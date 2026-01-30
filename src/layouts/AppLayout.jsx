@@ -10,10 +10,14 @@ export default function AppLayout() {
 
   return (
     <div className="min-h-screen" style={{ background: UI.COLORS.bg }}>
-      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
-      <div className={`${mainPad} transition-all duration-200`}>
-        <Topbar collapsed={collapsed} />
-        <main className="px-5 py-5">
+      <div className="sidebar">
+        <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
+      </div>
+      <div className={`${mainPad} transition-all duration-200 app-main-pad`}>
+        <div className="topbar">
+          <Topbar collapsed={collapsed} />
+        </div>
+        <main className="px-5 py-5 app-main">
           <Outlet />
         </main>
       </div>

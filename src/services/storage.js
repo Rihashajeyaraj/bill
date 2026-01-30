@@ -10,6 +10,7 @@ export const LS_KEYS = {
   parties: "parties",
   items: "items",
   invoices: "invoices",
+  creditNotes: "creditNotes",
   purchases: "purchases",
   payments: "payments",
   expenses: "expenses"

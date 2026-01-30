@@ -9,6 +9,7 @@ const VARIANTS = {
     value: "text-xs",
     tableHead: "text-[10px]",
     total: "text-sm",
+    header: "",
     divider: "border-t border-slate-100"
   },
   standard: {
@@ -18,6 +19,7 @@ const VARIANTS = {
     value: "text-sm",
     tableHead: "text-xs",
     total: "text-base",
+    header: "",
     divider: "border-t border-slate-100"
   },
   modern: {
@@ -27,6 +29,7 @@ const VARIANTS = {
     value: "text-sm",
     tableHead: "text-xs",
     total: "text-lg",
+    header: "rounded-2xl bg-slate-50/70 p-4",
     divider: "border-t-2 border-slate-200"
   },
   minimal: {
@@ -36,7 +39,48 @@ const VARIANTS = {
     value: "text-sm",
     tableHead: "text-xs",
     total: "text-base",
+    header: "",
     divider: "border-t border-slate-50"
+  },
+  classic: {
+    padding: "p-6",
+    title: "text-xl",
+    label: "text-[11px] uppercase tracking-widest",
+    value: "text-sm",
+    tableHead: "text-[11px] uppercase tracking-widest",
+    total: "text-base",
+    header: "",
+    divider: "border-t border-slate-200"
+  },
+  bold: {
+    padding: "p-7",
+    title: "text-2xl",
+    label: "text-xs uppercase tracking-wider",
+    value: "text-sm",
+    tableHead: "text-xs uppercase tracking-wider",
+    total: "text-xl",
+    header: "rounded-2xl border border-slate-200 p-4",
+    divider: "border-t-2 border-slate-300"
+  },
+  elegant: {
+    padding: "p-6",
+    title: "text-xl",
+    label: "text-xs",
+    value: "text-sm",
+    tableHead: "text-xs",
+    total: "text-base",
+    header: "border border-slate-100 rounded-2xl p-4",
+    divider: "border-t border-slate-200/70"
+  },
+  mono: {
+    padding: "p-6",
+    title: "text-xl",
+    label: "text-xs uppercase tracking-widest",
+    value: "text-sm",
+    tableHead: "text-xs uppercase tracking-widest",
+    total: "text-base",
+    header: "",
+    divider: "border-t border-slate-100"
   }
 };
 
@@ -47,35 +91,273 @@ function money(n) {
 
 export default function InvoicePreview({ templateId, styleConfig, invoiceData }) {
   const variant = VARIANTS[templateId] || VARIANTS.standard;
-  const { primaryColor, bgColor, fontFamily, logoUrl } = styleConfig || {};
+  const { primaryColor, bgColor, fontFamily, logoUrl, logoPosition } = styleConfig || {};
   const font = `${fontFamily || "Inter"}, "Helvetica Neue", Arial, sans-serif`;
+  const title = invoiceData.title || "Invoice";
+  const logoPos = logoPosition || "left";
+  const headerLayout =
+    logoPos === "center" ? "flex flex-col items-center text-center" : "flex items-start justify-between";
+  const invoiceAlign = logoPos === "right" ? "text-left" : "text-right";
+  const companyAlign = logoPos === "right" ? "flex-row-reverse text-right" : "text-left";
+  const isIndiaGST = invoiceData.country === "India" || invoiceData.tax?.type === "GST";
+
+  const seller = invoiceData.seller || {
+    name: invoiceData.companyName || "",
+    address: invoiceData.companyAddress || "",
+    gstin: invoiceData.companyGstin || "",
+    phone: invoiceData.companyPhone || "",
+    email: invoiceData.companyEmail || "",
+    state: invoiceData.companyState || ""
+  };
+
+  const buyer = invoiceData.buyer || {
+    name: invoiceData.customer?.name || "",
+    address: invoiceData.customer?.address || "",
+    gstin: invoiceData.customer?.gstin || "",
+    phone: invoiceData.customer?.phone || "",
+    state: invoiceData.customer?.state || ""
+  };
+
+  function buildGstLines() {
+    const rateFallback = Number(invoiceData.taxRate || 0);
+    return (invoiceData.items || []).map((item) => {
+      const qty = Number(item.qty || 0);
+      const rate = Number(item.rate || 0);
+      const taxableValue =
+        Number(item.taxableValue || item.net || 0) || Math.max(0, qty * rate - Number(item.discount || 0));
+      const taxRate = Number(item.taxRate ?? item.tax ?? rateFallback);
+      const taxAmount = (taxableValue * taxRate) / 100;
+      return {
+        id: item.id || item.name,
+        name: item.name || "-",
+        hsn: item.hsn || item.sac || item.hsnSac || "-",
+        qty,
+        rate,
+        taxableValue,
+        taxRate,
+        taxAmount,
+        total: taxableValue + taxAmount
+      };
+    });
+  }
+
+  function getSameState() {
+    if (typeof invoiceData.tax?.sameState === "boolean") return invoiceData.tax.sameState;
+    const sellerState = (seller.state || "").trim().toLowerCase();
+    const buyerState = (buyer.state || invoiceData.placeOfSupply || "").trim().toLowerCase();
+    return sellerState && buyerState ? sellerState === buyerState : false;
+  }
+
+  if (isIndiaGST) {
+    const gstLines = buildGstLines();
+    const totalTaxable = gstLines.reduce((sum, line) => sum + line.taxableValue, 0);
+    const totalTax = gstLines.reduce((sum, line) => sum + line.taxAmount, 0);
+    const grandTotal = totalTaxable + totalTax;
+    const sameState = getSameState();
+    const cgst = sameState ? totalTax / 2 : 0;
+    const sgst = sameState ? totalTax / 2 : 0;
+    const igst = sameState ? 0 : totalTax;
+    const amountWords = invoiceData.amountInWords || `Rupees ${money(grandTotal)} only`;
+
+    return (
+      <div
+        className={clsx("rounded-3xl border border-slate-100 shadow-soft", variant.padding)}
+        style={{ backgroundColor: bgColor || "#ffffff", fontFamily: font }}
+      >
+        <div className="flex items-start justify-between gap-6">
+          <div className="space-y-1">
+            <p className={clsx("font-semibold text-slate-900", variant.value)}>{seller.name}</p>
+            {seller.address ? <p className={clsx("text-slate-500", variant.label)}>{seller.address}</p> : null}
+            {seller.gstin ? <p className={clsx("text-slate-500", variant.label)}>GSTIN: {seller.gstin}</p> : null}
+            {seller.phone ? <p className={clsx("text-slate-500", variant.label)}>Phone: {seller.phone}</p> : null}
+            {seller.email ? <p className={clsx("text-slate-500", variant.label)}>Email: {seller.email}</p> : null}
+          </div>
+          <div className="text-right space-y-1">
+            <p className={clsx("font-semibold text-slate-900", variant.title)} style={{ color: primaryColor }}>
+              TAX INVOICE
+            </p>
+            <p className={clsx("text-slate-500", variant.label)}>No: {invoiceData.invoiceNo || "-"}</p>
+            <p className={clsx("text-slate-500", variant.label)}>Date: {invoiceData.invoiceDate || "-"}</p>
+            <p className={clsx("text-slate-500", variant.label)}>
+              Place of Supply: {invoiceData.placeOfSupply || buyer.state || "-"}
+            </p>
+          </div>
+        </div>
+
+        <div className={clsx("mt-4", variant.divider)} />
+
+        <div className="mt-4 grid grid-cols-2 gap-6">
+          <div>
+            <p className={clsx("uppercase tracking-widest text-slate-400", variant.label)}>Bill To</p>
+            <p className={clsx("mt-2 font-semibold text-slate-900", variant.value)}>{buyer.name || "-"}</p>
+            {buyer.address ? <p className={clsx("text-slate-500", variant.label)}>{buyer.address}</p> : null}
+            {buyer.gstin ? <p className={clsx("text-slate-500", variant.label)}>GSTIN: {buyer.gstin}</p> : null}
+            {buyer.phone ? <p className={clsx("text-slate-500", variant.label)}>Phone: {buyer.phone}</p> : null}
+          </div>
+          <div>
+            <p className={clsx("uppercase tracking-widest text-slate-400", variant.label)}>Invoice Info</p>
+            <div className="mt-2 space-y-1">
+              <p className={clsx("text-slate-500", variant.label)}>Invoice No: {invoiceData.invoiceNo || "-"}</p>
+              <p className={clsx("text-slate-500", variant.label)}>
+                Invoice Date: {invoiceData.invoiceDate || "-"}
+              </p>
+              <p className={clsx("text-slate-500", variant.label)}>
+                Place of Supply: {invoiceData.placeOfSupply || buyer.state || "-"}
+              </p>
+              <p className={clsx("text-slate-500", variant.label)}>
+                Tax Rule: {sameState ? "CGST + SGST" : "IGST"}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className={clsx("mt-5", variant.divider)} />
+
+        <div className="mt-4">
+          <div className={clsx("grid grid-cols-12 gap-2 text-slate-500", variant.tableHead)}>
+            <span className="col-span-4">Item</span>
+            <span className="col-span-2">HSN/SAC</span>
+            <span className="col-span-1 text-right">Qty</span>
+            <span className="col-span-1 text-right">Rate</span>
+            <span className="col-span-2 text-right">Taxable</span>
+            <span className="col-span-1 text-right">GST %</span>
+            <span className="col-span-1 text-right">Total</span>
+          </div>
+          <div className="mt-2 space-y-2">
+            {gstLines.map((line) => (
+              <div key={line.id} className="grid grid-cols-12 gap-2 text-slate-700">
+                <span className={clsx("col-span-4", variant.value)}>{line.name}</span>
+                <span className={clsx("col-span-2", variant.value)}>{line.hsn}</span>
+                <span className={clsx("col-span-1 text-right", variant.value)}>{line.qty}</span>
+                <span className={clsx("col-span-1 text-right", variant.value)}>{money(line.rate)}</span>
+                <span className={clsx("col-span-2 text-right", variant.value)}>{money(line.taxableValue)}</span>
+                <span className={clsx("col-span-1 text-right", variant.value)}>{line.taxRate}%</span>
+                <span className={clsx("col-span-1 text-right font-semibold", variant.value)}>
+                  {money(line.total)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className={clsx("mt-5", variant.divider)} />
+
+        <div className="mt-4 grid grid-cols-2 gap-6">
+          <div>
+            <p className={clsx("text-slate-500", variant.label)}>Amount in Words</p>
+            <p className={clsx("mt-2 text-slate-600", variant.value)}>{amountWords}</p>
+            <p className={clsx("mt-4 text-slate-500", variant.label)}>Authorized Signature</p>
+            <div className="mt-8 h-10 border-b border-slate-200" />
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className={clsx("text-slate-500", variant.label)}>Total Taxable Amount</span>
+              <span className={clsx("text-slate-900 font-semibold", variant.value)}>{money(totalTaxable)}</span>
+            </div>
+            {sameState ? (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className={clsx("text-slate-500", variant.label)}>CGST</span>
+                  <span className={clsx("text-slate-900 font-semibold", variant.value)}>{money(cgst)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className={clsx("text-slate-500", variant.label)}>SGST</span>
+                  <span className={clsx("text-slate-900 font-semibold", variant.value)}>{money(sgst)}</span>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className={clsx("text-slate-500", variant.label)}>IGST</span>
+                <span className={clsx("text-slate-900 font-semibold", variant.value)}>{money(igst)}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className={clsx("text-slate-500", variant.label)}>Total GST</span>
+              <span className={clsx("text-slate-900 font-semibold", variant.value)}>{money(totalTax)}</span>
+            </div>
+            <div className={clsx("pt-2", variant.divider)} />
+            <div className="flex items-center justify-between">
+              <span className={clsx("text-slate-500", variant.label)}>Grand Total</span>
+              <span className={clsx("font-semibold", variant.total)} style={{ color: primaryColor }}>
+                {money(grandTotal)}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
       className={clsx("rounded-3xl border border-slate-100 shadow-soft", variant.padding)}
       style={{ backgroundColor: bgColor || "#ffffff", fontFamily: font }}
     >
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          {logoUrl ? (
-            <img src={logoUrl} alt="logo" className="h-12 w-12 rounded-xl border border-slate-200 object-cover" />
-          ) : (
-            <div className="h-12 w-12 rounded-xl border border-slate-200 bg-slate-50" />
-          )}
-          <div>
-            <p className={clsx("font-semibold text-slate-900", variant.value)}>
-              {invoiceData.companyName}
-            </p>
-            <p className={clsx("text-slate-500", variant.label)}>Billing Address</p>
-          </div>
-        </div>
-        <div className="text-right">
-          <p className={clsx("font-semibold text-slate-900", variant.title)} style={{ color: primaryColor }}>
-            Invoice
-          </p>
-          <p className={clsx("text-slate-500", variant.label)}>No: {invoiceData.invoiceNo}</p>
-          <p className={clsx("text-slate-500", variant.label)}>Date: {invoiceData.invoiceDate}</p>
-        </div>
+      <div className={clsx(headerLayout, variant.header)}>
+        {logoPos === "center" ? (
+          <>
+            <div className="flex flex-col items-center gap-2">
+              {logoUrl ? (
+                <img
+                  src={logoUrl}
+                  alt="logo"
+                  className="h-12 w-12 rounded-xl border border-slate-200 object-cover"
+                />
+              ) : (
+                <div className="h-12 w-12 rounded-xl border border-slate-200 bg-slate-50" />
+              )}
+              <div>
+                <p className={clsx("font-semibold text-slate-900", variant.value)}>
+                  {invoiceData.companyName}
+                </p>
+                <p className={clsx("text-slate-500", variant.label)}>Billing Address</p>
+              </div>
+            </div>
+            <div className="mt-3">
+              <p className={clsx("font-semibold text-slate-900", variant.title)} style={{ color: primaryColor }}>
+                {title}
+              </p>
+              <p className={clsx("text-slate-500", variant.label)}>No: {invoiceData.invoiceNo}</p>
+              <p className={clsx("text-slate-500", variant.label)}>Date: {invoiceData.invoiceDate}</p>
+            </div>
+          </>
+        ) : (
+          <>
+            {logoPos === "right" ? (
+              <div className={clsx(invoiceAlign)}>
+                <p className={clsx("font-semibold text-slate-900", variant.title)} style={{ color: primaryColor }}>
+                  {title}
+                </p>
+                <p className={clsx("text-slate-500", variant.label)}>No: {invoiceData.invoiceNo}</p>
+                <p className={clsx("text-slate-500", variant.label)}>Date: {invoiceData.invoiceDate}</p>
+              </div>
+            ) : null}
+
+            <div className={clsx("flex items-center gap-3", companyAlign)}>
+              {logoUrl ? (
+                <img src={logoUrl} alt="logo" className="h-12 w-12 rounded-xl border border-slate-200 object-cover" />
+              ) : (
+                <div className="h-12 w-12 rounded-xl border border-slate-200 bg-slate-50" />
+              )}
+              <div>
+                <p className={clsx("font-semibold text-slate-900", variant.value)}>
+                  {invoiceData.companyName}
+                </p>
+                <p className={clsx("text-slate-500", variant.label)}>Billing Address</p>
+              </div>
+            </div>
+
+            {logoPos !== "right" ? (
+              <div className={clsx(invoiceAlign)}>
+                <p className={clsx("font-semibold text-slate-900", variant.title)} style={{ color: primaryColor }}>
+                  {title}
+                </p>
+                <p className={clsx("text-slate-500", variant.label)}>No: {invoiceData.invoiceNo}</p>
+                <p className={clsx("text-slate-500", variant.label)}>Date: {invoiceData.invoiceDate}</p>
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
 
       <div className={clsx("mt-4", variant.divider)} />

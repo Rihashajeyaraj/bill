@@ -57,6 +57,7 @@ export function ensureSeeded() {
   }
 
   if (!Array.isArray(lsGet(LS_KEYS.invoices, null))) lsSet(LS_KEYS.invoices, []);
+  if (!Array.isArray(lsGet(LS_KEYS.creditNotes, null))) lsSet(LS_KEYS.creditNotes, []);
   if (!Array.isArray(lsGet(LS_KEYS.purchases, null))) lsSet(LS_KEYS.purchases, []);
   if (!Array.isArray(lsGet(LS_KEYS.payments, null))) lsSet(LS_KEYS.payments, []);
   if (!Array.isArray(lsGet(LS_KEYS.expenses, null))) lsSet(LS_KEYS.expenses, []);

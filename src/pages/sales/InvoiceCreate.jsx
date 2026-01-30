@@ -20,7 +20,35 @@ function money(n) {
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function generateInvoiceNumber() {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const rnd = String(Math.floor(100 + Math.random() * 900));
+  return `INV-${yy}${mm}${dd}-${rnd}`;
+}
+
+function formatAddress(address) {
+  if (!address) return "";
+  const parts = [address.line1, address.line2, address.city, address.state, address.postalCode]
+    .map((part) => (part ? String(part).trim() : ""))
+    .filter(Boolean);
+  return parts.join(", ");
+}
+
 const GST_RATES = [0, 5, 12, 18, 28];
+const INDIA_STATES = [
+  "Andhra Pradesh",
+  "Delhi",
+  "Gujarat",
+  "Karnataka",
+  "Kerala",
+  "Maharashtra",
+  "Tamil Nadu",
+  "Telangana",
+  "West Bengal"
+];
 const VAT_RATES = { "Sri Lanka": 18, "United Kingdom": 20, UK: 20, Ireland: 23 };
 
 function getVatRate(country, company) {
@@ -40,17 +68,28 @@ export default function InvoiceCreate() {
 
   const customers = partiesByType("Customer");
   const items = itemsList();
+  const [itemSearch, setItemSearch] = useState("");
 
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [invoiceNo, setInvoiceNo] = useState(() => generateInvoiceNumber());
   const [partyId, setPartyId] = useState(customers[0]?.id || "");
   const party = useMemo(() => customers.find((c) => c.id === partyId) || null, [customers, partyId]);
+  const [placeOfSupply, setPlaceOfSupply] = useState("");
 
   const [lines, setLines] = useState([
-    { id: "l1", itemId: items[0]?.id || "", qty: 1, rate: items[0]?.price || 0, discount: 0, tax: 0 }
+    {
+      id: "l1",
+      itemId: items[0]?.id || "",
+      qty: 1,
+      rate: items[0]?.price || 0,
+      discount: 0,
+      tax: items[0]?.taxRate || 0
+    }
   ]);
 
   const companyState = company?.address?.state || "";
-  const customerState = party?.state || "";
+  const customerState = isIndia ? placeOfSupply || "" : party?.state || "";
+  const companyVatRate = company?.tax?.vatRate;
   const defaultRate = isIndia ? 18 : getVatRate(country, company);
   const [taxRate, setTaxRate] = useState(defaultRate);
   const [vatInput, setVatInput] = useState(
@@ -63,7 +102,23 @@ export default function InvoiceCreate() {
     if (!isIndia) {
       setVatInput(`VAT ${Number.isFinite(rate) ? rate : 0}%`);
     }
-  }, [country, isIndia, company]);
+  }, [country, isIndia, companyVatRate]);
+
+  useEffect(() => {
+    if (!isIndia) return;
+    const candidate = party?.state || "";
+    const normalizedCandidate = INDIA_STATES.find(
+      (state) => state.toLowerCase() === candidate.trim().toLowerCase()
+    );
+    if (normalizedCandidate) {
+      setPlaceOfSupply(normalizedCandidate);
+      return;
+    }
+    const normalizedCompany = INDIA_STATES.find(
+      (state) => state.toLowerCase() === companyState.trim().toLowerCase()
+    );
+    setPlaceOfSupply(normalizedCompany || "");
+  }, [party?.state, companyState, isIndia]);
 
   function addLine() {
     setLines((p) => [
@@ -74,9 +129,28 @@ export default function InvoiceCreate() {
         qty: 1,
         rate: items[0]?.price || 0,
         discount: 0,
-        tax: 0
+        tax: items[0]?.taxRate || 0
       }
     ]);
+  }
+
+  function addLineWithItem(item) {
+    if (!item) return;
+    setLines((prev) => {
+      const emptyIndex = prev.findIndex((line) => !line.itemId);
+      const nextLine = {
+        id: `l_${Date.now()}`,
+        itemId: item.id,
+        qty: 1,
+        rate: item.price || 0,
+        discount: 0,
+        tax: item.taxRate || 0
+      };
+      if (emptyIndex >= 0) {
+        return prev.map((line, idx) => (idx === emptyIndex ? { ...line, ...nextLine, id: line.id } : line));
+      }
+      return [...prev, nextLine];
+    });
   }
 
   function updateLine(id, patch) {
@@ -98,17 +172,34 @@ export default function InvoiceCreate() {
       const gross = qty * rate;
       const net = Math.max(0, gross - discount);
       const lineTax = net > 0 && taxRatePerLine > 0 ? (net * taxRatePerLine) / 100 : 0;
-      return { ...l, itemName: item?.name || "-", gross, net, lineTax };
+      return { ...l, itemName: item?.name || "-", hsn: item?.hsn || item?.sac || "-", gross, net, lineTax };
     });
 
     const subTotal = enriched.reduce((a, x) => a + x.net, 0);
-    const manualTaxTotal = enriched.reduce((a, x) => a + x.lineTax, 0);
+    const lineTaxTotal = enriched.reduce((a, x) => a + x.lineTax, 0);
+    const normalizedCompany = (companyState || placeOfSupply || "").trim().toLowerCase();
+    const normalizedCustomer = (customerState || placeOfSupply || "").trim().toLowerCase();
+    const sameState = normalizedCompany && normalizedCustomer && normalizedCompany === normalizedCustomer;
 
-    let tax = { type: "VAT", totalTax: 0, vat: 0 };
-    if (manualTaxTotal > 0) {
-      tax = { type: "Line Tax", totalTax: manualTaxTotal, mode: "manual" };
-    } else if (isIndia) {
-      tax = computeIndiaGST({ taxRate, companyState, customerState, taxableAmount: subTotal });
+    let tax = { type: isIndia ? "GST" : "VAT", totalTax: 0 };
+    if (isIndia) {
+      if (lineTaxTotal > 0) {
+        const half = sameState ? lineTaxTotal / 2 : 0;
+        const igst = sameState ? 0 : lineTaxTotal;
+        tax = {
+          type: "GST",
+          sameState,
+          cgst: half,
+          sgst: half,
+          igst,
+          totalTax: lineTaxTotal,
+          mode: "line"
+        };
+      } else {
+        tax = computeIndiaGST({ taxRate, companyState, customerState, taxableAmount: subTotal });
+      }
+    } else if (lineTaxTotal > 0) {
+      tax = { type: "Line Tax", totalTax: lineTaxTotal, mode: "manual" };
     } else {
       tax = computeVAT({ vatRate: taxRate, taxableAmount: subTotal });
     }
@@ -119,6 +210,21 @@ export default function InvoiceCreate() {
   }, [lines, items, isIndia, companyState, customerState, taxRate]);
   const isManualTax = computed.tax?.mode === "manual";
 
+  const filteredItems = useMemo(() => {
+    const query = itemSearch.trim().toLowerCase();
+    if (!query) return items;
+    const startsWith = items.filter((item) => item.name?.toLowerCase().startsWith(query));
+    if (startsWith.length) return startsWith;
+    return items.filter((item) => item.name?.toLowerCase().includes(query));
+  }, [items, itemSearch]);
+
+  function getItemOptions(currentId) {
+    const selected = items.find((item) => item.id === currentId);
+    if (!selected) return filteredItems;
+    if (filteredItems.some((item) => item.id === currentId)) return filteredItems;
+    return [selected, ...filteredItems];
+  }
+
   function mockPrint() {
     alert("Mock print: connect real print later.");
   }
@@ -127,13 +233,32 @@ export default function InvoiceCreate() {
   }
 
   function saveInvoice() {
+    const seller = {
+      name: company?.companyName || "",
+      address: formatAddress(company?.address),
+      gstin: company?.tax?.gstin || "",
+      phone: company?.phone || "",
+      email: company?.email || "",
+      state: company?.address?.state || ""
+    };
+    const buyer = {
+      name: party?.name || "",
+      address: party?.address || "",
+      gstin: party?.gstin || "",
+      phone: party?.phone || "",
+      state: party?.state || ""
+    };
     const payload = {
       invoiceDate,
+      invoiceNo,
       partyId,
       partyName: party?.name || "",
+      placeOfSupply: placeOfSupply || buyer.state,
       country,
       taxRate,
       companySnapshot: company,
+      seller,
+      buyer,
       lines: computed.enriched,
       totals: {
         subTotal: computed.subTotal,
@@ -185,6 +310,15 @@ export default function InvoiceCreate() {
           </div>
 
           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormField label="Invoice No">
+              <input
+                value={invoiceNo}
+                onChange={(e) => setInvoiceNo(e.target.value)}
+                className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
+                style={{ "--tw-ring-color": UI.COLORS.ring }}
+              />
+            </FormField>
+
             <FormField label="Invoice Date">
               <input
                 type="date"
@@ -210,6 +344,26 @@ export default function InvoiceCreate() {
                 ))}
               </select>
             </FormField>
+
+            {isIndia ? (
+              <FormField label="Place of Supply (State)">
+                <>
+                  <input
+                    list="india-states-invoice"
+                    value={placeOfSupply}
+                    onChange={(e) => setPlaceOfSupply(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
+                    style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    placeholder="Select or type state"
+                  />
+                  <datalist id="india-states-invoice">
+                    {INDIA_STATES.map((state) => (
+                      <option key={state} value={state} />
+                    ))}
+                  </datalist>
+                </>
+              </FormField>
+            ) : null}
 
             <FormField
               label={isIndia ? "GST Rate" : "VAT Rate"}
@@ -288,6 +442,39 @@ export default function InvoiceCreate() {
             </button>
           </div>
 
+          <div className="mt-3 flex items-center gap-3">
+            <div className="relative w-full max-w-sm">
+              <input
+                value={itemSearch}
+                onChange={(e) => setItemSearch(e.target.value)}
+                className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none focus:ring-4"
+                style={{ "--tw-ring-color": UI.COLORS.ring }}
+                placeholder="Search items..."
+              />
+              {itemSearch.trim().length ? (
+                <div className="absolute z-10 mt-2 w-full rounded-2xl border border-slate-100 bg-white shadow-soft p-2 max-h-52 overflow-auto">
+                  {filteredItems.length ? (
+                    filteredItems.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onMouseDown={() => {
+                          addLineWithItem(item);
+                          setItemSearch("");
+                        }}
+                        className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        {item.name}
+                      </button>
+                    ))
+                  ) : (
+                    <div className="px-3 py-2 text-sm text-slate-500">No items found</div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
           <div className="mt-3">
             <DataTable
               columns={[
@@ -299,11 +486,15 @@ export default function InvoiceCreate() {
                       value={r.itemId}
                       onChange={(e) => {
                         const it = items.find((x) => x.id === e.target.value);
-                        updateLine(r.id, { itemId: e.target.value, rate: it?.price || 0 });
+                        updateLine(r.id, {
+                          itemId: e.target.value,
+                          rate: it?.price || 0,
+                          tax: it?.taxRate || 0
+                        });
                       }}
                       className="rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-sm outline-none"
                     >
-                      {items.map((it) => (
+                      {getItemOptions(r.itemId).map((it) => (
                         <option key={it.id} value={it.id}>
                           {it.name}
                         </option>
@@ -383,6 +574,8 @@ export default function InvoiceCreate() {
             <p className="text-xs text-slate-500">Billed To</p>
             <p className="text-sm font-semibold text-slate-900">{party?.name || "Select customer"}</p>
             <p className="text-xs text-slate-500">{party?.phone || ""}</p>
+            {party?.address ? <p className="text-xs text-slate-500">{party.address}</p> : null}
+            {party?.gstin ? <p className="text-xs text-slate-500">GSTIN: {party.gstin}</p> : null}
           </div>
 
           <div className="mt-4">
@@ -392,13 +585,17 @@ export default function InvoiceCreate() {
             </div>
 
             <div className="mt-2 rounded-2xl border border-slate-100 p-3">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-600">
-                  {computed.tax.type}
-                  {isManualTax ? "" : ` (${taxRate}%)`}
-                </span>
-                <span className="font-semibold text-slate-900">{money(computed.tax.totalTax)}</span>
-              </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-600">
+                    {computed.tax.type}
+                    {isManualTax
+                      ? ""
+                      : computed.tax?.mode === "line"
+                        ? " (Line items)"
+                        : ` (${taxRate}%)`}
+                  </span>
+                  <span className="font-semibold text-slate-900">{money(computed.tax.totalTax)}</span>
+                </div>
 
               {isManualTax ? (
                 <div className="mt-2 text-xs text-slate-600 flex justify-between">

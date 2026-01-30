@@ -6,6 +6,7 @@ import clsx from "clsx";
 import Card from "../components/Card";
 import FormField from "../components/FormField";
 import GradientButton from "../components/GradientButton";
+import Modal from "../components/Modal";
 import TaxDropdown from "../components/TaxDropdown";
 import UnitPickerModal from "../components/UnitPickerModal";
 import { itemsUpsert } from "../services/items.service";
@@ -33,7 +34,8 @@ const DEFAULT_ITEM = {
   warehouse: ""
 };
 
-const CATEGORIES = ["General", "Granite", "Services", "Hardware"];
+const CATEGORY_KEY = "itemCategories";
+const DEFAULT_CATEGORIES = ["General", "Granite", "Services", "Hardware"];
 const PRICE_TAX_MODES = [
   { value: "WITH_TAX", label: "With Tax" },
   { value: "WITHOUT_TAX", label: "Without Tax" }
@@ -70,6 +72,18 @@ export default function ItemCreate() {
   const [tab, setTab] = useState("pricing");
   const [unitOpen, setUnitOpen] = useState(false);
   const [companyCountry, setCompanyCountry] = useState("India");
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const [newCategory, setNewCategory] = useState("");
+  const [categories, setCategories] = useState(() => {
+    try {
+      const raw = localStorage.getItem(CATEGORY_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      const list = Array.isArray(parsed) ? parsed : [];
+      return Array.from(new Set([...DEFAULT_CATEGORIES, ...list]));
+    } catch {
+      return DEFAULT_CATEGORIES;
+    }
+  });
 
   useEffect(() => {
     let active = true;
@@ -152,36 +166,59 @@ export default function ItemCreate() {
     nav("/items", { replace: true });
   }
 
+  function handleCategoryChange(value) {
+    if (value === "__add__") {
+      setCategoryOpen(true);
+      return;
+    }
+    updateItem({ category: value });
+  }
+
+  function saveCategory() {
+    const name = newCategory.trim();
+    if (!name) return;
+    const exists = categories.some((c) => c.toLowerCase() === name.toLowerCase());
+    const next = exists ? categories : [...categories, name];
+    setCategories(next);
+    localStorage.setItem(CATEGORY_KEY, JSON.stringify(next));
+    updateItem({ category: name });
+    setNewCategory("");
+    setCategoryOpen(false);
+  }
+
   return (
     <div className="max-w-6xl">
       <Card className="p-6">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <h1 className="text-lg font-semibold text-slate-900">Add Item</h1>
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
-              <button
-                type="button"
-                onClick={() => updateItem({ type: "PRODUCT" })}
-                className={clsx(item.type === "PRODUCT" ? "text-slate-900" : "text-slate-400")}
-              >
-                Product
-              </button>
-              <button
-                type="button"
-                onClick={toggleType}
-                className="relative h-6 w-11 rounded-full border border-slate-200 bg-slate-100"
-                aria-pressed={item.type === "SERVICE"}
-              >
-                <span
+            <div className="flex flex-wrap items-center gap-4">
+              <h1 className="text-lg font-semibold text-slate-900">Add Item</h1>
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
+                <button
+                  type="button"
+                  onClick={() => updateItem({ type: "PRODUCT" })}
+                  className={clsx(item.type === "PRODUCT" ? "text-slate-900" : "text-slate-400")}
+                >
+                  Product
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleType}
                   className={clsx(
-                    "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition",
-                    item.type === "SERVICE" ? "translate-x-5" : "translate-x-0.5"
+                    "relative h-7 w-12 rounded-full border transition-colors",
+                    item.type === "SERVICE" ? "border-emerald-400 bg-emerald-400" : "border-slate-200 bg-slate-200"
                   )}
-                />
-              </button>
-              <button
-                type="button"
-                onClick={() => updateItem({ type: "SERVICE" })}
+                  aria-pressed={item.type === "SERVICE"}
+                >
+                  <span
+                    className={clsx(
+                      "absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform",
+                      item.type === "SERVICE" ? "translate-x-5" : "translate-x-0"
+                    )}
+                  />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateItem({ type: "SERVICE" })}
                 className={clsx(item.type === "SERVICE" ? "text-slate-900" : "text-slate-400")}
               >
                 Service
@@ -257,14 +294,15 @@ export default function ItemCreate() {
             <FormField label="Category">
               <select
                 value={item.category}
-                onChange={(e) => updateItem({ category: e.target.value })}
+                onChange={(e) => handleCategoryChange(e.target.value)}
                 className="w-full rounded-3xl border border-slate-100 bg-white px-4 py-2.5 text-sm outline-none"
               >
-                {CATEGORIES.map((cat) => (
+                {categories.map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
                 ))}
+                <option value="__add__">+ Add Category</option>
               </select>
             </FormField>
           </div>
@@ -474,6 +512,36 @@ export default function ItemCreate() {
         onClose={() => setUnitOpen(false)}
         onSelect={(unit) => updateItem({ unit })}
       />
+
+      <Modal
+        open={categoryOpen}
+        title="Add Category"
+        onClose={() => {
+          setCategoryOpen(false);
+          setNewCategory("");
+        }}
+        footer={
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={saveCategory}
+              disabled={!newCategory.trim()}
+              className="w-full rounded-full bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Create
+            </button>
+          </div>
+        }
+      >
+        <FormField label="Enter Category Name">
+          <input
+            value={newCategory}
+            onChange={(e) => setNewCategory(e.target.value)}
+            className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none"
+            placeholder="e.g., Grocery"
+          />
+        </FormField>
+      </Modal>
     </div>
   );
 }

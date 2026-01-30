@@ -16,6 +16,51 @@ body {
   color: var(--text-main);
 }
 
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+  body {
+    background: #ffffff;
+  }
+  html, body {
+    width: 210mm;
+    min-height: 297mm;
+  }
+  .sidebar,
+  .topbar,
+  .app-main-pad,
+  .app-main {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .sidebar,
+  .topbar {
+    display: none !important;
+  }
+  .print-hide {
+    display: none !important;
+  }
+  .print-sheet {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0 auto;
+    padding: 12mm;
+    box-sizing: border-box;
+    border: none;
+    box-shadow: none;
+    background: transparent;
+  }
+  .credit-note-preview {
+    background: #ffffff !important;
+    border: 1px solid #e5e5e5 !important;
+    box-shadow: none !important;
+    width: 100%;
+    min-height: calc(297mm - 24mm);
+  }
+}
+
 * {
   -webkit-tap-highlight-color: transparent;
 }

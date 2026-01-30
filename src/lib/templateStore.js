@@ -5,7 +5,8 @@ export const DEFAULT_TEMPLATE_CONFIG = {
   primaryColor: "#1f6b45",
   bgColor: "#ffffff",
   fontFamily: "Inter",
-  logoUrl: ""
+  logoUrl: "",
+  logoPosition: "left"
 };
 
 export function getInvoiceTemplateConfig() {

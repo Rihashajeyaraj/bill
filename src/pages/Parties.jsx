@@ -25,7 +25,16 @@ export default function Parties() {
   const rows = useMemo(() => partiesByType(tab), [tab, open, editing]);
 
   function openCreate() {
-    setEditing({ type: tab, name: "", phone: "", email: "", state: "", balance: 0 });
+    setEditing({
+      type: tab,
+      name: "",
+      phone: "",
+      email: "",
+      state: "",
+      address: "",
+      gstin: "",
+      balance: 0
+    });
     setOpen(true);
   }
 
@@ -160,6 +169,24 @@ export default function Parties() {
                 value={editing.state}
                 onChange={(e) => setEditing((p) => ({ ...p, state: e.target.value }))}
                 className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none"
+              />
+            </FormField>
+
+            <FormField label="Address">
+              <input
+                value={editing.address || ""}
+                onChange={(e) => setEditing((p) => ({ ...p, address: e.target.value }))}
+                className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none"
+                placeholder="Street, city, state"
+              />
+            </FormField>
+
+            <FormField label="GSTIN (optional)">
+              <input
+                value={editing.gstin || ""}
+                onChange={(e) => setEditing((p) => ({ ...p, gstin: e.target.value }))}
+                className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none"
+                placeholder="15 digit GSTIN"
               />
             </FormField>
 
