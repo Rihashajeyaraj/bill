@@ -13,11 +13,11 @@ import Items from "../pages/Items";
 import ItemCreate from "../pages/ItemCreate";
 
 import InvoiceCreate from "../pages/sales/InvoiceCreate";
-import CreditNote from "../pages/sales/CreditNote";
-import PaymentIn from "../pages/sales/PaymentIn";
+import CreditNote from "../pages/sales/CreditNotePremium";
+import PaymentIn from "../pages/sales/PaymentInPremium";
 
 import PurchaseBill from "../pages/purchases/PurchaseBill";
-import DebitNote from "../pages/purchases/DebitNote";
+import DebitNote from "../pages/purchases/DebitNotePremium";
 import PaymentOut from "../pages/purchases/PaymentOut";
 import Expense from "../pages/purchases/Expense";
 

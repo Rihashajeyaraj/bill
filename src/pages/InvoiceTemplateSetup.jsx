@@ -18,69 +18,126 @@ import {
 } from "../lib/templateStore";
 import { companyGetProfile, companySetCompleted } from "../services/company.service";
 import { UI } from "../theme/tokens";
-
-const TEMPLATE_OPTIONS = [
-  { id: "compact", label: "Compact" },
-  { id: "standard", label: "Standard" },
-  { id: "modern", label: "Modern" },
-  { id: "minimal", label: "Minimal" },
-  { id: "classic", label: "Classic" },
-  { id: "bold", label: "Bold" },
-  { id: "elegant", label: "Elegant" },
-  { id: "mono", label: "Mono" }
-];
+import {
+  getCountryInvoiceConfig,
+  getCountryLabel,
+  getCountryTemplates
+} from "../data/invoiceCountryConfig";
 
 const FONT_OPTIONS = ["Inter", "Roboto", "Poppins"];
 
-const FALLBACK_COMPANY = "BillJoy Technologies";
+const FALLBACK_COMPANY = "Company Name";
 
-const DEFAULT_DEMO = {
-  title: "Tax Invoice",
-  invoiceNo: "INV-1208",
+const BASE_INVOICE = {
+  invoiceNo: "",
   invoiceDate: new Date().toISOString().slice(0, 10),
-  dueDate: "2026-02-05",
-  country: "India",
-  placeOfSupply: "Tamil Nadu",
+  dueDate: "",
+  placeOfSupply: "",
   seller: {
-    name: "BillJoy Technologies",
-    address: "No. 12, Business Street, Chennai, Tamil Nadu, 600001",
-    gstin: "29ABCDE1234F1Z5",
-    phone: "+91 98765 43210",
-    email: "billing@billjoy.com",
-    state: "Tamil Nadu"
+    name: "",
+    address: "",
+    phone: "",
+    email: "",
+    state: ""
   },
   customer: {
-    name: "Kavin Stores",
-    phone: "+91 90000 12345",
-    address: "15/2, Main Road, Chennai, Tamil Nadu, 600002",
-    gstin: "29AACCK1234A1ZP",
-    state: "Tamil Nadu"
+    name: "",
+    phone: "",
+    address: "",
+    state: ""
   },
-  items: [
-    { id: "it1", name: "LED Bulb", hsn: "9405", qty: 10, rate: 100, taxRate: 18 },
-    { id: "it2", name: "Installation", hsn: "9987", qty: 1, rate: 1500, taxRate: 18 }
-  ],
-  taxRate: 18
+  items: []
 };
 
+function buildEmptyInvoice(country, companyName, companyProfile) {
+  const config = getCountryInvoiceConfig(country);
+  const taxProfile = companyProfile?.tax || {};
+  const title = config.invoiceTitle;
+  const base = {
+    ...BASE_INVOICE,
+    title,
+    country: config.label,
+    companyName,
+    currencySymbol: config.currencySymbol,
+    taxRate: config.defaultTaxRate,
+    tax: {
+      type: config.taxType,
+      rate: config.defaultTaxRate
+    }
+  };
+
+  if (config.taxType === "GST") {
+    return {
+      ...base,
+      seller: {
+        ...base.seller,
+        gstin: taxProfile.gstin || ""
+      },
+      customer: {
+        ...base.customer,
+        gstin: ""
+      }
+    };
+  }
+
+  if (config.label === "UAE") {
+    return {
+      ...base,
+      tax: {
+        ...base.tax,
+        idLabel: "TRN",
+        idValue: taxProfile.vatNumber || ""
+      }
+    };
+  }
+
+  if (config.taxType === "VAT") {
+    return {
+      ...base,
+      tax: {
+        ...base.tax,
+        idLabel: "VAT Registration No.",
+        idValue: taxProfile.vatNumber || ""
+      }
+    };
+  }
+
+  if (config.taxType === "SALES_TAX") {
+    return {
+      ...base,
+      tax: {
+        ...base.tax,
+        idLabel: "EIN",
+        idValue: taxProfile.taxId || ""
+      }
+    };
+  }
+
+  return base;
+}
+
 function computePreviewTotals(preview) {
-  const items = preview.items.map((item) => {
+  const items = (preview.items || []).map((item) => {
     const qty = Number(item.qty || 0);
     const rate = Number(item.rate || 0);
     const taxableValue = qty * rate;
     return { ...item, qty, rate, taxableValue, amount: taxableValue };
   });
   const subTotal = items.reduce((sum, item) => sum + item.amount, 0);
-  const rate = Number(preview.taxRate || 0);
-  const isIndia = preview.country === "India";
-  const tax = isIndia
-    ? computeIndiaGST({
-        taxRate: rate,
-        companyState: preview.seller?.state || "",
-        customerState: preview.customer?.state || preview.placeOfSupply || "",
-        taxableAmount: subTotal
-      })
-    : computeVAT({ vatRate: rate, taxableAmount: subTotal });
+  const rate = Number(preview.taxRate || preview.tax?.rate || 0);
+  const taxType = preview.tax?.type || (preview.country === "India" ? "GST" : "NONE");
+  const computedTax =
+    taxType === "GST"
+      ? computeIndiaGST({
+          taxRate: rate,
+          companyState: preview.seller?.state || "",
+          customerState: preview.customer?.state || preview.placeOfSupply || "",
+          taxableAmount: subTotal
+        })
+      : taxType === "VAT"
+        ? computeVAT({ vatRate: rate, taxableAmount: subTotal })
+        : computeVAT({ vatRate: 0, taxableAmount: subTotal });
+  const tax = { ...(preview.tax || {}), ...computedTax };
   const total = subTotal + tax.totalTax;
   return {
     ...preview,
@@ -116,19 +173,24 @@ export default function InvoiceTemplateSetup() {
   const nav = useNavigate();
   const company = companyGetProfile();
   const companyName = company?.companyName || FALLBACK_COMPANY;
+  const country = company?.country || "India";
+  const countryConfig = getCountryInvoiceConfig(country);
+  const countryTemplates = getCountryTemplates(country);
   const [config, setConfig] = useState(() => {
     const stored = getInvoiceTemplateConfig();
+    const templateAllowed = countryTemplates.some((tpl) => tpl.id === stored.templateId);
+    const fallbackTemplate = countryTemplates[0]?.id || DEFAULT_TEMPLATE_CONFIG.templateId;
     return {
       ...DEFAULT_TEMPLATE_CONFIG,
       ...stored,
+      templateId: templateAllowed ? stored.templateId : fallbackTemplate,
       logoUrl: stored.logoUrl || company?.logoBase64 || ""
     };
   });
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [preview, setPreview] = useState(() => ({
-    ...DEFAULT_DEMO,
-    companyName
+    ...buildEmptyInvoice(country, companyName, company)
   }));
 
   useEffect(() => {
@@ -193,9 +255,19 @@ export default function InvoiceTemplateSetup() {
       if (!next.seller || !next.seller.name || next.seller.name === FALLBACK_COMPANY) {
         next.seller = { ...(next.seller || {}), name: companyName };
       }
+      if (next.country !== country) {
+        return { ...buildEmptyInvoice(country, companyName, company) };
+      }
       return next;
     });
-  }, [companyName]);
+  }, [companyName, country]);
+
+  useEffect(() => {
+    const allowed = countryTemplates.some((tpl) => tpl.id === config.templateId);
+    if (!allowed && countryTemplates.length) {
+      setConfig((prev) => ({ ...prev, templateId: countryTemplates[0].id }));
+    }
+  }, [countryTemplates, config.templateId]);
 
   const demoInvoice = useMemo(() => computePreviewTotals(preview), [preview]);
 
@@ -270,9 +342,17 @@ export default function InvoiceTemplateSetup() {
           </div>
 
           <div className="mt-4">
-            <p className="text-sm font-semibold text-slate-900">Invoice Template</p>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Invoice Template</p>
+                <p className="text-xs text-slate-500 mt-1">Templates based on: {getCountryLabel(country)}</p>
+              </div>
+              <span className="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                {countryConfig.taxType}
+              </span>
+            </div>
             <div className="mt-3 grid grid-cols-2 gap-3">
-              {TEMPLATE_OPTIONS.map((option) => {
+              {countryTemplates.map((option) => {
                 const selected = config.templateId === option.id;
                 return (
                   <button
@@ -289,14 +369,27 @@ export default function InvoiceTemplateSetup() {
                       {selected ? <CheckCircle className="h-4 w-4 text-emerald-500" /> : null}
                     </div>
                     <div className="mt-2 h-14 rounded-xl border border-slate-100 bg-slate-50 p-2 text-[9px] text-slate-500 leading-tight">
-                      <p className="font-semibold text-slate-600">Invoice #1208</p>
-                      <p>Bill To: Kavin Stores</p>
-                      <p>Item: Granite Slab</p>
-                      <p>Total: 23,500</p>
+                      <p className="font-semibold text-slate-600">Invoice Preview</p>
+                      <p>Bill To: —</p>
+                      <p>Item: —</p>
+                      <p>Total: {countryConfig.currencySymbol}—</p>
                     </div>
                   </button>
                 );
               })}
+            </div>
+            <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
+              <p className="text-xs font-semibold text-slate-600">Mandatory fields</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {countryConfig.requiredFields.map((field) => (
+                  <span
+                    key={field}
+                    className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600"
+                  >
+                    {field}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -401,7 +494,10 @@ export default function InvoiceTemplateSetup() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-semibold text-slate-900">Live Preview</p>
-              <p className="text-xs text-slate-500">Preview updates instantly</p>
+              <p className="text-xs text-slate-500">
+                Preview updates instantly · {getCountryLabel(country)} · {countryConfig.currencySymbol}
+                {countryConfig.currency}
+              </p>
             </div>
             <button
               type="button"
@@ -452,7 +548,15 @@ export default function InvoiceTemplateSetup() {
                     className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none"
                   />
                 </FormField>
-                <FormField label="Tax %">
+                <FormField
+                  label={
+                    countryConfig.taxType === "GST"
+                      ? "GST %"
+                      : countryConfig.taxType === "VAT"
+                        ? "VAT %"
+                        : "Sales Tax % (optional)"
+                  }
+                >
                   <input
                     value={preview.taxRate}
                     onChange={(e) => updatePreview({ taxRate: e.target.value })}

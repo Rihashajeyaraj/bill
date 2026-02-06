@@ -8,6 +8,7 @@ import FileUpload from "../components/FileUpload";
 import CurrencyMultiInput from "../components/CurrencyMultiInput";
 import { authGetRole, authGetUser } from "../services/auth.service";
 import { COUNTRIES, companyGetProfile, companySaveProfile } from "../services/company.service";
+import { invoicesList } from "../services/invoices.service";
 import { UI } from "../theme/tokens";
 
 const MAX_CURRENCIES = 3;
@@ -27,12 +28,14 @@ const INDIA_STATES = [
 const COUNTRY_META = {
   India: { currency: "INR" },
   "Sri Lanka": { currency: "LKR", vatRate: 18 },
+  UAE: { currency: "AED", vatRate: 5 },
+  USA: { currency: "USD" },
   "United Kingdom": { currency: "GBP", vatRate: 20 },
   UK: { currency: "GBP", vatRate: 20 },
   Ireland: { currency: "EUR", vatRate: 23 }
 };
 
-const VAT_COUNTRIES = ["Sri Lanka", "United Kingdom", "Ireland", "UK"];
+const VAT_COUNTRIES = ["Sri Lanka", "United Kingdom", "Ireland", "UK", "UAE"];
 
 function getCurrency(country) {
   return COUNTRY_META[country]?.currency || "";
@@ -90,7 +93,8 @@ function normalizeProfile(user, role, existing) {
     tax: {
       gstin: existing?.tax?.gstin || "",
       vatNumber: existing?.tax?.vatNumber || "",
-      vatRate: existing?.tax?.vatRate || getVatRate(baseCountry)
+      vatRate: existing?.tax?.vatRate || getVatRate(baseCountry),
+      taxId: existing?.tax?.taxId || ""
     }
   };
 }
@@ -102,12 +106,16 @@ export default function CompanySetup() {
 
   const current = companyGetProfile();
   const [profile, setProfile] = useState(() => normalizeProfile(user, role, current));
+  const [pendingCountry, setPendingCountry] = useState("");
+  const [countryWarning, setCountryWarning] = useState(false);
 
   const [errors, setErrors] = useState({});
   const [vatInput, setVatInput] = useState("");
+  const hasInvoices = invoicesList().length > 0;
 
   const isIndia = useMemo(() => profile.country === "India", [profile.country]);
   const isVatCountry = useMemo(() => VAT_COUNTRIES.includes(profile.country), [profile.country]);
+  const isSalesTaxCountry = useMemo(() => profile.country === "USA", [profile.country]);
 
   useEffect(() => {
     if (profile.country === "India") {
@@ -140,6 +148,18 @@ export default function CompanySetup() {
       created_at: new Date().toISOString()
     });
     nav("/invoice-template-setup", { replace: true });
+  }
+
+  function applyCountryChange(country) {
+    const defaults = normalizeCurrencyList({}, country);
+    setProfile((p) => ({
+      ...p,
+      country,
+      currency: defaults[0] || "",
+      currencies: defaults,
+      address: { ...p.address, state: "" },
+      tax: { ...p.tax, gstin: "", vatNumber: "", vatRate: getVatRate(country) }
+    }));
   }
 
   return (
@@ -213,15 +233,12 @@ export default function CompanySetup() {
                   value={profile.country}
                   onChange={(e) => {
                     const c = e.target.value;
-                    const defaults = normalizeCurrencyList({}, c);
-                    setProfile((p) => ({
-                      ...p,
-                      country: c,
-                      currency: defaults[0] || "",
-                      currencies: defaults,
-                      address: { ...p.address, state: "" },
-                      tax: { ...p.tax, gstin: "", vatNumber: "", vatRate: getVatRate(c) }
-                    }));
+                    if (hasInvoices && current?.country && c !== current.country) {
+                      setPendingCountry(c);
+                      setCountryWarning(true);
+                      return;
+                    }
+                    applyCountryChange(c);
                   }}
                   className={`w-full rounded-2xl border px-3 py-2.5 text-sm outline-none focus:ring-4 bg-white ${
                     errors.country ? "border-rose-300" : "border-slate-100"
@@ -235,6 +252,39 @@ export default function CompanySetup() {
                   ))}
                 </select>
                 {errors.country ? <p className="mt-1 text-xs text-rose-600">{errors.country}</p> : null}
+                {countryWarning ? (
+                  <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                    <p className="font-semibold">Warning: Country change affects existing invoices.</p>
+                    <p className="mt-1">
+                      You already have invoices. Changing the country can impact tax compliance and templates.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCountryWarning(false);
+                          setPendingCountry("");
+                        }}
+                        className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800"
+                      >
+                        Keep current
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (pendingCountry) {
+                            applyCountryChange(pendingCountry);
+                          }
+                          setCountryWarning(false);
+                          setPendingCountry("");
+                        }}
+                        className="rounded-full bg-amber-600 px-3 py-1 text-xs font-semibold text-white"
+                      >
+                        Switch country
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </FormField>
 
               <FormField label="Currency" hint={`Add up to ${MAX_CURRENCIES}`}>
@@ -388,9 +438,9 @@ export default function CompanySetup() {
                   </ul>
                 </div>
               </div>
-            ) : (
+            ) : isVatCountry ? (
               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                <FormField label="VAT Number (optional)">
+                <FormField label={profile.country === "UAE" ? "TRN (optional)" : "VAT Number (optional)"}>
                   <input
                     value={profile.tax.vatNumber}
                     onChange={(e) => setProfile((p) => ({ ...p, tax: { ...p.tax, vatNumber: e.target.value } }))}
@@ -399,7 +449,7 @@ export default function CompanySetup() {
                   />
                 </FormField>
 
-              <FormField label="VAT Rate (auto)">
+                <FormField label="VAT Rate (auto)">
                   <input
                     value={vatInput}
                     onChange={(e) => {
@@ -419,10 +469,21 @@ export default function CompanySetup() {
                     style={{ "--tw-ring-color": UI.COLORS.ring }}
                     placeholder={`${getVatRate(profile.country)}%`}
                   />
-                  {isVatCountry ? (
-                    <p className="mt-1 text-xs text-slate-500">Single VAT % applied automatically.</p>
-                  ) : null}
-              </FormField>
+                  <p className="mt-1 text-xs text-slate-500">Single VAT % applied automatically.</p>
+                </FormField>
+              </div>
+            ) : (
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <FormField label={isSalesTaxCountry ? "EIN / Business ID (optional)" : "Tax ID (optional)"}>
+                  <input
+                    value={profile.tax.taxId || ""}
+                    onChange={(e) =>
+                      setProfile((p) => ({ ...p, tax: { ...p.tax, taxId: e.target.value } }))
+                    }
+                    className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
+                    style={{ "--tw-ring-color": UI.COLORS.ring }}
+                  />
+                </FormField>
               </div>
             )}
           </section>

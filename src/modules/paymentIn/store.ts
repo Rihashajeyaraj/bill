@@ -1,0 +1,516 @@
+import { LS_KEYS, lsGet, lsSet } from "../../services/storage";
+import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW } from "./countryConfig";
+import type { CountryCode, PaymentMode, PaymentStatus } from "./countryConfig";
+import type { PaymentAttachmentMeta } from "./types";
+import { MOCK_CUSTOMERS, MOCK_OPEN_INVOICES } from "./mockData";
+
+const PAYMENT_STORE_KEY = "paymentInPremiumV1";
+const PAYMENT_SEQUENCE_KEY = "paymentInPremiumSequenceV1";
+const PAYMENT_LEDGER_KEY = "paymentInPremiumLedgerV1";
+const SELECTED_COUNTRY_KEY = "paymentInSelectedCountryV1";
+
+export interface CustomerOpenInvoice {
+  id: string;
+  invoiceNo: string;
+  country: CountryCode;
+  customerId: string;
+  customerName: string;
+  invoiceDate: string;
+  invoiceAmount: number;
+  balanceDue: number;
+}
+
+export interface CustomerOption {
+  id: string;
+  name: string;
+  email?: string;
+  state?: string;
+  registrationNumber?: string;
+  country: CountryCode;
+}
+
+export interface PaymentAllocationDraft {
+  invoiceId: string;
+  invoiceNo: string;
+  invoiceDate: string;
+  invoiceAmount: number;
+  balanceDue: number;
+  applyAmount: number;
+}
+
+export interface PaymentInTotals {
+  amountReceived: number;
+  amountApplied: number;
+  unappliedAmount: number;
+  customerOutstandingBefore: number;
+  customerOutstandingAfter: number;
+}
+
+export interface PaymentInRecord {
+  id: string;
+  country: CountryCode;
+  receiptNo: string;
+  paymentDate: string;
+  customerId: string;
+  customerName: string;
+  currency: string;
+  paymentMode: PaymentMode;
+  referenceNo?: string;
+  chequeNo?: string;
+  bankName?: string;
+  bankAccount?: string;
+  transactionId?: string;
+  paymentReference?: string;
+  registrationNumber?: string;
+  internalNotes?: string;
+  customerNotes?: string;
+  attachment?: PaymentAttachmentMeta | null;
+  status: PaymentStatus;
+  allocations: PaymentAllocationDraft[];
+  totals: PaymentInTotals;
+  audit: {
+    createdBy: string;
+    createdAt: string;
+    modifiedBy: string;
+    modifiedAt: string;
+  };
+  history: Array<{ status: PaymentStatus; at: string; by: string; note: string }>;
+}
+
+export interface PaymentLedgerEntry {
+  id: string;
+  noteId: string;
+  country: CountryCode;
+  customerId: string;
+  customerName: string;
+  account: "Accounts Receivable";
+  amountReceived: number;
+  amountApplied: number;
+  unappliedAmount: number;
+  status: PaymentStatus;
+  postedBy: string;
+  postedAt: string;
+}
+
+export interface SavePaymentInPayload {
+  id?: string;
+  country: CountryCode;
+  paymentDate: string;
+  customerId: string;
+  customerName: string;
+  paymentMode: PaymentMode;
+  referenceNo?: string;
+  chequeNo?: string;
+  bankName?: string;
+  bankAccount?: string;
+  transactionId?: string;
+  paymentReference?: string;
+  registrationNumber?: string;
+  internalNotes?: string;
+  customerNotes?: string;
+  attachment?: PaymentAttachmentMeta | null;
+  desiredStatus: PaymentStatus;
+  amountReceived: number;
+  allocations: PaymentAllocationDraft[];
+  customerOutstandingBefore: number;
+  actor: string;
+}
+
+type SequenceStore = Partial<Record<CountryCode, number>>;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function toNumber(value: unknown) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeCountryCode(value: unknown): CountryCode | null {
+  if (!value) return null;
+  const clean = String(value).trim();
+  if (clean in COUNTRY_CONFIG) return clean as CountryCode;
+  return COUNTRY_NAME_TO_CODE[clean] || null;
+}
+
+function getAllPayments(): PaymentInRecord[] {
+  return lsGet(PAYMENT_STORE_KEY, []);
+}
+
+function setAllPayments(list: PaymentInRecord[]) {
+  lsSet(PAYMENT_STORE_KEY, list);
+}
+
+function getLedgerEntries(): PaymentLedgerEntry[] {
+  return lsGet(PAYMENT_LEDGER_KEY, []);
+}
+
+function setLedgerEntries(list: PaymentLedgerEntry[]) {
+  lsSet(PAYMENT_LEDGER_KEY, list);
+}
+
+function getSequenceStore(): SequenceStore {
+  return lsGet(PAYMENT_SEQUENCE_KEY, {});
+}
+
+function setSequenceStore(value: SequenceStore) {
+  lsSet(PAYMENT_SEQUENCE_KEY, value);
+}
+
+function inferCurrentCountrySequence(country: CountryCode, notes: PaymentInRecord[]) {
+  const prefix = COUNTRY_CONFIG[country].numberPrefix;
+  return notes
+    .filter((note) => note.country === country && note.receiptNo.startsWith(prefix))
+    .reduce((max, note) => {
+      const chunk = note.receiptNo.replace(prefix, "");
+      const n = Number(chunk);
+      return Number.isFinite(n) ? Math.max(max, n) : max;
+    }, 0);
+}
+
+function nextReceiptNumber(country: CountryCode) {
+  const notes = getAllPayments();
+  const store = getSequenceStore();
+  const inferred = inferCurrentCountrySequence(country, notes);
+  const current = Math.max(store[country] || 0, inferred);
+  const next = current + 1;
+  setSequenceStore({ ...store, [country]: next });
+  return `${COUNTRY_CONFIG[country].numberPrefix}${String(next).padStart(5, "0")}`;
+}
+
+function buildHistory(
+  previous: PaymentInRecord | undefined,
+  status: PaymentStatus,
+  actor: string,
+  now: string
+) {
+  const existingHistory = previous?.history || [];
+  const lastStatus = existingHistory[existingHistory.length - 1]?.status;
+  if (lastStatus === status) return existingHistory;
+  return [...existingHistory, { status, by: actor, at: now, note: `Status moved to ${status}` }];
+}
+
+function ensureTransition(previous: PaymentStatus, next: PaymentStatus) {
+  const allowed = STATUS_FLOW[previous] || [];
+  if (!allowed.includes(next)) {
+    throw new Error(`Invalid status transition: ${previous} -> ${next}`);
+  }
+}
+
+function computeTotals(payload: SavePaymentInPayload) {
+  const amountReceived = Math.max(0, toNumber(payload.amountReceived));
+  const allocations = payload.allocations.map((line) => ({
+    ...line,
+    invoiceAmount: Math.max(0, toNumber(line.invoiceAmount)),
+    balanceDue: Math.max(0, toNumber(line.balanceDue)),
+    applyAmount: Math.max(0, toNumber(line.applyAmount))
+  }));
+
+  allocations.forEach((line) => {
+    if (line.applyAmount > line.balanceDue) {
+      throw new Error(`Applied amount exceeds balance due for ${line.invoiceNo}.`);
+    }
+  });
+
+  const amountApplied = allocations.reduce((sum, line) => sum + line.applyAmount, 0);
+  if (amountApplied > amountReceived) {
+    throw new Error("Applied amount cannot exceed amount received.");
+  }
+
+  const unappliedAmount = Math.max(0, amountReceived - amountApplied);
+  const customerOutstandingAfter = Math.max(0, toNumber(payload.customerOutstandingBefore) - amountApplied);
+
+  return {
+    allocations,
+    totals: {
+      amountReceived,
+      amountApplied,
+      unappliedAmount,
+      customerOutstandingBefore: Math.max(0, toNumber(payload.customerOutstandingBefore)),
+      customerOutstandingAfter
+    } satisfies PaymentInTotals
+  };
+}
+
+function adjustInvoicesBalance(allocations: PaymentAllocationDraft[], direction: "apply" | "revert") {
+  const invoices = lsGet(LS_KEYS.invoices, []);
+  if (!Array.isArray(invoices) || !invoices.length) return;
+
+  const applyMap = new Map<string, number>();
+  allocations.forEach((line) => {
+    const amount = toNumber(line.applyAmount);
+    if (amount > 0) applyMap.set(line.invoiceId, amount);
+  });
+  if (!applyMap.size) return;
+
+  const next = invoices.map((invoice: any) => {
+    const applyAmount = applyMap.get(invoice.id) || 0;
+    if (!applyAmount) return invoice;
+    const currentBalance = Math.max(
+      0,
+      toNumber(invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoice?.totals?.grandTotal ?? invoice?.totals?.total)
+    );
+    const nextBalance =
+      direction === "apply"
+        ? Math.max(0, currentBalance - applyAmount)
+        : Math.max(0, currentBalance + applyAmount);
+    return {
+      ...invoice,
+      remainingBalance: nextBalance,
+      totals: { ...(invoice.totals || {}), balance: nextBalance },
+      updated_at: nowIso()
+    };
+  });
+
+  lsSet(LS_KEYS.invoices, next);
+}
+
+function adjustCustomerBalance(customerId: string, appliedAmount: number, direction: "apply" | "revert") {
+  if (!customerId || appliedAmount <= 0) return;
+  const parties = lsGet(LS_KEYS.parties, []);
+  if (!Array.isArray(parties) || !parties.length) return;
+  const idx = parties.findIndex((party: any) => party.id === customerId);
+  if (idx < 0) return;
+  const current = toNumber(parties[idx].balance);
+  const nextBalance =
+    direction === "apply" ? current - appliedAmount : current + appliedAmount;
+  parties[idx] = {
+    ...parties[idx],
+    balance: nextBalance,
+    updated_at: nowIso()
+  };
+  lsSet(LS_KEYS.parties, parties);
+}
+
+function postLedgerEntry(note: PaymentInRecord, actor: string) {
+  if (note.status === "Draft") return;
+  const ledger = getLedgerEntries();
+  const alreadyPosted = ledger.some((entry) => entry.noteId === note.id && entry.status === note.status);
+  if (alreadyPosted) return;
+
+  const entry: PaymentLedgerEntry = {
+    id: `plg_${Date.now().toString(16)}`,
+    noteId: note.id,
+    country: note.country,
+    customerId: note.customerId,
+    customerName: note.customerName,
+    account: "Accounts Receivable",
+    amountReceived: note.totals.amountReceived,
+    amountApplied: note.totals.amountApplied,
+    unappliedAmount: note.totals.unappliedAmount,
+    status: note.status,
+    postedBy: actor,
+    postedAt: nowIso()
+  };
+  setLedgerEntries([entry, ...ledger]);
+}
+
+export function getSelectedPaymentCountry(): CountryCode | "" {
+  const saved = lsGet(SELECTED_COUNTRY_KEY, "");
+  return normalizeCountryCode(saved) || "";
+}
+
+export function setSelectedPaymentCountry(country: CountryCode) {
+  lsSet(SELECTED_COUNTRY_KEY, country);
+}
+
+export function listPaymentIn(country?: CountryCode) {
+  const payments = getAllPayments();
+  if (!country) return payments;
+  return payments.filter((entry) => entry.country === country);
+}
+
+export function getPaymentIn(id: string) {
+  return getAllPayments().find((entry) => entry.id === id) || null;
+}
+
+export function listPaymentLedger(country?: CountryCode) {
+  const ledger = getLedgerEntries();
+  if (!country) return ledger;
+  return ledger.filter((entry) => entry.country === country);
+}
+
+export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvoice[] {
+  const rawInvoices = lsGet(LS_KEYS.invoices, []);
+  const fromStorage: CustomerOpenInvoice[] = (Array.isArray(rawInvoices) ? rawInvoices : [])
+    .map((invoice: any) => {
+      const mappedCountry = normalizeCountryCode(invoice?.country);
+      if (mappedCountry !== country) return null;
+      const balanceDue = Math.max(
+        0,
+        toNumber(invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoice?.totals?.grandTotal ?? invoice?.totals?.total)
+      );
+      if (balanceDue <= 0) return null;
+      const invoiceAmount = Math.max(
+        balanceDue,
+        toNumber(invoice?.totals?.grandTotal ?? invoice?.totals?.total ?? invoice?.totals?.subTotal)
+      );
+      return {
+        id: invoice.id,
+        invoiceNo: invoice.invoiceNo || invoice.id,
+        country,
+        customerId: invoice.partyId || invoice.customerId || invoice.buyer?.id || invoice.partyName || "unknown_customer",
+        customerName: invoice.partyName || invoice.customerName || invoice.buyer?.name || "Customer",
+        invoiceDate: invoice.invoiceDate || invoice.date || "",
+        invoiceAmount,
+        balanceDue
+      } satisfies CustomerOpenInvoice;
+    })
+    .filter(Boolean) as CustomerOpenInvoice[];
+
+  const fromMock = MOCK_OPEN_INVOICES.filter((invoice) => invoice.country === country);
+  const merged = [...fromStorage, ...fromMock.filter((mock) => !fromStorage.some((stored) => stored.id === mock.id))];
+  return merged.sort((a, b) => (a.invoiceDate < b.invoiceDate ? 1 : -1));
+}
+
+export function mapCustomersByCountry(country: CountryCode): CustomerOption[] {
+  const parties = lsGet(LS_KEYS.parties, []);
+  const invoices = mapOpenInvoicesByCountry(country);
+
+  const fromParties = (Array.isArray(parties) ? parties : [])
+    .map((party: any) => {
+      if (party?.type && String(party.type).toLowerCase() !== "customer") return null;
+      const mappedCountry = normalizeCountryCode(party.country);
+      if (mappedCountry && mappedCountry !== country) return null;
+      return {
+        id: party.id,
+        name: party.name,
+        email: party.email || "",
+        state: party.state || "",
+        registrationNumber: party.gstin || party.trn || party.vatNo || "",
+        country
+      } satisfies CustomerOption;
+    })
+    .filter(Boolean) as CustomerOption[];
+
+  const fromInvoices = invoices.map((invoice) => ({
+    id: invoice.customerId,
+    name: invoice.customerName,
+    country
+  }));
+
+  const fromMock = MOCK_CUSTOMERS.filter((customer) => customer.country === country);
+
+  const byId = new Map<string, CustomerOption>();
+  [...fromParties, ...fromInvoices, ...fromMock].forEach((entry) => {
+    if (!entry?.id || !entry.name) return;
+    const existing = byId.get(entry.id);
+    byId.set(entry.id, { ...(existing || {}), ...entry });
+  });
+
+  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function outstandingByCustomer(country: CountryCode, customerId: string) {
+  if (!customerId) return 0;
+  return mapOpenInvoicesByCountry(country)
+    .filter((invoice) => invoice.customerId === customerId)
+    .reduce((sum, invoice) => sum + invoice.balanceDue, 0);
+}
+
+export function paymentInsightsByCustomer(country: CountryCode, customerId: string) {
+  if (!customerId) {
+    return {
+      lastPaymentDate: "",
+      advanceWallet: 0,
+      totalReceived: 0,
+      paymentCount: 0
+    };
+  }
+
+  const records = listPaymentIn(country).filter((entry) => entry.customerId === customerId);
+  const sorted = [...records].sort((a, b) => (a.paymentDate < b.paymentDate ? 1 : -1));
+
+  return {
+    lastPaymentDate: sorted[0]?.paymentDate || "",
+    advanceWallet: records
+      .filter((entry) => entry.status !== "Draft")
+      .reduce((sum, entry) => sum + entry.totals.unappliedAmount, 0),
+    totalReceived: records
+      .filter((entry) => entry.status !== "Draft")
+      .reduce((sum, entry) => sum + entry.totals.amountReceived, 0),
+    paymentCount: records.length
+  };
+}
+
+export function savePaymentIn(payload: SavePaymentInPayload): PaymentInRecord {
+  const openInvoices = mapOpenInvoicesByCountry(payload.country);
+  const invoiceMap = new Map(openInvoices.map((invoice) => [invoice.id, invoice]));
+  payload.allocations.forEach((line) => {
+    if (toNumber(line.applyAmount) <= 0) return;
+    const linked = invoiceMap.get(line.invoiceId);
+    if (!linked) throw new Error(`Invoice ${line.invoiceNo} is not valid for selected country.`);
+    if (linked.customerId !== payload.customerId) {
+      throw new Error(`Invoice ${line.invoiceNo} belongs to a different customer.`);
+    }
+  });
+
+  const payments = getAllPayments();
+  const existing = payload.id ? payments.find((entry) => entry.id === payload.id) : undefined;
+  const now = nowIso();
+  const previousStatus: PaymentStatus = existing?.status || "Draft";
+  const nextStatus = payload.desiredStatus;
+  ensureTransition(previousStatus, nextStatus);
+
+  const calculated = computeTotals(payload);
+  const receiptNo = existing?.receiptNo || nextReceiptNumber(payload.country);
+  const id = existing?.id || `pr_${Date.now().toString(16)}`;
+
+  if (previousStatus === "Applied" && nextStatus !== "Applied" && existing) {
+    adjustInvoicesBalance(existing.allocations, "revert");
+    adjustCustomerBalance(payload.customerId, existing.totals.amountApplied, "revert");
+  }
+
+  if (nextStatus === "Applied" && previousStatus !== "Applied") {
+    adjustInvoicesBalance(calculated.allocations, "apply");
+    adjustCustomerBalance(payload.customerId, calculated.totals.amountApplied, "apply");
+  }
+
+  const note: PaymentInRecord = {
+    id,
+    country: payload.country,
+    receiptNo,
+    paymentDate: payload.paymentDate,
+    customerId: payload.customerId,
+    customerName: payload.customerName,
+    currency: COUNTRY_CONFIG[payload.country].currency,
+    paymentMode: payload.paymentMode,
+    referenceNo: payload.referenceNo || "",
+    chequeNo: payload.chequeNo || "",
+    bankName: payload.bankName || "",
+    bankAccount: payload.bankAccount || "",
+    transactionId: payload.transactionId || "",
+    paymentReference: payload.paymentReference || "",
+    registrationNumber: payload.registrationNumber || "",
+    internalNotes: payload.internalNotes || "",
+    customerNotes: payload.customerNotes || "",
+    attachment: payload.attachment || null,
+    status: nextStatus,
+    allocations: calculated.allocations,
+    totals: calculated.totals,
+    audit: {
+      createdBy: existing?.audit.createdBy || payload.actor,
+      createdAt: existing?.audit.createdAt || now,
+      modifiedBy: payload.actor,
+      modifiedAt: now
+    },
+    history: buildHistory(existing, nextStatus, payload.actor, now)
+  };
+
+  postLedgerEntry(note, payload.actor);
+  const next = existing ? payments.map((entry) => (entry.id === existing.id ? note : entry)) : [note, ...payments];
+  setAllPayments(next);
+  return note;
+}
+
+export function summarizePaymentIn(country: CountryCode) {
+  const list = listPaymentIn(country);
+  const totalReceived = list.reduce((sum, entry) => sum + entry.totals.amountReceived, 0);
+  const totalUnallocated = list.reduce((sum, entry) => sum + entry.totals.unappliedAmount, 0);
+  return {
+    count: list.length,
+    totalReceived,
+    totalUnallocated
+  };
+}

@@ -1,0 +1,747 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Send, Sparkles } from "lucide-react";
+import { COUNTRY_CONFIG, COUNTRY_OPTIONS, type CountryCode, type PaymentMode, type PaymentStatus } from "../../modules/paymentIn/countryConfig";
+import {
+  getSelectedPaymentCountry,
+  listPaymentIn,
+  mapCustomersByCountry,
+  mapOpenInvoicesByCountry,
+  outstandingByCustomer,
+  paymentInsightsByCustomer,
+  savePaymentIn,
+  setSelectedPaymentCountry,
+  summarizePaymentIn,
+  type PaymentInRecord
+} from "../../modules/paymentIn/store";
+import { allocationsFromInvoices, computeEditorTotals, defaultForm, formFromRecord, formatMoney, parseNumber } from "../../modules/paymentIn/utils";
+import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf } from "../../modules/paymentIn/pdf";
+import type { PaymentInFormState } from "../../modules/paymentIn/types";
+import { authGetRole, authGetUser } from "../../services/auth.service";
+import { companyGetProfile } from "../../services/company.service";
+import EmptyState from "../../components/EmptyState";
+import FlowCard from "../../modules/paymentIn/FlowCard";
+import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
+import PaymentModePicker from "../../modules/paymentIn/PaymentModePicker";
+import InvoiceApplyCard from "../../modules/paymentIn/InvoiceApplyCard";
+import ReceiptFeedCard from "../../modules/paymentIn/ReceiptFeedCard";
+import PaymentInSkeleton from "../../modules/paymentIn/PaymentInSkeleton";
+import AuditDrawer from "../../modules/paymentIn/AuditDrawer";
+
+const STEPS = ["Customer & Country", "Payment Details", "Allocate to Invoices", "Review & Confirm"];
+const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+type PanelMode = "feed" | "flow";
+type FlowMode = "create" | "edit" | "view";
+
+function roleAccess(role: string, user: any) {
+  const normalized = String(role || "").toLowerCase();
+  const isAdmin = normalized.includes("owner") || normalized.includes("manager");
+  if (isAdmin) return { roleType: "Admin" as const, canApply: true, allowedCountries: COUNTRY_OPTIONS.map((entry) => entry.code) };
+  const configured = Array.isArray(user?.allowedCountries) ? user.allowedCountries.filter((entry: string) => entry in COUNTRY_CONFIG) : [];
+  return { roleType: "Staff" as const, canApply: false, allowedCountries: configured.length ? configured : (["IN", "SL", "AE"] as CountryCode[]) };
+}
+
+function canReopenWithinWindow(record: PaymentInRecord | null) {
+  if (!record || record.status !== "Applied") return false;
+  const touched = new Date(record.audit.modifiedAt).getTime();
+  return Number.isFinite(touched) && Date.now() - touched <= EDIT_WINDOW_MS;
+}
+
+export default function PaymentInPremium() {
+  const company = companyGetProfile();
+  const user = authGetUser();
+  const access = useMemo(() => roleAccess(authGetRole(), user), [user]);
+  const actorName = user?.name || user?.email || "System User";
+
+  const [country, setCountry] = useState<CountryCode | "">(getSelectedPaymentCountry());
+  const [panelMode, setPanelMode] = useState<PanelMode>("feed");
+  const [flowMode, setFlowMode] = useState<FlowMode>("create");
+  const [activeStep, setActiveStep] = useState(0);
+  const [form, setForm] = useState<PaymentInFormState | null>(null);
+  const [activePayment, setActivePayment] = useState<PaymentInRecord | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [showAudit, setShowAudit] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<PaymentStatus | "">("");
+  const [customerFilter, setCustomerFilter] = useState("");
+  const [modeFilter, setModeFilter] = useState("");
+
+  const payments = useMemo(() => (country ? listPaymentIn(country) : []), [country, refreshKey]);
+  const customers = useMemo(() => (country ? mapCustomersByCountry(country) : []), [country, refreshKey]);
+  const openInvoices = useMemo(() => (country ? mapOpenInvoicesByCountry(country) : []), [country, refreshKey]);
+  const summary = useMemo(() => (country ? summarizePaymentIn(country) : null), [country, refreshKey]);
+
+  const customerOutstandingBefore = useMemo(() => (country && form?.customerId ? outstandingByCustomer(country, form.customerId) : 0), [country, form?.customerId, refreshKey]);
+  const customerInsights = useMemo(() => (country && form?.customerId ? paymentInsightsByCustomer(country, form.customerId) : { lastPaymentDate: "", advanceWallet: 0, totalReceived: 0, paymentCount: 0 }), [country, form?.customerId, refreshKey]);
+  const totals = useMemo(() => (form ? computeEditorTotals(form, customerOutstandingBefore) : { amountReceived: 0, amountApplied: 0, unappliedAmount: 0, outstandingAfter: 0 }), [form, customerOutstandingBefore]);
+  const selectedCustomer = useMemo(() => customers.find((entry) => entry.id === form?.customerId) || null, [customers, form?.customerId]);
+  const filteredPayments = useMemo(() => payments.filter((entry) => {
+    const haystack = `${entry.customerName} ${entry.receiptNo} ${entry.referenceNo || ""} ${entry.transactionId || ""}`.toLowerCase();
+    const q = search.trim().toLowerCase();
+    return (!q || haystack.includes(q)) && (!statusFilter || entry.status === statusFilter) && (!customerFilter || entry.customerId === customerFilter) && (!modeFilter || entry.paymentMode === modeFilter);
+  }), [payments, search, statusFilter, customerFilter, modeFilter]);
+
+  const allowed = !country || access.allowedCountries.includes(country);
+  const readOnly = flowMode === "view";
+
+  useEffect(() => {
+    if (!country) return;
+    setLoading(true);
+    const timer = window.setTimeout(() => setLoading(false), 180);
+    return () => window.clearTimeout(timer);
+  }, [country, refreshKey]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty]);
+
+  function clearMessages() {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setFieldErrors({});
+  }
+
+  function onCountryChange(next: CountryCode) {
+    if (next === country) return;
+    if (dirty && !window.confirm("Discard unsaved changes and switch country?")) return;
+    setCountry(next);
+    setSelectedPaymentCountry(next);
+    setPanelMode("feed");
+    setFlowMode("create");
+    setActiveStep(0);
+    setForm(null);
+    setActivePayment(null);
+    setDirty(false);
+    clearMessages();
+  }
+
+  function startNewPayment() {
+    if (!country || !allowed) return;
+    setForm(defaultForm(country, company));
+    setActivePayment(null);
+    setPanelMode("flow");
+    setFlowMode("create");
+    setActiveStep(0);
+    setDirty(false);
+    clearMessages();
+  }
+
+  function openFlow(record: PaymentInRecord, mode: FlowMode) {
+    if (!country || record.country !== country) return;
+    if (mode === "edit" && record.status === "Applied" && !canReopenWithinWindow(record)) return;
+    setForm(formFromRecord(record));
+    setActivePayment(record);
+    setPanelMode("flow");
+    setFlowMode(mode);
+    setActiveStep(mode === "view" ? 3 : 0);
+    setDirty(false);
+    clearMessages();
+  }
+
+  function backToFeed() {
+    if (dirty && !window.confirm("Discard unsaved changes?")) return;
+    setPanelMode("feed");
+    setFlowMode("create");
+    setActiveStep(0);
+    setForm(null);
+    setActivePayment(null);
+    setDirty(false);
+    clearMessages();
+  }
+
+  function updateForm<K extends keyof PaymentInFormState>(key: K, value: PaymentInFormState[K]) {
+    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    setDirty(true);
+  }
+
+  function applyCustomer(customerId: string, inputName?: string) {
+    const customer = customers.find((entry) => entry.id === customerId);
+    const linkedInvoices = openInvoices.filter((invoice) => invoice.customerId === customerId);
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            customerId,
+            customerInput: inputName || customer?.name || prev.customerInput,
+            registrationNumber: customer?.registrationNumber || prev.registrationNumber,
+            allocations: allocationsFromInvoices(linkedInvoices)
+          }
+        : prev
+    );
+    setDirty(true);
+  }
+
+  function updateAllocation(invoiceId: string, value: number) {
+    setForm((prev) => {
+      if (!prev) return prev;
+      const amountReceived = Math.max(0, parseNumber(prev.amountReceived));
+      const otherApplied = prev.allocations
+        .filter((line) => line.invoiceId !== invoiceId)
+        .reduce((sum, line) => sum + Math.max(0, parseNumber(line.applyAmount)), 0);
+      const maxForLine = Math.max(0, amountReceived - otherApplied);
+      return {
+        ...prev,
+        allocations: prev.allocations.map((line) => {
+          if (line.invoiceId !== invoiceId) return line;
+          const capped = Math.min(Math.max(0, value), line.balanceDue, maxForLine);
+          return { ...line, applyAmount: capped };
+        })
+      };
+    });
+    setDirty(true);
+  }
+
+  function fillInvoiceMax(invoiceId: string) {
+    const target = form?.allocations.find((line) => line.invoiceId === invoiceId);
+    if (!target) return;
+    updateAllocation(invoiceId, target.balanceDue);
+  }
+
+  function fillAllInvoices() {
+    if (!form) return;
+    let remaining = Math.max(0, parseNumber(form.amountReceived));
+    const next = form.allocations.map((line) => {
+      const applyAmount = Math.min(line.balanceDue, remaining);
+      remaining -= applyAmount;
+      return { ...line, applyAmount };
+    });
+    setForm((prev) => (prev ? { ...prev, allocations: next } : prev));
+    setDirty(true);
+  }
+
+  function validate(targetStatus: PaymentStatus) {
+    if (!form || !country) return false;
+    const cfg = COUNTRY_CONFIG[country];
+    const errors: Record<string, string> = {};
+    const amountReceived = Math.max(0, parseNumber(form.amountReceived));
+    const amountApplied = form.allocations.reduce((sum, line) => sum + Math.max(0, parseNumber(line.applyAmount)), 0);
+
+    if (!form.paymentDate) errors.paymentDate = "Payment date is required.";
+    if (!form.customerId) errors.customerId = "Customer is required.";
+    if (amountReceived <= 0) errors.amountReceived = "Amount received must be greater than zero.";
+    if (cfg.registrationRequired && !form.registrationNumber.trim()) errors.registrationNumber = `${cfg.registrationLabel} is required.`;
+    if (cfg.registrationRegex && form.registrationNumber.trim() && !cfg.registrationRegex.test(form.registrationNumber.trim())) errors.registrationNumber = `Invalid ${cfg.registrationLabel} format.`;
+    if (form.paymentMode === "Cheque") {
+      if (!form.chequeNo.trim()) errors.chequeNo = "Cheque number is required.";
+      if (!form.bankName.trim()) errors.bankName = "Bank name is required.";
+    }
+    if (form.paymentMode === "Bank Transfer" && !form.bankAccount.trim()) errors.bankAccount = "Bank account is required.";
+    if ((form.paymentMode === "Bank Transfer" || form.paymentMode === "Card" || form.paymentMode === "UPI" || form.paymentMode === "Online Gateway") && !form.transactionId.trim()) errors.transactionId = "Transaction ID is required.";
+    if (form.allocations.some((line) => parseNumber(line.applyAmount) > line.balanceDue)) errors.allocations = "Apply amount cannot exceed invoice balance due.";
+    if (amountApplied > amountReceived) errors.allocations = "Applied amount cannot exceed amount received.";
+    if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Admin can apply to invoices.";
+
+    setFieldErrors(errors);
+    if (Object.keys(errors).length) {
+      setErrorMessage(Object.values(errors)[0] || "Please fix the highlighted fields before saving.");
+      setSuccessMessage("");
+      return false;
+    }
+    return true;
+  }
+
+  function buildPayload(targetStatus: PaymentStatus, outstandingOverride?: number) {
+    if (!form || !country) return null;
+    const customer = customers.find((entry) => entry.id === form.customerId);
+    return {
+      id: form.id,
+      country,
+      paymentDate: form.paymentDate,
+      customerId: form.customerId,
+      customerName: customer?.name || form.customerInput || "Customer",
+      paymentMode: form.paymentMode,
+      referenceNo: form.referenceNo,
+      chequeNo: form.chequeNo,
+      bankName: form.bankName,
+      bankAccount: form.bankAccount,
+      transactionId: form.transactionId,
+      paymentReference: form.paymentReference,
+      registrationNumber: form.registrationNumber,
+      internalNotes: form.internalNotes,
+      customerNotes: form.customerNotes,
+      attachment: form.attachment,
+      desiredStatus: targetStatus,
+      amountReceived: parseNumber(form.amountReceived),
+      allocations: form.allocations,
+      customerOutstandingBefore: typeof outstandingOverride === "number" ? outstandingOverride : customerOutstandingBefore,
+      actor: actorName
+    };
+  }
+
+  function persist(targetStatus: PaymentStatus, options?: { email?: boolean; download?: boolean }) {
+    if (!form || !country) return;
+    if (!validate(targetStatus)) return;
+    try {
+      let saved: PaymentInRecord | null = null;
+      const canDirectApply = !!activePayment && activePayment.status === "Received";
+      if (targetStatus === "Applied" && !canDirectApply) {
+        const stagedPayload = buildPayload("Received");
+        if (!stagedPayload) return;
+        const staged = savePaymentIn(stagedPayload);
+        const applyPayload = { ...stagedPayload, id: staged.id, desiredStatus: "Applied" as PaymentStatus, customerOutstandingBefore: staged.totals.customerOutstandingBefore };
+        saved = savePaymentIn(applyPayload);
+      } else {
+        const payload = buildPayload(targetStatus);
+        if (!payload) return;
+        saved = savePaymentIn(payload);
+      }
+      if (!saved) return;
+      if (options?.download) exportSinglePaymentInPdf(saved);
+      if (options?.email) window.alert(`Email queued for ${saved.receiptNo}.`);
+      setRefreshKey((prev) => prev + 1);
+      setActivePayment(saved);
+      setForm(formFromRecord(saved));
+      setFlowMode("edit");
+      setActiveStep(3);
+      setDirty(false);
+      setSuccessMessage(`${saved.receiptNo} saved as ${saved.status}.`);
+      setErrorMessage("");
+    } catch (error: any) {
+      setErrorMessage(error?.message || "Unable to save payment.");
+    }
+  }
+
+  function undoApplied(record: PaymentInRecord) {
+    if (!canReopenWithinWindow(record) || !country) return;
+    try {
+      const saved = savePaymentIn({
+        id: record.id,
+        country: record.country,
+        paymentDate: record.paymentDate,
+        customerId: record.customerId,
+        customerName: record.customerName,
+        paymentMode: record.paymentMode,
+        referenceNo: record.referenceNo,
+        chequeNo: record.chequeNo,
+        bankName: record.bankName,
+        bankAccount: record.bankAccount,
+        transactionId: record.transactionId,
+        paymentReference: record.paymentReference,
+        registrationNumber: record.registrationNumber,
+        internalNotes: record.internalNotes,
+        customerNotes: record.customerNotes,
+        attachment: record.attachment,
+        desiredStatus: "Received",
+        amountReceived: record.totals.amountReceived,
+        allocations: record.allocations,
+        customerOutstandingBefore: record.totals.customerOutstandingBefore,
+        actor: actorName
+      });
+      setRefreshKey((prev) => prev + 1);
+      setSuccessMessage(`${saved.receiptNo} reopened as Received.`);
+      setErrorMessage("");
+    } catch (error: any) {
+      setErrorMessage(error?.message || "Unable to undo apply.");
+    }
+  }
+
+  const confirmStatus: PaymentStatus = access.canApply && totals.amountApplied > 0 ? "Applied" : "Received";
+
+  return (
+    <div className="mx-auto max-w-[1360px] space-y-4 pb-32">
+      <div className="sticky top-0 z-30 rounded-2xl border border-slate-200/80 bg-white/90 px-3 py-2 shadow-sm backdrop-blur sm:px-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-base font-semibold text-slate-900">Payment In</p>
+            <p className="text-xs text-slate-500">Receive money from customers</p>
+          </div>
+          <label className="mx-auto w-full max-w-xs sm:mx-0 sm:flex-1 sm:max-w-sm">
+            <span className="sr-only">Country</span>
+            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">
+              <select value={country} onChange={(event) => onCountryChange(event.target.value as CountryCode)} className="w-full bg-transparent text-sm font-semibold text-slate-700 outline-none">
+                <option value="">Select country</option>
+                {COUNTRY_OPTIONS.map((entry) => (
+                  <option key={entry.code} value={entry.code}>
+                    {entry.flag} {entry.name} | {entry.currency}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </label>
+          <button onClick={startNewPayment} disabled={!country || !allowed} className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+            <Plus className="h-4 w-4" />
+            New Payment
+          </button>
+        </div>
+      </div>
+
+      {!country ? (
+        <EmptyState icon={AlertTriangle} title="Select a country to continue" description="Country is mandatory before creating or viewing receipts." />
+      ) : !allowed ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">You do not have access to manage {COUNTRY_CONFIG[country].name} data.</div>
+      ) : (
+        <div className="space-y-4">
+          {panelMode === "feed" ? (
+            <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <FlowCard title="Total Payments" subtitle="Count of receipts">{loading ? <PaymentInSkeleton /> : <p className="text-2xl font-bold text-slate-900">{summary?.count || 0}</p>}</FlowCard>
+                <FlowCard title="Total Received" subtitle="Across all statuses"><p className="text-2xl font-bold text-slate-900">{formatMoney(summary?.totalReceived || 0, country)}</p></FlowCard>
+                <FlowCard title="Unallocated" subtitle="Advance wallet value"><p className="text-2xl font-bold text-amber-700">{formatMoney(summary?.totalUnallocated || 0, country)}</p></FlowCard>
+              </div>
+
+              <FlowCard>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search customer, receipt, reference" className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200" />
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PaymentStatus | "")} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All Status</option><option value="Draft">Draft</option><option value="Received">Received</option><option value="Applied">Applied</option></select>
+                  <select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All Customers</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select>
+                  <select value={modeFilter} onChange={(event) => setModeFilter(event.target.value)} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All Modes</option>{COUNTRY_CONFIG[country].paymentModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button onClick={() => exportPaymentInSummaryPdf(filteredPayments, country)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"><FileDown className="h-3.5 w-3.5" />Summary PDF</button>
+                  <button onClick={() => exportPaymentInCsv(filteredPayments, country)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"><FileSpreadsheet className="h-3.5 w-3.5" />CSV</button>
+                </div>
+              </FlowCard>
+
+              {loading ? (
+                <PaymentInSkeleton />
+              ) : (
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {filteredPayments.map((record) => (
+                    <ReceiptFeedCard key={record.id} record={record} onView={() => openFlow(record, "view")} onEdit={() => openFlow(record, "edit")} onPdf={() => exportSinglePaymentInPdf(record)} canUndo={canReopenWithinWindow(record)} onUndo={() => undoApplied(record)} />
+                  ))}
+                  {!filteredPayments.length ? (
+                    <FlowCard className="md:col-span-2 xl:col-span-3" title="No payments found" subtitle="Try different search/filter or create a new payment.">
+                      <button onClick={startNewPayment} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"><Sparkles className="h-4 w-4" />Start Payment Flow</button>
+                    </FlowCard>
+                  ) : null}
+                </div>
+              )}
+            </>
+          ) : null}
+
+          {panelMode === "flow" && form ? (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <button onClick={backToFeed} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><ArrowLeft className="h-4 w-4" />Back</button>
+                <button onClick={() => setShowAudit(true)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700">Audit Timeline</button>
+              </div>
+
+              <FlowStepTabs steps={STEPS} activeStep={activeStep} onChange={setActiveStep} />
+
+              {activeStep === 0 ? (
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <FlowCard title="Country Context" subtitle="Auto updates currency, label and legal wording">
+                    <div className="space-y-3">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">{COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].name}</div>
+                      <p className="text-sm text-slate-700">Currency: <span className="font-semibold">{COUNTRY_CONFIG[country].currency}</span></p>
+                      <p className="text-sm text-slate-700">Receipt Label: <span className="font-semibold">{COUNTRY_CONFIG[country].receiptLabel}</span></p>
+                      <p className="text-xs text-slate-500">{COUNTRY_CONFIG[country].legalWording}</p>
+                    </div>
+                  </FlowCard>
+
+                  <FlowCard title="Customer" subtitle="Search and pick a customer to begin">
+                    <div className="space-y-3">
+                      <input list="payment-customer-options" value={form.customerInput} disabled={readOnly} onChange={(event) => {
+                        const next = event.target.value;
+                        const matched = customers.find((customer) => customer.name.toLowerCase() === next.trim().toLowerCase());
+                        if (matched) applyCustomer(matched.id, matched.name);
+                        else {
+                          updateForm("customerInput", next);
+                          updateForm("customerId", "");
+                        }
+                      }} placeholder="Type customer name" className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-base outline-none focus:ring-4 focus:ring-slate-200" />
+                      <datalist id="payment-customer-options">{customers.map((customer) => <option key={customer.id} value={customer.name} />)}</datalist>
+                      {fieldErrors.customerId ? <p className="text-xs text-rose-600">{fieldErrors.customerId}</p> : null}
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Outstanding</p><p className="font-semibold text-slate-900">{formatMoney(customerOutstandingBefore, country)}</p></div>
+                        <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Last Payment</p><p className="font-semibold text-slate-900">{customerInsights.lastPaymentDate || "-"}</p></div>
+                        <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Advance Wallet</p><p className="font-semibold text-amber-700">{formatMoney(customerInsights.advanceWallet, country)}</p></div>
+                      </div>
+                    </div>
+                  </FlowCard>
+                </div>
+              ) : null}
+
+              {activeStep === 1 ? (
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <FlowCard title="Payment Details" subtitle="Core details for this receipt">
+                    <div className="space-y-3">
+                      <label className="block">
+                        <span className="text-xs font-semibold text-slate-600">Amount Received</span>
+                        <input type="number" min={0} value={form.amountReceived} disabled={readOnly} onChange={(event) => updateForm("amountReceived", event.target.value)} className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200" />
+                        {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
+                      </label>
+                      <label className="block">
+                        <span className="text-xs font-semibold text-slate-600">Payment Date</span>
+                        <input type="date" value={form.paymentDate} disabled={readOnly} onChange={(event) => updateForm("paymentDate", event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+                        {fieldErrors.paymentDate ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.paymentDate}</p> : null}
+                      </label>
+                      <div>
+                        <p className="mb-1 text-xs font-semibold text-slate-600">Payment Mode</p>
+                        <PaymentModePicker options={COUNTRY_CONFIG[country].paymentModes} value={form.paymentMode} onChange={(mode) => updateForm("paymentMode", mode as PaymentMode)} />
+                      </div>
+                    </div>
+                  </FlowCard>
+
+                  <FlowCard title="Mode Specific Fields" subtitle="Details vary by selected payment mode">
+                    <div className="space-y-3">
+                      <input value={form.referenceNo} disabled={readOnly} onChange={(event) => updateForm("referenceNo", event.target.value)} placeholder="Payment Reference" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+                      {form.paymentMode === "Cheque" ? (
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <div><input value={form.chequeNo} disabled={readOnly} onChange={(event) => updateForm("chequeNo", event.target.value)} placeholder="Cheque No" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.chequeNo ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.chequeNo}</p> : null}</div>
+                          <div><input value={form.bankName} disabled={readOnly} onChange={(event) => updateForm("bankName", event.target.value)} placeholder="Bank Name" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.bankName ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.bankName}</p> : null}</div>
+                        </div>
+                      ) : null}
+                      {form.paymentMode === "Bank Transfer" ? (
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <div><input value={form.bankAccount} disabled={readOnly} onChange={(event) => updateForm("bankAccount", event.target.value)} placeholder="Bank Account" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.bankAccount ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.bankAccount}</p> : null}</div>
+                          <div><input value={form.transactionId} disabled={readOnly} onChange={(event) => updateForm("transactionId", event.target.value)} placeholder="Transaction ID" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.transactionId ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.transactionId}</p> : null}</div>
+                        </div>
+                      ) : null}
+                      {(form.paymentMode === "Card" || form.paymentMode === "UPI" || form.paymentMode === "Online Gateway") ? <div><input value={form.transactionId} disabled={readOnly} onChange={(event) => updateForm("transactionId", event.target.value)} placeholder="Transaction ID" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.transactionId ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.transactionId}</p> : null}</div> : null}
+                      <label className="block">
+                        <span className="text-xs font-semibold text-slate-600">{COUNTRY_CONFIG[country].registrationLabel}</span>
+                        <input value={form.registrationNumber} disabled={readOnly} onChange={(event) => updateForm("registrationNumber", event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+                      </label>
+                      <label className="block rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                        <input type="file" disabled={readOnly} onChange={(event) => {
+                          const file = event.target.files?.[0] || null;
+                          updateForm("attachment", file ? { name: file.name, size: file.size, type: file.type || "application/octet-stream" } : null);
+                        }} className="hidden" />
+                        Drag & drop payment proof or click to upload
+                        {form.attachment ? <p className="mt-2 text-xs font-semibold text-slate-700">{form.attachment.name}</p> : null}
+                      </label>
+                    </div>
+                  </FlowCard>
+                </div>
+              ) : null}
+
+              {activeStep === 2 ? (
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.4fr_0.8fr]">
+                  <FlowCard title="Allocate Payment" subtitle="Apply payment using sliders, keep extra as advance">
+                    {form.customerId ? (
+                      <div className="space-y-4">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="font-semibold text-slate-700">
+                              Remaining to allocate:{" "}
+                              <span className="text-slate-900">{formatMoney(totals.unappliedAmount, country)}</span>
+                            </p>
+                            <button
+                              type="button"
+                              onClick={fillAllInvoices}
+                              disabled={readOnly || !form.allocations.length}
+                              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Auto-fill invoices
+                            </button>
+                          </div>
+                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+                            <div
+                              className="h-full rounded-full bg-slate-900 transition-all"
+                              style={{
+                                width: `${Math.min(
+                                  100,
+                                  totals.amountReceived > 0
+                                    ? (totals.amountApplied / totals.amountReceived) * 100
+                                    : 0
+                                )}%`
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        {form.allocations.length ? (
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            {form.allocations.map((allocation) => {
+                              const maxAllowed = allocation.applyAmount + totals.unappliedAmount;
+                              return (
+                                <InvoiceApplyCard
+                                  key={allocation.invoiceId}
+                                  allocation={allocation}
+                                  maxAllowed={maxAllowed}
+                                  currencyText={COUNTRY_CONFIG[country].currency}
+                                  onApply={(amount) => updateAllocation(allocation.invoiceId, amount)}
+                                  onAutoFill={() => fillInvoiceMax(allocation.invoiceId)}
+                                />
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                            No open invoices for this customer. Any received amount will stay in advance wallet.
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                        Select a customer in Step 1 to allocate invoices.
+                      </div>
+                    )}
+                  </FlowCard>
+
+                  <FlowCard title="Notes & Controls" subtitle="Finance-only notes and customer-visible message">
+                    <div className="space-y-3">
+                      <label className="block">
+                        <span className="text-xs font-semibold text-slate-600">Internal Notes</span>
+                        <textarea
+                          value={form.internalNotes}
+                          disabled={readOnly}
+                          onChange={(event) => updateForm("internalNotes", event.target.value)}
+                          rows={3}
+                          className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                          placeholder="Visible to finance team only"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-xs font-semibold text-slate-600">Customer Notes</span>
+                        <textarea
+                          value={form.customerNotes}
+                          disabled={readOnly}
+                          onChange={(event) => updateForm("customerNotes", event.target.value)}
+                          rows={3}
+                          className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                          placeholder="Shown in receipt PDF"
+                        />
+                      </label>
+
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-xl bg-slate-50 p-3">
+                          <p className="text-slate-500">Received</p>
+                          <p className="font-semibold text-slate-900">{formatMoney(totals.amountReceived, country)}</p>
+                        </div>
+                        <div className="rounded-xl bg-slate-50 p-3">
+                          <p className="text-slate-500">Applied</p>
+                          <p className="font-semibold text-slate-900">{formatMoney(totals.amountApplied, country)}</p>
+                        </div>
+                        <div className="rounded-xl bg-slate-50 p-3">
+                          <p className="text-slate-500">Unapplied</p>
+                          <p className="font-semibold text-amber-700">{formatMoney(totals.unappliedAmount, country)}</p>
+                        </div>
+                        <div className="rounded-xl bg-slate-50 p-3">
+                          <p className="text-slate-500">Outstanding After</p>
+                          <p className="font-semibold text-slate-900">{formatMoney(totals.outstandingAfter, country)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </FlowCard>
+                </div>
+              ) : null}
+
+              {activeStep === 3 ? (
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+                  <FlowCard title="Review & Confirm" subtitle="Final check before posting this payment">
+                    <div className="space-y-3 text-sm">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs text-slate-500">Customer</p>
+                        <p className="font-semibold text-slate-900">{selectedCustomer?.name || form.customerInput || "-"}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].name} | {COUNTRY_CONFIG[country].currency}
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">Amount Received</p>
+                          <p className="text-base font-semibold text-slate-900">{formatMoney(totals.amountReceived, country)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">Amount Applied</p>
+                          <p className="text-base font-semibold text-slate-900">{formatMoney(totals.amountApplied, country)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">Unapplied</p>
+                          <p className="text-base font-semibold text-amber-700">{formatMoney(totals.unappliedAmount, country)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">Payment Mode</p>
+                          <p className="text-base font-semibold text-slate-900">{form.paymentMode}</p>
+                        </div>
+                      </div>
+                      {totals.unappliedAmount > 0 ? (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                          Unapplied amount will be saved as advance payment wallet for this customer.
+                        </div>
+                      ) : null}
+                    </div>
+                  </FlowCard>
+
+                  <FlowCard title="Receipt Snapshot" subtitle="Country wording + legal labels">
+                    <div className="space-y-3">
+                      <p className="text-xs text-slate-500">{COUNTRY_CONFIG[country].receiptLabel}</p>
+                      <p className="text-3xl font-bold tracking-tight text-slate-900">{formatMoney(totals.amountReceived, country)}</p>
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                        <p>{COUNTRY_CONFIG[country].legalWording}</p>
+                        <p className="mt-2">
+                          {COUNTRY_CONFIG[country].registrationLabel}:{" "}
+                          <span className="font-semibold text-slate-800">{form.registrationNumber || "-"}</span>
+                        </p>
+                      </div>
+                      {activePayment ? (
+                        <button
+                          type="button"
+                          onClick={() => exportSinglePaymentInPdf(activePayment)}
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"
+                        >
+                          <FileDown className="h-3.5 w-3.5" />
+                          Download Current PDF
+                        </button>
+                      ) : null}
+                    </div>
+                  </FlowCard>
+                </div>
+              ) : null}
+
+              {fieldErrors.workflow ? (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  {fieldErrors.workflow}
+                </div>
+              ) : null}
+              {errorMessage ? (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  {errorMessage}
+                </div>
+              ) : null}
+              {successMessage ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                  {successMessage}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      )}
+
+      {panelMode === "flow" && form && !readOnly ? (
+        <div className="fixed bottom-4 right-4 z-40 flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur">
+          <button
+            type="button"
+            onClick={() => persist("Draft")}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"
+          >
+            <Save className="h-3.5 w-3.5" />
+            Save Draft
+          </button>
+          <button
+            type="button"
+            onClick={() => persist(confirmStatus)}
+            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white"
+          >
+            <Send className="h-3.5 w-3.5" />
+            Confirm Payment
+          </button>
+          <button
+            type="button"
+            onClick={() => persist(confirmStatus, { email: true, download: true })}
+            className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700"
+          >
+            <Mail className="h-3.5 w-3.5" />
+            Send Receipt
+          </button>
+        </div>
+      ) : null}
+
+      <AuditDrawer open={showAudit} record={activePayment} onClose={() => setShowAudit(false)} />
+    </div>
+  );
+}

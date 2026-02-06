@@ -1,6 +1,6 @@
 import { LS_KEYS, lsGet, lsSet } from "./storage";
 
-export const COUNTRIES = ["India", "Sri Lanka", "United Kingdom", "Ireland"];
+export const COUNTRIES = ["India", "Sri Lanka", "UAE", "USA", "United Kingdom", "Ireland"];
 
 export function companyIsCompleted() {
   return !!lsGet(LS_KEYS.companyProfileCompleted, false);

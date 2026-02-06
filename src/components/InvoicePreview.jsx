@@ -81,12 +81,34 @@ const VARIANTS = {
     total: "text-base",
     header: "",
     divider: "border-t border-slate-100"
+  },
+  simple: {
+    padding: "p-6",
+    title: "text-xl",
+    label: "text-xs",
+    value: "text-sm",
+    tableHead: "text-xs",
+    total: "text-base",
+    header: "",
+    divider: "border-t border-slate-100"
+  },
+  professional: {
+    padding: "p-7",
+    title: "text-2xl",
+    label: "text-xs uppercase tracking-widest",
+    value: "text-sm",
+    tableHead: "text-xs uppercase tracking-widest",
+    total: "text-lg",
+    header: "rounded-2xl border border-slate-200 p-4",
+    divider: "border-t-2 border-slate-200"
   }
 };
 
-function money(n) {
+function money(n, currencySymbol) {
   const v = Number(n || 0);
-  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const formatted = v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (!currencySymbol) return formatted;
+  return `${currencySymbol}${formatted}`;
 }
 
 export default function InvoicePreview({ templateId, styleConfig, invoiceData }) {
@@ -94,12 +116,14 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
   const { primaryColor, bgColor, fontFamily, logoUrl, logoPosition } = styleConfig || {};
   const font = `${fontFamily || "Inter"}, "Helvetica Neue", Arial, sans-serif`;
   const title = invoiceData.title || "Invoice";
+  const currencySymbol = invoiceData.currencySymbol || "";
   const logoPos = logoPosition || "left";
   const headerLayout =
     logoPos === "center" ? "flex flex-col items-center text-center" : "flex items-start justify-between";
   const invoiceAlign = logoPos === "right" ? "text-left" : "text-right";
   const companyAlign = logoPos === "right" ? "flex-row-reverse text-right" : "text-left";
-  const isIndiaGST = invoiceData.country === "India" || invoiceData.tax?.type === "GST";
+  const taxType = invoiceData.tax?.type || (invoiceData.country === "India" ? "GST" : "NONE");
+  const isIndiaGST = taxType === "GST";
 
   const seller = invoiceData.seller || {
     name: invoiceData.companyName || "",
@@ -157,7 +181,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
     const cgst = sameState ? totalTax / 2 : 0;
     const sgst = sameState ? totalTax / 2 : 0;
     const igst = sameState ? 0 : totalTax;
-    const amountWords = invoiceData.amountInWords || `Rupees ${money(grandTotal)} only`;
+    const amountWords = invoiceData.amountInWords || `Rupees ${money(grandTotal, "")} only`;
 
     return (
       <div
@@ -174,7 +198,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
           </div>
           <div className="text-right space-y-1">
             <p className={clsx("font-semibold text-slate-900", variant.title)} style={{ color: primaryColor }}>
-              TAX INVOICE
+              {title.toUpperCase()}
             </p>
             <p className={clsx("text-slate-500", variant.label)}>No: {invoiceData.invoiceNo || "-"}</p>
             <p className={clsx("text-slate-500", variant.label)}>Date: {invoiceData.invoiceDate || "-"}</p>
@@ -229,11 +253,13 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
                 <span className={clsx("col-span-4", variant.value)}>{line.name}</span>
                 <span className={clsx("col-span-2", variant.value)}>{line.hsn}</span>
                 <span className={clsx("col-span-1 text-right", variant.value)}>{line.qty}</span>
-                <span className={clsx("col-span-1 text-right", variant.value)}>{money(line.rate)}</span>
-                <span className={clsx("col-span-2 text-right", variant.value)}>{money(line.taxableValue)}</span>
+                <span className={clsx("col-span-1 text-right", variant.value)}>{money(line.rate, currencySymbol)}</span>
+                <span className={clsx("col-span-2 text-right", variant.value)}>
+                  {money(line.taxableValue, currencySymbol)}
+                </span>
                 <span className={clsx("col-span-1 text-right", variant.value)}>{line.taxRate}%</span>
                 <span className={clsx("col-span-1 text-right font-semibold", variant.value)}>
-                  {money(line.total)}
+                  {money(line.total, currencySymbol)}
                 </span>
               </div>
             ))}
@@ -252,34 +278,44 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className={clsx("text-slate-500", variant.label)}>Total Taxable Amount</span>
-              <span className={clsx("text-slate-900 font-semibold", variant.value)}>{money(totalTaxable)}</span>
+              <span className={clsx("text-slate-900 font-semibold", variant.value)}>
+                {money(totalTaxable, currencySymbol)}
+              </span>
             </div>
             {sameState ? (
               <>
                 <div className="flex items-center justify-between">
                   <span className={clsx("text-slate-500", variant.label)}>CGST</span>
-                  <span className={clsx("text-slate-900 font-semibold", variant.value)}>{money(cgst)}</span>
+                  <span className={clsx("text-slate-900 font-semibold", variant.value)}>
+                    {money(cgst, currencySymbol)}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className={clsx("text-slate-500", variant.label)}>SGST</span>
-                  <span className={clsx("text-slate-900 font-semibold", variant.value)}>{money(sgst)}</span>
+                  <span className={clsx("text-slate-900 font-semibold", variant.value)}>
+                    {money(sgst, currencySymbol)}
+                  </span>
                 </div>
               </>
             ) : (
               <div className="flex items-center justify-between">
                 <span className={clsx("text-slate-500", variant.label)}>IGST</span>
-                <span className={clsx("text-slate-900 font-semibold", variant.value)}>{money(igst)}</span>
+                <span className={clsx("text-slate-900 font-semibold", variant.value)}>
+                  {money(igst, currencySymbol)}
+                </span>
               </div>
             )}
             <div className="flex items-center justify-between">
               <span className={clsx("text-slate-500", variant.label)}>Total GST</span>
-              <span className={clsx("text-slate-900 font-semibold", variant.value)}>{money(totalTax)}</span>
+              <span className={clsx("text-slate-900 font-semibold", variant.value)}>
+                {money(totalTax, currencySymbol)}
+              </span>
             </div>
             <div className={clsx("pt-2", variant.divider)} />
             <div className="flex items-center justify-between">
               <span className={clsx("text-slate-500", variant.label)}>Grand Total</span>
               <span className={clsx("font-semibold", variant.total)} style={{ color: primaryColor }}>
-                {money(grandTotal)}
+                {money(grandTotal, currencySymbol)}
               </span>
             </div>
           </div>
@@ -287,6 +323,14 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
       </div>
     );
   }
+
+  const taxRate = Number(invoiceData.taxRate || invoiceData.tax?.rate || 0);
+  const taxLabel =
+    taxType === "VAT" ? `VAT (${taxRate}%)` : taxType === "SALES_TAX" ? `Sales Tax (${taxRate}%)` : "Tax";
+  const taxValue = Number(invoiceData.totals?.tax || 0);
+  const showTaxLine = taxType !== "NONE" && taxRate > 0;
+  const taxIdLabel = invoiceData.tax?.idLabel || "Tax ID";
+  const taxIdValue = invoiceData.tax?.idValue || "";
 
   return (
     <div
@@ -379,6 +423,12 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
             <span className={clsx("text-slate-500", variant.label)}>Terms</span>
             <span className={clsx("text-slate-900", variant.value)}>Net 15</span>
           </div>
+          {taxIdValue ? (
+            <div className="mt-1 flex items-center justify-between">
+              <span className={clsx("text-slate-500", variant.label)}>{taxIdLabel}</span>
+              <span className={clsx("text-slate-900", variant.value)}>{taxIdValue}</span>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -396,9 +446,11 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
             <div key={item.id} className="grid grid-cols-12 gap-2 text-slate-700">
               <span className={clsx("col-span-6", variant.value)}>{item.name}</span>
               <span className={clsx("col-span-2 text-right", variant.value)}>{item.qty}</span>
-              <span className={clsx("col-span-2 text-right", variant.value)}>{money(item.rate)}</span>
+              <span className={clsx("col-span-2 text-right", variant.value)}>
+                {money(item.rate, currencySymbol)}
+              </span>
               <span className={clsx("col-span-2 text-right font-semibold", variant.value)}>
-                {money(item.amount)}
+                {money(item.amount, currencySymbol)}
               </span>
             </div>
           ))}
@@ -418,26 +470,28 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
           <div className="flex items-center justify-between">
             <span className={clsx("text-slate-500", variant.label)}>Subtotal</span>
             <span className={clsx("text-slate-900 font-semibold", variant.value)}>
-              {money(invoiceData.totals.subTotal)}
+              {money(invoiceData.totals.subTotal, currencySymbol)}
             </span>
           </div>
-          <div className="flex items-center justify-between">
-            <span className={clsx("text-slate-500", variant.label)}>Tax</span>
-            <span className={clsx("text-slate-900 font-semibold", variant.value)}>
-              {money(invoiceData.totals.tax)}
-            </span>
-          </div>
+          {showTaxLine ? (
+            <div className="flex items-center justify-between">
+              <span className={clsx("text-slate-500", variant.label)}>{taxLabel}</span>
+              <span className={clsx("text-slate-900 font-semibold", variant.value)}>
+                {money(taxValue, currencySymbol)}
+              </span>
+            </div>
+          ) : null}
           <div className="flex items-center justify-between">
             <span className={clsx("text-slate-500", variant.label)}>Total</span>
             <span className={clsx("font-semibold", variant.total)} style={{ color: primaryColor }}>
-              {money(invoiceData.totals.total)}
+              {money(invoiceData.totals.total, currencySymbol)}
             </span>
           </div>
           <div className={clsx("pt-2", variant.divider)} />
           <div className="flex items-center justify-between">
             <span className={clsx("text-slate-500", variant.label)}>Balance Due</span>
             <span className={clsx("font-semibold", variant.total)} style={{ color: primaryColor }}>
-              {money(invoiceData.totals.balance)}
+              {money(invoiceData.totals.balance, currencySymbol)}
             </span>
           </div>
         </div>

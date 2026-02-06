@@ -63,7 +63,7 @@ function parseRateInput(value) {
 
 export default function InvoiceCreate() {
   const company = companyGetProfile();
-  const country = company?.country || "Sri Lanka";
+  const country = company?.country || "";
   const isIndia = country === "India";
 
   const customers = partiesByType("Customer");
@@ -71,21 +71,12 @@ export default function InvoiceCreate() {
   const [itemSearch, setItemSearch] = useState("");
 
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
-  const [invoiceNo, setInvoiceNo] = useState(() => generateInvoiceNumber());
-  const [partyId, setPartyId] = useState(customers[0]?.id || "");
+  const [invoiceNo, setInvoiceNo] = useState("");
+  const [partyId, setPartyId] = useState("");
   const party = useMemo(() => customers.find((c) => c.id === partyId) || null, [customers, partyId]);
   const [placeOfSupply, setPlaceOfSupply] = useState("");
 
-  const [lines, setLines] = useState([
-    {
-      id: "l1",
-      itemId: items[0]?.id || "",
-      qty: 1,
-      rate: items[0]?.price || 0,
-      discount: 0,
-      tax: items[0]?.taxRate || 0
-    }
-  ]);
+  const [lines, setLines] = useState([]);
 
   const companyState = company?.address?.state || "";
   const customerState = isIndia ? placeOfSupply || "" : party?.state || "";
@@ -125,11 +116,11 @@ export default function InvoiceCreate() {
       ...p,
       {
         id: `l_${Date.now()}`,
-        itemId: items[0]?.id || "",
+        itemId: "",
         qty: 1,
-        rate: items[0]?.price || 0,
+        rate: 0,
         discount: 0,
-        tax: items[0]?.taxRate || 0
+        tax: 0
       }
     ]);
   }
@@ -172,7 +163,7 @@ export default function InvoiceCreate() {
       const gross = qty * rate;
       const net = Math.max(0, gross - discount);
       const lineTax = net > 0 && taxRatePerLine > 0 ? (net * taxRatePerLine) / 100 : 0;
-      return { ...l, itemName: item?.name || "-", hsn: item?.hsn || item?.sac || "-", gross, net, lineTax };
+      return { ...l, itemName: item?.name || "XXX", hsn: item?.hsn || item?.sac || "XX", gross, net, lineTax };
     });
 
     const subTotal = enriched.reduce((a, x) => a + x.net, 0);
@@ -226,10 +217,10 @@ export default function InvoiceCreate() {
   }
 
   function mockPrint() {
-    alert("Mock print: connect real print later.");
+    alert("Print not connected yet.");
   }
   function mockEmail() {
-    alert("Mock send email: integrate later.");
+    alert("Send not connected yet.");
   }
 
   function saveInvoice() {
@@ -304,9 +295,15 @@ export default function InvoiceCreate() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-semibold text-slate-900">Invoice Form</p>
-              <p className="text-xs text-slate-500">Country: {country}</p>
+              <p className="text-xs text-slate-500">Country: {country || "—"}</p>
             </div>
-            {isIndia ? <Badge tone="warning">GST</Badge> : <Badge tone="success">VAT</Badge>}
+            {isIndia ? (
+              <Badge tone="warning">GST</Badge>
+            ) : country ? (
+              <Badge tone="success">VAT</Badge>
+            ) : (
+              <Badge tone="neutral">TAX</Badge>
+            )}
           </div>
 
           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -316,6 +313,7 @@ export default function InvoiceCreate() {
                 onChange={(e) => setInvoiceNo(e.target.value)}
                 className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
                 style={{ "--tw-ring-color": UI.COLORS.ring }}
+                placeholder="INV-XXXX"
               />
             </FormField>
 
@@ -572,9 +570,9 @@ export default function InvoiceCreate() {
 
           <div className="mt-4 rounded-2xl border border-slate-100 p-4 bg-slate-50/50">
             <p className="text-xs text-slate-500">Billed To</p>
-            <p className="text-sm font-semibold text-slate-900">{party?.name || "Select customer"}</p>
-            <p className="text-xs text-slate-500">{party?.phone || ""}</p>
-            {party?.address ? <p className="text-xs text-slate-500">{party.address}</p> : null}
+            <p className="text-sm font-semibold text-slate-900">{party?.name || "XXX"}</p>
+            <p className="text-xs text-slate-500">{party?.phone || "XX"}</p>
+            <p className="text-xs text-slate-500">{party?.address || "XX"}</p>
             {party?.gstin ? <p className="text-xs text-slate-500">GSTIN: {party.gstin}</p> : null}
           </div>
 
