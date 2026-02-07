@@ -49,13 +49,13 @@ export default function Sidebar({ collapsed, onToggle }) {
       { to: "/app/company-setup", icon: Building2, label: "Company Setup" },
       { to: "/invoice-template-setup", icon: LayoutTemplate, label: "Invoice Template" },
       { to: "/app/parties", icon: Users, label: "Parties" },
-      { to: "/items", icon: Boxes, label: "Items" },
+      { to: "/app/items", icon: Boxes, label: "Items" },
       { to: "/app/sales/invoice", icon: ReceiptIndianRupee, label: "Invoices" },
       { to: "/app/purchase/bill", icon: FileText, label: "Purchases" },
       { to: "/app/sales/credit-note", icon: BadgePercent, label: "Credit Note" },
       { to: "/app/purchase/debit-note", icon: BadgePercent, label: "Debit Note" },
       { to: "/app/sales/payment-in", icon: ArrowDownToLine, label: "Payment In" },
-      { to: "/app/purchase/payment-out", icon: ArrowUpFromLine, label: "Payment Out" },
+      { to: "/app/purchases/payment-out", icon: ArrowUpFromLine, label: "Payment Out" },
       { to: "/app/reports", icon: BarChart3, label: "Reports" },
       { to: "/app/company-settings", icon: Settings, label: "Settings" }
     ];

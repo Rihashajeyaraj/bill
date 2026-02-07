@@ -18,7 +18,7 @@ import PaymentIn from "../pages/sales/PaymentInPremium";
 
 import PurchaseBill from "../pages/purchases/PurchaseBill";
 import DebitNote from "../pages/purchases/DebitNotePremium";
-import PaymentOut from "../pages/purchases/PaymentOut";
+import PaymentOutPremium from "../pages/purchases/PaymentOutPremium";
 import Expense from "../pages/purchases/Expense";
 
 import CashBank from "../pages/CashBank";
@@ -59,9 +59,9 @@ export const routes = [
               { path: "/app/parties", element: <Parties /> },
               { path: "/app/parties/:id/statement", element: <PartyStatement /> },
 
-              { path: "/items", element: <Items /> },
+              { path: "/app/items", element: <Items /> },
+              { path: "/items", element: <Navigate to="/app/items" replace /> },
               { path: "/items/new", element: <ItemCreate /> },
-              { path: "/app/items", element: <Navigate to="/items" replace /> },
 
               { path: "/app/sales/invoice", element: <InvoiceCreate /> },
               { path: "/app/sales/credit-note", element: <CreditNote /> },
@@ -69,7 +69,8 @@ export const routes = [
 
               { path: "/app/purchase/bill", element: <PurchaseBill /> },
               { path: "/app/purchase/debit-note", element: <DebitNote /> },
-              { path: "/app/purchase/payment-out", element: <PaymentOut /> },
+              { path: "/app/purchases/payment-out", element: <PaymentOutPremium /> },
+              { path: "/app/purchase/payment-out", element: <Navigate to="/app/purchases/payment-out" replace /> },
               { path: "/app/purchase/expense", element: <Expense /> },
 
               { path: "/app/cash-bank", element: <CashBank /> },
