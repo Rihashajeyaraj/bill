@@ -1,295 +1,1153 @@
-import React, { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import {
-  BarChart3,
-  ChevronLeft,
-  ChevronRight,
-  Download,
-  Filter,
-  Plus,
-  Search,
-  Settings,
-  SlidersHorizontal,
-  TrendingUp,
-  Wallet,
-  Banknote
-} from "lucide-react";
-import PageHeader from "../components/PageHeader";
-import EmptyState from "../components/EmptyState";
-import DataTable from "../components/DataTable";
-import Card from "../components/Card";
-import StatCard from "../components/StatCard";
-import ReportAccordion from "../components/reports/ReportAccordion";
-import ReportListItem from "../components/reports/ReportListItem";
-import { reportSections } from "../data/reports";
-import { UI } from "../theme/tokens";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
+import {
+  ArrowDownRight,
+  ArrowUpRight,
+  BarChart3,
+  Boxes,
+  Briefcase,
+  ClipboardList,
+  FileDown,
+  LineChart as LineChartIcon,
+  Package,
+  Percent,
+  Printer,
+  Receipt,
+  Search,
+  Users
+} from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from "recharts";
+import PageHeader from "../components/PageHeader";
+import Card from "../components/Card";
+import Badge from "../components/Badge";
+import { companyGetProfile, COUNTRIES } from "../services/company.service";
+import { formatMoney, normalizeText } from "../modules/items/utils";
 
-export default function Reports() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [query, setQuery] = useState("");
-  const [navCollapsed, setNavCollapsed] = useState(false);
-  const [expandedSections, setExpandedSections] = useState(() =>
-    reportSections.reduce((acc, section) => ({ ...acc, [section.id]: true }), {})
-  );
+const CURRENCY_MAP = {
+  India: "INR",
+  "Sri Lanka": "LKR",
+  UAE: "AED",
+  USA: "USD",
+  "United Kingdom": "GBP",
+  Ireland: "EUR"
+};
 
-  const activeReportId = searchParams.get("report");
+const SCOPE_OPTIONS = ["All", "Sales", "Purchase", "Party", "Item", "Tax"];
 
-  const flatReports = useMemo(
-    () =>
-      reportSections.flatMap((section) =>
-        section.items.map((item) => ({
-          ...item,
-          sectionId: section.id,
-          sectionTitle: section.title
-        }))
-      ),
-    []
-  );
+const REPORT_CARDS = [
+  {
+    id: "sales",
+    label: "Sales",
+    scope: "Sales",
+    description: "Invoice revenue and credit impact.",
+    metricLabel: "Net Sales",
+    metricValue: 1284000,
+    delta: 0.082,
+    icon: Receipt
+  },
+  {
+    id: "purchases",
+    label: "Purchases",
+    scope: "Purchase",
+    description: "Bills, debit notes, and spend mix.",
+    metricLabel: "Net Purchase",
+    metricValue: 844600,
+    delta: -0.031,
+    icon: Briefcase
+  },
+  {
+    id: "receivables",
+    label: "Receivables",
+    scope: "Party",
+    description: "Customer outstanding and aging.",
+    metricLabel: "Outstanding",
+    metricValue: 392200,
+    delta: 0.054,
+    icon: Users
+  },
+  {
+    id: "payables",
+    label: "Payables",
+    scope: "Party",
+    description: "Supplier outstanding and due risk.",
+    metricLabel: "Payables",
+    metricValue: 266800,
+    delta: -0.018,
+    icon: Users
+  },
+  {
+    id: "tax",
+    label: "Tax",
+    scope: "Tax",
+    description: "Output vs input tax tracking.",
+    metricLabel: "Net Payable",
+    metricValue: 118400,
+    delta: 0.027,
+    icon: Percent
+  },
+  {
+    id: "items",
+    label: "Items",
+    scope: "Item",
+    description: "Top items, stock, and margins.",
+    metricLabel: "Top Item Sales",
+    metricValue: 214200,
+    delta: 0.064,
+    icon: Package
+  },
+  {
+    id: "parties",
+    label: "Parties",
+    scope: "Party",
+    description: "Top parties and statement health.",
+    metricLabel: "Top Party",
+    metricValue: 164800,
+    delta: 0.041,
+    icon: ClipboardList
+  }
+];
 
-  const activeReport = useMemo(
-    () => flatReports.find((report) => report.id === activeReportId) || null,
-    [activeReportId, flatReports]
-  );
-
-  const filteredSections = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    if (!search) {
-      return reportSections;
+const REPORT_CONTENT = {
+  sales: {
+    summary: [
+      { label: "Gross Sales", value: 1420000, tone: "default" },
+      { label: "Credit Given", value: 96000, tone: "warn" },
+      { label: "Net Sales", value: 1324000, tone: "success" },
+      { label: "Invoice Count", value: 214, tone: "default", format: "count" }
+    ],
+    chart: {
+      type: "line",
+      data: [
+        { label: "Aug", amount: 182000, count: 32 },
+        { label: "Sep", amount: 205000, count: 38 },
+        { label: "Oct", amount: 226000, count: 41 },
+        { label: "Nov", amount: 214000, count: 36 },
+        { label: "Dec", amount: 252000, count: 39 },
+        { label: "Jan", amount: 285000, count: 44 }
+      ]
+    },
+    details: {
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "doc", label: "Invoice" },
+        { key: "party", label: "Customer" },
+        { key: "amount", label: "Amount", align: "right", format: "money" },
+        { key: "credit", label: "Credit", align: "right", format: "money" },
+        { key: "net", label: "Net", align: "right", format: "money" },
+        { key: "status", label: "Status", format: "status" }
+      ],
+      rows: [
+        {
+          id: "S-1021",
+          date: "2026-02-02",
+          doc: "INV-1021",
+          party: "Nova Retail",
+          amount: 86400,
+          credit: 6400,
+          net: 80000,
+          status: "Paid"
+        },
+        {
+          id: "S-1022",
+          date: "2026-02-03",
+          doc: "INV-1022",
+          party: "Atlas Labs",
+          amount: 112000,
+          credit: 12000,
+          net: 100000,
+          status: "Partial"
+        },
+        {
+          id: "S-1023",
+          date: "2026-02-04",
+          doc: "INV-1023",
+          party: "Bright Foods",
+          amount: 54000,
+          credit: 0,
+          net: 54000,
+          status: "Paid"
+        },
+        {
+          id: "S-1024",
+          date: "2026-02-06",
+          doc: "INV-1024",
+          party: "Cresta Media",
+          amount: 76000,
+          credit: 6000,
+          net: 70000,
+          status: "Pending"
+        },
+        {
+          id: "S-1025",
+          date: "2026-02-07",
+          doc: "INV-1025",
+          party: "Rogue Studio",
+          amount: 94000,
+          credit: 8000,
+          net: 86000,
+          status: "Paid"
+        }
+      ]
     }
+  },
+  purchases: {
+    summary: [
+      { label: "Gross Purchase", value: 910000, tone: "default" },
+      { label: "Debit Added", value: 64000, tone: "warn" },
+      { label: "Net Purchase", value: 846000, tone: "danger" },
+      { label: "Bills Pending", value: 48, tone: "default", format: "count" }
+    ],
+    chart: {
+      type: "bar",
+      data: [
+        { label: "Aug", amount: 124000, count: 18 },
+        { label: "Sep", amount: 138000, count: 21 },
+        { label: "Oct", amount: 156000, count: 19 },
+        { label: "Nov", amount: 142000, count: 20 },
+        { label: "Dec", amount: 162000, count: 22 },
+        { label: "Jan", amount: 188000, count: 25 }
+      ]
+    },
+    details: {
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "doc", label: "Bill" },
+        { key: "party", label: "Supplier" },
+        { key: "amount", label: "Amount", align: "right", format: "money" },
+        { key: "debit", label: "Debit", align: "right", format: "money" },
+        { key: "net", label: "Net", align: "right", format: "money" },
+        { key: "status", label: "Status", format: "status" }
+      ],
+      rows: [
+        {
+          id: "P-5501",
+          date: "2026-02-01",
+          doc: "BILL-5501",
+          party: "Keystone Supply",
+          amount: 92000,
+          debit: 8000,
+          net: 100000,
+          status: "Applied"
+        },
+        {
+          id: "P-5502",
+          date: "2026-02-02",
+          doc: "BILL-5502",
+          party: "Summit Hardware",
+          amount: 72000,
+          debit: 0,
+          net: 72000,
+          status: "Paid"
+        },
+        {
+          id: "P-5503",
+          date: "2026-02-04",
+          doc: "BILL-5503",
+          party: "Helios Textiles",
+          amount: 110000,
+          debit: 6000,
+          net: 116000,
+          status: "Pending"
+        },
+        {
+          id: "P-5504",
+          date: "2026-02-05",
+          doc: "BILL-5504",
+          party: "Polar Packaging",
+          amount: 88000,
+          debit: 4000,
+          net: 92000,
+          status: "Paid"
+        }
+      ]
+    }
+  },
+  receivables: {
+    summary: [
+      { label: "Total Outstanding", value: 392200, tone: "danger" },
+      { label: "Overdue 60+", value: 84000, tone: "warn" },
+      { label: "Avg Collection Days", value: 28, tone: "default", format: "count" },
+      { label: "Top 5 Share", value: 61, tone: "default", format: "percent" }
+    ],
+    chart: {
+      type: "pie",
+      data: [
+        { label: "0-30 days", amount: 164000, count: 34 },
+        { label: "31-60 days", amount: 98000, count: 21 },
+        { label: "61-90 days", amount: 62000, count: 12 },
+        { label: "90+ days", amount: 68200, count: 8 }
+      ]
+    },
+    details: {
+      columns: [
+        { key: "party", label: "Customer" },
+        { key: "invoice", label: "Invoice" },
+        { key: "due", label: "Due Date" },
+        { key: "amount", label: "Balance", align: "right", format: "money" },
+        { key: "bucket", label: "Aging" },
+        { key: "status", label: "Status", format: "status" }
+      ],
+      rows: [
+        {
+          id: "R-1",
+          party: "Nova Retail",
+          invoice: "INV-1018",
+          due: "2026-02-10",
+          amount: 42000,
+          bucket: "0-30",
+          status: "Open"
+        },
+        {
+          id: "R-2",
+          party: "Atlas Labs",
+          invoice: "INV-1009",
+          due: "2026-01-20",
+          amount: 58000,
+          bucket: "31-60",
+          status: "Overdue"
+        },
+        {
+          id: "R-3",
+          party: "Vento Logistics",
+          invoice: "INV-995",
+          due: "2025-12-28",
+          amount: 22000,
+          bucket: "61-90",
+          status: "Overdue"
+        },
+        {
+          id: "R-4",
+          party: "Cresta Media",
+          invoice: "INV-986",
+          due: "2025-11-25",
+          amount: 46200,
+          bucket: "90+",
+          status: "Overdue"
+        }
+      ]
+    }
+  },
+  payables: {
+    summary: [
+      { label: "Supplier Outstanding", value: 266800, tone: "danger" },
+      { label: "Due This Week", value: 68000, tone: "warn" },
+      { label: "Avg Pay Days", value: 21, tone: "default", format: "count" },
+      { label: "Top 3 Share", value: 54, tone: "default", format: "percent" }
+    ],
+    chart: {
+      type: "pie",
+      data: [
+        { label: "0-30 days", amount: 108000, count: 22 },
+        { label: "31-60 days", amount: 76000, count: 15 },
+        { label: "61-90 days", amount: 52000, count: 9 },
+        { label: "90+ days", amount: 30800, count: 6 }
+      ]
+    },
+    details: {
+      columns: [
+        { key: "party", label: "Supplier" },
+        { key: "bill", label: "Bill" },
+        { key: "due", label: "Due Date" },
+        { key: "amount", label: "Balance", align: "right", format: "money" },
+        { key: "bucket", label: "Aging" },
+        { key: "status", label: "Status", format: "status" }
+      ],
+      rows: [
+        {
+          id: "P-1",
+          party: "Keystone Supply",
+          bill: "BILL-5481",
+          due: "2026-02-12",
+          amount: 38000,
+          bucket: "0-30",
+          status: "Open"
+        },
+        {
+          id: "P-2",
+          party: "Summit Hardware",
+          bill: "BILL-5466",
+          due: "2026-01-25",
+          amount: 52000,
+          bucket: "31-60",
+          status: "Overdue"
+        },
+        {
+          id: "P-3",
+          party: "Helios Textiles",
+          bill: "BILL-5428",
+          due: "2025-12-18",
+          amount: 32000,
+          bucket: "61-90",
+          status: "Overdue"
+        },
+        {
+          id: "P-4",
+          party: "Polar Packaging",
+          bill: "BILL-5409",
+          due: "2025-11-12",
+          amount: 18800,
+          bucket: "90+",
+          status: "Overdue"
+        }
+      ]
+    }
+  },
+  tax: {
+    summary: [
+      { label: "Output Tax", value: 184600, tone: "default" },
+      { label: "Input Tax", value: 66200, tone: "default" },
+      { label: "Net Payable", value: 118400, tone: "danger" },
+      { label: "Filed Coverage", value: 82, tone: "default", format: "percent" }
+    ],
+    chart: {
+      type: "bar",
+      data: [
+        { label: "Aug", amount: 22000, count: 38 },
+        { label: "Sep", amount: 26000, count: 42 },
+        { label: "Oct", amount: 24000, count: 40 },
+        { label: "Nov", amount: 28000, count: 46 },
+        { label: "Dec", amount: 30000, count: 48 },
+        { label: "Jan", amount: 32400, count: 51 }
+      ]
+    },
+    details: {
+      columns: [
+        { key: "rate", label: "Rate" },
+        { key: "taxable", label: "Taxable", align: "right", format: "money" },
+        { key: "output", label: "Output Tax", align: "right", format: "money" },
+        { key: "input", label: "Input Tax", align: "right", format: "money" },
+        { key: "net", label: "Net", align: "right", format: "money" }
+      ],
+      rows: [
+        { id: "T-1", rate: "0%", taxable: 84000, output: 0, input: 0, net: 0 },
+        { id: "T-2", rate: "5%", taxable: 220000, output: 11000, input: 4200, net: 6800 },
+        { id: "T-3", rate: "12%", taxable: 310000, output: 37200, input: 14800, net: 22400 },
+        { id: "T-4", rate: "18%", taxable: 420000, output: 75600, input: 18800, net: 56800 }
+      ]
+    }
+  },
+  items: {
+    summary: [
+      { label: "Top Item Sales", value: 214200, tone: "success" },
+      { label: "Low Stock Items", value: 6, tone: "warn", format: "count" },
+      { label: "Avg Margin", value: 32, tone: "default", format: "percent" },
+      { label: "Inventory Value", value: 486000, tone: "default" }
+    ],
+    chart: {
+      type: "bar",
+      data: [
+        { label: "Aero Chair", amount: 214200, count: 42 },
+        { label: "Nimbus Desk", amount: 178500, count: 31 },
+        { label: "Flux Lamp", amount: 142800, count: 44 },
+        { label: "Orbit Shelf", amount: 119200, count: 26 },
+        { label: "Slate Stool", amount: 98600, count: 29 }
+      ]
+    },
+    details: {
+      columns: [
+        { key: "item", label: "Item" },
+        { key: "category", label: "Category" },
+        { key: "sold", label: "Units Sold", align: "right", format: "count" },
+        { key: "revenue", label: "Revenue", align: "right", format: "money" },
+        { key: "margin", label: "Margin", align: "right", format: "percent" },
+        { key: "status", label: "Stock", format: "status" }
+      ],
+      rows: [
+        {
+          id: "I-1",
+          item: "Aero Chair",
+          category: "Furniture",
+          sold: 42,
+          revenue: 214200,
+          margin: 34,
+          status: "Healthy"
+        },
+        {
+          id: "I-2",
+          item: "Nimbus Desk",
+          category: "Furniture",
+          sold: 31,
+          revenue: 178500,
+          margin: 28,
+          status: "Low"
+        },
+        {
+          id: "I-3",
+          item: "Flux Lamp",
+          category: "Lighting",
+          sold: 44,
+          revenue: 142800,
+          margin: 38,
+          status: "Healthy"
+        },
+        {
+          id: "I-4",
+          item: "Orbit Shelf",
+          category: "Storage",
+          sold: 26,
+          revenue: 119200,
+          margin: 31,
+          status: "Low"
+        }
+      ]
+    }
+  },
+  parties: {
+    summary: [
+      { label: "Active Parties", value: 128, tone: "default", format: "count" },
+      { label: "Top Customer", value: 164800, tone: "success" },
+      { label: "Top Supplier", value: 118600, tone: "danger" },
+      { label: "Avg Ticket", value: 38400, tone: "default" }
+    ],
+    chart: {
+      type: "line",
+      data: [
+        { label: "Nova Retail", amount: 164800, count: 12 },
+        { label: "Atlas Labs", amount: 142200, count: 9 },
+        { label: "Bright Foods", amount: 126400, count: 8 },
+        { label: "Cresta Media", amount: 112900, count: 7 },
+        { label: "Rogue Studio", amount: 98400, count: 6 }
+      ]
+    },
+    details: {
+      columns: [
+        { key: "party", label: "Party" },
+        { key: "type", label: "Type" },
+        { key: "transactions", label: "Transactions", align: "right", format: "count" },
+        { key: "value", label: "Value", align: "right", format: "money" },
+        { key: "outstanding", label: "Outstanding", align: "right", format: "money" },
+        { key: "status", label: "Status", format: "status" }
+      ],
+      rows: [
+        {
+          id: "PT-1",
+          party: "Nova Retail",
+          type: "Customer",
+          transactions: 12,
+          value: 164800,
+          outstanding: 42000,
+          status: "Healthy"
+        },
+        {
+          id: "PT-2",
+          party: "Atlas Labs",
+          type: "Customer",
+          transactions: 9,
+          value: 142200,
+          outstanding: 58000,
+          status: "Attention"
+        },
+        {
+          id: "PT-3",
+          party: "Keystone Supply",
+          type: "Supplier",
+          transactions: 6,
+          value: 118600,
+          outstanding: 32000,
+          status: "On Track"
+        },
+        {
+          id: "PT-4",
+          party: "Summit Hardware",
+          type: "Supplier",
+          transactions: 5,
+          value: 98600,
+          outstanding: 28000,
+          status: "Attention"
+        }
+      ]
+    }
+  }
+};
 
-    return reportSections
-      .map((section) => ({
-        ...section,
-        items: section.items.filter((item) => {
-          const blob = [item.label, item.description, ...(item.tags || [])].join(" ").toLowerCase();
-          return blob.includes(search);
-        })
-      }))
-      .filter((section) => section.items.length > 0);
-  }, [query]);
+const PIE_COLORS = ["#1f6b45", "#2e8d5a", "#8fbfa7", "#dbe8e2"];
 
-  const handleSelect = (report) => {
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.set("report", report.id);
-    setSearchParams(nextParams);
-  };
+function formatValue(value, format, currency) {
+  if (format === "money") return formatMoney(value, currency);
+  if (format === "count") return Number(value ?? 0).toLocaleString();
+  if (format === "percent") return `${Number(value ?? 0)}%`;
+  return value ?? "-";
+}
 
-  const toggleSection = (sectionId) => {
-    setExpandedSections((prev) => ({ ...prev, [sectionId]: !prev[sectionId] }));
-  };
+function statusTone(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized.includes("paid") || normalized.includes("healthy") || normalized.includes("on track")) {
+    return "success";
+  }
+  if (normalized.includes("overdue") || normalized.includes("low") || normalized.includes("attention")) {
+    return "danger";
+  }
+  if (normalized.includes("partial") || normalized.includes("pending") || normalized.includes("applied")) {
+    return "warning";
+  }
+  return "neutral";
+}
 
-  const reportColumns = activeReport?.columns || [
-    { key: "date", header: "Date" },
-    { key: "party", header: "Party" },
-    { key: "amount", header: "Amount" }
-  ];
+function MetricDelta({ delta }) {
+  const isUp = delta >= 0;
+  const Icon = isUp ? ArrowUpRight : ArrowDownRight;
+  return (
+    <span
+      className={clsx(
+        "inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold",
+        isUp ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+      )}
+    >
+      <Icon className="h-3 w-3" />
+      {Math.abs(delta * 100).toFixed(1)}%
+    </span>
+  );
+}
 
-  const isSaleReport = activeReport?.id === "sale";
+function ReportCard({ report, active, currency, onSelect }) {
+  const Icon = report.icon || BarChart3;
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(report.id)}
+      className={clsx(
+        "group w-full rounded-3xl border p-4 text-left shadow-soft transition",
+        active
+          ? "border-emerald-200 bg-emerald-50/60"
+          : "border-slate-200 bg-white hover:-translate-y-0.5 hover:border-emerald-200"
+      )}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div
+            className={clsx(
+              "flex h-11 w-11 items-center justify-center rounded-2xl",
+              active ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"
+            )}
+          >
+            <Icon className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-900">{report.label}</p>
+            <p className="text-xs text-slate-500">{report.description}</p>
+          </div>
+        </div>
+        <MetricDelta delta={report.delta} />
+      </div>
+      <div className="mt-4 flex items-end justify-between">
+        <div>
+          <p className="text-xs font-semibold text-slate-500">{report.metricLabel}</p>
+          <p className="mt-1 text-lg font-semibold text-slate-900">
+            {formatMoney(report.metricValue, currency)}
+          </p>
+        </div>
+        <div className="text-xs text-slate-400">Tap to open</div>
+      </div>
+    </button>
+  );
+}
+
+function ChartBlock({ type, data, metric, currency }) {
+  const isMoney = metric === "amount";
+  const valueFormatter = (value) => (isMoney ? formatMoney(value, currency) : value);
+  if (type === "pie") {
+    return (
+      <ResponsiveContainer width="100%" height={280}>
+        <PieChart>
+          <Tooltip formatter={valueFormatter} />
+          <Legend verticalAlign="bottom" height={36} />
+          <Pie
+            data={data}
+            dataKey={metric}
+            nameKey="label"
+            innerRadius={65}
+            outerRadius={110}
+            paddingAngle={3}
+          >
+            {data.map((entry, index) => (
+              <Cell key={`${entry.label}-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+            ))}
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+    );
+  }
+
+  if (type === "line") {
+    return (
+      <ResponsiveContainer width="100%" height={280}>
+        <LineChart data={data} margin={{ top: 12, right: 16, left: 0, bottom: 8 }}>
+          <CartesianGrid strokeDasharray="4 4" stroke="#e2ebe5" />
+          <XAxis dataKey="label" tickLine={false} axisLine={false} />
+          <YAxis tickLine={false} axisLine={false} width={60} />
+          <Tooltip formatter={valueFormatter} />
+          <Line type="monotone" dataKey={metric} stroke="#1f6b45" strokeWidth={3} dot={{ r: 3 }} />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  }
 
   return (
-    <div className="max-w-6xl space-y-5">
+    <ResponsiveContainer width="100%" height={280}>
+      <BarChart data={data} margin={{ top: 12, right: 16, left: 0, bottom: 8 }}>
+        <CartesianGrid strokeDasharray="4 4" stroke="#e2ebe5" />
+        <XAxis dataKey="label" tickLine={false} axisLine={false} />
+        <YAxis tickLine={false} axisLine={false} width={60} />
+        <Tooltip formatter={valueFormatter} />
+        <Bar dataKey={metric} radius={[8, 8, 0, 0]} fill="#2e8d5a" />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function LoadingBlock() {
+  return (
+    <div className="animate-pulse space-y-3">
+      <div className="h-4 w-32 rounded-full bg-slate-200" />
+      <div className="h-7 w-40 rounded-full bg-slate-200" />
+      <div className="h-32 w-full rounded-2xl bg-slate-200" />
+    </div>
+  );
+}
+export default function Reports() {
+  const company = companyGetProfile();
+  const defaultCountry = company?.country || "India";
+  const currency =
+    company?.currency || company?.tax?.currency || CURRENCY_MAP[defaultCountry] || "USD";
+
+  const today = new Date();
+  const [fromDate, setFromDate] = useState(
+    new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10)
+  );
+  const [toDate, setToDate] = useState(today.toISOString().slice(0, 10));
+  const [country, setCountry] = useState(defaultCountry);
+  const [scope, setScope] = useState("All");
+
+  const [activeReport, setActiveReport] = useState("sales");
+  const [metric, setMetric] = useState("amount");
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailSearch, setDetailSearch] = useState("");
+  const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
+  const [loading, setLoading] = useState(false);
+  const [selectedRow, setSelectedRow] = useState(null);
+
+  const scopedReports = useMemo(() => {
+    if (scope === "All") return REPORT_CARDS;
+    return REPORT_CARDS.filter((report) => report.scope === scope);
+  }, [scope]);
+
+  useEffect(() => {
+    if (!scopedReports.length) return;
+    const exists = scopedReports.some((report) => report.id === activeReport);
+    if (!exists) {
+      setActiveReport(scopedReports[0].id);
+    }
+  }, [scopedReports, activeReport]);
+
+  useEffect(() => {
+    setLoading(true);
+    const timer = window.setTimeout(() => setLoading(false), 280);
+    return () => window.clearTimeout(timer);
+  }, [activeReport, fromDate, toDate, country, scope]);
+
+  const activeContent = REPORT_CONTENT[activeReport];
+  const chartLabel = metric === "amount" ? "Amount" : "Count";
+
+  const filteredRows = useMemo(() => {
+    const rows = activeContent?.details?.rows || [];
+    const query = normalizeText(detailSearch);
+    const matchRows = query
+      ? rows.filter((row) =>
+          Object.values(row)
+            .join(" ")
+            .toLowerCase()
+            .includes(query)
+        )
+      : rows;
+
+    if (!sortConfig.key) return matchRows;
+    const sorted = [...matchRows].sort((a, b) => {
+      const aValue = a[sortConfig.key];
+      const bValue = b[sortConfig.key];
+      if (typeof aValue === "number" && typeof bValue === "number") {
+        return aValue - bValue;
+      }
+      return String(aValue ?? "").localeCompare(String(bValue ?? ""));
+    });
+    return sortConfig.direction === "desc" ? sorted.reverse() : sorted;
+  }, [activeContent, detailSearch, sortConfig]);
+
+  function toggleSort(key) {
+    setSortConfig((prev) => {
+      if (prev.key === key) {
+        return { key, direction: prev.direction === "asc" ? "desc" : "asc" };
+      }
+      return { key, direction: "asc" };
+    });
+  }
+
+  const tableColumns = activeContent?.details?.columns || [];
+
+  return (
+    <div className="mx-auto max-w-[1360px] space-y-4 pb-24">
       <PageHeader
         title="Reports"
-        subtitle="Choose a report from the library to load its data in the workspace."
+        subtitle="Insights - Finance - Performance"
         right={
-          <div className="flex items-center gap-2">
-            <button className="h-10 rounded-2xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-white">
-              <Filter className="h-4 w-4 inline-flex mr-2" />
-              Filters
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <FileDown className="h-4 w-4" />
+              Export PDF
             </button>
             <button
-              className="h-10 rounded-2xl px-4 text-sm font-semibold text-white shadow-soft"
-              style={{ background: UI.GRADIENT }}
+              type="button"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
-              <Download className="h-4 w-4 inline-flex mr-2" />
-              Export
+              <Boxes className="h-4 w-4" />
+              Export Excel
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-slate-800"
+            >
+              <Printer className="h-4 w-4" />
+              Print
             </button>
           </div>
         }
       />
 
-      <div
-        className={clsx(
-          "grid grid-cols-1 gap-5 transition-all duration-300",
-          navCollapsed ? "xl:grid-cols-[96px_1fr]" : "xl:grid-cols-[320px_1fr]"
-        )}
-      >
-        <Card className="p-4 flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-3">
-            {navCollapsed ? (
-              <div className="h-9 w-9 rounded-2xl flex items-center justify-center bg-emerald-50 text-emerald-700 text-xs font-semibold">
-                RP
+      <div className="sticky top-4 z-20 rounded-3xl border border-slate-200 bg-white/90 p-4 shadow-soft backdrop-blur">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr_1fr]">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-[140px]">
+              <p className="text-xs font-semibold text-slate-500">Date Range</p>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(event) => setFromDate(event.target.value)}
+                  className="w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm"
+                />
+                <span className="text-xs text-slate-400">to</span>
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(event) => setToDate(event.target.value)}
+                  className="w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm"
+                />
               </div>
-            ) : (
-              <div>
-                <p className="text-sm font-semibold text-slate-900">Report Library</p>
-                <p className="text-xs text-slate-500">Browse by section</p>
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => setNavCollapsed((prev) => !prev)}
-              className="h-9 w-9 rounded-2xl border border-slate-100 flex items-center justify-center hover:bg-slate-50"
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-500">Country</p>
+            <select
+              value={country}
+              onChange={(event) => setCountry(event.target.value)}
+              className="mt-2 w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm"
             >
-              {navCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-            </button>
+              {COUNTRIES.map((entry) => (
+                <option key={entry} value={entry}>
+                  {entry}
+                </option>
+              ))}
+            </select>
           </div>
-
-          <div className={clsx("relative", navCollapsed && "hidden")}>
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search reports"
-              className="w-full rounded-2xl border border-slate-100 bg-white px-9 py-2 text-sm outline-none focus:border-emerald-200"
-            />
-          </div>
-
-          <div className="flex-1 overflow-y-auto pr-1 scroll-smooth max-h-[calc(100vh-280px)]">
-            <div className="space-y-3">
-              {filteredSections.map((section) => (
-                <ReportAccordion
-                  key={section.id}
-                  title={section.title}
-                  description={section.description}
-                  count={section.items.length}
-                  expanded={expandedSections[section.id]}
-                  collapsed={navCollapsed}
-                  onToggle={() => toggleSection(section.id)}
+          <div>
+            <p className="text-xs font-semibold text-slate-500">Report Scope</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {SCOPE_OPTIONS.map((entry) => (
+                <button
+                  key={entry}
+                  type="button"
+                  onClick={() => setScope(entry)}
+                  className={clsx(
+                    "rounded-full border px-4 py-2 text-sm font-semibold",
+                    scope === entry
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  )}
                 >
-                  {section.items.map((report) => (
-                    <ReportListItem
-                      key={report.id}
-                      report={report}
-                      compact={navCollapsed}
-                      active={activeReport?.id === report.id}
-                      onSelect={handleSelect}
-                    />
-                  ))}
-                </ReportAccordion>
+                  {entry}
+                </button>
               ))}
             </div>
           </div>
-        </Card>
-
-        <div className="space-y-4">
-          {!activeReport ? (
-            <EmptyState
-              icon={BarChart3}
-              title="Select a report"
-              description="Pick a report from the left panel to load its data in the workspace."
-            />
-          ) : isSaleReport ? (
-            <>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-500">Transaction report</p>
-                  <h2 className="text-2xl font-semibold text-slate-900">Sale Invoices</h2>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button className="h-10 rounded-full bg-rose-500 px-5 text-sm font-semibold text-white shadow-soft hover:bg-rose-600">
-                    <Plus className="h-4 w-4 inline-flex mr-2" />
-                    Add Sale
-                  </button>
-                  <button className="h-10 w-10 rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">
-                    <Settings className="h-4 w-4 mx-auto" />
-                  </button>
-                </div>
-              </div>
-
-              <Card className="p-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className="text-sm font-semibold text-slate-600">Filter by :</span>
-                  {["All Sale Invoices", "Pick a date", "All Firms", "All Users"].map((label) => (
-                    <button
-                      key={label}
-                      className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-white"
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </Card>
-
-              <Card className="p-5">
-                <p className="text-sm text-slate-500">Total Sales Amount</p>
-                <p className="text-2xl font-semibold text-slate-900">₹ 0</p>
-                <div className="mt-2 text-sm text-slate-500">
-                  Received: <span className="font-semibold text-slate-700">₹ 0</span> | Balance:{" "}
-                  <span className="font-semibold text-slate-700">₹ 0</span>
-                </div>
-              </Card>
-
-              <Card className="p-8">
-                <div className="flex flex-col items-center text-center gap-2">
-                  <div className="h-20 w-20 rounded-full bg-blue-100 flex items-center justify-center">
-                    <BarChart3 className="h-8 w-8 text-blue-500" />
-                  </div>
-                  <p className="text-base font-semibold text-slate-800">No Transactions to show</p>
-                  <p className="text-sm text-slate-500">You haven't added any transactions yet.</p>
-                  <button className="mt-2 rounded-full bg-rose-500 px-6 py-2 text-sm font-semibold text-white hover:bg-rose-600">
-                    <Plus className="h-4 w-4 inline-flex mr-2" />
-                    Add Sale
-                  </button>
-                </div>
-              </Card>
-            </>
-          ) : (
-            <>
-              <Card className="p-5">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-sm text-slate-500">{activeReport.sectionTitle}</p>
-                    <h2 className="text-xl font-semibold text-slate-900 truncate">{activeReport.label}</h2>
-                    <p className="text-sm text-slate-500 mt-1">{activeReport.description}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button className="h-9 rounded-2xl border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                      <SlidersHorizontal className="h-3.5 w-3.5 inline-flex mr-2" />
-                      Customize
-                    </button>
-                    <button
-                      className="h-9 rounded-2xl px-3 text-xs font-semibold text-white"
-                      style={{ background: UI.GRADIENT }}
-                    >
-                      Run Report
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {(activeReport.filters || []).map((filter) => (
-                    <span
-                      key={filter}
-                      className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600"
-                    >
-                      {filter}
-                    </span>
-                  ))}
-                </div>
-              </Card>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <StatCard title="Total Value" value="₹0.00" icon={Wallet} hint="Awaiting report run" />
-                <StatCard title="Net Movement" value="₹0.00" icon={TrendingUp} hint="No entries selected" />
-                <StatCard title="Opening Balance" value="₹0.00" icon={Banknote} hint="Select a date range" />
-              </div>
-
-              <Card className="p-4 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm text-slate-600">
-                  <SlidersHorizontal className="h-4 w-4" />
-                  Configure date range, party, and grouping to populate the table.
-                </div>
-                <button className="rounded-2xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                  Save View
-                </button>
-              </Card>
-
-              <DataTable columns={reportColumns} rows={[]} emptyText="No data loaded yet. Run the report to fetch results." />
-            </>
-          )}
         </div>
       </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {scopedReports.length ? (
+          scopedReports.map((report) => (
+            <ReportCard
+              key={report.id}
+              report={report}
+              active={report.id === activeReport}
+              currency={currency}
+              onSelect={setActiveReport}
+            />
+          ))
+        ) : (
+          <Card className="p-6 text-center text-sm text-slate-500">
+            No reports available for the selected scope.
+          </Card>
+        )}
+      </div>
+
+      <Card className="p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">
+              {REPORT_CARDS.find((report) => report.id === activeReport)?.label}
+            </p>
+            <p className="text-xs text-slate-500">
+              Filters applied: {fromDate} to {toDate} - {country}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMetric("amount")}
+              className={clsx(
+                "rounded-full border px-4 py-2 text-xs font-semibold",
+                metric === "amount"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-slate-200 bg-white text-slate-600"
+              )}
+            >
+              Amount
+            </button>
+            <button
+              type="button"
+              onClick={() => setMetric("count")}
+              className={clsx(
+                "rounded-full border px-4 py-2 text-xs font-semibold",
+                metric === "count"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-slate-200 bg-white text-slate-600"
+              )}
+            >
+              Count
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-4">
+          {loading
+            ? Array.from({ length: 4 }).map((_, index) => (
+                <div key={`summary-loading-${index}`} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <LoadingBlock />
+                </div>
+              ))
+            : activeContent?.summary?.map((card) => (
+                <div key={card.label} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-xs font-semibold text-slate-500">{card.label}</p>
+                  <p
+                    className={clsx(
+                      "mt-2 text-2xl font-bold",
+                      card.tone === "success"
+                        ? "text-emerald-600"
+                        : card.tone === "danger"
+                        ? "text-rose-600"
+                        : card.tone === "warn"
+                        ? "text-amber-600"
+                        : "text-slate-900"
+                    )}
+                  >
+                    {formatValue(card.value, card.format || "money", currency)}
+                  </p>
+                </div>
+              ))}
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Trend ({chartLabel})</p>
+                <p className="text-xs text-slate-500">Visual read of the selected report.</p>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <LineChartIcon className="h-4 w-4" />
+                {metric === "amount" ? "Currency" : "Count"}
+              </div>
+            </div>
+            <div className="mt-4">
+              {loading ? (
+                <LoadingBlock />
+              ) : (
+                <ChartBlock
+                  type={activeContent?.chart?.type}
+                  data={activeContent?.chart?.data}
+                  metric={metric}
+                  currency={currency}
+                />
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-900">Highlights</p>
+                <Badge tone="success">Auto insights</Badge>
+              </div>
+              <ul className="mt-3 space-y-2 text-sm text-slate-600">
+                <li>Top 3 accounts contribute 54% of the total volume.</li>
+                <li>Receivables aging improved by 6 days since last month.</li>
+                <li>Tax payable is down 2.7% after input offsets.</li>
+              </ul>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <p className="text-sm font-semibold text-slate-900">Quick Actions</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  Export PDF
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  <Boxes className="h-3.5 w-3.5" />
+                  Export Excel
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                  Print
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Details</p>
+            <p className="text-xs text-slate-500">Expandable data table with sorting and search.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDetailsOpen((prev) => !prev)}
+            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            {detailsOpen ? "Collapse" : "Expand"}
+          </button>
+        </div>
+
+        {detailsOpen ? (
+          <div className="mt-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="relative w-full max-w-sm">
+                <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                <input
+                  value={detailSearch}
+                  onChange={(event) => setDetailSearch(event.target.value)}
+                  placeholder="Search within report"
+                  className="w-full rounded-full border border-slate-200 bg-slate-50 px-10 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200"
+                />
+              </label>
+              <span className="text-xs text-slate-500">Click row to drill down to source</span>
+            </div>
+
+            <div className="overflow-auto rounded-2xl border border-slate-200">
+              <table className="w-full min-w-[900px] text-left text-sm">
+                <thead className="sticky top-0 bg-slate-50">
+                  <tr>
+                    {tableColumns.map((col) => (
+                      <th
+                        key={col.key}
+                        onClick={() => toggleSort(col.key)}
+                        className={clsx(
+                          "cursor-pointer px-4 py-3 font-semibold text-slate-700",
+                          col.align === "right" ? "text-right" : "text-left"
+                        )}
+                      >
+                        <div
+                          className={clsx(
+                            "flex items-center gap-2",
+                            col.align === "right" ? "justify-end" : "justify-start"
+                          )}
+                        >
+                          {col.label}
+                          {sortConfig.key === col.key ? (
+                            <span className="text-[10px] text-slate-400">
+                              {sortConfig.direction === "asc" ? "ASC" : "DESC"}
+                            </span>
+                          ) : null}
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td colSpan={tableColumns.length} className="px-4 py-10 text-center text-slate-500">
+                        Loading report data...
+                      </td>
+                    </tr>
+                  ) : filteredRows.length ? (
+                    filteredRows.map((row) => (
+                      <tr
+                        key={row.id}
+                        onClick={() => setSelectedRow(row.id)}
+                        className={clsx(
+                          "border-t border-slate-100 hover:bg-slate-50/70",
+                          selectedRow === row.id ? "bg-emerald-50/60" : ""
+                        )}
+                      >
+                        {tableColumns.map((col) => (
+                          <td
+                            key={`${row.id}-${col.key}`}
+                            className={clsx("px-4 py-3", col.align === "right" ? "text-right" : "text-left")}
+                          >
+                            {col.format === "status" ? (
+                              <Badge tone={statusTone(row[col.key])}>{row[col.key]}</Badge>
+                            ) : (
+                              formatValue(row[col.key], col.format, currency)
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={tableColumns.length} className="px-4 py-10 text-center text-slate-500">
+                        No data for selected filters
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+            Details are collapsed to keep the page fast. Expand to view the sortable report table.
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
