@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Download, FileDown, Loader2, Mail, Save, Send } from "lucide-react";
-import GradientButton from "../../components/GradientButton";
+import { ArrowLeft, Loader2, Save } from "lucide-react";
 import { CREDIT_REASONS, COUNTRY_CONFIG, type CountryCode, type CreditStatus, type CreditType } from "./countryConfig";
 import type { CreditInvoice, CreditNoteRecord, CustomerOption } from "./store";
 import type { CreditNoteFormState } from "./types";
@@ -40,8 +39,6 @@ interface CreditNoteEditorProps {
 const CREDIT_TYPES: CreditType[] = [
   "Full Credit",
   "Partial Credit",
-  "Item Return",
-  "Price Adjustment",
   "Discount Credit"
 ];
 
@@ -49,8 +46,15 @@ function readStoredTotalsCard(storageKey: string) {
   if (typeof window === "undefined") return defaultFloatingCardState();
   try {
     const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return defaultFloatingCardState();
-    return sanitizeFloatingCardState(JSON.parse(raw));
+    const saved = raw ? sanitizeFloatingCardState(JSON.parse(raw)) : defaultFloatingCardState();
+    if (window.innerWidth >= 1280 && saved.size !== "maximized" && !saved.hidden) {
+      return {
+        ...saved,
+        x: Math.max(92, window.innerWidth - 420),
+        y: 170
+      };
+    }
+    return saved;
   } catch {
     return defaultFloatingCardState();
   }
@@ -162,8 +166,8 @@ export default function CreditNoteEditor({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="credit-note-compact flex h-full min-h-0 flex-col gap-2.5">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-2.5">
         <button
           onClick={onBack}
           className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
@@ -176,11 +180,11 @@ export default function CreditNoteEditor({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4">
-        <fieldset className="space-y-4" disabled={isReadOnly}>
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1 pb-2 xl:pr-[400px]">
+        <fieldset className="space-y-2.5" disabled={isReadOnly}>
+          <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
             <p className="text-sm font-semibold text-slate-900">Section 1 - Basic Info</p>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
               <label className="text-xs font-semibold text-slate-600">
                 Selected Country
                 <input
@@ -223,7 +227,7 @@ export default function CreditNoteEditor({
                 </datalist>
                 {fieldErrors.customerId ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.customerId}</span> : null}
               </label>
-              <label className="text-xs font-semibold text-slate-600 md:col-span-2">
+              <label className="text-xs font-semibold text-slate-600 md:col-span-2 xl:col-span-3">
                 <span className="inline-flex items-center gap-2">
                   Linked Invoice (same country only)
                   {invoiceLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" /> : null}
@@ -254,9 +258,9 @@ export default function CreditNoteEditor({
             </div>
           </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">
+          <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
             <p className="text-sm font-semibold text-slate-900">Section 2 - Credit Type</p>
-            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
               {CREDIT_TYPES.map((type) => (
                 <label
                   key={type}
@@ -269,7 +273,7 @@ export default function CreditNoteEditor({
                 </label>
               ))}
             </div>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2">
               {form.creditType === "Partial Credit" ? (
                 <label className="text-xs font-semibold text-slate-600">
                   Partial Credit Amount
@@ -296,85 +300,10 @@ export default function CreditNoteEditor({
                   />
                 </label>
               ) : null}
-              {form.creditType === "Price Adjustment" ? (
-                <label className="text-xs font-semibold text-slate-600">
-                  Price Adjustment Amount
-                  <input
-                    type="number"
-                    value={form.priceAdjustmentAmount}
-                    onChange={(event) => onUpdateForm("priceAdjustmentAmount", event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
-                  />
-                </label>
-              ) : null}
-              {form.creditType === "Item Return" ? (
-                <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={form.returnToStock}
-                    onChange={(event) => onUpdateForm("returnToStock", event.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300"
-                  />
-                  Return quantity to stock
-                </label>
-              ) : null}
             </div>
           </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">
-            <p className="text-sm font-semibold text-slate-900">Country-Specific Fields</p>
-            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label className="text-xs font-semibold text-slate-600">
-                {cfg.registrationLabel}
-                <input
-                  value={form.registrationNumber}
-                  onChange={(event) => onUpdateForm("registrationNumber", event.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
-                />
-                {fieldErrors.registrationNumber ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.registrationNumber}</span> : null}
-              </label>
-              <label className="text-xs font-semibold text-slate-600">
-                {cfg.taxLabel} %
-                <input
-                  type="number"
-                  min={0}
-                  value={form.taxRate}
-                  onChange={(event) => onUpdateForm("taxRate", parseNumber(event.target.value))}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
-                />
-              </label>
-              <label className="text-xs font-semibold text-slate-600">
-                Place of Supply / State
-                <input
-                  value={form.placeOfSupply}
-                  onChange={(event) => onUpdateForm("placeOfSupply", event.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
-                />
-              </label>
-              {country === "UK" ? (
-                <label className="text-xs font-semibold text-slate-600">
-                  HMRC Reference
-                  <input
-                    value={form.hmrcReference}
-                    onChange={(event) => onUpdateForm("hmrcReference", event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
-                  />
-                </label>
-              ) : null}
-              {country === "US" ? (
-                <label className="text-xs font-semibold text-slate-600">
-                  Sales Tax State
-                  <input
-                    value={form.salesTaxState}
-                    onChange={(event) => onUpdateForm("salesTaxState", event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
-                  />
-                </label>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">
+          <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
             <div className="flex items-center justify-between">
               <p className="text-sm font-semibold text-slate-900">Section 3 - Items Table</p>
               <button onClick={onAddLine} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
@@ -382,8 +311,8 @@ export default function CreditNoteEditor({
               </button>
             </div>
             {fieldErrors.lines ? <p className="mt-2 text-xs text-rose-600">{fieldErrors.lines}</p> : null}
-            <div className="mt-3 overflow-auto">
-              <table className="min-w-[1280px] w-full text-left text-sm">
+            <div className="mt-2.5 max-h-[32vh] overflow-auto">
+              <table className="min-w-[1060px] w-full text-left text-sm">
                 <thead className="bg-slate-50">
                   <tr>
                     <th className="px-3 py-2 font-semibold text-slate-700">Item Name</th>
@@ -404,12 +333,12 @@ export default function CreditNoteEditor({
                 <tbody>
                   {totals.detailed.map((line) => (
                     <tr key={line.id} className="border-t border-slate-100">
-                      <td className="px-3 py-2"><input value={line.itemName} onChange={(event) => onUpdateLine(line.id, { itemName: event.target.value })} className="w-52 rounded-lg border border-slate-200 px-2 py-1.5 text-sm" /></td>
-                      {country === "IN" ? <td className="px-3 py-2"><input value={line.hsnSac || ""} onChange={(event) => onUpdateLine(line.id, { hsnSac: event.target.value })} className="w-32 rounded-lg border border-slate-200 px-2 py-1.5 text-sm" /></td> : null}
-                      <td className="px-3 py-2"><input type="number" min={0} value={line.quantity} onChange={(event) => onUpdateLine(line.id, { quantity: parseNumber(event.target.value) })} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm" /></td>
-                      <td className="px-3 py-2"><input type="number" min={0} value={line.rate} onChange={(event) => onUpdateLine(line.id, { rate: parseNumber(event.target.value) })} className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm" /></td>
+                      <td className="px-3 py-2"><input value={line.itemName} onChange={(event) => onUpdateLine(line.id, { itemName: event.target.value })} className="w-44 rounded-lg border border-slate-200 px-2 py-1.5 text-sm" /></td>
+                      {country === "IN" ? <td className="px-3 py-2"><input value={line.hsnSac || ""} onChange={(event) => onUpdateLine(line.id, { hsnSac: event.target.value })} className="w-28 rounded-lg border border-slate-200 px-2 py-1.5 text-sm" /></td> : null}
+                      <td className="px-3 py-2"><input type="number" min={0} value={line.quantity} onChange={(event) => onUpdateLine(line.id, { quantity: parseNumber(event.target.value) })} className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm" /></td>
+                      <td className="px-3 py-2"><input type="number" min={0} value={line.rate} onChange={(event) => onUpdateLine(line.id, { rate: parseNumber(event.target.value) })} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm" /></td>
                       <td className="px-3 py-2 text-right font-medium text-slate-700">{formatMoney(line.baseAmount, country)}</td>
-                      <td className="px-3 py-2"><input type="number" min={0} value={line.taxRate} onChange={(event) => onUpdateLine(line.id, { taxRate: parseNumber(event.target.value) })} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm" /></td>
+                      <td className="px-3 py-2"><input type="number" min={0} value={line.taxRate} onChange={(event) => onUpdateLine(line.id, { taxRate: parseNumber(event.target.value) })} className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm" /></td>
                       <td className="px-3 py-2 text-right font-medium text-slate-700">{formatMoney(line.taxAmount, country)}</td>
                       <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatMoney(line.amountAfterTax, country)}</td>
                       <td className="px-3 py-2">
@@ -424,7 +353,7 @@ export default function CreditNoteEditor({
                           min={0}
                           value={line.creditValue}
                           onChange={(event) => onUpdateLine(line.id, { creditValue: parseNumber(event.target.value) })}
-                          className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
+                          className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
                         />
                         {line.validationMessage ? <p className="mt-1 text-right text-[11px] text-rose-600">{line.validationMessage}</p> : null}
                       </td>
@@ -439,9 +368,9 @@ export default function CreditNoteEditor({
             </div>
           </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">
+          <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
             <p className="text-sm font-semibold text-slate-900">Section 4 - Reason & Notes</p>
-            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="mt-2.5 grid grid-cols-1 gap-2.5 md:grid-cols-2">
               <label className="text-xs font-semibold text-slate-600">
                 Reason
                 <select value={form.reason} onChange={(event) => onUpdateForm("reason", event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
@@ -506,22 +435,22 @@ export default function CreditNoteEditor({
         </div>
       </FloatingCard>
 
-      <div className="fixed bottom-0 right-0 left-[84px] z-40 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:left-[260px]">
-        <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-between gap-3">
+      <div className="shrink-0 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-xs text-slate-500">
             Status: <span className="font-semibold text-slate-700">{activeNote?.status || "Unsaved Draft"}</span>
             {fieldErrors.workflow ? <span className="ml-3 font-semibold text-rose-600">{fieldErrors.workflow}</span> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {!isReadOnly ? (
-              <>
-                <button onClick={() => onPersist("Draft")} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><Save className="h-4 w-4" />Save as Draft</button>
-                <button onClick={() => onPersist("Issued")} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><Send className="h-4 w-4" />Issue Credit Note</button>
-                <button onClick={() => onPersist("Applied")} disabled={!access.canApply} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"><Download className="h-4 w-4" />Apply to Invoice</button>
-                <button onClick={() => onPersist(activeNote?.status || "Draft", { email: true })} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><Mail className="h-4 w-4" />Email</button>
-              </>
+              <button
+                onClick={() => onPersist("Draft")}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
+              >
+                <Save className="h-4 w-4" />
+                Save
+              </button>
             ) : null}
-            <GradientButton onClick={() => onPersist(activeNote?.status || "Draft", { download: true })}><FileDown className="h-4 w-4" />Download PDF</GradientButton>
           </div>
         </div>
       </div>

@@ -13,6 +13,13 @@ const PRICE_TAX_MODES = [
   { value: "WITH_TAX", label: "With Tax" }
 ];
 const DEFAULT_UNITS = ["pcs", "kg", "box", "ltr", "set", "hr"];
+const BLOCKED_UNITS = ["job"];
+
+function normalizeUnit(unit) {
+  const value = String(unit || "").trim();
+  if (!value) return "pcs";
+  return BLOCKED_UNITS.includes(value.toLowerCase()) ? "pcs" : value;
+}
 
 function money(n) {
   const v = Number(n || 0);
@@ -36,7 +43,7 @@ function createLine(items) {
     itemId: item?.id || "",
     itemName: item?.name || "",
     qty: 1,
-    unit: item?.unit || "pcs",
+    unit: normalizeUnit(item?.unit),
     rate: purchaseRate,
     priceTaxMode: "WITHOUT_TAX",
     tax: item?.taxRate || 0
@@ -65,7 +72,9 @@ export default function PurchaseBill() {
   }, [party?.phone]);
 
   const unitOptions = useMemo(() => {
-    const itemUnits = items.map((item) => item.unit).filter(Boolean);
+    const itemUnits = items
+      .map((item) => normalizeUnit(item.unit))
+      .filter((unit) => unit && !BLOCKED_UNITS.includes(unit.toLowerCase()));
     return Array.from(new Set([...DEFAULT_UNITS, ...itemUnits]));
   }, [items]);
 
@@ -88,7 +97,7 @@ export default function PurchaseBill() {
         ...line,
         itemName: match.name,
         itemId: match.id,
-        unit: match.unit || line.unit,
+        unit: normalizeUnit(match.unit || line.unit),
         rate: purchaseRate,
         tax: match.taxRate ?? line.tax
       };

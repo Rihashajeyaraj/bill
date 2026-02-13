@@ -6,6 +6,7 @@ import CreditNoteListTable from "../../modules/creditNote/CreditNoteListTable";
 import CreditNoteEditor from "../../modules/creditNote/CreditNoteEditor";
 import {
   COUNTRY_CONFIG,
+  COUNTRY_NAME_TO_CODE,
   COUNTRY_OPTIONS,
   type CountryCode,
   type CreditStatus
@@ -51,7 +52,22 @@ export default function CreditNotePremium() {
   const actorName = user?.name || user?.email || "System User";
   const companyState = company?.address?.state || "";
 
-  const [country, setCountry] = useState<CountryCode | "">(getSelectedCreditCountry());
+  function resolveInitialCountry(): CountryCode | "" {
+    const saved = getSelectedCreditCountry();
+    if (saved && access.allowedCountries.includes(saved)) return saved;
+
+    const companyCountryRaw = company?.country || company?.address?.country || "";
+    const mappedCompanyCountry =
+      (companyCountryRaw in COUNTRY_CONFIG
+        ? (companyCountryRaw as CountryCode)
+        : COUNTRY_NAME_TO_CODE[String(companyCountryRaw || "").trim()]) || "";
+    if (mappedCompanyCountry && access.allowedCountries.includes(mappedCompanyCountry)) {
+      return mappedCompanyCountry;
+    }
+    return access.allowedCountries[0] || "";
+  }
+
+  const [country, setCountry] = useState<CountryCode | "">(resolveInitialCountry);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [form, setForm] = useState<CreditNoteFormState | null>(null);
   const [activeNote, setActiveNote] = useState<CreditNoteRecord | null>(null);
@@ -79,6 +95,11 @@ export default function CreditNotePremium() {
   const selectedCustomer = useMemo(() => customers.find((customer) => customer.id === form?.customerId) || null, [customers, form?.customerId]);
   const totals = useMemo(() => (form && country ? computeEditorTotals(form, country, selectedInvoice?.remainingBalance || 0, companyState) : { detailed: [], subtotal: 0, taxTotal: 0, total: 0, remaining: 0, cgst: 0, sgst: 0, igst: 0 }), [form, country, selectedInvoice?.remainingBalance, companyState]);
   const allowed = !country || access.allowedCountries.includes(country);
+
+  useEffect(() => {
+    if (!country) return;
+    setSelectedCreditCountry(country);
+  }, [country]);
 
   useEffect(() => {
     if (!country) return;
@@ -209,13 +230,10 @@ export default function CreditNotePremium() {
 
   function validate(targetStatus: CreditStatus) {
     if (!form || !country) return false;
-    const cfg = COUNTRY_CONFIG[country];
     const errors: Record<string, string> = {};
     if (!form.creditNoteDate) errors.creditNoteDate = "Credit note date is required.";
     if (!form.customerId) errors.customerId = "Customer is required.";
     if (!form.linkedInvoiceId) errors.linkedInvoiceId = "Linked invoice is mandatory.";
-    if (cfg.registrationRequired && !form.registrationNumber.trim()) errors.registrationNumber = `${cfg.registrationLabel} is required.`;
-    if (cfg.registrationRegex && form.registrationNumber.trim() && !cfg.registrationRegex.test(form.registrationNumber.trim())) errors.registrationNumber = `Invalid ${cfg.registrationLabel} format.`;
     if (country === "IN" && form.lines.some((line) => !line.hsnSac?.trim())) errors.lines = "HSN/SAC is mandatory for India.";
     if ((totals as any).detailed?.some((line: any) => line.validationMessage)) errors.lines = "Credit cannot exceed amount after tax.";
     if (form.creditType === "Partial Credit" && parseNumber(form.partialAmountCap) <= 0) errors.partialAmountCap = "Partial credit amount is required.";
@@ -279,17 +297,31 @@ export default function CreditNotePremium() {
   }
 
   return (
-    <div className="mx-auto max-w-[1440px] space-y-4 pb-28">
-      <CountrySelector value={country} onChange={onCountryChange} />
+    <div className="mx-auto flex h-full max-w-[1440px] flex-col gap-3">
+      {country ? (
+        <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Country Context</p>
+              <p className="text-xs text-slate-500">Credit Note is locked to the selected country.</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
+              {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].name}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <CountrySelector value={country} onChange={onCountryChange} />
+      )}
 
       {!country ? (
         <EmptyState icon={AlertTriangle} title="Select a country to continue" description="Country is mandatory before creating or viewing credit notes." />
       ) : (
-        <div className={`space-y-4 transition-all duration-300 ${switching ? "translate-y-1 opacity-40" : "opacity-100"}`}>
+        <div className={`min-h-0 flex flex-1 flex-col gap-3 transition-all duration-300 ${switching ? "translate-y-1 opacity-40" : "opacity-100"}`}>
           {!allowed ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">You do not have access to manage {COUNTRY_CONFIG[country].name} data.</div> : null}
 
           {viewMode === "list" ? (
-            <>
+            <div className="min-h-0 overflow-y-auto pr-1 pb-2">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Credit Notes</p><p className="mt-3 text-2xl font-bold text-slate-900">{summary?.count || 0}</p></div>
                 <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Credited Amount</p><p className="mt-3 text-2xl font-bold text-slate-900">{formatMoney(summary?.totalAmount || 0, country)}</p></div>
@@ -329,32 +361,34 @@ export default function CreditNotePremium() {
                   }}
                 />
               )}
-            </>
+            </div>
           ) : form ? (
-            editorLoading ? (
-              <CreditNoteSkeleton />
-            ) : (
-            <CreditNoteEditor
-              country={country}
-              readOnly={viewMode === "view"}
-              form={form}
-                activeNote={activeNote}
-                customers={customers}
-                invoices={invoices}
-                selectedInvoice={selectedInvoice}
-                totals={totals as any}
-                actorName={actorName}
-                access={access}
-                fieldErrors={fieldErrors}
-                onBack={backToList}
-                onUpdateForm={updateForm}
-                onApplyInvoice={applyInvoice}
-                onUpdateLine={updateLine}
-                onAddLine={addLine}
-                onRemoveLine={removeLine}
-                onPersist={persist}
-              />
-            )
+            <div className="min-h-0 flex-1">
+              {editorLoading ? (
+                <CreditNoteSkeleton />
+              ) : (
+              <CreditNoteEditor
+                country={country}
+                readOnly={viewMode === "view"}
+                form={form}
+                  activeNote={activeNote}
+                  customers={customers}
+                  invoices={invoices}
+                  selectedInvoice={selectedInvoice}
+                  totals={totals as any}
+                  actorName={actorName}
+                  access={access}
+                  fieldErrors={fieldErrors}
+                  onBack={backToList}
+                  onUpdateForm={updateForm}
+                  onApplyInvoice={applyInvoice}
+                  onUpdateLine={updateLine}
+                  onAddLine={addLine}
+                  onRemoveLine={removeLine}
+                  onPersist={persist}
+                />
+              )}
+            </div>
           ) : null}
 
           {errorMessage ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{errorMessage}</div> : null}

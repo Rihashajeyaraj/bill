@@ -6,6 +6,7 @@ import DebitNoteListTable from "../../modules/debitNote/DebitNoteListTable";
 import DebitNoteEditor from "../../modules/debitNote/DebitNoteEditor";
 import {
   COUNTRY_CONFIG,
+  COUNTRY_NAME_TO_CODE,
   COUNTRY_OPTIONS,
   type CountryCode,
   type DebitStatus
@@ -63,7 +64,22 @@ export default function DebitNotePremium() {
   const actorName = user?.name || user?.email || "System User";
   const companyState = company?.address?.state || "";
 
-  const [country, setCountry] = useState<CountryCode | "">(getSelectedDebitCountry());
+  function resolveInitialCountry(): CountryCode | "" {
+    const saved = getSelectedDebitCountry();
+    if (saved && access.allowedCountries.includes(saved)) return saved;
+
+    const companyCountryRaw = company?.country || company?.address?.country || "";
+    const mappedCompanyCountry =
+      (companyCountryRaw in COUNTRY_CONFIG
+        ? (companyCountryRaw as CountryCode)
+        : COUNTRY_NAME_TO_CODE[String(companyCountryRaw || "").trim()]) || "";
+    if (mappedCompanyCountry && access.allowedCountries.includes(mappedCompanyCountry)) {
+      return mappedCompanyCountry;
+    }
+    return access.allowedCountries[0] || "";
+  }
+
+  const [country, setCountry] = useState<CountryCode | "">(resolveInitialCountry);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [form, setForm] = useState<DebitNoteFormState | null>(null);
   const [activeNote, setActiveNote] = useState<DebitNoteRecord | null>(null);
@@ -113,6 +129,11 @@ export default function DebitNotePremium() {
     const timer = window.setTimeout(() => setLoading(false), 220);
     return () => window.clearTimeout(timer);
   }, [country, refreshKey]);
+
+  useEffect(() => {
+    if (!country) return;
+    setSelectedDebitCountry(country);
+  }, [country]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -254,22 +275,16 @@ export default function DebitNotePremium() {
 
   function validate(targetStatus: DebitStatus) {
     if (!form || !country) return false;
-    const cfg = COUNTRY_CONFIG[country];
     const errors: Record<string, string> = {};
 
     if (!form.debitNoteDate) errors.debitNoteDate = "Debit note date is required.";
     if (!form.supplierId) errors.supplierId = "Supplier is required.";
     if (!form.linkedPurchaseInvoiceId) errors.linkedPurchaseInvoiceId = "Linked purchase invoice is mandatory.";
-    if (cfg.registrationRequired && !form.registrationNumber.trim()) errors.registrationNumber = `${cfg.registrationLabel} is required.`;
-    if (cfg.registrationRegex && form.registrationNumber.trim() && !cfg.registrationRegex.test(form.registrationNumber.trim())) {
-      errors.registrationNumber = `Invalid ${cfg.registrationLabel} format.`;
-    }
     if (country === "IN" && form.lines.some((line) => !line.hsnSac?.trim())) errors.lines = "HSN/SAC is mandatory for India.";
     if (!form.lines.length) errors.lines = "At least one line item is required.";
     if (form.debitType === "Partial Debit" && parseNumber(form.partialAmountCap) <= 0) errors.partialAmountCap = "Partial debit amount is required.";
     if (form.debitType === "Price Increase" && parseNumber(form.priceAdjustmentAmount) <= 0) errors.priceAdjustmentAmount = "Price increase amount is required.";
     if (form.debitType === "Additional Charges" && parseNumber(form.additionalChargesAmount) <= 0) errors.additionalChargesAmount = "Additional charges amount is required.";
-    if (form.debitType === "Tax Adjustment" && parseNumber(form.taxAdjustmentAmount) <= 0) errors.taxAdjustmentAmount = "Tax adjustment amount is required.";
     if ((totals as any).detailed?.some((line: any) => line.validationMessage)) errors.lines = "Debit amount cannot be negative.";
     if (totals.total <= 0) errors.totals = "Total debit must be greater than zero.";
     if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Admin can apply debits.";
@@ -331,17 +346,31 @@ export default function DebitNotePremium() {
   }
 
   return (
-    <div className="mx-auto max-w-[1440px] space-y-4 pb-28">
-      <CountrySelector value={country} onChange={onCountryChange} />
+    <div className="mx-auto flex h-full max-w-[1440px] flex-col gap-3">
+      {country ? (
+        <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Country Context</p>
+              <p className="text-xs text-slate-500">Debit Note is locked to the selected country.</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
+              {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].name}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <CountrySelector value={country} onChange={onCountryChange} />
+      )}
 
       {!country ? (
         <EmptyState icon={AlertTriangle} title="Select a country to continue" description="Country is mandatory before creating or viewing debit notes." />
       ) : (
-        <div className={`space-y-4 transition-all duration-300 ${switching ? "translate-y-1 opacity-40" : "opacity-100"}`}>
+        <div className={`min-h-0 flex flex-1 flex-col gap-3 transition-all duration-300 ${switching ? "translate-y-1 opacity-40" : "opacity-100"}`}>
           {!allowed ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">You do not have access to manage {COUNTRY_CONFIG[country].name} data.</div> : null}
 
           {viewMode === "list" ? (
-            <>
+            <div className="min-h-0 overflow-y-auto pr-1 pb-2">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Debit Notes</p><p className="mt-3 text-2xl font-bold text-slate-900">{summary?.count || 0}</p></div>
                 <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Debit Amount</p><p className="mt-3 text-2xl font-bold text-slate-900">{formatMoney(summary?.totalAmount || 0, country)}</p></div>
@@ -381,32 +410,34 @@ export default function DebitNotePremium() {
                   }}
                 />
               )}
-            </>
+            </div>
           ) : form ? (
-            editorLoading ? (
-              <DebitNoteSkeleton />
-            ) : (
-              <DebitNoteEditor
-                country={country}
-                readOnly={viewMode === "view"}
-                form={form}
-                activeNote={activeNote}
-                suppliers={suppliers}
-                invoices={invoices}
-                selectedInvoice={selectedInvoice}
-                totals={totals as any}
-                actorName={actorName}
-                access={access}
-                fieldErrors={fieldErrors}
-                onBack={backToList}
-                onUpdateForm={updateForm}
-                onApplyInvoice={applyInvoice}
-                onUpdateLine={updateLine}
-                onAddLine={addLine}
-                onRemoveLine={removeLine}
-                onPersist={persist}
-              />
-            )
+            <div className="min-h-0 flex-1">
+              {editorLoading ? (
+                <DebitNoteSkeleton />
+              ) : (
+                <DebitNoteEditor
+                  country={country}
+                  readOnly={viewMode === "view"}
+                  form={form}
+                  activeNote={activeNote}
+                  suppliers={suppliers}
+                  invoices={invoices}
+                  selectedInvoice={selectedInvoice}
+                  totals={totals as any}
+                  actorName={actorName}
+                  access={access}
+                  fieldErrors={fieldErrors}
+                  onBack={backToList}
+                  onUpdateForm={updateForm}
+                  onApplyInvoice={applyInvoice}
+                  onUpdateLine={updateLine}
+                  onAddLine={addLine}
+                  onRemoveLine={removeLine}
+                  onPersist={persist}
+                />
+              )}
+            </div>
           ) : null}
 
           {errorMessage ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{errorMessage}</div> : null}

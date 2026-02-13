@@ -72,4 +72,20 @@ body {
   .muted {
     @apply text-slate-500;
   }
+  .credit-note-compact input,
+  .credit-note-compact select,
+  .credit-note-compact textarea {
+    min-height: 36px;
+  }
+  .credit-note-compact textarea {
+    min-height: 68px;
+  }
+  .debit-note-compact input,
+  .debit-note-compact select,
+  .debit-note-compact textarea {
+    min-height: 36px;
+  }
+  .debit-note-compact textarea {
+    min-height: 68px;
+  }
 }

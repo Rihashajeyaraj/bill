@@ -229,17 +229,6 @@ export default function PartyFormModal({
           />
         </FormField>
 
-        <FormField label="Opening Balance Type">
-          <select
-            value={form.openingBalanceType}
-            onChange={(event) => updateField("openingBalanceType", event.target.value as any)}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none"
-          >
-            <option value="Receivable">Receivable</option>
-            <option value="Payable">Payable</option>
-          </select>
-        </FormField>
-
         <FormField label="Credit Limit" hint="Party-wise limit">
           <input
             type="number"

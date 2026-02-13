@@ -13,6 +13,7 @@ import { partiesByType } from "../../services/parties.service";
 import { itemsList } from "../../services/items.service";
 import { invoicesCreate } from "../../services/invoices.service";
 import { computeIndiaGST, computeVAT } from "../../services/tax";
+import { LS_KEYS } from "../../services/storage";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus } from "../../modules/parties/store";
@@ -64,7 +65,7 @@ function parseRateInput(value) {
 }
 
 export default function InvoiceCreate() {
-  const company = companyGetProfile();
+  const [company, setCompany] = useState(() => companyGetProfile());
   const country = company?.country || "";
   const isIndia = country === "India";
   const currency = company?.currency || company?.tax?.currency || "";
@@ -82,7 +83,7 @@ export default function InvoiceCreate() {
   const [lines, setLines] = useState([]);
 
   const companyState = company?.address?.state || "";
-  const customerState = isIndia ? placeOfSupply || "" : party?.state || "";
+  const customerState = isIndia ? placeOfSupply || party?.state || "" : party?.state || "";
   const companyVatRate = company?.tax?.vatRate;
   const defaultRate = isIndia ? 18 : getVatRate(country, company);
   const [taxRate, setTaxRate] = useState(defaultRate);
@@ -91,6 +92,21 @@ export default function InvoiceCreate() {
   );
 
   const creditStatus = useMemo(() => getPartyCreditStatus(partyId), [partyId]);
+
+  useEffect(() => {
+    const syncCompanyProfile = () => setCompany(companyGetProfile());
+    const onStorage = (event) => {
+      if (!event.key || event.key === LS_KEYS.company_profile) {
+        syncCompanyProfile();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", syncCompanyProfile);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", syncCompanyProfile);
+    };
+  }, []);
 
   useEffect(() => {
     const rate = isIndia ? 18 : getVatRate(country, company);
@@ -173,8 +189,8 @@ export default function InvoiceCreate() {
 
     const subTotal = enriched.reduce((a, x) => a + x.net, 0);
     const lineTaxTotal = enriched.reduce((a, x) => a + x.lineTax, 0);
-    const normalizedCompany = (companyState || placeOfSupply || "").trim().toLowerCase();
-    const normalizedCustomer = (customerState || placeOfSupply || "").trim().toLowerCase();
+    const normalizedCompany = (companyState || "").trim().toLowerCase();
+    const normalizedCustomer = (customerState || "").trim().toLowerCase();
     const sameState = normalizedCompany && normalizedCustomer && normalizedCompany === normalizedCustomer;
 
     let tax = { type: isIndia ? "GST" : "VAT", totalTax: 0 };
@@ -205,6 +221,8 @@ export default function InvoiceCreate() {
     return { enriched, subTotal, tax, grandTotal };
   }, [lines, items, isIndia, companyState, customerState, taxRate]);
   const isManualTax = computed.tax?.mode === "manual";
+  const showSplitGst = isIndia && !isManualTax && !!computed.tax?.sameState;
+  const showIgstOnly = isIndia && !isManualTax && !computed.tax?.sameState;
 
   const creditLimitEnabled =
     !!creditStatus.party?.creditLimitEnabled && creditStatus.creditLimit > 0;
@@ -642,24 +660,24 @@ export default function InvoiceCreate() {
                 </div>
               ) : isIndia ? (
                 <div className="mt-2 text-xs text-slate-600 space-y-1">
-                  <div className="flex justify-between">
-                    <span>CGST</span>
-                    <span>{money(computed.tax.cgst)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>SGST</span>
-                    <span>{money(computed.tax.sgst)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>IGST</span>
-                    <span>{money(computed.tax.igst)}</span>
-                  </div>
-                  <div className="pt-2 border-t border-slate-100 flex justify-between">
-                    <span>Rule</span>
-                    <span className="font-semibold">
-                      {computed.tax.sameState ? "Same-state (CGST+SGST)" : "Inter-state (IGST)"}
-                    </span>
-                  </div>
+                  {showSplitGst ? (
+                    <>
+                      <div className="flex justify-between">
+                        <span>CGST</span>
+                        <span>{money(computed.tax.cgst)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>SGST</span>
+                        <span>{money(computed.tax.sgst)}</span>
+                      </div>
+                    </>
+                  ) : null}
+                  {showIgstOnly ? (
+                    <div className="flex justify-between">
+                      <span>IGST</span>
+                      <span>{money(computed.tax.igst)}</span>
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div className="mt-2 text-xs text-slate-600 flex justify-between">

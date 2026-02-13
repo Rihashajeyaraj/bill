@@ -22,12 +22,11 @@ import EmptyState from "../../components/EmptyState";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import PaymentModePicker from "../../modules/paymentIn/PaymentModePicker";
-import InvoiceApplyCard from "../../modules/paymentIn/InvoiceApplyCard";
 import ReceiptFeedCard from "../../modules/paymentIn/ReceiptFeedCard";
 import PaymentInSkeleton from "../../modules/paymentIn/PaymentInSkeleton";
 import AuditDrawer from "../../modules/paymentIn/AuditDrawer";
 
-const STEPS = ["Customer & Country", "Payment Details", "Allocate to Invoices", "Review & Confirm"];
+const STEPS = ["Customer & Country", "Payment Details", "Review & Confirm"];
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
 type PanelMode = "feed" | "flow";
@@ -144,7 +143,7 @@ export default function PaymentInPremium() {
     setActivePayment(record);
     setPanelMode("flow");
     setFlowMode(mode);
-    setActiveStep(mode === "view" ? 3 : 0);
+    setActiveStep(mode === "view" ? 2 : 0);
     setDirty(false);
     clearMessages();
   }
@@ -182,41 +181,18 @@ export default function PaymentInPremium() {
     setDirty(true);
   }
 
-  function updateAllocation(invoiceId: string, value: number) {
+  function setAllocateAmount(totalAllocate: number) {
     setForm((prev) => {
       if (!prev) return prev;
       const amountReceived = Math.max(0, parseNumber(prev.amountReceived));
-      const otherApplied = prev.allocations
-        .filter((line) => line.invoiceId !== invoiceId)
-        .reduce((sum, line) => sum + Math.max(0, parseNumber(line.applyAmount)), 0);
-      const maxForLine = Math.max(0, amountReceived - otherApplied);
-      return {
-        ...prev,
-        allocations: prev.allocations.map((line) => {
-          if (line.invoiceId !== invoiceId) return line;
-          const capped = Math.min(Math.max(0, value), line.balanceDue, maxForLine);
-          return { ...line, applyAmount: capped };
-        })
-      };
+      let remaining = Math.min(Math.max(0, totalAllocate), amountReceived);
+      const nextAllocations = prev.allocations.map((line) => {
+        const applyAmount = Math.min(line.balanceDue, remaining);
+        remaining -= applyAmount;
+        return { ...line, applyAmount };
+      });
+      return { ...prev, allocations: nextAllocations };
     });
-    setDirty(true);
-  }
-
-  function fillInvoiceMax(invoiceId: string) {
-    const target = form?.allocations.find((line) => line.invoiceId === invoiceId);
-    if (!target) return;
-    updateAllocation(invoiceId, target.balanceDue);
-  }
-
-  function fillAllInvoices() {
-    if (!form) return;
-    let remaining = Math.max(0, parseNumber(form.amountReceived));
-    const next = form.allocations.map((line) => {
-      const applyAmount = Math.min(line.balanceDue, remaining);
-      remaining -= applyAmount;
-      return { ...line, applyAmount };
-    });
-    setForm((prev) => (prev ? { ...prev, allocations: next } : prev));
     setDirty(true);
   }
 
@@ -303,7 +279,7 @@ export default function PaymentInPremium() {
       setActivePayment(saved);
       setForm(formFromRecord(saved));
       setFlowMode("edit");
-      setActiveStep(3);
+      setActiveStep(2);
       setDirty(false);
       setSuccessMessage(`${saved.receiptNo} saved as ${saved.status}.`);
       setErrorMessage("");
@@ -473,6 +449,21 @@ export default function PaymentInPremium() {
                         {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
                       </label>
                       <label className="block">
+                        <span className="text-xs font-semibold text-slate-600">Allocate</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={totals.amountApplied}
+                          disabled={readOnly || !form.customerId || !form.allocations.length}
+                          onChange={(event) => setAllocateAmount(parseNumber(event.target.value))}
+                          className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-50"
+                          placeholder="Allocate to invoices"
+                        />
+                        <p className="mt-1 text-xs text-slate-500">
+                          Unapplied: <span className="font-semibold text-slate-700">{formatMoney(totals.unappliedAmount, country)}</span>
+                        </p>
+                      </label>
+                      <label className="block">
                         <span className="text-xs font-semibold text-slate-600">Payment Date</span>
                         <input type="date" value={form.paymentDate} disabled={readOnly} onChange={(event) => updateForm("paymentDate", event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
                         {fieldErrors.paymentDate ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.paymentDate}</p> : null}
@@ -512,77 +503,6 @@ export default function PaymentInPremium() {
                         Drag & drop payment proof or click to upload
                         {form.attachment ? <p className="mt-2 text-xs font-semibold text-slate-700">{form.attachment.name}</p> : null}
                       </label>
-                    </div>
-                  </FlowCard>
-                </div>
-              ) : null}
-
-              {activeStep === 2 ? (
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.4fr_0.8fr]">
-                  <FlowCard title="Allocate Payment" subtitle="Apply payment using sliders, keep extra as advance">
-                    {form.customerId ? (
-                      <div className="space-y-4">
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <p className="font-semibold text-slate-700">
-                              Remaining to allocate:{" "}
-                              <span className="text-slate-900">{formatMoney(totals.unappliedAmount, country)}</span>
-                            </p>
-                            <button
-                              type="button"
-                              onClick={fillAllInvoices}
-                              disabled={readOnly || !form.allocations.length}
-                              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              Auto-fill invoices
-                            </button>
-                          </div>
-                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
-                            <div
-                              className="h-full rounded-full bg-slate-900 transition-all"
-                              style={{
-                                width: `${Math.min(
-                                  100,
-                                  totals.amountReceived > 0
-                                    ? (totals.amountApplied / totals.amountReceived) * 100
-                                    : 0
-                                )}%`
-                              }}
-                            />
-                          </div>
-                        </div>
-
-                        {form.allocations.length ? (
-                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            {form.allocations.map((allocation) => {
-                              const maxAllowed = allocation.applyAmount + totals.unappliedAmount;
-                              return (
-                                <InvoiceApplyCard
-                                  key={allocation.invoiceId}
-                                  allocation={allocation}
-                                  maxAllowed={maxAllowed}
-                                  currencyText={COUNTRY_CONFIG[country].currency}
-                                  onApply={(amount) => updateAllocation(allocation.invoiceId, amount)}
-                                  onAutoFill={() => fillInvoiceMax(allocation.invoiceId)}
-                                />
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                            No open invoices for this customer. Any received amount will stay in advance wallet.
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                        Select a customer in Step 1 to allocate invoices.
-                      </div>
-                    )}
-                  </FlowCard>
-
-                  <FlowCard title="Notes & Controls" subtitle="Finance-only notes and customer-visible message">
-                    <div className="space-y-3">
                       <label className="block">
                         <span className="text-xs font-semibold text-slate-600">Internal Notes</span>
                         <textarea
@@ -605,31 +525,12 @@ export default function PaymentInPremium() {
                           placeholder="Shown in receipt PDF"
                         />
                       </label>
-
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="rounded-xl bg-slate-50 p-3">
-                          <p className="text-slate-500">Received</p>
-                          <p className="font-semibold text-slate-900">{formatMoney(totals.amountReceived, country)}</p>
-                        </div>
-                        <div className="rounded-xl bg-slate-50 p-3">
-                          <p className="text-slate-500">Applied</p>
-                          <p className="font-semibold text-slate-900">{formatMoney(totals.amountApplied, country)}</p>
-                        </div>
-                        <div className="rounded-xl bg-slate-50 p-3">
-                          <p className="text-slate-500">Unapplied</p>
-                          <p className="font-semibold text-amber-700">{formatMoney(totals.unappliedAmount, country)}</p>
-                        </div>
-                        <div className="rounded-xl bg-slate-50 p-3">
-                          <p className="text-slate-500">Outstanding After</p>
-                          <p className="font-semibold text-slate-900">{formatMoney(totals.outstandingAfter, country)}</p>
-                        </div>
-                      </div>
                     </div>
                   </FlowCard>
                 </div>
               ) : null}
 
-              {activeStep === 3 ? (
+              {activeStep === 2 ? (
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_0.8fr]">
                   <FlowCard title="Review & Confirm" subtitle="Final check before posting this payment">
                     <div className="space-y-3 text-sm">
