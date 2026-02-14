@@ -21,7 +21,10 @@ export default function Topbar() {
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-100 bg-white/85 backdrop-blur">
+    <header
+      className="sticky top-0 z-40 border-b backdrop-blur"
+      style={{ borderColor: UI.COLORS.border, background: "var(--app-topbar-bg, rgba(255, 255, 255, 0.85))" }}
+    >
       <div className="px-5 py-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <div className="h-9 w-9 rounded-2xl border border-slate-100 flex items-center justify-center overflow-hidden">

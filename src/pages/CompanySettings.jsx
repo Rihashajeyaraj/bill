@@ -18,6 +18,14 @@ import FormField from "../components/FormField";
 import FileUpload from "../components/FileUpload";
 import GradientButton from "../components/GradientButton";
 import Badge from "../components/Badge";
+import CurrencyMultiInput from "../components/CurrencyMultiInput";
+import ThemeModal from "../components/theme/ThemeModal";
+import {
+  THEME_PRESETS,
+  findThemePresetById,
+  findThemePresetBySettings
+} from "../components/theme/themePresets";
+import { useTheme } from "../context/ThemeContext";
 import { COUNTRIES, companyGetProfile, companyUpdateProfile } from "../services/company.service";
 import { authGetUser } from "../services/auth.service";
 import { uid } from "../services/storage";
@@ -88,6 +96,7 @@ const TIMEZONES = [
 
 const DATE_FORMATS = ["DD MMM YYYY", "DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"];
 const NUMBER_FORMATS = ["1,23,456.78", "123,456.78", "123.456,78"];
+const MAX_CURRENCIES = 3;
 
 const COUNTRY_META = {
   India: { currency: "INR", code: "IN", gstDefault: 18 },
@@ -122,6 +131,38 @@ function getCountryMeta(country) {
   return { currency: "", code: clean.slice(0, 2).toUpperCase() };
 }
 
+function normalizeCurrencyCode(value) {
+  return typeof value === "string" ? value.trim().toUpperCase() : "";
+}
+
+function uniqueCurrencyList(values) {
+  const seen = new Set();
+  const unique = [];
+  values.forEach((value) => {
+    const code = normalizeCurrencyCode(value);
+    if (!code || seen.has(code)) return;
+    seen.add(code);
+    unique.push(code);
+  });
+  return unique;
+}
+
+function normalizeLocalizationCurrencies({ country, primary, currencies }) {
+  const nextCountry = country || "India";
+  const autoCurrency = normalizeCurrencyCode(getCountryMeta(nextCountry).currency);
+  const primaryCurrency = autoCurrency || normalizeCurrencyCode(primary);
+  const merged = uniqueCurrencyList([
+    primaryCurrency,
+    ...(Array.isArray(currencies) ? currencies : []),
+    primary
+  ]);
+  if (!primaryCurrency) return merged.slice(0, MAX_CURRENCIES);
+  const extras = merged
+    .filter((currency) => currency !== primaryCurrency)
+    .slice(0, Math.max(MAX_CURRENCIES - 1, 0));
+  return [primaryCurrency, ...extras];
+}
+
 function buildDefaultPrefixes(country) {
   const code = getCountryMeta(country).code || "NA";
   return DOCUMENT_TYPES.reduce((acc, doc) => {
@@ -137,9 +178,18 @@ function formatSectionTitle(section) {
 function buildDefaultSettings(profile, currentUser) {
   const stored = profile?.settings || {};
   const baseCountry = stored.localization?.defaultCountry || profile?.country || "India";
+  const localizationCurrencies = normalizeLocalizationCurrencies({
+    country: baseCountry,
+    primary: stored.localization?.currency || profile?.currency || profile?.tax?.currency,
+    currencies: [
+      ...(Array.isArray(stored.localization?.currencies) ? stored.localization.currencies : []),
+      ...(Array.isArray(profile?.currencies) ? profile.currencies : []),
+      profile?.currency,
+      profile?.tax?.currency
+    ]
+  });
+  const currency = localizationCurrencies[0] || "";
   const meta = getCountryMeta(baseCountry);
-  const currency =
-    stored.localization?.currency || profile?.currency || profile?.tax?.currency || meta.currency || "";
 
   const address = profile?.address || {};
   const profileSection = {
@@ -162,6 +212,7 @@ function buildDefaultSettings(profile, currentUser) {
   const localization = {
     defaultCountry: baseCountry,
     currency,
+    currencies: localizationCurrencies,
     timezone: stored.localization?.timezone || "Asia/Kolkata",
     dateFormat: stored.localization?.dateFormat || "DD MMM YYYY",
     numberFormat: stored.localization?.numberFormat || "1,23,456.78"
@@ -254,6 +305,21 @@ function buildDefaultSettings(profile, currentUser) {
 }
 
 function mapSettingsToProfile(settings) {
+  const normalizedCurrencies = normalizeLocalizationCurrencies({
+    country: settings.localization.defaultCountry,
+    primary: settings.localization.currency,
+    currencies: settings.localization.currencies
+  });
+  const primaryCurrency = normalizedCurrencies[0] || "";
+  const normalizedSettings = {
+    ...settings,
+    localization: {
+      ...settings.localization,
+      currency: primaryCurrency,
+      currencies: normalizedCurrencies
+    }
+  };
+
   return {
     companyName: settings.profile.companyName,
     logoBase64: settings.profile.logoBase64,
@@ -262,7 +328,8 @@ function mapSettingsToProfile(settings) {
     phone: settings.profile.phone,
     website: settings.profile.website,
     country: settings.localization.defaultCountry,
-    currency: settings.localization.currency,
+    currency: primaryCurrency,
+    currencies: normalizedCurrencies,
     address: settings.profile.address,
     tax: {
       gstin: settings.tax.gstin,
@@ -274,9 +341,9 @@ function mapSettingsToProfile(settings) {
       defaultGstRate: settings.tax.defaultGstRate,
       defaultVatRate: settings.tax.defaultVatRate,
       salesTaxStates: settings.tax.salesTaxStates,
-      currency: settings.localization.currency
+      currency: primaryCurrency
     },
-    settings
+    settings: normalizedSettings
   };
 }
 function SectionNavItem({ section, active, dirty, onClick }) {
@@ -437,6 +504,7 @@ function validateProfile(profile) {
 }
 
 export default function CompanySettings() {
+  const { setTheme, setThemePreset, themePresetId } = useTheme();
   const currentProfile = companyGetProfile();
   const currentUser = authGetUser();
   const [settings, setSettings] = useState(() => buildDefaultSettings(currentProfile, currentUser));
@@ -446,6 +514,7 @@ export default function CompanySettings() {
   const [sectionMessage, setSectionMessage] = useState({});
   const [errors, setErrors] = useState({});
   const [invite, setInvite] = useState({ name: "", email: "", role: "Staff" });
+  const [themeModalOpen, setThemeModalOpen] = useState(false);
 
   const dirtyMap = useMemo(() => {
     return SECTION_ITEMS.reduce((acc, section) => {
@@ -456,6 +525,13 @@ export default function CompanySettings() {
   }, [settings, savedSettings]);
 
   const hasUnsaved = useMemo(() => Object.values(dirtyMap).some(Boolean), [dirtyMap]);
+  const activeThemePreset = useMemo(
+    () =>
+      findThemePresetById(themePresetId) ||
+      findThemePresetBySettings(settings.theme) ||
+      THEME_PRESETS[0],
+    [settings.theme, themePresetId]
+  );
 
   useEffect(() => {
     if (!hasUnsaved) return;
@@ -490,6 +566,11 @@ export default function CompanySettings() {
     const nextMeta = getCountryMeta(nextCountry);
     setSettings((prev) => {
       const nextPrefixes = refreshPrefixes(prev.numbering.prefixes, prev.localization.defaultCountry, nextCountry);
+      const nextCurrencies = normalizeLocalizationCurrencies({
+        country: nextCountry,
+        primary: nextMeta.currency,
+        currencies: prev.localization.currencies
+      });
       const nextTax = { ...prev.tax };
       if (nextCountry === "India") {
         nextTax.enableGst = true;
@@ -512,12 +593,34 @@ export default function CompanySettings() {
         localization: {
           ...prev.localization,
           defaultCountry: nextCountry,
-          currency: nextMeta.currency
+          currency: nextCurrencies[0] || normalizeCurrencyCode(nextMeta.currency),
+          currencies: nextCurrencies
         },
         tax: nextTax,
         numbering: {
           ...prev.numbering,
           prefixes: nextPrefixes
+        }
+      };
+    });
+  }
+
+  function applyAdditionalCurrencies(nextExtraCurrencies) {
+    setSettings((prev) => {
+      const nextCurrencies = normalizeLocalizationCurrencies({
+        country: prev.localization.defaultCountry,
+        primary: prev.localization.currency,
+        currencies: [
+          prev.localization.currency,
+          ...(Array.isArray(nextExtraCurrencies) ? nextExtraCurrencies : [])
+        ]
+      });
+      return {
+        ...prev,
+        localization: {
+          ...prev.localization,
+          currency: nextCurrencies[0] || "",
+          currencies: nextCurrencies
         }
       };
     });
@@ -882,6 +985,18 @@ export default function CompanySettings() {
                       />
                     </FormField>
 
+                    <FormField label="Additional Currencies" hint={`Add up to ${MAX_CURRENCIES - 1}`}>
+                      <CurrencyMultiInput
+                        value={(settings.localization.currencies || []).filter(
+                          (currency) => currency !== settings.localization.currency
+                        )}
+                        onChange={applyAdditionalCurrencies}
+                        max={Math.max(MAX_CURRENCIES - 1, 0)}
+                        placeholder="USD"
+                        ringColor={UI.COLORS.ring}
+                      />
+                    </FormField>
+
                     <FormField label="Timezone">
                       <select
                         value={settings.localization.timezone}
@@ -971,36 +1086,6 @@ export default function CompanySettings() {
                               }
                               className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                             />
-                          </FormField>
-                          <FormField label="CGST Rule" hint="Intra-state">
-                            <select
-                              value={settings.tax.cgstRule}
-                              onChange={(event) => updateSection("tax", { cgstRule: event.target.value })}
-                              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                            >
-                              <option>Split equally</option>
-                              <option>Override manually</option>
-                            </select>
-                          </FormField>
-                          <FormField label="SGST Rule" hint="Intra-state">
-                            <select
-                              value={settings.tax.sgstRule}
-                              onChange={(event) => updateSection("tax", { sgstRule: event.target.value })}
-                              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                            >
-                              <option>Split equally</option>
-                              <option>Override manually</option>
-                            </select>
-                          </FormField>
-                          <FormField label="IGST Rule" hint="Inter-state">
-                            <select
-                              value={settings.tax.igstRule}
-                              onChange={(event) => updateSection("tax", { igstRule: event.target.value })}
-                              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                            >
-                              <option>Interstate</option>
-                              <option>Override manually</option>
-                            </select>
                           </FormField>
                         </div>
                       </>
@@ -1290,7 +1375,15 @@ export default function CompanySettings() {
                   <SectionHeader
                     title="Theme & Appearance"
                     description="Preview brand colors and invoice styling."
-                  />
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setThemeModalOpen(true)}
+                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 active:scale-[0.98]"
+                    >
+                      Choose Theme
+                    </button>
+                  </SectionHeader>
 
                   <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
                     <FormField label="Theme Mode">
@@ -1401,6 +1494,24 @@ export default function CompanySettings() {
                     dirty={sectionDirty}
                     onSave={() => handleSave("theme")}
                     onCancel={() => handleCancel("theme")}
+                  />
+
+                  <ThemeModal
+                    open={themeModalOpen}
+                    themes={THEME_PRESETS}
+                    initialThemeId={activeThemePreset?.id || themePresetId}
+                    onClose={() => setThemeModalOpen(false)}
+                    onApply={(preset) => {
+                      setThemePreset(preset.id);
+                      setTheme(preset.mode === "Dark" ? "dark" : "light");
+                      updateSection("theme", {
+                        mode: preset.mode,
+                        primaryColor: preset.primaryColor,
+                        accentColor: preset.accentColor,
+                        invoiceTheme: preset.invoiceTheme || settings.theme.invoiceTheme
+                      });
+                      setThemeModalOpen(false);
+                    }}
                   />
                 </Card>
               ) : null}

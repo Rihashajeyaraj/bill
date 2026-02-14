@@ -3,6 +3,8 @@ export const LS_KEYS = {
   auth_user: "auth_user",
   auth_users: "auth_users",
   role: "role",
+  theme_mode: "theme_mode",
+  theme_preset: "theme_preset",
   company_profile: "company_profile",
   companyProfileCompleted: "companyProfileCompleted",
   invoiceTemplateConfig: "invoiceTemplateConfig",

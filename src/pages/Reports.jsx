@@ -10,7 +10,6 @@ import {
   FileDown,
   LineChart as LineChartIcon,
   Package,
-  Percent,
   Printer,
   Receipt,
   Search,
@@ -34,7 +33,7 @@ import {
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import Badge from "../components/Badge";
-import { companyGetProfile, COUNTRIES } from "../services/company.service";
+import { companyGetProfile } from "../services/company.service";
 import { formatMoney, normalizeText } from "../modules/items/utils";
 
 const CURRENCY_MAP = {
@@ -46,7 +45,7 @@ const CURRENCY_MAP = {
   Ireland: "EUR"
 };
 
-const SCOPE_OPTIONS = ["All", "Sales", "Purchase", "Party", "Item", "Tax"];
+const SCOPE_OPTIONS = ["All", "Sales", "Purchase", "Party", "Item"];
 
 const REPORT_CARDS = [
   {
@@ -88,16 +87,6 @@ const REPORT_CARDS = [
     metricValue: 266800,
     delta: -0.018,
     icon: Users
-  },
-  {
-    id: "tax",
-    label: "Tax",
-    scope: "Tax",
-    description: "Output vs input tax tracking.",
-    metricLabel: "Net Payable",
-    metricValue: 118400,
-    delta: 0.027,
-    icon: Percent
   },
   {
     id: "items",
@@ -280,8 +269,8 @@ const REPORT_CONTENT = {
     summary: [
       { label: "Total Outstanding", value: 392200, tone: "danger" },
       { label: "Overdue 60+", value: 84000, tone: "warn" },
-      { label: "Avg Collection Days", value: 28, tone: "default", format: "count" },
-      { label: "Top 5 Share", value: 61, tone: "default", format: "percent" }
+      { label: "Partially Paid", value: 0, tone: "default" },
+      { label: "Oldest Due", value: 0, tone: "default", format: "days" }
     ],
     chart: {
       type: "pie",
@@ -308,8 +297,9 @@ const REPORT_CONTENT = {
           invoice: "INV-1018",
           due: "2026-02-10",
           amount: 42000,
+          paid_amount: 18000,
           bucket: "0-30",
-          status: "Open"
+          status: "Partial"
         },
         {
           id: "R-2",
@@ -326,8 +316,9 @@ const REPORT_CONTENT = {
           invoice: "INV-995",
           due: "2025-12-28",
           amount: 22000,
+          paid_amount: 12000,
           bucket: "61-90",
-          status: "Overdue"
+          status: "Partial"
         },
         {
           id: "R-4",
@@ -345,8 +336,8 @@ const REPORT_CONTENT = {
     summary: [
       { label: "Supplier Outstanding", value: 266800, tone: "danger" },
       { label: "Due This Week", value: 68000, tone: "warn" },
-      { label: "Avg Pay Days", value: 21, tone: "default", format: "count" },
-      { label: "Top 3 Share", value: 54, tone: "default", format: "percent" }
+      { label: "Partially Paid", value: 0, tone: "default" },
+      { label: "Oldest Due", value: 0, tone: "default", format: "days" }
     ],
     chart: {
       type: "pie",
@@ -373,8 +364,9 @@ const REPORT_CONTENT = {
           bill: "BILL-5481",
           due: "2026-02-12",
           amount: 38000,
+          paid_amount: 14000,
           bucket: "0-30",
-          status: "Open"
+          status: "Partial"
         },
         {
           id: "P-2",
@@ -391,8 +383,9 @@ const REPORT_CONTENT = {
           bill: "BILL-5428",
           due: "2025-12-18",
           amount: 32000,
+          paid_amount: 9000,
           bucket: "61-90",
-          status: "Overdue"
+          status: "Partial"
         },
         {
           id: "P-4",
@@ -509,9 +502,9 @@ const REPORT_CONTENT = {
   parties: {
     summary: [
       { label: "Active Parties", value: 128, tone: "default", format: "count" },
-      { label: "Top Customer", value: 164800, tone: "success" },
-      { label: "Top Supplier", value: 118600, tone: "danger" },
-      { label: "Avg Ticket", value: 38400, tone: "default" }
+      { label: "Top Customer", value: "-", tone: "success", format: "text" },
+      { label: "Top Supplier", value: "-", tone: "danger", format: "text" },
+      { label: "New Parties (This Month)", value: 0, tone: "default", format: "count" }
     ],
     chart: {
       type: "line",
@@ -540,6 +533,7 @@ const REPORT_CONTENT = {
           transactions: 12,
           value: 164800,
           outstanding: 42000,
+          created_at: "2026-02-03",
           status: "Healthy"
         },
         {
@@ -549,6 +543,7 @@ const REPORT_CONTENT = {
           transactions: 9,
           value: 142200,
           outstanding: 58000,
+          created_at: "2026-01-19",
           status: "Attention"
         },
         {
@@ -558,6 +553,7 @@ const REPORT_CONTENT = {
           transactions: 6,
           value: 118600,
           outstanding: 32000,
+          created_at: "2026-02-08",
           status: "On Track"
         },
         {
@@ -567,6 +563,7 @@ const REPORT_CONTENT = {
           transactions: 5,
           value: 98600,
           outstanding: 28000,
+          created_at: "2025-12-11",
           status: "Attention"
         }
       ]
@@ -580,7 +577,19 @@ function formatValue(value, format, currency) {
   if (format === "money") return formatMoney(value, currency);
   if (format === "count") return Number(value ?? 0).toLocaleString();
   if (format === "percent") return `${Number(value ?? 0)}%`;
+  if (format === "days") return `${Number(value ?? 0).toLocaleString()} days`;
+  if (format === "text") return String(value || "-");
   return value ?? "-";
+}
+
+function overdueDaysFromDueDate(dueDate) {
+  if (!dueDate) return 0;
+  const due = new Date(`${dueDate}T00:00:00`);
+  if (Number.isNaN(due.getTime())) return 0;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = today.getTime() - due.getTime();
+  return diff > 0 ? Math.floor(diff / (24 * 60 * 60 * 1000)) : 0;
 }
 
 function statusTone(value) {
@@ -729,7 +738,7 @@ export default function Reports() {
     new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10)
   );
   const [toDate, setToDate] = useState(today.toISOString().slice(0, 10));
-  const [country, setCountry] = useState(defaultCountry);
+  const country = defaultCountry;
   const [scope, setScope] = useState("All");
 
   const [activeReport, setActiveReport] = useState("sales");
@@ -761,9 +770,65 @@ export default function Reports() {
 
   const activeContent = REPORT_CONTENT[activeReport];
   const chartLabel = metric === "amount" ? "Amount" : "Count";
+  const detailsRows = activeContent?.details?.rows || [];
+
+  const summaryCards = useMemo(() => {
+    const base = activeContent?.summary || [];
+    if (activeReport === "parties") {
+      const activeParties = detailsRows.length;
+      const customers = detailsRows.filter((row) => String(row?.type || "").toLowerCase() === "customer");
+      const suppliers = detailsRows.filter((row) => String(row?.type || "").toLowerCase() === "supplier");
+      const scoreByRow = (row) => Math.max(Number(row?.value ?? 0), Number(row?.outstanding ?? 0));
+      const topCustomer = customers.reduce(
+        (best, row) => (scoreByRow(row) > scoreByRow(best) ? row : best),
+        customers[0] || null
+      );
+      const topSupplier = suppliers.reduce(
+        (best, row) => (scoreByRow(row) > scoreByRow(best) ? row : best),
+        suppliers[0] || null
+      );
+      const now = new Date();
+      const thisMonth = now.getMonth();
+      const thisYear = now.getFullYear();
+      const newPartiesThisMonth = detailsRows.filter((row) => {
+        const raw = row?.created_at || row?.createdAt;
+        if (!raw) return false;
+        const createdAt = new Date(raw);
+        if (Number.isNaN(createdAt.getTime())) return false;
+        return createdAt.getMonth() === thisMonth && createdAt.getFullYear() === thisYear;
+      }).length;
+
+      return [
+        { label: "Active Parties", value: activeParties, tone: "default", format: "count" },
+        { label: "Top Customer", value: topCustomer?.party || "-", tone: "success", format: "text" },
+        { label: "Top Supplier", value: topSupplier?.party || "-", tone: "danger", format: "text" },
+        { label: "New Parties (This Month)", value: newPartiesThisMonth, tone: "default", format: "count" }
+      ];
+    }
+
+    if (activeReport !== "receivables" && activeReport !== "payables") return base;
+
+    const partiallyPaidAmount = detailsRows
+      .filter((row) => Number(row?.paid_amount ?? row?.paidAmount ?? 0) > 0 && Number(row?.amount ?? 0) > 0)
+      .reduce((sum, row) => sum + Number(row?.amount ?? 0), 0);
+
+    const oldestDueDays = detailsRows
+      .filter((row) => Number(row?.amount ?? 0) > 0)
+      .reduce((max, row) => Math.max(max, overdueDaysFromDueDate(row?.due)), 0);
+
+    const leadLabel = activeReport === "payables" ? "Supplier Outstanding" : "Total Outstanding";
+    const secondLabel = activeReport === "payables" ? "Due This Week" : "Overdue 60+";
+
+    return [
+      base[0] || { label: leadLabel, value: 0, tone: "danger" },
+      base[1] || { label: secondLabel, value: 0, tone: "warn" },
+      { label: "Partially Paid", value: partiallyPaidAmount, tone: partiallyPaidAmount > 0 ? "warn" : "default" },
+      { label: "Oldest Due", value: oldestDueDays, tone: oldestDueDays >= 60 ? "danger" : "default", format: "days" }
+    ];
+  }, [activeContent, activeReport, detailsRows]);
 
   const filteredRows = useMemo(() => {
-    const rows = activeContent?.details?.rows || [];
+    const rows = detailsRows;
     const query = normalizeText(detailSearch);
     const matchRows = query
       ? rows.filter((row) =>
@@ -784,7 +849,7 @@ export default function Reports() {
       return String(aValue ?? "").localeCompare(String(bValue ?? ""));
     });
     return sortConfig.direction === "desc" ? sorted.reverse() : sorted;
-  }, [activeContent, detailSearch, sortConfig]);
+  }, [detailsRows, detailSearch, sortConfig]);
 
   function toggleSort(key) {
     setSortConfig((prev) => {
@@ -853,17 +918,9 @@ export default function Reports() {
           </div>
           <div>
             <p className="text-xs font-semibold text-slate-500">Country</p>
-            <select
-              value={country}
-              onChange={(event) => setCountry(event.target.value)}
-              className="mt-2 w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm"
-            >
-              {COUNTRIES.map((entry) => (
-                <option key={entry} value={entry}>
-                  {entry}
-                </option>
-              ))}
-            </select>
+            <div className="mt-2 w-full rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700">
+              {country}
+            </div>
           </div>
           <div>
             <p className="text-xs font-semibold text-slate-500">Report Scope</p>
@@ -951,12 +1008,14 @@ export default function Reports() {
                   <LoadingBlock />
                 </div>
               ))
-            : activeContent?.summary?.map((card) => (
+            : summaryCards.map((card) => (
                 <div key={card.label} className="rounded-2xl border border-slate-200 bg-white p-4">
                   <p className="text-xs font-semibold text-slate-500">{card.label}</p>
                   <p
+                    title={card.format === "text" ? String(card.value || "-") : undefined}
                     className={clsx(
                       "mt-2 text-2xl font-bold",
+                      card.format === "text" && "truncate whitespace-nowrap text-xl leading-tight",
                       card.tone === "success"
                         ? "text-emerald-600"
                         : card.tone === "danger"

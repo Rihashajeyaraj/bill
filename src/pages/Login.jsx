@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LockKeyhole, Mail, ReceiptIndianRupee, User } from "lucide-react";
+import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import Card from "../components/Card";
 import { authLogin, authRegister } from "../services/auth.service";
 import { api } from "../lib/api";
@@ -114,7 +115,7 @@ export default function Login() {
             <div className="absolute -right-24 top-1/2 h-72 w-72 -translate-y-1/2 rounded-full bg-white/10" />
             <div className="absolute -left-20 -top-20 h-56 w-56 rounded-full bg-white/10" />
             <div className="absolute right-10 -bottom-16 h-44 w-44 rounded-full bg-white/10" />
-            <div className="relative z-10 space-y-6">
+            <div className="relative z-10 flex h-full flex-col gap-6">
               <div className="flex items-center gap-3">
                 <div className="h-11 w-11 rounded-full bg-white/15 flex items-center justify-center">
                   <ReceiptIndianRupee className="h-5 w-5 text-white" />
@@ -126,7 +127,9 @@ export default function Login() {
               </div>
 
               <div>
-                <h2 className="text-2xl font-semibold">Welcome Back!</h2>
+                <h2 className="text-2xl font-semibold">
+                  {isLogin ? "Welcome Back!" : "Create Your Account"}
+                </h2>
                 <p className="mt-3 text-sm text-white/85 max-w-sm">
                   Create invoices, manage GST/VAT, track payments,
                   <br />
@@ -134,6 +137,15 @@ export default function Login() {
                   <br />
                   Built for owners and managers.
                 </p>
+              </div>
+
+              <div className="mt-1 flex-1 min-h-[230px] overflow-hidden rounded-3xl border border-white/25 bg-white/10 p-3 backdrop-blur-sm">
+                <DotLottieReact
+                  src="https://lottie.host/710a03f2-f726-46a8-b0cd-8a7ff41f703c/jLQlsvDDaW.lottie"
+                  autoplay
+                  loop
+                  style={{ width: "100%", height: "100%" }}
+                />
               </div>
             </div>
           </div>

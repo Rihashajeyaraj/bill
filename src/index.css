@@ -5,6 +5,13 @@
 :root {
   --bg-warm: #eef3ef;
   --text-main: #1f2b24;
+  --app-card-bg: #ffffff;
+  --app-card-border: #e2ebe5;
+  --app-muted: #6c7d73;
+  --app-cream: #e3f2ea;
+  --app-ring: rgba(46, 141, 90, 0.25);
+  --app-gradient: linear-gradient(135deg, #1f6b45 0%, #2e8d5a 100%);
+  --app-topbar-bg: rgba(255, 255, 255, 0.85);
 }
 
 html, body {
@@ -67,10 +74,12 @@ body {
 
 @layer components {
   .card {
-    @apply bg-white border border-slate-100 shadow-soft rounded-card;
+    @apply border shadow-soft rounded-card;
+    background: var(--app-card-bg);
+    border-color: var(--app-card-border);
   }
   .muted {
-    @apply text-slate-500;
+    color: var(--app-muted);
   }
   .credit-note-compact input,
   .credit-note-compact select,

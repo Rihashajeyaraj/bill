@@ -1,0 +1,308 @@
+.theme-modal {
+  --tm-bg: #f8fbfa;
+  --tm-panel: #ffffff;
+  --tm-border: #dfe9e3;
+  --tm-soft-border: #e7eeea;
+  --tm-text: #18221d;
+  --tm-muted: #6c7d73;
+  --tm-selected: #1f6b45;
+  --tm-selected-ring: rgba(31, 107, 69, 0.14);
+  --tm-primary-start: #153c2a;
+  --tm-primary-end: #1f6b45;
+  --tm-primary-shadow: rgba(21, 60, 42, 0.28);
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+}
+
+.theme-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.theme-modal__panel {
+  position: relative;
+  width: min(880px, 100%);
+  max-height: 90vh;
+  overflow: hidden;
+  border-radius: 26px;
+  border: 1px solid var(--tm-border);
+  background: var(--tm-bg);
+  box-shadow: 0 28px 64px rgba(15, 23, 42, 0.2);
+  display: flex;
+  flex-direction: column;
+}
+
+.theme-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 22px 22px 14px;
+}
+
+.theme-modal__title {
+  color: var(--tm-text);
+  font-size: 1.25rem;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.theme-modal__subtitle {
+  margin-top: 4px;
+  color: var(--tm-muted);
+  font-size: 0.85rem;
+}
+
+.theme-modal__close {
+  height: 40px;
+  width: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--tm-soft-border);
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #334155;
+  transition: transform 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+
+.theme-modal__close:hover {
+  background: #f8fafc;
+  border-color: #dbe3df;
+}
+
+.theme-modal__close:active {
+  transform: scale(0.95);
+}
+
+.theme-modal__current-card {
+  margin: 0 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--tm-soft-border);
+  border-radius: 18px;
+  background: var(--tm-panel);
+  padding: 14px;
+}
+
+.theme-modal__muted {
+  color: var(--tm-muted);
+  font-size: 0.75rem;
+  line-height: 1.25;
+}
+
+.theme-modal__current-name {
+  margin-top: 3px;
+  color: var(--tm-text);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.theme-modal__badge {
+  border-radius: 999px;
+  border: 1px solid #ccdfd5;
+  background: #ecfbf3;
+  color: #0f766e;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.theme-modal__badge.is-dark {
+  border-color: #dbe4f6;
+  background: #eef3ff;
+  color: #334155;
+}
+
+.theme-modal__body {
+  margin-top: 14px;
+  padding: 0 22px 8px;
+  overflow-y: auto;
+}
+
+.theme-modal__section + .theme-modal__section {
+  margin-top: 15px;
+}
+
+.theme-modal__section-title {
+  color: #3f5a4a;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.theme-modal__grid {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 11px;
+}
+
+.theme-card {
+  position: relative;
+  width: 100%;
+  border-radius: 18px;
+  border: 1px solid var(--tm-soft-border);
+  background: var(--tm-panel);
+  overflow: hidden;
+  text-align: left;
+  transition: transform 170ms ease, box-shadow 170ms ease, border-color 170ms ease;
+}
+
+.theme-card:hover {
+  transform: translateY(-1px);
+  border-color: #cfe2d8;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+}
+
+.theme-card:active {
+  transform: translateY(0) scale(0.99);
+}
+
+.theme-card.is-selected {
+  border-color: var(--tm-selected);
+  box-shadow: 0 0 0 4px var(--tm-selected-ring);
+}
+
+.theme-card__gradient {
+  display: block;
+  height: 7px;
+  background: linear-gradient(110deg, var(--theme-grad-start), var(--theme-grad-end));
+}
+
+.theme-card__body {
+  padding: 11px 12px 12px;
+}
+
+.theme-card__topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.theme-card__icon-wrap {
+  height: 28px;
+  width: 28px;
+  border-radius: 10px;
+  border: 1px solid #dce8e1;
+  background: #f5faf7;
+  color: var(--theme-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.theme-card__badge {
+  border-radius: 999px;
+  border: 1px solid #cae0d4;
+  background: #effbf3;
+  color: #126b4f;
+  font-size: 0.65rem;
+  line-height: 1;
+  font-weight: 700;
+  padding: 5px 8px;
+}
+
+.theme-card__badge.is-dark {
+  border-color: #dbe2f7;
+  background: #eff3ff;
+  color: #334155;
+}
+
+.theme-card__title {
+  margin-top: 10px;
+  color: var(--tm-text);
+  font-size: 0.86rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.theme-card__check {
+  position: absolute;
+  right: 11px;
+  bottom: 11px;
+  height: 20px;
+  width: 20px;
+  border-radius: 999px;
+  background: var(--tm-selected);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.theme-card__check.is-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.theme-modal__actions {
+  margin-top: 8px;
+  padding: 14px 22px 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  background: linear-gradient(180deg, rgba(248, 251, 250, 0.8), #ffffff 45%);
+  border-top: 1px solid var(--tm-soft-border);
+  position: sticky;
+  bottom: 0;
+}
+
+.theme-modal__btn {
+  height: 42px;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  padding: 0 18px;
+  transition: transform 160ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.theme-modal__btn:active {
+  transform: translateY(1px);
+}
+
+.theme-modal__btn--secondary {
+  border: 1px solid #dbe5df;
+  color: #3f4c46;
+  background: #fff;
+}
+
+.theme-modal__btn--secondary:hover {
+  background: #f8faf8;
+}
+
+.theme-modal__btn--primary {
+  border: 1px solid transparent;
+  color: #fff;
+  background: linear-gradient(135deg, var(--tm-primary-start), var(--tm-primary-end));
+  box-shadow: 0 8px 18px var(--tm-primary-shadow);
+}
+
+.theme-modal__btn--primary:hover {
+  box-shadow: 0 10px 22px var(--tm-primary-shadow);
+}
+
+@media (min-width: 640px) {
+  .theme-modal {
+    padding: 28px;
+  }
+
+  .theme-modal__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

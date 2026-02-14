@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Send, Sparkles } from "lucide-react";
-import { COUNTRY_CONFIG, COUNTRY_OPTIONS, type CountryCode, type PaymentMode, type PaymentStatus } from "../../modules/paymentIn/countryConfig";
+import { ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Send, Sparkles } from "lucide-react";
+import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, COUNTRY_OPTIONS, type CountryCode, type PaymentMode, type PaymentStatus } from "../../modules/paymentIn/countryConfig";
 import {
   getSelectedPaymentCountry,
   listPaymentIn,
@@ -18,7 +18,6 @@ import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf
 import type { PaymentInFormState } from "../../modules/paymentIn/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { companyGetProfile } from "../../services/company.service";
-import EmptyState from "../../components/EmptyState";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import PaymentModePicker from "../../modules/paymentIn/PaymentModePicker";
@@ -46,13 +45,22 @@ function canReopenWithinWindow(record: PaymentInRecord | null) {
   return Number.isFinite(touched) && Date.now() - touched <= EDIT_WINDOW_MS;
 }
 
+function resolveFixedCountry(company: any): CountryCode {
+  const raw = String(company?.countryCode || company?.country || "").trim();
+  if (raw && raw in COUNTRY_CONFIG) return raw as CountryCode;
+  if (raw && COUNTRY_NAME_TO_CODE[raw]) return COUNTRY_NAME_TO_CODE[raw];
+  const saved = getSelectedPaymentCountry();
+  if (saved && saved in COUNTRY_CONFIG) return saved;
+  return "IN";
+}
+
 export default function PaymentInPremium() {
   const company = companyGetProfile();
   const user = authGetUser();
   const access = useMemo(() => roleAccess(authGetRole(), user), [user]);
   const actorName = user?.name || user?.email || "System User";
 
-  const [country, setCountry] = useState<CountryCode | "">(getSelectedPaymentCountry());
+  const country = useMemo<CountryCode>(() => resolveFixedCountry(company), [company]);
   const [panelMode, setPanelMode] = useState<PanelMode>("feed");
   const [flowMode, setFlowMode] = useState<FlowMode>("create");
   const [activeStep, setActiveStep] = useState(0);
@@ -70,13 +78,13 @@ export default function PaymentInPremium() {
   const [customerFilter, setCustomerFilter] = useState("");
   const [modeFilter, setModeFilter] = useState("");
 
-  const payments = useMemo(() => (country ? listPaymentIn(country) : []), [country, refreshKey]);
-  const customers = useMemo(() => (country ? mapCustomersByCountry(country) : []), [country, refreshKey]);
-  const openInvoices = useMemo(() => (country ? mapOpenInvoicesByCountry(country) : []), [country, refreshKey]);
-  const summary = useMemo(() => (country ? summarizePaymentIn(country) : null), [country, refreshKey]);
+  const payments = useMemo(() => listPaymentIn(country), [country, refreshKey]);
+  const customers = useMemo(() => mapCustomersByCountry(country), [country, refreshKey]);
+  const openInvoices = useMemo(() => mapOpenInvoicesByCountry(country), [country, refreshKey]);
+  const summary = useMemo(() => summarizePaymentIn(country), [country, refreshKey]);
 
-  const customerOutstandingBefore = useMemo(() => (country && form?.customerId ? outstandingByCustomer(country, form.customerId) : 0), [country, form?.customerId, refreshKey]);
-  const customerInsights = useMemo(() => (country && form?.customerId ? paymentInsightsByCustomer(country, form.customerId) : { lastPaymentDate: "", advanceWallet: 0, totalReceived: 0, paymentCount: 0 }), [country, form?.customerId, refreshKey]);
+  const customerOutstandingBefore = useMemo(() => (form?.customerId ? outstandingByCustomer(country, form.customerId) : 0), [country, form?.customerId, refreshKey]);
+  const customerInsights = useMemo(() => (form?.customerId ? paymentInsightsByCustomer(country, form.customerId) : { lastPaymentDate: "", advanceWallet: 0, totalReceived: 0, paymentCount: 0 }), [country, form?.customerId, refreshKey]);
   const totals = useMemo(() => (form ? computeEditorTotals(form, customerOutstandingBefore) : { amountReceived: 0, amountApplied: 0, unappliedAmount: 0, outstandingAfter: 0 }), [form, customerOutstandingBefore]);
   const selectedCustomer = useMemo(() => customers.find((entry) => entry.id === form?.customerId) || null, [customers, form?.customerId]);
   const filteredPayments = useMemo(() => payments.filter((entry) => {
@@ -85,11 +93,14 @@ export default function PaymentInPremium() {
     return (!q || haystack.includes(q)) && (!statusFilter || entry.status === statusFilter) && (!customerFilter || entry.customerId === customerFilter) && (!modeFilter || entry.paymentMode === modeFilter);
   }), [payments, search, statusFilter, customerFilter, modeFilter]);
 
-  const allowed = !country || access.allowedCountries.includes(country);
+  const allowed = access.allowedCountries.includes(country);
   const readOnly = flowMode === "view";
 
   useEffect(() => {
-    if (!country) return;
+    setSelectedPaymentCountry(country);
+  }, [country]);
+
+  useEffect(() => {
     setLoading(true);
     const timer = window.setTimeout(() => setLoading(false), 180);
     return () => window.clearTimeout(timer);
@@ -111,22 +122,8 @@ export default function PaymentInPremium() {
     setFieldErrors({});
   }
 
-  function onCountryChange(next: CountryCode) {
-    if (next === country) return;
-    if (dirty && !window.confirm("Discard unsaved changes and switch country?")) return;
-    setCountry(next);
-    setSelectedPaymentCountry(next);
-    setPanelMode("feed");
-    setFlowMode("create");
-    setActiveStep(0);
-    setForm(null);
-    setActivePayment(null);
-    setDirty(false);
-    clearMessages();
-  }
-
   function startNewPayment() {
-    if (!country || !allowed) return;
+    if (!allowed) return;
     setForm(defaultForm(country, company));
     setActivePayment(null);
     setPanelMode("flow");
@@ -137,7 +134,7 @@ export default function PaymentInPremium() {
   }
 
   function openFlow(record: PaymentInRecord, mode: FlowMode) {
-    if (!country || record.country !== country) return;
+    if (record.country !== country) return;
     if (mode === "edit" && record.status === "Applied" && !canReopenWithinWindow(record)) return;
     setForm(formFromRecord(record));
     setActivePayment(record);
@@ -197,7 +194,7 @@ export default function PaymentInPremium() {
   }
 
   function validate(targetStatus: PaymentStatus) {
-    if (!form || !country) return false;
+    if (!form) return false;
     const cfg = COUNTRY_CONFIG[country];
     const errors: Record<string, string> = {};
     const amountReceived = Math.max(0, parseNumber(form.amountReceived));
@@ -228,7 +225,7 @@ export default function PaymentInPremium() {
   }
 
   function buildPayload(targetStatus: PaymentStatus, outstandingOverride?: number) {
-    if (!form || !country) return null;
+    if (!form) return null;
     const customer = customers.find((entry) => entry.id === form.customerId);
     return {
       id: form.id,
@@ -256,7 +253,7 @@ export default function PaymentInPremium() {
   }
 
   function persist(targetStatus: PaymentStatus, options?: { email?: boolean; download?: boolean }) {
-    if (!form || !country) return;
+    if (!form) return;
     if (!validate(targetStatus)) return;
     try {
       let saved: PaymentInRecord | null = null;
@@ -289,7 +286,7 @@ export default function PaymentInPremium() {
   }
 
   function undoApplied(record: PaymentInRecord) {
-    if (!canReopenWithinWindow(record) || !country) return;
+    if (!canReopenWithinWindow(record)) return;
     try {
       const saved = savePaymentIn({
         id: record.id,
@@ -332,29 +329,17 @@ export default function PaymentInPremium() {
             <p className="text-base font-semibold text-slate-900">Payment In</p>
             <p className="text-xs text-slate-500">Receive money from customers</p>
           </div>
-          <label className="mx-auto w-full max-w-xs sm:mx-0 sm:flex-1 sm:max-w-sm">
-            <span className="sr-only">Country</span>
-            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">
-              <select value={country} onChange={(event) => onCountryChange(event.target.value as CountryCode)} className="w-full bg-transparent text-sm font-semibold text-slate-700 outline-none">
-                <option value="">Select country</option>
-                {COUNTRY_OPTIONS.map((entry) => (
-                  <option key={entry.code} value={entry.code}>
-                    {entry.flag} {entry.name} | {entry.currency}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </label>
-          <button onClick={startNewPayment} disabled={!country || !allowed} className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+          <div className="mx-auto w-full max-w-xs rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm font-semibold text-slate-700 sm:mx-0 sm:flex-1 sm:max-w-sm">
+            {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].name} | {COUNTRY_CONFIG[country].currency}
+          </div>
+          <button onClick={startNewPayment} disabled={!allowed} className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
             <Plus className="h-4 w-4" />
             New Payment
           </button>
         </div>
       </div>
 
-      {!country ? (
-        <EmptyState icon={AlertTriangle} title="Select a country to continue" description="Country is mandatory before creating or viewing receipts." />
-      ) : !allowed ? (
+      {!allowed ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">You do not have access to manage {COUNTRY_CONFIG[country].name} data.</div>
       ) : (
         <div className="space-y-4">
