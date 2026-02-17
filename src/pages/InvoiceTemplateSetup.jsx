@@ -8,7 +8,6 @@ import PageHeader from "../components/PageHeader";
 import GradientButton from "../components/GradientButton";
 import FormField from "../components/FormField";
 import InvoicePreview from "../components/InvoicePreview";
-import { api } from "../lib/api";
 import { computeIndiaGST, computeVAT } from "../services/tax";
 import {
   DEFAULT_TEMPLATE_CONFIG,
@@ -16,7 +15,12 @@ import {
   setInvoiceTemplateConfig,
   setInvoiceTemplateCompleted
 } from "../lib/templateStore";
-import { companyGetProfile, companySetCompleted } from "../services/company.service";
+import {
+  companyGetProfile,
+  companyLoadMyOrganization,
+  companySaveProfileRemote,
+  companyUpdateProfile
+} from "../services/company.service";
 import { UI } from "../theme/tokens";
 import {
   getCountryInvoiceConfig,
@@ -152,23 +156,6 @@ function computePreviewTotals(preview) {
   };
 }
 
-function mapTemplatePayload(payload) {
-  if (!payload) return null;
-  const source = payload.invoice_template || payload.invoiceTemplate || payload;
-  const next = {
-    templateId: source.invoice_template_id || source.template_id || source.templateId,
-    primaryColor: source.invoice_primary_color || source.primaryColor,
-    bgColor: source.invoice_bg_color || source.bgColor,
-    fontFamily: source.invoice_font_family || source.fontFamily,
-    logoUrl: source.invoice_logo_url || source.logoUrl,
-    logoPosition: source.invoice_logo_position || source.logoPosition
-  };
-  Object.keys(next).forEach((key) => {
-    if (next[key] === undefined || next[key] === null || next[key] === "") delete next[key];
-  });
-  return next;
-}
-
 export default function InvoiceTemplateSetup() {
   const nav = useNavigate();
   const company = companyGetProfile();
@@ -188,6 +175,7 @@ export default function InvoiceTemplateSetup() {
     };
   });
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [preview, setPreview] = useState(() => ({
     ...buildEmptyInvoice(country, companyName, company)
@@ -197,41 +185,11 @@ export default function InvoiceTemplateSetup() {
     let active = true;
 
     async function load() {
-      let me = null;
-      let templatePayload = null;
-
-      try {
-        const res = await api.get("/api/me");
-        me = res.data;
-      } catch {
-        me = null;
-      }
-
-      try {
-        const res = await api.get("/api/company/invoice-template");
-        templatePayload = res.data;
-      } catch {
-        try {
-          const res = await api.get("/api/company");
-          templatePayload = res.data;
-        } catch {
-          templatePayload = null;
-        }
-      }
-
+      const remoteProfile = await companyLoadMyOrganization();
       if (!active) return;
-
-      if (me) {
-        if (typeof me.company_setup_completed === "boolean") {
-          companySetCompleted(me.company_setup_completed);
-        }
-        if (typeof me.invoice_template_completed === "boolean") {
-          setInvoiceTemplateCompleted(me.invoice_template_completed);
-        }
-      }
-
-      const mapped = mapTemplatePayload(templatePayload);
-      if (mapped) {
+      const profile = remoteProfile || companyGetProfile() || {};
+      const mapped = profile?.settings?.invoiceTemplate || null;
+      if (mapped && typeof mapped === "object") {
         setConfig((prev) => {
           const next = { ...DEFAULT_TEMPLATE_CONFIG, ...prev, ...mapped };
           setInvoiceTemplateConfig(next);
@@ -296,21 +254,27 @@ export default function InvoiceTemplateSetup() {
 
   async function saveTemplate() {
     setSaving(true);
-    const payload = {
-      invoice_template_id: config.templateId,
-      invoice_primary_color: config.primaryColor,
-      invoice_bg_color: config.bgColor,
-      invoice_font_family: config.fontFamily,
-      invoice_logo_url: config.logoUrl,
-      invoice_logo_position: config.logoPosition
-    };
+    setSaveError("");
 
     try {
-      await api.post("/api/company/invoice-template", payload);
       setInvoiceTemplateConfig(config);
       setInvoiceTemplateCompleted(true);
+
+      const profile = companyGetProfile() || {};
+      const nextProfile = {
+        ...profile,
+        settings: {
+          ...(profile.settings || {}),
+          invoiceTemplate: config
+        },
+        updated_at: new Date().toISOString()
+      };
+      companyUpdateProfile(nextProfile);
+      await companySaveProfileRemote(nextProfile);
+
       nav("/dashboard", { replace: true });
-    } catch {
+    } catch (error) {
+      setSaveError(error?.message || "Template saved locally but cloud sync failed.");
       setInvoiceTemplateConfig(config);
       setInvoiceTemplateCompleted(true);
       nav("/dashboard", { replace: true });
@@ -325,6 +289,11 @@ export default function InvoiceTemplateSetup() {
         title="Invoice Template Setup"
         subtitle="Choose a template and brand colors before accessing the dashboard."
       />
+      {saveError ? (
+        <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {saveError}
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-5">
         <Card className="p-5">
