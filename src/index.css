@@ -2,25 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --bg-warm: #eef3ef;
-  --text-main: #1f2b24;
-  --app-card-bg: #ffffff;
-  --app-card-border: #e2ebe5;
-  --app-muted: #6c7d73;
-  --app-cream: #e3f2ea;
-  --app-ring: rgba(46, 141, 90, 0.25);
-  --app-gradient: linear-gradient(135deg, #1f6b45 0%, #2e8d5a 100%);
-  --app-topbar-bg: rgba(255, 255, 255, 0.85);
-}
-
 html, body {
   height: 100%;
 }
 
 body {
-  background: var(--bg-warm);
-  color: var(--text-main);
+  margin: 0;
+  background: var(--bg, #f6faf8);
+  color: var(--text, #14221d);
+  transition: background-color 180ms ease, color 180ms ease;
 }
 
 @media print {

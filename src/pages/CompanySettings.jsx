@@ -30,6 +30,7 @@ import { COUNTRIES, companyGetProfile, companyUpdateProfile } from "../services/
 import { authGetUser } from "../services/auth.service";
 import { uid } from "../services/storage";
 import { UI } from "../theme/tokens";
+import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 
 const SECTION_ITEMS = [
   {
@@ -504,7 +505,7 @@ function validateProfile(profile) {
 }
 
 export default function CompanySettings() {
-  const { setTheme, setThemePreset, themePresetId } = useTheme();
+  const { setTheme, themePresetId } = useTheme();
   const currentProfile = companyGetProfile();
   const currentUser = authGetUser();
   const [settings, setSettings] = useState(() => buildDefaultSettings(currentProfile, currentUser));
@@ -515,6 +516,7 @@ export default function CompanySettings() {
   const [errors, setErrors] = useState({});
   const [invite, setInvite] = useState({ name: "", email: "", role: "Staff" });
   const [themeModalOpen, setThemeModalOpen] = useState(false);
+  useGlobalLoadingBridge(loadingSection, "company-settings");
 
   const dirtyMap = useMemo(() => {
     return SECTION_ITEMS.reduce((acc, section) => {
@@ -1502,8 +1504,7 @@ export default function CompanySettings() {
                     initialThemeId={activeThemePreset?.id || themePresetId}
                     onClose={() => setThemeModalOpen(false)}
                     onApply={(preset) => {
-                      setThemePreset(preset.id);
-                      setTheme(preset.mode === "Dark" ? "dark" : "light");
+                      setTheme(preset.id);
                       updateSection("theme", {
                         mode: preset.mode,
                         primaryColor: preset.primaryColor,

@@ -35,6 +35,7 @@ import Card from "../components/Card";
 import Badge from "../components/Badge";
 import { companyGetProfile } from "../services/company.service";
 import { formatMoney, normalizeText } from "../modules/items/utils";
+import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 
 const CURRENCY_MAP = {
   India: "INR",
@@ -748,6 +749,7 @@ export default function Reports() {
   const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
   const [loading, setLoading] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
+  useGlobalLoadingBridge(loading, "reports");
 
   const scopedReports = useMemo(() => {
     if (scope === "All") return REPORT_CARDS;

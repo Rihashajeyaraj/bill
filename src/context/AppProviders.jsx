@@ -4,6 +4,7 @@ import { AppShellProvider } from "./AppShellContext";
 import { ConfirmProvider } from "./ConfirmContext";
 import { ThemeProvider, useTheme } from "./ThemeContext";
 import { ToastProvider, useToast } from "./ToastContext";
+import { PageLoadingProvider } from "./PageLoadingContext";
 import { useSessionTimeout } from "../hooks/useSessionTimeout";
 import { authGetToken, authLogout } from "../services/auth.service";
 import CommandPalette from "../components/shell/CommandPalette";
@@ -83,9 +84,11 @@ function ProvidersTree({ children }) {
     <ThemeProvider>
       <ToastProvider>
         <ConfirmProvider>
-          <AppShellProvider>
-            <SessionAndShellLayer>{children}</SessionAndShellLayer>
-          </AppShellProvider>
+          <PageLoadingProvider>
+            <AppShellProvider>
+              <SessionAndShellLayer>{children}</SessionAndShellLayer>
+            </AppShellProvider>
+          </PageLoadingProvider>
         </ConfirmProvider>
       </ToastProvider>
     </ThemeProvider>

@@ -31,6 +31,7 @@ import { companyGetProfile } from "../../services/company.service";
 import EmptyState from "../../components/EmptyState";
 import GradientButton from "../../components/GradientButton";
 import { UI } from "../../theme/tokens";
+import { useGlobalLoadingBridge } from "../../hooks/useGlobalLoadingBridge";
 
 type ViewMode = "list" | "create" | "edit" | "view";
 
@@ -86,6 +87,7 @@ export default function CreditNotePremium() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [page, setPage] = useState(1);
+  useGlobalLoadingBridge(loading || editorLoading || switching, "credit-note");
 
   const notes = useMemo(() => (country ? listCreditNotes(country) : []), [country, refreshKey]);
   const invoices = useMemo(() => (country ? mapInvoicesByCountry(country) : []), [country, refreshKey]);

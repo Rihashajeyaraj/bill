@@ -1,147 +1,87 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { THEME_PRESETS, findThemePresetById } from "../components/theme/themePresets";
 import { LS_KEYS } from "../services/storage";
-import { companyGetProfile } from "../services/company.service";
-import {
-  DEFAULT_THEME_PRESET_ID,
-  THEME_PRESETS,
-  findThemePresetById,
-  findThemePresetBySettings
-} from "../components/theme/themePresets";
 
 const ThemeContext = createContext(null);
 
-function isThemeMode(mode) {
-  return mode === "light" || mode === "dark";
+const SUPPORTED_THEME_IDS = ["task-ink", "focus-mint", "forest-balance", "moon-breath"];
+const DEFAULT_THEME_ID = "focus-mint";
+const LEGACY_MODE_TO_THEME = {
+  dark: "task-ink",
+  light: "focus-mint"
+};
+
+function isSupportedTheme(themeId) {
+  return SUPPORTED_THEME_IDS.includes(themeId);
 }
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
+function normalizeThemeId(themeId) {
+  if (!themeId || typeof themeId !== "string") return null;
+  return isSupportedTheme(themeId) ? themeId : null;
 }
 
-function normalizeHex(hex, fallback) {
-  const value = String(hex || "").trim();
-  if (!/^#([0-9a-fA-F]{6})$/.test(value)) return fallback;
-  return value.toUpperCase();
+function getThemeMode(themeId) {
+  return themeId === "task-ink" || themeId === "moon-breath" ? "dark" : "light";
 }
 
-function hexToRgb(hex, fallback = "#1F6B45") {
-  const safe = normalizeHex(hex, fallback).slice(1);
-  return {
-    r: Number.parseInt(safe.slice(0, 2), 16),
-    g: Number.parseInt(safe.slice(2, 4), 16),
-    b: Number.parseInt(safe.slice(4, 6), 16)
-  };
-}
+function readInitialThemeId() {
+  if (typeof window === "undefined") return DEFAULT_THEME_ID;
 
-function mixHex(source, target, amount) {
-  const ratio = clamp(amount, 0, 1);
-  const src = hexToRgb(source);
-  const dst = hexToRgb(target);
-  const r = Math.round(src.r * (1 - ratio) + dst.r * ratio);
-  const g = Math.round(src.g * (1 - ratio) + dst.g * ratio);
-  const b = Math.round(src.b * (1 - ratio) + dst.b * ratio);
-  return `#${[r, g, b]
-    .map((component) => component.toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase()}`;
-}
+  const storedThemeId = normalizeThemeId(localStorage.getItem(LS_KEYS.theme_preset));
+  if (storedThemeId) return storedThemeId;
 
-function toRgba(hex, alpha) {
-  const rgb = hexToRgb(hex);
-  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${clamp(alpha, 0, 1)})`;
-}
+  const legacyMode = localStorage.getItem(LS_KEYS.theme_mode);
+  if (legacyMode && LEGACY_MODE_TO_THEME[legacyMode]) {
+    return LEGACY_MODE_TO_THEME[legacyMode];
+  }
 
-function getPresetFromCompany() {
-  const companyTheme = companyGetProfile()?.settings?.theme;
-  if (!companyTheme) return null;
-  return findThemePresetBySettings(companyTheme);
-}
-
-function readInitialTheme() {
-  const stored = localStorage.getItem(LS_KEYS.theme_mode);
-  if (isThemeMode(stored)) return stored;
-
-  const companyTheme = companyGetProfile()?.settings?.theme?.mode;
-  if (companyTheme === "Dark") return "dark";
-  if (companyTheme === "Light") return "light";
-
-  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-  return prefersDark ? "dark" : "light";
-}
-
-function readInitialPresetId(themeMode) {
-  const stored = localStorage.getItem(LS_KEYS.theme_preset);
-  if (stored && findThemePresetById(stored)) return stored;
-
-  const fromCompany = getPresetFromCompany();
-  if (fromCompany) return fromCompany.id;
-
-  return (
-    THEME_PRESETS.find((preset) => preset.mode.toLowerCase() === themeMode)?.id ||
-    DEFAULT_THEME_PRESET_ID
-  );
-}
-
-function applyTheme(mode, presetId) {
-  const preset = findThemePresetById(presetId) || findThemePresetById(DEFAULT_THEME_PRESET_ID);
-  const primary = normalizeHex(preset?.primaryColor, "#1F6B45");
-  const accent = normalizeHex(preset?.accentColor, "#2E8D5A");
-  const isDark = mode === "dark";
-  const root = document.documentElement;
-
-  document.documentElement.setAttribute("data-theme", mode);
-  root.style.setProperty("--app-gradient", `linear-gradient(135deg, ${primary} 0%, ${accent} 100%)`);
-  root.style.setProperty("--bg-warm", isDark ? mixHex(primary, "#E8EEF1", 0.86) : mixHex(primary, "#F4F8F6", 0.9));
-  root.style.setProperty("--text-main", "#1F2B24");
-  root.style.setProperty("--app-card-bg", "#FFFFFF");
-  root.style.setProperty("--app-card-border", mixHex(primary, "#DDE7E1", 0.82));
-  root.style.setProperty("--app-muted", mixHex(primary, "#6C7D73", 0.9));
-  root.style.setProperty("--app-cream", mixHex(accent, "#ECF8F2", 0.82));
-  root.style.setProperty("--app-ring", toRgba(accent, 0.24));
-  root.style.setProperty(
-    "--app-topbar-bg",
-    isDark ? "rgba(247, 250, 252, 0.92)" : "rgba(255, 255, 255, 0.85)"
-  );
+  return DEFAULT_THEME_ID;
 }
 
 export function ThemeProvider({ children }) {
-  const [theme, setThemeState] = useState(() => readInitialTheme());
-  const [themePresetId, setThemePresetIdState] = useState(() => readInitialPresetId(readInitialTheme()));
+  const [theme, setThemeState] = useState(readInitialThemeId);
 
   useEffect(() => {
-    applyTheme(theme, themePresetId);
-    localStorage.setItem(LS_KEYS.theme_mode, theme);
-    localStorage.setItem(LS_KEYS.theme_preset, themePresetId);
-  }, [theme, themePresetId]);
+    if (typeof window === "undefined") return;
+    const mode = getThemeMode(theme);
+    localStorage.setItem(LS_KEYS.theme_preset, theme);
+    localStorage.setItem(LS_KEYS.theme_mode, mode);
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
 
-  const setTheme = (mode) => {
-    if (!isThemeMode(mode)) return;
-    setThemeState(mode);
-  };
+  const setTheme = useCallback((themeId) => {
+    const nextTheme = normalizeThemeId(themeId);
+    if (!nextTheme) return;
+    setThemeState(nextTheme);
+  }, []);
 
-  const setThemePreset = (presetId) => {
-    if (!findThemePresetById(presetId)) return;
-    setThemePresetIdState(presetId);
-  };
-
-  const toggleTheme = () => {
-    setThemeState((prev) => (prev === "light" ? "dark" : "light"));
-  };
+  const toggleTheme = useCallback(() => {
+    setThemeState((prevTheme) => (getThemeMode(prevTheme) === "dark" ? "focus-mint" : "task-ink"));
+  }, []);
 
   const value = useMemo(
     () => ({
       theme,
-      isDark: theme === "dark",
-      themePresetId,
-      themePreset: findThemePresetById(themePresetId) || findThemePresetById(DEFAULT_THEME_PRESET_ID),
+      currentTheme: theme,
+      themeMode: getThemeMode(theme),
+      isDark: getThemeMode(theme) === "dark",
+      themes: THEME_PRESETS.filter((preset) => SUPPORTED_THEME_IDS.includes(preset.id)),
       setTheme,
-      setThemePreset,
-      toggleTheme
+      toggleTheme,
+      themePresetId: theme,
+      themePreset: findThemePresetById(theme),
+      setThemePreset: setTheme
     }),
-    [theme, themePresetId]
+    [theme, setTheme, toggleTheme]
   );
 
-  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+  return (
+    <ThemeContext.Provider value={value}>
+      <div data-theme={theme} className="theme-root">
+        {children}
+      </div>
+    </ThemeContext.Provider>
+  );
 }
 
 export function useTheme() {

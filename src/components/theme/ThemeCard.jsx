@@ -10,9 +10,9 @@ export default function ThemeCard({ theme, selected, onSelect }) {
       type="button"
       className={clsx("theme-card", selected && "is-selected")}
       style={{
-        "--theme-grad-start": theme.gradient?.[0] || "#0f766e",
-        "--theme-grad-end": theme.gradient?.[1] || "#22c55e",
-        "--theme-accent": theme.accentColor || theme.gradient?.[0] || "#0f766e"
+        "--theme-grad-start": theme.gradient?.[0] || "var(--primary)",
+        "--theme-grad-end": theme.gradient?.[1] || "var(--accent)",
+        "--theme-accent": theme.accentColor || theme.gradient?.[0] || "var(--primary)"
       }}
       onClick={() => onSelect?.(theme)}
     >

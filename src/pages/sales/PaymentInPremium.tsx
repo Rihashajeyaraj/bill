@@ -24,6 +24,7 @@ import PaymentModePicker from "../../modules/paymentIn/PaymentModePicker";
 import ReceiptFeedCard from "../../modules/paymentIn/ReceiptFeedCard";
 import PaymentInSkeleton from "../../modules/paymentIn/PaymentInSkeleton";
 import AuditDrawer from "../../modules/paymentIn/AuditDrawer";
+import { useGlobalLoadingBridge } from "../../hooks/useGlobalLoadingBridge";
 
 const STEPS = ["Customer & Country", "Payment Details", "Review & Confirm"];
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
@@ -77,6 +78,7 @@ export default function PaymentInPremium() {
   const [statusFilter, setStatusFilter] = useState<PaymentStatus | "">("");
   const [customerFilter, setCustomerFilter] = useState("");
   const [modeFilter, setModeFilter] = useState("");
+  useGlobalLoadingBridge(loading, "payment-in");
 
   const payments = useMemo(() => listPaymentIn(country), [country, refreshKey]);
   const customers = useMemo(() => mapCustomersByCountry(country), [country, refreshKey]);

@@ -17,10 +17,9 @@ import {
   ChevronRight
 } from "lucide-react";
 import clsx from "clsx";
-import { UI } from "../theme/tokens";
 
-const base = "text-white/80 hover:bg-white/10";
-const active = "text-white";
+const base = "app-sidebar-item";
+const active = "app-sidebar-item is-active";
 
 function Item({ to, icon: Icon, label, collapsed }) {
   return (
@@ -28,11 +27,10 @@ function Item({ to, icon: Icon, label, collapsed }) {
       to={to}
       className={({ isActive }) =>
         clsx(
-          "flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition",
+          "flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-colors",
           isActive ? active : base
         )
       }
-      style={({ isActive }) => (isActive ? { background: UI.GRADIENT } : {})}
     >
       <Icon className="h-4.5 w-4.5" />
       {!collapsed ? <span className="truncate">{label}</span> : null}
@@ -63,24 +61,23 @@ export default function Sidebar({ collapsed, onToggle }) {
 
   return (
     <aside
-      className={clsx("fixed left-0 top-0 z-50 h-screen border-r border-white/10 text-white", width)}
-      style={{ background: UI.GRADIENT }}
+      className={clsx("app-sidebar fixed left-0 top-0 z-50 h-screen", width)}
     >
       <div className="h-full flex flex-col">
         <div className="px-4 py-4 flex items-center justify-between">
           <div className="min-w-0">
             {!collapsed ? (
               <>
-                <p className="text-sm font-semibold text-white">BillJoy</p>
-                <p className="text-xs text-white/70">Billing Suite</p>
+                <p className="app-sidebar-title text-sm font-semibold">BillJoy</p>
+                <p className="app-sidebar-subtitle text-xs">Billing Suite</p>
               </>
             ) : (
-              <div className="h-9 w-9 rounded-2xl bg-white/10" />
+              <div className="app-sidebar-placeholder h-9 w-9 rounded-2xl" />
             )}
           </div>
           <button
             onClick={onToggle}
-            className="h-9 w-9 rounded-2xl border border-white/20 bg-white/10 hover:bg-white/15 flex items-center justify-center"
+            className="app-sidebar-toggle h-9 w-9 rounded-2xl flex items-center justify-center"
           >
             {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </button>
@@ -90,7 +87,7 @@ export default function Sidebar({ collapsed, onToggle }) {
           {items.map((it, idx) =>
             it.section ? (
               <div key={`sec_${idx}`} className={clsx("mt-3 mb-2", collapsed ? "px-1" : "px-2")}>
-                {!collapsed ? <p className="text-xs font-semibold text-white/60 uppercase">{it.section}</p> : null}
+                {!collapsed ? <p className="app-sidebar-subtitle text-xs font-semibold uppercase">{it.section}</p> : null}
               </div>
             ) : (
               <div key={it.to} className="mb-1">
@@ -100,15 +97,15 @@ export default function Sidebar({ collapsed, onToggle }) {
           )}
         </nav>
 
-        <div className="px-3 py-4 border-t border-slate-100">
-          <div className="rounded-2xl p-3 border border-slate-100" style={{ background: UI.COLORS.cream }}>
+        <div className="app-sidebar-tip-wrap px-3 py-4">
+          <div className="app-sidebar-tip rounded-2xl p-3">
             {!collapsed ? (
               <>
-                <p className="text-sm font-semibold text-slate-900">Tip</p>
-                <p className="text-xs text-slate-600 mt-1">Complete Company Setup to unlock the dashboard.</p>
+                <p className="app-sidebar-tip-title text-sm font-semibold">Tip</p>
+                <p className="app-sidebar-tip-copy mt-1 text-xs">Complete Company Setup to unlock the dashboard.</p>
               </>
             ) : (
-              <div className="h-3 w-3 rounded-full" style={{ background: UI.COLORS.deepRed }} />
+              <div className="app-sidebar-tip-dot h-3 w-3 rounded-full" />
             )}
           </div>
         </div>

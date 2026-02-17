@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownCircle,
   ArrowUpCircle,
-  Landmark,
+  AlertTriangle,
   Wallet,
   Plus,
   Minus,
@@ -24,6 +24,7 @@ import {
   Pie,
   Cell
 } from "recharts";
+import { beginPageLoading, endPageLoading } from "../state/pageLoadingStore";
 
 function money(n) {
   const v = Number(n || 0);
@@ -35,6 +36,15 @@ function buildMonthLabels() {
 }
 
 export default function Dashboard() {
+  useEffect(() => {
+    const token = beginPageLoading("dashboard");
+    const timer = window.setTimeout(() => endPageLoading(token), 260);
+    return () => {
+      window.clearTimeout(timer);
+      endPageLoading(token);
+    };
+  }, []);
+
   const company = companyGetProfile();
   const currency = company?.currency || company?.currencies?.[0] || "INR";
   const invoices = invoicesList();
@@ -51,13 +61,50 @@ export default function Dashboard() {
 
     const received = payments.filter((p) => p.direction === "IN").reduce((a, x) => a + Number(x.amount || 0), 0);
     const paid = payments.filter((p) => p.direction === "OUT").reduce((a, x) => a + Number(x.amount || 0), 0);
+    const overdueCutoff = new Date();
+    overdueCutoff.setHours(0, 0, 0, 0);
+    overdueCutoff.setDate(overdueCutoff.getDate() - 30);
+
+    let remainingReceived = Math.max(0, received);
+    const sortedInvoices = [...invoices].sort((a, b) => {
+      const aTime = new Date(a?.invoiceDate || a?.date || a?.created_at || 0).getTime();
+      const bTime = new Date(b?.invoiceDate || b?.date || b?.created_at || 0).getTime();
+      return aTime - bTime;
+    });
+
+    const overdueAmount = sortedInvoices.reduce((sum, invoice) => {
+      const status = String(invoice?.status || invoice?.paymentStatus || "").toLowerCase();
+      if (status === "paid") return sum;
+
+      const invoiceTotal = Math.max(
+        0,
+        Number(
+          invoice?.totals?.balance ??
+            invoice?.remainingBalance ??
+            invoice?.totals?.grandTotal ??
+            invoice?.totals?.total ??
+            0
+        )
+      );
+      if (!invoiceTotal) return sum;
+
+      const applied = Math.min(invoiceTotal, remainingReceived);
+      remainingReceived = Math.max(0, remainingReceived - applied);
+      const outstanding = Math.max(0, invoiceTotal - applied);
+      if (!outstanding) return sum;
+
+      const invoiceDate = new Date(invoice?.invoiceDate || invoice?.date || invoice?.created_at || 0);
+      if (Number.isNaN(invoiceDate.getTime()) || invoiceDate >= overdueCutoff) return sum;
+
+      return sum + outstanding;
+    }, 0);
 
     return {
       totalSales: sales,
       receivables: Math.max(0, sales - received),
       payables: Math.max(0, purchase - paid),
       cashBalance: Math.max(0, received - paid),
-      bankBalance: Math.max(0, sales - purchase),
+      overdueAmount: Math.max(0, overdueAmount),
       expenses: purchase,
       received,
       paid
@@ -165,11 +212,11 @@ export default function Dashboard() {
 
         <Card className="p-3 flex items-center justify-between">
           <div>
-            <p className="text-xs text-slate-500">Bank Balance</p>
-            <p className="text-sm font-semibold text-amber-500">{currencyPrefix}{money(totals.bankBalance)}</p>
+            <p className="text-xs text-slate-500">Overdue Amount</p>
+            <p className="text-sm font-semibold text-amber-500">{currencyPrefix}{money(totals.overdueAmount)}</p>
           </div>
           <div className="h-9 w-9 rounded-full bg-amber-100 flex items-center justify-center">
-            <Landmark className="h-4 w-4 text-amber-500" />
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
           </div>
         </Card>
       </div>
