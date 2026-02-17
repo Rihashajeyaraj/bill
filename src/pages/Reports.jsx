@@ -746,6 +746,7 @@ export default function Reports() {
   const [metric, setMetric] = useState("amount");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailSearch, setDetailSearch] = useState("");
+  const [partyTypeFilter, setPartyTypeFilter] = useState("All");
   const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
   const [loading, setLoading] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
@@ -832,7 +833,7 @@ export default function Reports() {
   const filteredRows = useMemo(() => {
     const rows = detailsRows;
     const query = normalizeText(detailSearch);
-    const matchRows = query
+    const searchedRows = query
       ? rows.filter((row) =>
           Object.values(row)
             .join(" ")
@@ -840,6 +841,13 @@ export default function Reports() {
             .includes(query)
         )
       : rows;
+    const matchRows =
+      activeReport === "parties" && partyTypeFilter !== "All"
+        ? searchedRows.filter(
+            (row) =>
+              String(row?.type || "").toLowerCase() === partyTypeFilter.toLowerCase()
+          )
+        : searchedRows;
 
     if (!sortConfig.key) return matchRows;
     const sorted = [...matchRows].sort((a, b) => {
@@ -851,7 +859,7 @@ export default function Reports() {
       return String(aValue ?? "").localeCompare(String(bValue ?? ""));
     });
     return sortConfig.direction === "desc" ? sorted.reverse() : sorted;
-  }, [detailsRows, detailSearch, sortConfig]);
+  }, [detailsRows, detailSearch, activeReport, partyTypeFilter, sortConfig]);
 
   function toggleSort(key) {
     setSortConfig((prev) => {
@@ -1128,6 +1136,17 @@ export default function Reports() {
                   className="w-full rounded-full border border-slate-200 bg-slate-50 px-10 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200"
                 />
               </label>
+              {activeReport === "parties" ? (
+                <select
+                  value={partyTypeFilter}
+                  onChange={(event) => setPartyTypeFilter(event.target.value)}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700"
+                >
+                  <option value="All">All Parties</option>
+                  <option value="Customer">Customer</option>
+                  <option value="Supplier">Supplier</option>
+                </select>
+              ) : null}
               <span className="text-xs text-slate-500">Click row to drill down to source</span>
             </div>
 
