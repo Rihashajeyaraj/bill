@@ -1,12 +1,15 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { LockKeyhole, Mail, ReceiptIndianRupee, User } from "lucide-react";
+import { LockKeyhole, Mail, ReceiptIndianRupee, User, ShieldCheck } from "lucide-react";
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import Card from "../components/Card";
-import { authLogin, authRegister } from "../services/auth.service";
-import { api } from "../lib/api";
-import { invoiceTemplateIsCompleted, setInvoiceTemplateCompleted } from "../lib/templateStore";
-import { companyIsCompleted, companySetCompleted } from "../services/company.service";
+import {
+  authLogin,
+  authRegister,
+  authUsingSupabase
+} from "../services/auth.service";
+import { companyLoadMyOrganization } from "../services/company.service";
+import { ROLE_LABELS, ROLE_OPTIONS, isOwnerRole } from "../services/roles";
 
 export default function Login() {
   const nav = useNavigate();
@@ -14,19 +17,23 @@ export default function Login() {
   const isLogin = mode === "login";
 
   const [loginForm, setLoginForm] = useState({
-    email: "owner@demo.com",
-    password: "owner123"
+    email: "",
+    password: ""
   });
+
   const [signupForm, setSignupForm] = useState({
     name: "",
     email: "",
     password: "",
     confirmPassword: "",
-    role: "Owner"
+    role: ROLE_LABELS.owner,
+    registerCode: ""
   });
 
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const usingSupabase = useMemo(() => authUsingSupabase(), []);
 
   function switchMode(next, nextNotice = "") {
     setMode(next);
@@ -38,42 +45,29 @@ export default function Login() {
     e.preventDefault();
     setErr("");
     setNotice("");
+    setSubmitting(true);
+
     try {
-      authLogin({ email: loginForm.email, password: loginForm.password });
-      let me = null;
-      try {
-        const res = await api.get("/api/me");
-        me = res.data;
-      } catch {
-        me = null;
+      const result = await authLogin({ email: loginForm.email, password: loginForm.password });
+      await companyLoadMyOrganization();
+
+      if (!result.organizationId || !result.companySetupCompleted) {
+        nav("/company-setup", { replace: true });
+      } else {
+        nav("/dashboard", { replace: true });
       }
-
-      const companyDone =
-        typeof me?.company_setup_completed === "boolean" ? me.company_setup_completed : companyIsCompleted();
-      const invoiceDone =
-        typeof me?.invoice_template_completed === "boolean"
-          ? me.invoice_template_completed
-          : invoiceTemplateIsCompleted();
-
-      companySetCompleted(companyDone);
-      setInvoiceTemplateCompleted(invoiceDone);
-
-      if (!companyDone) nav("/company-setup", { replace: true });
-      else if (!invoiceDone) nav("/invoice-template-setup", { replace: true });
-      else nav("/dashboard", { replace: true });
     } catch (ex) {
       setErr(ex.message || "Login failed");
+    } finally {
+      setSubmitting(false);
     }
   }
 
-  function handleSignupSubmit(e) {
+  async function handleSignupSubmit(e) {
     e.preventDefault();
     setErr("");
     setNotice("");
-    if (!signupForm.name.trim()) {
-      setErr("Full name is required.");
-      return;
-    }
+
     if (!signupForm.email.trim()) {
       setErr("Email is required.");
       return;
@@ -86,18 +80,39 @@ export default function Login() {
       setErr("Passwords do not match.");
       return;
     }
+    if (!isOwnerRole(signupForm.role) && !signupForm.registerCode.trim()) {
+      setErr("Register code is required for Accounter or Staff.");
+      return;
+    }
 
+    setSubmitting(true);
     try {
-      authRegister({
+      const result = await authRegister({
         name: signupForm.name,
         email: signupForm.email,
         password: signupForm.password,
-        role: signupForm.role
+        role: signupForm.role,
+        registerCode: signupForm.registerCode
       });
-      setLoginForm((prev) => ({ ...prev, email: signupForm.email, password: "" }));
-      switchMode("login", "Account created. Please log in.");
+
+      if (result?.requiresEmailVerification) {
+        switchMode(
+          "login",
+          "Registration successful. Check your email for verification, then login."
+        );
+        return;
+      }
+
+      if (result?.next === "organization_setup") {
+        nav("/company-setup", { replace: true });
+      } else {
+        await companyLoadMyOrganization();
+        nav("/dashboard", { replace: true });
+      }
     } catch (ex) {
-      setErr(ex.message || "Sign up failed");
+      setErr(ex.message || "Register failed");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -120,20 +135,20 @@ export default function Login() {
                 </div>
                 <div>
                   <p className="text-sm font-semibold">BillJoy</p>
-                  <p className="auth-hero-copy text-xs">Billing software</p>
+                  <p className="auth-hero-copy text-xs">India-first billing software</p>
                 </div>
               </div>
 
               <div>
                 <h2 className="text-2xl font-semibold">
-                  {isLogin ? "Welcome Back!" : "Create Your Account"}
+                  {isLogin ? "Welcome Back" : "Create Account"}
                 </h2>
                 <p className="auth-hero-copy mt-3 max-w-sm text-sm">
-                  Create invoices, manage GST/VAT, track payments,
+                  Owner creates organization.
                   <br />
-                  and review reports in one secure place.
+                  Accounter and Staff join with register code.
                   <br />
-                  Built for owners and managers.
+                  India GST workflow ready.
                 </p>
               </div>
 
@@ -154,26 +169,24 @@ export default function Login() {
             }`}
           >
             <p className="auth-kicker text-xs font-semibold uppercase tracking-[0.3em]">
-              {isLogin ? "WELCOME" : "GET STARTED"}
+              {isLogin ? "WELCOME" : "REGISTER"}
             </p>
             <h1 className="auth-title mt-2 text-2xl font-semibold">
-              {isLogin ? "Login" : "Create Account"}
+              {isLogin ? "Login" : "Register"}
             </h1>
             <p className="auth-description mt-2 text-sm">
-              {isLogin ? "Login to your billing account to continue" : "Create an account to start billing"}
+              {isLogin ? "Login to continue" : "Create your user account"}
             </p>
 
+            {!usingSupabase ? (
+              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                Supabase env keys are not configured. App is running in local demo mode.
+              </div>
+            ) : null}
+
             <form className="mt-6 space-y-4" onSubmit={isLogin ? handleLoginSubmit : handleSignupSubmit}>
-              {err ? (
-                <div className="auth-alert-error rounded-2xl px-4 py-3 text-sm">
-                  {err}
-                </div>
-              ) : null}
-              {notice ? (
-                <div className="auth-alert-success rounded-2xl px-4 py-3 text-sm">
-                  {notice}
-                </div>
-              ) : null}
+              {err ? <div className="auth-alert-error rounded-2xl px-4 py-3 text-sm">{err}</div> : null}
+              {notice ? <div className="auth-alert-success rounded-2xl px-4 py-3 text-sm">{notice}</div> : null}
 
               {isLogin ? (
                 <>
@@ -204,37 +217,29 @@ export default function Login() {
                     </div>
                   </label>
 
-                  <div className="auth-muted flex items-center justify-between text-xs">
-                    <button type="button" className="auth-link font-semibold hover:opacity-80">
-                      Forgot password?
-                    </button>
-                    <button type="button" className="auth-link font-semibold hover:opacity-80">
-                      Need help?
-                    </button>
-                  </div>
-
                   <button
                     type="submit"
-                    className="auth-submit w-full rounded-full py-3 text-sm font-semibold shadow-soft"
+                    disabled={submitting}
+                    className="auth-submit w-full rounded-full py-3 text-sm font-semibold shadow-soft disabled:opacity-60"
                   >
-                    Login
+                    {submitting ? "Please wait..." : "Login"}
                   </button>
 
                   <p className="auth-muted text-center text-xs">
-                    Don't have an account?{" "}
+                    Don&apos;t have an account?{" "}
                     <button
                       type="button"
                       className="auth-link font-semibold hover:opacity-80"
                       onClick={() => switchMode("signup")}
                     >
-                      Sign up
+                      Register
                     </button>
                   </p>
                 </>
               ) : (
                 <>
                   <label className="block">
-                    <span className="auth-label text-xs font-semibold">Full Name</span>
+                    <span className="auth-label text-xs font-semibold">Full Name (optional)</span>
                     <div className="mt-2 relative">
                       <User className="auth-input-icon absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2" />
                       <input
@@ -294,16 +299,37 @@ export default function Login() {
                       onChange={(e) => setSignupForm((p) => ({ ...p, role: e.target.value }))}
                       className="auth-select w-full rounded-full px-4 py-2.5 text-sm outline-none"
                     >
-                      <option value="Owner">Owner</option>
-                      <option value="Manager">Manager</option>
+                      {ROLE_OPTIONS.map((role) => (
+                        <option key={role} value={role}>
+                          {role}
+                        </option>
+                      ))}
                     </select>
                   </label>
 
+                  {!isOwnerRole(signupForm.role) ? (
+                    <label className="block">
+                      <span className="auth-label text-xs font-semibold">Register Code</span>
+                      <div className="mt-2 relative">
+                        <ShieldCheck className="auth-input-icon absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2" />
+                        <input
+                          value={signupForm.registerCode}
+                          onChange={(e) =>
+                            setSignupForm((p) => ({ ...p, registerCode: e.target.value.toUpperCase() }))
+                          }
+                          className="auth-input w-full rounded-full px-11 py-2.5 text-sm outline-none"
+                          placeholder="Paste organization register code"
+                        />
+                      </div>
+                    </label>
+                  ) : null}
+
                   <button
                     type="submit"
-                    className="auth-submit w-full rounded-full py-3 text-sm font-semibold shadow-soft"
+                    disabled={submitting}
+                    className="auth-submit w-full rounded-full py-3 text-sm font-semibold shadow-soft disabled:opacity-60"
                   >
-                    Create Account
+                    {submitting ? "Please wait..." : "Create Account"}
                   </button>
 
                   <p className="auth-muted text-center text-xs">

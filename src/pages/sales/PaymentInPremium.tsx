@@ -34,7 +34,12 @@ type FlowMode = "create" | "edit" | "view";
 
 function roleAccess(role: string, user: any) {
   const normalized = String(role || "").toLowerCase();
-  const isAdmin = normalized.includes("owner") || normalized.includes("manager");
+  const isAdmin =
+    normalized.includes("owner") ||
+    normalized.includes("manager") ||
+    normalized.includes("accounter") ||
+    normalized.includes("accountant") ||
+    normalized.includes("admin");
   if (isAdmin) return { roleType: "Admin" as const, canApply: true, allowedCountries: COUNTRY_OPTIONS.map((entry) => entry.code) };
   const configured = Array.isArray(user?.allowedCountries) ? user.allowedCountries.filter((entry: string) => entry in COUNTRY_CONFIG) : [];
   return { roleType: "Staff" as const, canApply: false, allowedCountries: configured.length ? configured : (["IN", "SL", "AE"] as CountryCode[]) };

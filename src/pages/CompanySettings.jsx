@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   BadgeCheck,
   Building2,
+  Copy,
   Database,
   Globe,
   Hash,
@@ -26,8 +27,16 @@ import {
   findThemePresetBySettings
 } from "../components/theme/themePresets";
 import { useTheme } from "../context/ThemeContext";
-import { COUNTRIES, companyGetProfile, companyUpdateProfile } from "../services/company.service";
-import { authGetUser } from "../services/auth.service";
+import {
+  COUNTRIES,
+  companyGetProfile,
+  companySaveProfileRemote,
+  companyUpdateProfile,
+  organizationGenerateCode,
+  organizationListActiveCodes
+} from "../services/company.service";
+import { authGetRole, authGetUser } from "../services/auth.service";
+import { isOwnerRole, normalizeRoleLabel } from "../services/roles";
 import { uid } from "../services/storage";
 import { UI } from "../theme/tokens";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
@@ -119,10 +128,9 @@ const DOCUMENT_TYPES = [
 ];
 
 const DEFAULT_ROLE_PERMISSIONS = {
-  Admin: { create: true, edit: true, delete: true, reports: true, approvals: true },
-  Accountant: { create: true, edit: true, delete: false, reports: true, approvals: false },
-  Staff: { create: true, edit: false, delete: false, reports: false, approvals: false },
-  Viewer: { create: false, edit: false, delete: false, reports: true, approvals: false }
+  Owner: { create: true, edit: true, delete: true, reports: true, approvals: true },
+  Accounter: { create: true, edit: true, delete: false, reports: true, approvals: false },
+  Staff: { create: true, edit: false, delete: false, reports: false, approvals: false }
 };
 
 function getCountryMeta(country) {
@@ -261,16 +269,16 @@ function buildDefaultSettings(profile, currentUser) {
     : [
         {
           id: uid("user_"),
-          name: currentUser?.name || "Primary Admin",
+          name: currentUser?.name || "Primary Owner",
           email: currentUser?.email || "owner@demo.com",
-          role: "Admin",
+          role: "Owner",
           status: "Active"
         },
         {
           id: uid("user_"),
-          name: "Finance Manager",
+          name: "Finance Accounter",
           email: "finance@demo.com",
-          role: "Accountant",
+          role: "Accounter",
           status: "Active"
         },
         {
@@ -508,6 +516,8 @@ export default function CompanySettings() {
   const { setTheme, themePresetId } = useTheme();
   const currentProfile = companyGetProfile();
   const currentUser = authGetUser();
+  const currentRole = authGetRole();
+  const canGenerateRegisterCodes = isOwnerRole(currentRole);
   const [settings, setSettings] = useState(() => buildDefaultSettings(currentProfile, currentUser));
   const [savedSettings, setSavedSettings] = useState(() => buildDefaultSettings(currentProfile, currentUser));
   const [activeSection, setActiveSection] = useState("profile");
@@ -515,6 +525,12 @@ export default function CompanySettings() {
   const [sectionMessage, setSectionMessage] = useState({});
   const [errors, setErrors] = useState({});
   const [invite, setInvite] = useState({ name: "", email: "", role: "Staff" });
+  const [registerCodeRole, setRegisterCodeRole] = useState("Accounter");
+  const [generatedCode, setGeneratedCode] = useState(null);
+  const [activeCodes, setActiveCodes] = useState([]);
+  const [codeBusy, setCodeBusy] = useState(false);
+  const [codeMessage, setCodeMessage] = useState("");
+  const [codeError, setCodeError] = useState("");
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   useGlobalLoadingBridge(loadingSection, "company-settings");
 
@@ -550,6 +566,22 @@ export default function CompanySettings() {
     const timer = window.setTimeout(() => setLoadingSection(false), 220);
     return () => window.clearTimeout(timer);
   }, [activeSection]);
+
+  useEffect(() => {
+    if (!canGenerateRegisterCodes || activeSection !== "users") return;
+    let active = true;
+    (async () => {
+      try {
+        const list = await organizationListActiveCodes(6);
+        if (active) setActiveCodes(list);
+      } catch {
+        if (active) setActiveCodes([]);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [activeSection, canGenerateRegisterCodes]);
 
   const country = settings.localization.defaultCountry;
   const isIndia = country === "India";
@@ -628,7 +660,7 @@ export default function CompanySettings() {
     });
   }
 
-  function handleSave(section) {
+  async function handleSave(section) {
     if (section === "profile") {
       const profileErrors = validateProfile(settings.profile);
       if (Object.keys(profileErrors).length) {
@@ -639,11 +671,21 @@ export default function CompanySettings() {
     }
 
     setSavedSettings((prev) => ({ ...prev, [section]: settings[section] }));
-    companyUpdateProfile(mapSettingsToProfile(settings));
-    setSectionMessage((prev) => ({ ...prev, [section]: "Changes saved successfully." }));
-    window.setTimeout(() => {
-      setSectionMessage((prev) => ({ ...prev, [section]: "" }));
-    }, 2400);
+    const nextProfile = mapSettingsToProfile(settings);
+    companyUpdateProfile(nextProfile);
+
+    try {
+      await companySaveProfileRemote(nextProfile);
+      setSectionMessage((prev) => ({ ...prev, [section]: "Changes saved successfully." }));
+      window.setTimeout(() => {
+        setSectionMessage((prev) => ({ ...prev, [section]: "" }));
+      }, 2400);
+    } catch (error) {
+      setSectionMessage((prev) => ({
+        ...prev,
+        [section]: error?.message || "Saved locally, but sync to Supabase failed."
+      }));
+    }
   }
 
   function handleCancel(section) {
@@ -688,6 +730,39 @@ export default function CompanySettings() {
       users: { ...prev.users, members: [nextMember, ...prev.users.members] }
     }));
     setInvite({ name: "", email: "", role: "Staff" });
+  }
+
+  async function handleGenerateRegisterCode() {
+    if (!canGenerateRegisterCodes) return;
+    setCodeBusy(true);
+    setCodeError("");
+    setCodeMessage("");
+    try {
+      const created = await organizationGenerateCode({
+        targetRole: registerCodeRole,
+        maxUses: 25,
+        expiresInDays: 45
+      });
+      setGeneratedCode(created);
+      setCodeMessage("Register code generated successfully.");
+      const list = await organizationListActiveCodes(6);
+      setActiveCodes(list);
+    } catch (error) {
+      setCodeError(error?.message || "Failed to generate register code");
+    } finally {
+      setCodeBusy(false);
+    }
+  }
+
+  async function copyRegisterCode(value) {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCodeMessage("Code copied to clipboard.");
+      setCodeError("");
+    } catch {
+      setCodeError("Unable to copy code. Copy manually.");
+    }
   }
 
   function handleDanger(action) {
@@ -1532,7 +1607,7 @@ export default function CompanySettings() {
                               <p className="text-sm font-semibold text-slate-900">{role}</p>
                               <p className="text-xs text-slate-500">Configure access level.</p>
                             </div>
-                            <Badge tone={role === "Admin" ? "success" : "neutral"}>{role}</Badge>
+                            <Badge tone={role === "Owner" ? "success" : "neutral"}>{role}</Badge>
                           </div>
                           <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                             {PERMISSION_LIST.map((permission) => (
@@ -1556,6 +1631,81 @@ export default function CompanySettings() {
                     </div>
 
                     <div className="space-y-4">
+                      {canGenerateRegisterCodes ? (
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                          <p className="text-sm font-semibold text-slate-900">Generate Register Code</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Use this code for Accounter or Staff signup.
+                          </p>
+                          <div className="mt-3 space-y-2">
+                            <select
+                              value={registerCodeRole}
+                              onChange={(event) => setRegisterCodeRole(event.target.value)}
+                              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                            >
+                              <option value="Accounter">Accounter</option>
+                              <option value="Staff">Staff</option>
+                            </select>
+                            <button
+                              type="button"
+                              disabled={codeBusy}
+                              onClick={handleGenerateRegisterCode}
+                              className={clsx(
+                                "w-full rounded-full px-4 py-2 text-xs font-semibold text-white",
+                                codeBusy ? "bg-slate-400" : "bg-slate-900"
+                              )}
+                            >
+                              {codeBusy ? "Generating..." : "Generate Code"}
+                            </button>
+                          </div>
+
+                          {generatedCode?.code ? (
+                            <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+                              <p className="text-xs text-emerald-700">Latest Code</p>
+                              <div className="mt-1 flex items-center justify-between gap-2">
+                                <p className="text-sm font-semibold tracking-[0.08em] text-emerald-900">
+                                  {generatedCode.code}
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => copyRegisterCode(generatedCode.code)}
+                                  className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700"
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                  Copy
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {codeMessage ? (
+                            <p className="mt-2 text-xs text-emerald-700">{codeMessage}</p>
+                          ) : null}
+                          {codeError ? <p className="mt-2 text-xs text-rose-600">{codeError}</p> : null}
+
+                          {activeCodes.length ? (
+                            <div className="mt-3 space-y-2">
+                              <p className="text-xs font-semibold text-slate-500">Active Codes</p>
+                              {activeCodes.map((codeEntry) => (
+                                <div
+                                  key={codeEntry.id}
+                                  className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-xs font-semibold text-slate-800">{codeEntry.code}</p>
+                                    <Badge tone="neutral">{normalizeRoleLabel(codeEntry.target_role)}</Badge>
+                                  </div>
+                                  <p className="mt-1 text-[11px] text-slate-500">
+                                    Uses: {codeEntry.used_count}/{codeEntry.max_uses} | Expires:{" "}
+                                    {new Date(codeEntry.expires_at).toLocaleDateString()}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+
                       <div className="rounded-2xl border border-slate-200 bg-white p-4">
                         <p className="text-sm font-semibold text-slate-900">Invite User</p>
                         <div className="mt-3 space-y-2">

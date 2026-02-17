@@ -37,7 +37,12 @@ type ViewMode = "list" | "create" | "edit" | "view";
 
 function roleAccess(role: string, user: any) {
   const normalized = String(role || "").toLowerCase();
-  const isAdmin = normalized.includes("owner") || normalized.includes("manager");
+  const isAdmin =
+    normalized.includes("owner") ||
+    normalized.includes("manager") ||
+    normalized.includes("accounter") ||
+    normalized.includes("accountant") ||
+    normalized.includes("admin");
   if (isAdmin) {
     return { roleType: "Admin" as const, canApply: true, canOverride: true, allowedCountries: COUNTRY_OPTIONS.map((country) => country.code) };
   }

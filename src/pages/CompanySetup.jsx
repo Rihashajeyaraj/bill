@@ -7,7 +7,11 @@ import FormField from "../components/FormField";
 import FileUpload from "../components/FileUpload";
 import CurrencyMultiInput from "../components/CurrencyMultiInput";
 import { authGetRole, authGetUser } from "../services/auth.service";
-import { COUNTRIES, companyGetProfile, companySaveProfile } from "../services/company.service";
+import {
+  COUNTRIES,
+  companyGetProfile,
+  companySaveProfileRemote
+} from "../services/company.service";
 import { invoicesList } from "../services/invoices.service";
 import { UI } from "../theme/tokens";
 
@@ -81,7 +85,7 @@ function normalizeProfile(user, role, existing) {
   return {
     ownerName: user?.name || existing?.ownerName || "",
     ownerEmail: user?.email || existing?.ownerEmail || "",
-    ownerRole: role || existing?.ownerRole || "Manager",
+    ownerRole: role || existing?.ownerRole || "Owner",
     companyName: existing?.companyName || "",
     logoBase64: existing?.logoBase64 || "",
     country: baseCountry,
@@ -110,6 +114,8 @@ export default function CompanySetup() {
   const [countryWarning, setCountryWarning] = useState(false);
 
   const [errors, setErrors] = useState({});
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
   const [vatInput, setVatInput] = useState("");
   const hasInvoices = invoicesList().length > 0;
 
@@ -137,17 +143,25 @@ export default function CompanySetup() {
     return next;
   }
 
-  function save() {
+  async function save() {
     const nextErrors = validate();
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
+    setSaveError("");
+    setSaving(true);
 
-    companySaveProfile({
-      ...profile,
-      currency: profile.currencies[0] || "",
-      created_at: new Date().toISOString()
-    });
-    nav("/invoice-template-setup", { replace: true });
+    try {
+      await companySaveProfileRemote({
+        ...profile,
+        currency: profile.currencies[0] || "",
+        created_at: new Date().toISOString()
+      });
+      nav("/dashboard", { replace: true });
+    } catch (error) {
+      setSaveError(error?.message || "Failed to save organization details");
+    } finally {
+      setSaving(false);
+    }
   }
 
   function applyCountryChange(country) {
@@ -166,9 +180,15 @@ export default function CompanySetup() {
     <div className="px-5 py-6 max-w-6xl mx-auto">
       <PageHeader
         title="Company Setup"
-        subtitle="Mandatory - complete this to unlock the dashboard."
-        right={<GradientButton onClick={save}>Save & Continue</GradientButton>}
+        subtitle="Create your organization and tax profile to unlock dashboards."
+        right={<GradientButton onClick={save}>{saving ? "Saving..." : "Save & Continue"}</GradientButton>}
       />
+
+      {saveError ? (
+        <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {saveError}
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="p-5 lg:col-span-2">
@@ -506,7 +526,7 @@ export default function CompanySetup() {
 
           <div className="mt-4">
             <GradientButton className="w-full justify-center" onClick={save}>
-              Save & Continue
+              {saving ? "Saving..." : "Save & Continue"}
             </GradientButton>
           </div>
         </Card>

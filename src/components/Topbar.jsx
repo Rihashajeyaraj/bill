@@ -14,8 +14,8 @@ export default function Topbar() {
 
   const companyName = useMemo(() => company?.companyName || "Your Company", [company]);
 
-  function logout() {
-    authLogout();
+  async function logout() {
+    await authLogout();
     nav("/login", { replace: true });
   }
 

@@ -1,6 +1,6 @@
 import React from "react";
 import { Navigate } from "react-router-dom";
-import { AuthGuard, SetupGuard, InvoiceTemplateGuard } from "./guards";
+import { AuthGuard, SetupGuard } from "./guards";
 
 import AppLayout from "../layouts/AppLayout";
 import Login from "../pages/Login";
@@ -47,12 +47,10 @@ export const routes = [
             children: [
               { path: "/", element: <Navigate to="/dashboard" replace /> },
               {
-                element: <InvoiceTemplateGuard />,
-                children: [
-                  { path: "/dashboard", element: <Dashboard /> },
-                  { path: "/app/dashboard", element: <Dashboard /> }
-                ]
+                path: "/dashboard",
+                element: <Dashboard />
               },
+              { path: "/app/dashboard", element: <Dashboard /> },
               { path: "/app/company-setup", element: <CompanySetup /> },
               { path: "/invoice-template-setup", element: <InvoiceTemplateSetup /> },
 

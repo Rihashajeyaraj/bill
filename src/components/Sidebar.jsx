@@ -17,6 +17,8 @@ import {
   ChevronRight
 } from "lucide-react";
 import clsx from "clsx";
+import { authGetRole } from "../services/auth.service";
+import { isAccounterRole, isOwnerRole } from "../services/roles";
 
 const base = "app-sidebar-item";
 const active = "app-sidebar-item is-active";
@@ -40,12 +42,11 @@ function Item({ to, icon: Icon, label, collapsed }) {
 
 export default function Sidebar({ collapsed, onToggle }) {
   const width = collapsed ? "w-[84px]" : "w-[260px]";
+  const role = authGetRole();
 
   const items = useMemo(() => {
-    return [
+    const shared = [
       { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-      { to: "/app/company-setup", icon: Building2, label: "Company Setup" },
-      { to: "/invoice-template-setup", icon: LayoutTemplate, label: "Invoice Template" },
       { to: "/app/parties", icon: Users, label: "Parties" },
       { to: "/app/items", icon: Boxes, label: "Items" },
       { to: "/app/sales/invoice", icon: ReceiptIndianRupee, label: "Invoices" },
@@ -53,11 +54,25 @@ export default function Sidebar({ collapsed, onToggle }) {
       { to: "/app/sales/credit-note", icon: BadgePercent, label: "Credit Note" },
       { to: "/app/purchase/debit-note", icon: BadgePercent, label: "Debit Note" },
       { to: "/app/sales/payment-in", icon: ArrowDownToLine, label: "Payment In" },
-      { to: "/app/purchases/payment-out", icon: ArrowUpFromLine, label: "Payment Out" },
-      { to: "/app/reports", icon: BarChart3, label: "Reports" },
-      { to: "/app/company-settings", icon: Settings, label: "Settings" }
+      { to: "/app/purchases/payment-out", icon: ArrowUpFromLine, label: "Payment Out" }
     ];
-  }, []);
+
+    if (isOwnerRole(role)) {
+      return [
+        ...shared,
+        { to: "/app/company-setup", icon: Building2, label: "Company Setup" },
+        { to: "/invoice-template-setup", icon: LayoutTemplate, label: "Invoice Template" },
+        { to: "/app/reports", icon: BarChart3, label: "Reports" },
+        { to: "/app/company-settings", icon: Settings, label: "Settings" }
+      ];
+    }
+
+    if (isAccounterRole(role)) {
+      return [...shared, { to: "/app/reports", icon: BarChart3, label: "Reports" }];
+    }
+
+    return shared;
+  }, [role]);
 
   return (
     <aside

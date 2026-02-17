@@ -1,14 +1,20 @@
 # Vyapar-like Frontend (Relaxing Red)
 
 ## Run
+```bash
 npm install
 npm run dev
+```
 
-## Demo users (Login)
-- Owner: owner@demo.com / owner123
-- Manager: manager@demo.com / manager123
-- Accountant: accountant@demo.com / accountant123
+## Supabase Setup
+1. Copy `.env.example` to `.env` and add your Supabase values.
+2. Run `supabase/schema.sql` in Supabase SQL Editor.
+3. See full setup guide: `docs/SUPABASE_SETUP.md`.
 
-## LocalStorage keys
-auth_token, auth_user, role, company_profile, companyProfileCompleted,
-parties, items, invoices, purchases, payments, expenses
+## Roles and workflow
+- `Owner`: registers, creates organization, enters dashboard.
+- `Accounter` / `Staff`: register using owner-generated register code.
+- Register code generation is available in `Company Settings -> Users & Roles`.
+
+## Local fallback mode
+If Supabase env is not configured, the app runs in local demo mode.
