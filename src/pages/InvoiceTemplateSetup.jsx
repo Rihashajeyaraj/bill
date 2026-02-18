@@ -323,6 +323,12 @@ export default function InvoiceTemplateSetup() {
             <div className="mt-3 grid grid-cols-2 gap-3">
               {countryTemplates.map((option) => {
                 const selected = config.templateId === option.id;
+                const hint =
+                  option.id === "india_gst_sample"
+                    ? "CGST + SGST format"
+                    : option.id === "india_igst_sample"
+                      ? "IGST format"
+                      : "Invoice Preview";
                 return (
                   <button
                     key={option.id}
@@ -338,7 +344,7 @@ export default function InvoiceTemplateSetup() {
                       {selected ? <CheckCircle className="h-4 w-4 text-emerald-500" /> : null}
                     </div>
                     <div className="mt-2 h-14 rounded-xl border border-slate-100 bg-slate-50 p-2 text-[9px] text-slate-500 leading-tight">
-                      <p className="font-semibold text-slate-600">Invoice Preview</p>
+                      <p className="font-semibold text-slate-600">{hint}</p>
                       <p>Bill To: —</p>
                       <p>Item: —</p>
                       <p>Total: {countryConfig.currencySymbol}—</p>

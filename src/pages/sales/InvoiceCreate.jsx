@@ -7,6 +7,7 @@ import GradientButton from "../../components/GradientButton";
 import FormField from "../../components/FormField";
 import DataTable from "../../components/DataTable";
 import Badge from "../../components/Badge";
+import InvoicePreview from "../../components/InvoicePreview";
 
 import { companyGetProfile } from "../../services/company.service";
 import { partiesByType } from "../../services/parties.service";
@@ -17,6 +18,7 @@ import { LS_KEYS } from "../../services/storage";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus } from "../../modules/parties/store";
+import { getInvoiceTemplateConfig } from "../../lib/templateStore";
 
 function money(n) {
   const v = Number(n || 0);
@@ -53,6 +55,14 @@ const INDIA_STATES = [
   "West Bengal"
 ];
 const VAT_RATES = { "Sri Lanka": 18, "United Kingdom": 20, UK: 20, Ireland: 23 };
+const CURRENCY_SYMBOLS = {
+  INR: "₹",
+  LKR: "₨",
+  AED: "AED ",
+  USD: "$",
+  GBP: "£",
+  EUR: "€"
+};
 
 function getVatRate(country, company) {
   return company?.tax?.vatRate || VAT_RATES[country] || 0;
@@ -64,8 +74,16 @@ function parseRateInput(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function resolveCurrencySymbol(country, currencyCode) {
+  const normalized = String(currencyCode || "").trim().toUpperCase();
+  if (CURRENCY_SYMBOLS[normalized]) return CURRENCY_SYMBOLS[normalized];
+  if (country === "India") return "₹";
+  return normalized ? `${normalized} ` : "";
+}
+
 export default function InvoiceCreate() {
   const [company, setCompany] = useState(() => companyGetProfile());
+  const [templateConfig, setTemplateConfig] = useState(() => getInvoiceTemplateConfig());
   const country = company?.country || "";
   const isIndia = country === "India";
   const currency = company?.currency || company?.tax?.currency || "";
@@ -75,7 +93,7 @@ export default function InvoiceCreate() {
   const [itemSearch, setItemSearch] = useState("");
 
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
-  const [invoiceNo, setInvoiceNo] = useState("");
+  const [invoiceNo, setInvoiceNo] = useState(() => generateInvoiceNumber());
   const [partyId, setPartyId] = useState("");
   const party = useMemo(() => customers.find((c) => c.id === partyId) || null, [customers, partyId]);
   const [placeOfSupply, setPlaceOfSupply] = useState("");
@@ -94,17 +112,24 @@ export default function InvoiceCreate() {
   const creditStatus = useMemo(() => getPartyCreditStatus(partyId), [partyId]);
 
   useEffect(() => {
-    const syncCompanyProfile = () => setCompany(companyGetProfile());
+    const syncProfiles = () => {
+      setCompany(companyGetProfile());
+      setTemplateConfig(getInvoiceTemplateConfig());
+    };
     const onStorage = (event) => {
-      if (!event.key || event.key === LS_KEYS.company_profile) {
-        syncCompanyProfile();
+      if (
+        !event.key ||
+        event.key === LS_KEYS.company_profile ||
+        event.key === LS_KEYS.invoiceTemplateConfig
+      ) {
+        syncProfiles();
       }
     };
     window.addEventListener("storage", onStorage);
-    window.addEventListener("focus", syncCompanyProfile);
+    window.addEventListener("focus", syncProfiles);
     return () => {
       window.removeEventListener("storage", onStorage);
-      window.removeEventListener("focus", syncCompanyProfile);
+      window.removeEventListener("focus", syncProfiles);
     };
   }, []);
 
@@ -220,9 +245,6 @@ export default function InvoiceCreate() {
 
     return { enriched, subTotal, tax, grandTotal };
   }, [lines, items, isIndia, companyState, customerState, taxRate]);
-  const isManualTax = computed.tax?.mode === "manual";
-  const showSplitGst = isIndia && !isManualTax && !!computed.tax?.sameState;
-  const showIgstOnly = isIndia && !isManualTax && !computed.tax?.sameState;
 
   const creditLimitEnabled =
     !!creditStatus.party?.creditLimitEnabled && creditStatus.creditLimit > 0;
@@ -248,8 +270,110 @@ export default function InvoiceCreate() {
     return [selected, ...filteredItems];
   }
 
-  function mockPrint() {
-    alert("Print not connected yet.");
+  const invoicePreviewData = useMemo(() => {
+    const subTotal = Number(computed.subTotal || 0);
+    const totalTax = Number(computed.tax?.totalTax || 0);
+    const effectiveTaxRate =
+      computed.tax?.mode === "manual" && subTotal > 0
+        ? Number(((totalTax / subTotal) * 100).toFixed(2))
+        : Number(taxRate || 0);
+    const seller = {
+      name: company?.companyName || "",
+      address: formatAddress(company?.address),
+      gstin: company?.tax?.gstin || "",
+      phone: company?.phone || "",
+      email: company?.email || "",
+      state: companyState
+    };
+    const buyer = {
+      name: party?.name || "",
+      address: party?.address || "",
+      gstin: party?.gstin || "",
+      phone: party?.phone || "",
+      state: customerState
+    };
+    return {
+      title: isIndia ? "Tax Invoice" : "Invoice",
+      country,
+      companyName: company?.companyName || "",
+      currencySymbol: resolveCurrencySymbol(country, currency),
+      invoiceNo: invoiceNo || "-",
+      invoiceDate,
+      dueDate: invoiceDate,
+      placeOfSupply: placeOfSupply || customerState,
+      seller,
+      buyer,
+      customer: {
+        name: buyer.name,
+        address: buyer.address,
+        phone: buyer.phone,
+        state: buyer.state,
+        gstin: buyer.gstin
+      },
+      taxRate: effectiveTaxRate,
+      tax: isIndia
+        ? {
+            type: "GST",
+            sameState: !!computed.tax?.sameState,
+            cgst: Number(computed.tax?.cgst || 0),
+            sgst: Number(computed.tax?.sgst || 0),
+            igst: Number(computed.tax?.igst || 0),
+            totalTax
+          }
+        : {
+            type: "VAT",
+            rate: effectiveTaxRate,
+            vat: totalTax,
+            totalTax
+          },
+      items: computed.enriched.map((line) => ({
+        id: line.id,
+        name: line.itemName || "",
+        hsn: line.hsn || "",
+        qty: Number(line.qty || 0),
+        rate: Number(line.rate || 0),
+        discount: Number(line.discount || 0),
+        tax: Number(line.tax || 0),
+        taxRate: Number(line.tax || 0),
+        taxableValue: Number(line.net || 0),
+        net: Number(line.net || 0),
+        amount: Number(line.net || 0)
+      })),
+      totals: {
+        subTotal,
+        tax: totalTax,
+        total: Number(computed.grandTotal || 0),
+        balance: Number(computed.grandTotal || 0)
+      }
+    };
+  }, [
+    company,
+    companyState,
+    computed.enriched,
+    computed.grandTotal,
+    computed.subTotal,
+    computed.tax,
+    country,
+    currency,
+    customerState,
+    invoiceDate,
+    invoiceNo,
+    isIndia,
+    party,
+    placeOfSupply,
+    taxRate
+  ]);
+
+  function handlePrint() {
+    if (!partyId) {
+      alert("Select customer before printing.");
+      return;
+    }
+    if (!computed.enriched.length) {
+      alert("Add at least one line item before printing.");
+      return;
+    }
+    window.print();
   }
   function mockEmail() {
     alert("Send not connected yet.");
@@ -299,35 +423,37 @@ export default function InvoiceCreate() {
 
   return (
     <div className="max-w-6xl">
-      <PageHeader
-        title="Sales - Invoice"
-        subtitle="Create invoice - line items - country tax breakdown - preview panel"
-        right={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={mockPrint}
-              className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
-            >
-              <Printer className="h-4 w-4" />
-              Print
-            </button>
-            <button
-              onClick={mockEmail}
-              className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
-            >
-              <Send className="h-4 w-4" />
-              Send
-            </button>
-            <GradientButton onClick={saveInvoice} disabled={creditBlocked} className="disabled:cursor-not-allowed disabled:opacity-60">
-              <Save className="h-4 w-4" />
-              Save
-            </GradientButton>
-          </div>
-        }
-      />
+      <div className="print-hide">
+        <PageHeader
+          title="Sales - Invoice"
+          subtitle="Create invoice - line items - country tax breakdown - preview panel"
+          right={
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handlePrint}
+                className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
+              >
+                <Printer className="h-4 w-4" />
+                Print
+              </button>
+              <button
+                onClick={mockEmail}
+                className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
+              >
+                <Send className="h-4 w-4" />
+                Send
+              </button>
+              <GradientButton onClick={saveInvoice} disabled={creditBlocked} className="disabled:cursor-not-allowed disabled:opacity-60">
+                <Save className="h-4 w-4" />
+                Save
+              </GradientButton>
+            </div>
+          }
+        />
+      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="p-5 lg:col-span-2">
+      <div className="grid grid-cols-1 gap-4">
+        <Card className="p-5 print-hide">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-semibold text-slate-900">Invoice Form</p>
@@ -622,82 +748,44 @@ export default function InvoiceCreate() {
           </div>
         </Card>
 
-        <Card className="p-5 lg:col-span-1">
-          <p className="text-sm font-semibold text-slate-900">Invoice Preview</p>
-          <p className="text-xs text-slate-500 mt-1">Frontend-only preview panel</p>
+        <Card className="p-5 print-sheet">
+          <div className="print-hide">
+            <p className="text-sm font-semibold text-slate-900">Invoice Preview</p>
+            <p className="text-xs text-slate-500 mt-1">Print uses selected template</p>
 
-          <div className="mt-4 rounded-2xl border border-slate-100 p-4 bg-slate-50/50">
-            <p className="text-xs text-slate-500">Billed To</p>
-            <p className="text-sm font-semibold text-slate-900">{party?.name || "XXX"}</p>
-            <p className="text-xs text-slate-500">{party?.phone || "XX"}</p>
-            <p className="text-xs text-slate-500">{party?.address || "XX"}</p>
-            {party?.gstin ? <p className="text-xs text-slate-500">GSTIN: {party.gstin}</p> : null}
-          </div>
-
-          <div className="mt-4">
-            <div className="flex items-center justify-between text-sm">
+            <div className="mt-4 flex items-center justify-between text-sm">
               <span className="text-slate-600">Sub Total</span>
               <span className="font-semibold text-slate-900">{money(computed.subTotal)}</span>
             </div>
-
-            <div className="mt-2 rounded-2xl border border-slate-100 p-3">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-600">
-                    {computed.tax.type}
-                    {isManualTax
-                      ? ""
-                      : computed.tax?.mode === "line"
-                        ? " (Line items)"
-                        : ` (${taxRate}%)`}
-                  </span>
-                  <span className="font-semibold text-slate-900">{money(computed.tax.totalTax)}</span>
-                </div>
-
-              {isManualTax ? (
-                <div className="mt-2 text-xs text-slate-600 flex justify-between">
-                  <span>Line tax total</span>
-                  <span>{money(computed.tax.totalTax)}</span>
-                </div>
-              ) : isIndia ? (
-                <div className="mt-2 text-xs text-slate-600 space-y-1">
-                  {showSplitGst ? (
-                    <>
-                      <div className="flex justify-between">
-                        <span>CGST</span>
-                        <span>{money(computed.tax.cgst)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>SGST</span>
-                        <span>{money(computed.tax.sgst)}</span>
-                      </div>
-                    </>
-                  ) : null}
-                  {showIgstOnly ? (
-                    <div className="flex justify-between">
-                      <span>IGST</span>
-                      <span>{money(computed.tax.igst)}</span>
-                    </div>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="mt-2 text-xs text-slate-600 flex justify-between">
-                  <span>VAT</span>
-                  <span>{money(computed.tax.vat)}</span>
-                </div>
-              )}
+            <div className="mt-2 flex items-center justify-between text-sm">
+              <span className="text-slate-600">{computed.tax.type}</span>
+              <span className="font-semibold text-slate-900">{money(computed.tax.totalTax)}</span>
             </div>
-
-            <div className="mt-3 flex items-center justify-between text-base">
+            <div className="mt-2 flex items-center justify-between text-base">
               <span className="font-semibold text-slate-900">Grand Total</span>
               <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span>
             </div>
+
+            <div className="mt-4">
+              <GradientButton className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60" onClick={saveInvoice} disabled={creditBlocked}>
+                <Save className="h-4 w-4" />
+                Save Invoice
+              </GradientButton>
+            </div>
           </div>
 
-          <div className="mt-5">
-            <GradientButton className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60" onClick={saveInvoice} disabled={creditBlocked}>
-              <Save className="h-4 w-4" />
-              Save Invoice
-            </GradientButton>
+          <div className="invoice-preview mt-4">
+            <InvoicePreview
+              templateId={templateConfig.templateId}
+              styleConfig={{
+                primaryColor: templateConfig.primaryColor,
+                bgColor: templateConfig.bgColor,
+                fontFamily: templateConfig.fontFamily,
+                logoUrl: templateConfig.logoUrl,
+                logoPosition: templateConfig.logoPosition
+              }}
+              invoiceData={invoicePreviewData}
+            />
           </div>
         </Card>
       </div>

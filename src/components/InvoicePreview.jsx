@@ -2,6 +2,26 @@ import React from "react";
 import clsx from "clsx";
 
 const VARIANTS = {
+  india_gst_sample: {
+    padding: "p-6",
+    title: "text-2xl",
+    label: "text-[11px] uppercase tracking-wider",
+    value: "text-sm",
+    tableHead: "text-[11px] uppercase tracking-wider",
+    total: "text-lg",
+    header: "",
+    divider: "border-t-2 border-slate-300"
+  },
+  india_igst_sample: {
+    padding: "p-7",
+    title: "text-2xl",
+    label: "text-xs uppercase tracking-widest",
+    value: "text-sm",
+    tableHead: "text-xs uppercase tracking-widest",
+    total: "text-lg",
+    header: "rounded-2xl border border-slate-200 p-4",
+    divider: "border-t-2 border-slate-300"
+  },
   compact: {
     padding: "p-4",
     title: "text-lg",
@@ -188,15 +208,45 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
         className={clsx("rounded-3xl border border-slate-100 shadow-soft", variant.padding)}
         style={{ backgroundColor: bgColor || "#ffffff", fontFamily: font }}
       >
-        <div className="flex items-start justify-between gap-6">
-          <div className="space-y-1">
-            <p className={clsx("font-semibold text-slate-900", variant.value)}>{seller.name}</p>
-            {seller.address ? <p className={clsx("text-slate-500", variant.label)}>{seller.address}</p> : null}
-            {seller.gstin ? <p className={clsx("text-slate-500", variant.label)}>GSTIN: {seller.gstin}</p> : null}
-            {seller.phone ? <p className={clsx("text-slate-500", variant.label)}>Phone: {seller.phone}</p> : null}
-            {seller.email ? <p className={clsx("text-slate-500", variant.label)}>Email: {seller.email}</p> : null}
+        <div
+          className={clsx(
+            "gap-6",
+            logoPos === "center"
+              ? "flex flex-col items-center text-center"
+              : logoPos === "right"
+                ? "flex items-start justify-between flex-row-reverse"
+                : "flex items-start justify-between"
+          )}
+        >
+          <div
+            className={clsx(
+              "gap-3",
+              logoPos === "center"
+                ? "flex flex-col items-center"
+                : logoPos === "right"
+                  ? "flex items-start flex-row-reverse text-right"
+                  : "flex items-start text-left"
+            )}
+          >
+            {logoUrl ? (
+              <img src={logoUrl} alt="logo" className="h-12 w-12 rounded-xl border border-slate-200 object-cover" />
+            ) : (
+              <div className="h-12 w-12 rounded-xl border border-slate-200 bg-slate-50" />
+            )}
+            <div className="space-y-1">
+              <p className={clsx("font-semibold text-slate-900", variant.value)}>{seller.name}</p>
+              {seller.address ? <p className={clsx("text-slate-500", variant.label)}>{seller.address}</p> : null}
+              {seller.gstin ? <p className={clsx("text-slate-500", variant.label)}>GSTIN: {seller.gstin}</p> : null}
+              {seller.phone ? <p className={clsx("text-slate-500", variant.label)}>Phone: {seller.phone}</p> : null}
+              {seller.email ? <p className={clsx("text-slate-500", variant.label)}>Email: {seller.email}</p> : null}
+            </div>
           </div>
-          <div className="text-right space-y-1">
+          <div
+            className={clsx(
+              "space-y-1",
+              logoPos === "center" ? "text-center" : logoPos === "right" ? "text-left" : "text-right"
+            )}
+          >
             <p className={clsx("font-semibold text-slate-900", variant.title)} style={{ color: primaryColor }}>
               {title.toUpperCase()}
             </p>

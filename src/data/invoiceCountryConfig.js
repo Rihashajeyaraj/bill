@@ -8,7 +8,7 @@
     invoiceTitle: "Tax Invoice",
     taxType: "GST",
     defaultTaxRate: 18,
-    templates: ["standard", "compact", "modern", "bold"],
+    templates: ["india_gst_sample", "india_igst_sample", "standard", "compact", "modern", "bold"],
     requiredFields: [
       "GSTIN (Seller & Buyer)",
       "HSN/SAC",
@@ -68,6 +68,8 @@
 };
 
 export const TEMPLATE_LIBRARY = {
+  india_gst_sample: { id: "india_gst_sample", label: "Sample GST" },
+  india_igst_sample: { id: "india_igst_sample", label: "Sample IGST" },
   standard: { id: "standard", label: "Standard" },
   compact: { id: "compact", label: "Compact" },
   modern: { id: "modern", label: "Modern" },
