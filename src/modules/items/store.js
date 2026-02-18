@@ -1,11 +1,25 @@
 import { LS_KEYS, lsGet, lsSet, uid } from "../../services/storage";
+import { authGetOrganizationId, authGetUser } from "../../services/auth.service";
+import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
 import { buildTaxLabel, normalizeItemType, normalizeText, parseNumber } from "./utils";
 
 const CREDIT_NOTES_PREMIUM_KEY = "creditNotesPremiumV1";
 const DEBIT_NOTES_PREMIUM_KEY = "debitNotesPremiumV1";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function looksLikeUuid(value) {
+  return UUID_PATTERN.test(String(value || ""));
+}
+
+function normalizeSupabaseError(error, fallback) {
+  if (error?.code === "42501") {
+    return `${fallback}. Supabase RLS denied access. Verify organization membership and policies.`;
+  }
+  return error?.message || fallback;
 }
 
 function parseTaxRate(label) {
@@ -52,6 +66,66 @@ function normalizeItem(raw) {
     priceLevels: ensureArray(metadata?.priceLevels),
     taxMappings: ensureArray(metadata?.taxMappings),
     metadata
+  };
+}
+
+function mapRemoteItem(row) {
+  const type = String(row?.item_type || "").toLowerCase() === "service" ? "Service" : "Product";
+  const openingStock = parseNumber(row?.opening_stock);
+  const purchasePrice = parseNumber(row?.purchase_price);
+
+  return normalizeItem({
+    id: row?.id,
+    type,
+    name: row?.item_name || "",
+    hsn: type === "Product" ? row?.hsn_sac || "" : "",
+    sac: type === "Service" ? row?.hsn_sac || "" : "",
+    unit: row?.unit || "pcs",
+    salesRate: parseNumber(row?.sale_price),
+    purchaseRate: purchasePrice,
+    taxRate: parseNumber(row?.tax_rate),
+    status: row?.is_active === false ? "Inactive" : "Active",
+    trackInventory: type === "Product",
+    openingStock,
+    lowStockAlert: parseNumber(row?.reorder_level),
+    sku: row?.sku || "",
+    price: parseNumber(row?.sale_price),
+    stockQty: openingStock,
+    metadata: {
+      purchasePrice,
+      taxInclusive: !!row?.tax_inclusive,
+      salePriceTaxMode: row?.tax_inclusive ? "WITH_TAX" : "WITHOUT_TAX",
+      purchasePriceTaxMode: row?.tax_inclusive ? "WITH_TAX" : "WITHOUT_TAX",
+      trackStock: type === "Product",
+      openingStock,
+      openingQty: openingStock,
+      lowStockQty: parseNumber(row?.reorder_level)
+    },
+    created_at: row?.created_at,
+    updated_at: row?.updated_at
+  });
+}
+
+function toRemotePayload(draft) {
+  const incoming = normalizeItem(draft);
+  const hsnSac = incoming.type === "Service" ? incoming.sac || incoming.hsn : incoming.hsn || incoming.sac;
+  const openingStock = incoming.trackInventory ? parseNumber(incoming.openingStock) : 0;
+  const reorderLevel = incoming.trackInventory ? parseNumber(incoming.lowStockAlert) : null;
+
+  return {
+    item_type: incoming.type === "Service" ? "service" : "product",
+    item_name: incoming.name || "",
+    sku: incoming.sku || null,
+    hsn_sac: hsnSac || null,
+    unit: incoming.unit || "pcs",
+    sale_price: parseNumber(incoming.salesRate),
+    purchase_price: parseNumber(incoming.purchaseRate),
+    tax_rate: parseNumber(incoming.taxRate),
+    tax_inclusive: !!incoming.taxInclusive,
+    opening_stock: openingStock,
+    current_stock: openingStock,
+    reorder_level: reorderLevel,
+    is_active: incoming.status !== "Inactive"
   };
 }
 
@@ -119,6 +193,107 @@ export function removeItem(id) {
     LS_KEYS.items,
     listRawItems().filter((item) => item.id !== id)
   );
+}
+
+export async function syncItemsFromRemote() {
+  if (!isSupabaseConfigured || !supabase) return listItems();
+
+  const organizationId = authGetOrganizationId();
+  if (!organizationId) return listItems();
+
+  const { data, error } = await supabase
+    .from("items")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .order("item_name", { ascending: true });
+
+  if (error) {
+    throw new Error(normalizeSupabaseError(error, "Failed to load items"));
+  }
+
+  const mapped = ensureArray(data).map(mapRemoteItem);
+  lsSet(LS_KEYS.items, mapped);
+  return mapped.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function upsertItemRemote(draft, country) {
+  if (!isSupabaseConfigured || !supabase) {
+    return upsertItem(draft, country);
+  }
+
+  const organizationId = authGetOrganizationId();
+  if (!organizationId) {
+    return upsertItem(draft, country);
+  }
+
+  const incoming = normalizeItem(draft);
+  const payload = toRemotePayload(incoming);
+  const actorUserId = authGetUser()?.id || null;
+  let remoteRow = null;
+
+  if (incoming.id && looksLikeUuid(incoming.id)) {
+    const { data, error } = await supabase
+      .from("items")
+      .update(payload)
+      .eq("organization_id", organizationId)
+      .eq("id", incoming.id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(normalizeSupabaseError(error, "Failed to update item"));
+    }
+    remoteRow = data || null;
+  }
+
+  if (!remoteRow) {
+    const { data, error } = await supabase
+      .from("items")
+      .insert({
+        organization_id: organizationId,
+        created_by: actorUserId,
+        ...payload
+      })
+      .select("*")
+      .single();
+
+    if (error) {
+      throw new Error(normalizeSupabaseError(error, "Failed to create item"));
+    }
+    remoteRow = data;
+  }
+
+  const saved = mapRemoteItem(remoteRow);
+  const nextList = listRawItems().filter((item) => item.id !== incoming.id && item.id !== saved.id);
+  lsSet(LS_KEYS.items, [saved, ...nextList]);
+  return saved.id;
+}
+
+export async function removeItemRemote(id) {
+  if (!id) return;
+
+  if (!isSupabaseConfigured || !supabase) {
+    removeItem(id);
+    return;
+  }
+
+  const organizationId = authGetOrganizationId();
+  if (!organizationId || !looksLikeUuid(id)) {
+    removeItem(id);
+    return;
+  }
+
+  const { error } = await supabase
+    .from("items")
+    .delete()
+    .eq("organization_id", organizationId)
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(normalizeSupabaseError(error, "Failed to delete item"));
+  }
+
+  removeItem(id);
 }
 
 function matchesLine(item, line) {

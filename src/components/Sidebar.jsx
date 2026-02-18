@@ -17,8 +17,7 @@ import {
   ChevronRight
 } from "lucide-react";
 import clsx from "clsx";
-import { authGetRole } from "../services/auth.service";
-import { isAccounterRole, isOwnerRole } from "../services/roles";
+import { companyGetProfile } from "../services/company.service";
 
 const base = "app-sidebar-item";
 const active = "app-sidebar-item is-active";
@@ -42,10 +41,14 @@ function Item({ to, icon: Icon, label, collapsed }) {
 
 export default function Sidebar({ collapsed, onToggle }) {
   const width = collapsed ? "w-[84px]" : "w-[260px]";
-  const role = authGetRole();
+  const company = companyGetProfile();
+  const companyName = useMemo(() => {
+    const value = String(company?.companyName || "").trim();
+    return value || "BillJoy";
+  }, [company?.companyName]);
 
   const items = useMemo(() => {
-    const shared = [
+    return [
       { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
       { to: "/app/parties", icon: Users, label: "Parties" },
       { to: "/app/items", icon: Boxes, label: "Items" },
@@ -54,25 +57,13 @@ export default function Sidebar({ collapsed, onToggle }) {
       { to: "/app/sales/credit-note", icon: BadgePercent, label: "Credit Note" },
       { to: "/app/purchase/debit-note", icon: BadgePercent, label: "Debit Note" },
       { to: "/app/sales/payment-in", icon: ArrowDownToLine, label: "Payment In" },
-      { to: "/app/purchases/payment-out", icon: ArrowUpFromLine, label: "Payment Out" }
+      { to: "/app/purchases/payment-out", icon: ArrowUpFromLine, label: "Payment Out" },
+      { to: "/app/company-setup", icon: Building2, label: "Company Setup" },
+      { to: "/invoice-template-setup", icon: LayoutTemplate, label: "Invoice Template" },
+      { to: "/app/reports", icon: BarChart3, label: "Reports" },
+      { to: "/app/company-settings", icon: Settings, label: "Settings" }
     ];
-
-    if (isOwnerRole(role)) {
-      return [
-        ...shared,
-        { to: "/app/company-setup", icon: Building2, label: "Company Setup" },
-        { to: "/invoice-template-setup", icon: LayoutTemplate, label: "Invoice Template" },
-        { to: "/app/reports", icon: BarChart3, label: "Reports" },
-        { to: "/app/company-settings", icon: Settings, label: "Settings" }
-      ];
-    }
-
-    if (isAccounterRole(role)) {
-      return [...shared, { to: "/app/reports", icon: BarChart3, label: "Reports" }];
-    }
-
-    return shared;
-  }, [role]);
+  }, []);
 
   return (
     <aside
@@ -82,12 +73,27 @@ export default function Sidebar({ collapsed, onToggle }) {
         <div className="px-4 py-4 flex items-center justify-between">
           <div className="min-w-0">
             {!collapsed ? (
-              <>
-                <p className="app-sidebar-title text-sm font-semibold">BillJoy</p>
-                <p className="app-sidebar-subtitle text-xs">Billing Suite</p>
-              </>
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="h-10 w-10 rounded-2xl border border-white/20 bg-white/70 flex items-center justify-center overflow-hidden shrink-0">
+                  {company?.logoBase64 ? (
+                    <img src={company.logoBase64} alt="Company logo" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="h-full w-full" style={{ background: "var(--app-gradient)" }} />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="app-sidebar-title text-sm font-semibold truncate">{companyName}</p>
+                  <p className="app-sidebar-subtitle text-xs">Billing Suite</p>
+                </div>
+              </div>
             ) : (
-              <div className="app-sidebar-placeholder h-9 w-9 rounded-2xl" />
+              <div className="h-9 w-9 rounded-2xl border border-white/20 bg-white/70 flex items-center justify-center overflow-hidden">
+                {company?.logoBase64 ? (
+                  <img src={company.logoBase64} alt="Company logo" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="h-full w-full" style={{ background: "var(--app-gradient)" }} />
+                )}
+              </div>
             )}
           </div>
           <button

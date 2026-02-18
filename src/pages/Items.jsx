@@ -1,14 +1,23 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { BarChart3, FileSpreadsheet, Plus, Search, Trash2 } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import Tabs from "../components/Tabs";
 import Badge from "../components/Badge";
 import ItemFormModal from "../modules/items/ItemFormModal";
 import { companyGetProfile } from "../services/company.service";
-import { computeItemStock, computeItemUsage, listItems, removeItem, upsertItem } from "../modules/items/store";
+import {
+  computeItemStock,
+  computeItemUsage,
+  listItems,
+  removeItemRemote,
+  syncItemsFromRemote,
+  upsertItemRemote
+} from "../modules/items/store";
 import { formatMoney, normalizeText, taxContext } from "../modules/items/utils";
+import { useToast } from "../context/ToastContext";
 
 export default function Items() {
+  const toast = useToast();
   const company = companyGetProfile();
   const country = company?.country || "India";
   const currency = company?.currency || company?.tax?.currency || "";
@@ -20,6 +29,7 @@ export default function Items() {
   const [modalMode, setModalMode] = useState("create");
   const [activeItem, setActiveItem] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loading, setLoading] = useState(true);
 
   const items = useMemo(() => listItems(), [refreshKey]);
   const taxCfg = useMemo(() => taxContext(country, tab), [country, tab]);
@@ -46,6 +56,25 @@ export default function Items() {
     };
   }, [items, tab]);
 
+  useEffect(() => {
+    let mounted = true;
+    async function loadItems() {
+      setLoading(true);
+      try {
+        await syncItemsFromRemote();
+        if (mounted) setRefreshKey((prev) => prev + 1);
+      } catch (error) {
+        toast.error("Failed to load items", error?.message || "Could not fetch items from backend.");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    loadItems();
+    return () => {
+      mounted = false;
+    };
+  }, [toast]);
+
   function openCreate() {
     setActiveItem({ type: tab });
     setModalMode("create");
@@ -63,18 +92,26 @@ export default function Items() {
     setActiveItem(null);
   }
 
-  function handleSave(item) {
-    upsertItem(item, country);
-    setRefreshKey((prev) => prev + 1);
-    closeModal();
+  async function handleSave(item) {
+    try {
+      await upsertItemRemote(item, country);
+      setRefreshKey((prev) => prev + 1);
+      closeModal();
+    } catch (error) {
+      toast.error("Failed to save item", error?.message || "Item was not saved.");
+    }
   }
 
-  function handleDelete(item) {
+  async function handleDelete(item) {
     const usage = computeItemUsage(item);
     if (usage.used) return;
     if (!window.confirm(`Delete ${item.name}? This cannot be undone.`)) return;
-    removeItem(item.id);
-    setRefreshKey((prev) => prev + 1);
+    try {
+      await removeItemRemote(item.id);
+      setRefreshKey((prev) => prev + 1);
+    } catch (error) {
+      toast.error("Failed to delete item", error?.message || "Item was not deleted.");
+    }
   }
 
   return (
@@ -172,7 +209,13 @@ export default function Items() {
               </tr>
             </thead>
             <tbody>
-              {filtered.length ? (
+              {loading ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
+                    Loading items...
+                  </td>
+                </tr>
+              ) : filtered.length ? (
                 filtered.map((item) => {
                   const usage = computeItemUsage(item);
                   const stock = computeItemStock(item);
@@ -267,7 +310,9 @@ export default function Items() {
         country={country}
         initialItem={activeItem}
         onClose={closeModal}
-        onSave={handleSave}
+        onSave={(item) => {
+          void handleSave(item);
+        }}
       />
     </div>
   );

@@ -1,4 +1,6 @@
 import { LS_KEYS, lsGet, lsSet, uid } from "../../services/storage";
+import { authGetOrganizationId, authGetUser } from "../../services/auth.service";
+import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
 import type { LedgerEntry, PartyDraft, PartyFinancials, PartyRecord, PartyType, StatementDocType } from "./types";
 import { defaultOpeningBalanceType, normalizeText, openingBalanceSigned, parseNumber, toIsoDate } from "./utils";
 
@@ -8,6 +10,26 @@ const DEBIT_NOTES_PREMIUM_KEY = "debitNotesPremiumV1";
 const PAYMENT_OUT_PREMIUM_KEY = "paymentOutPremiumV1";
 
 const SYSTEM_ACTOR = "System";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const COUNTRY_NAME_TO_CODE: Record<string, string> = {
+  india: "IN",
+  "sri lanka": "LK",
+  uae: "AE",
+  usa: "US",
+  "united kingdom": "GB",
+  uk: "GB",
+  ireland: "IE"
+};
+
+const COUNTRY_CODE_TO_NAME: Record<string, string> = {
+  IN: "India",
+  LK: "Sri Lanka",
+  AE: "UAE",
+  US: "USA",
+  GB: "United Kingdom",
+  IE: "Ireland"
+};
 
 function nowIso() {
   return new Date().toISOString();
@@ -64,6 +86,84 @@ function normalizeParty(raw: any): PartyRecord {
     notes: raw?.notes || "",
     attachments: ensureArray(raw?.attachments),
     audit
+  };
+}
+
+function looksLikeUuid(value?: string | null) {
+  return UUID_PATTERN.test(String(value || ""));
+}
+
+function countryToCode(country?: string | null) {
+  const normalized = normalizeText(country || "");
+  return COUNTRY_NAME_TO_CODE[normalized] || "IN";
+}
+
+function codeToCountry(code?: string | null) {
+  const normalized = String(code || "IN").trim().toUpperCase();
+  return COUNTRY_CODE_TO_NAME[normalized] || "India";
+}
+
+function normalizeSupabaseError(error: any, fallback: string) {
+  if (error?.code === "42501") {
+    return `${fallback}. Supabase RLS denied access. Verify organization membership and policies.`;
+  }
+  return error?.message || fallback;
+}
+
+function mapRemoteParty(row: any): PartyRecord {
+  const typeRaw = String(row?.party_type || "customer").toLowerCase();
+  const type: PartyType = typeRaw === "supplier" ? "Supplier" : "Customer";
+  const openingBalanceSigned = parseNumber(row?.opening_balance);
+  const address = [row?.billing_address_line1, row?.billing_address_line2]
+    .filter(Boolean)
+    .join(", ");
+
+  return normalizeParty({
+    id: row?.id,
+    type,
+    name: row?.display_name || row?.legal_name || "",
+    phone: row?.phone || "",
+    email: row?.email || "",
+    country: codeToCountry(row?.country_code),
+    state: row?.state_name || "",
+    address,
+    taxId: row?.tax_id || row?.gstin || row?.vat_number || "",
+    gstin: row?.gstin || "",
+    vatNo: row?.vat_number || "",
+    openingBalance: Math.abs(openingBalanceSigned),
+    openingBalanceType: inferOpeningBalanceType(type, openingBalanceSigned),
+    creditLimit: parseNumber(row?.credit_limit),
+    creditLimitEnabled: row?.credit_limit !== null && row?.credit_limit !== undefined && parseNumber(row?.credit_limit) > 0,
+    autoBlock: true,
+    notes: row?.notes || "",
+    attachments: [],
+    created_at: row?.created_at,
+    created_by: row?.created_by || SYSTEM_ACTOR,
+    updated_at: row?.updated_at
+  });
+}
+
+function toRemotePayload(draft: PartyDraft) {
+  const normalized = normalizeParty(draft);
+  const signedOpeningBalance = openingBalanceSigned(normalized);
+  const creditLimit = Math.max(0, parseNumber(normalized.creditLimit));
+
+  return {
+    party_type: normalized.type === "Supplier" ? "supplier" : "customer",
+    display_name: normalized.name,
+    legal_name: normalized.name,
+    phone: normalized.phone || null,
+    email: normalized.email || null,
+    billing_address_line1: normalized.address || null,
+    state_name: normalized.state || null,
+    country_code: countryToCode(normalized.country),
+    gstin: normalized.gstin || normalized.taxId || null,
+    vat_number: normalized.vatNo || null,
+    tax_id: normalized.taxId || normalized.gstin || null,
+    opening_balance: signedOpeningBalance,
+    credit_limit: normalized.creditLimitEnabled ? creditLimit : null,
+    notes: normalized.notes || null,
+    is_active: true
   };
 }
 
@@ -141,6 +241,108 @@ export function removeParty(id: string) {
     LS_KEYS.parties,
     basePartyList().filter((party: any) => party.id !== id)
   );
+}
+
+export async function syncPartiesFromRemote(): Promise<PartyRecord[]> {
+  if (!isSupabaseConfigured || !supabase) return listParties();
+
+  const organizationId = authGetOrganizationId();
+  if (!organizationId) return listParties();
+
+  const { data, error } = await supabase
+    .from("parties")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .eq("is_active", true)
+    .order("display_name", { ascending: true });
+
+  if (error) {
+    throw new Error(normalizeSupabaseError(error, "Failed to load parties"));
+  }
+
+  const mapped = ensureArray<any>(data).map(mapRemoteParty);
+  lsSet(LS_KEYS.parties, mapped);
+  return mapped.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function upsertPartyRemote(draft: PartyDraft, actor?: string): Promise<PartyRecord> {
+  if (!isSupabaseConfigured || !supabase) {
+    return upsertParty(draft, actor);
+  }
+
+  const organizationId = authGetOrganizationId();
+  if (!organizationId) {
+    return upsertParty(draft, actor);
+  }
+
+  const incoming = normalizeParty(draft);
+  const payload = toRemotePayload(incoming);
+  const actorUserId = authGetUser()?.id || null;
+  let remoteRow: any = null;
+
+  if (incoming.id && looksLikeUuid(incoming.id)) {
+    const { data, error } = await supabase
+      .from("parties")
+      .update(payload)
+      .eq("organization_id", organizationId)
+      .eq("id", incoming.id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(normalizeSupabaseError(error, "Failed to update party"));
+    }
+    remoteRow = data || null;
+  }
+
+  if (!remoteRow) {
+    const { data, error } = await supabase
+      .from("parties")
+      .insert({
+        organization_id: organizationId,
+        created_by: actorUserId,
+        ...payload
+      })
+      .select("*")
+      .single();
+
+    if (error) {
+      throw new Error(normalizeSupabaseError(error, "Failed to create party"));
+    }
+    remoteRow = data;
+  }
+
+  const saved = mapRemoteParty(remoteRow);
+  const nextList = basePartyList().filter((party: any) => party.id !== saved.id && party.id !== incoming.id);
+  lsSet(LS_KEYS.parties, [saved, ...nextList]);
+  return saved;
+}
+
+export async function removePartyRemote(id: string): Promise<void> {
+  if (!id) return;
+
+  if (!isSupabaseConfigured || !supabase) {
+    removeParty(id);
+    return;
+  }
+
+  const organizationId = authGetOrganizationId();
+  if (!organizationId || !looksLikeUuid(id)) {
+    removeParty(id);
+    return;
+  }
+
+  const { error } = await supabase
+    .from("parties")
+    .update({ is_active: false, updated_at: nowIso() })
+    .eq("organization_id", organizationId)
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(normalizeSupabaseError(error, "Failed to delete party"));
+  }
+
+  removeParty(id);
 }
 
 function matchesParty(party: PartyRecord, record: any) {

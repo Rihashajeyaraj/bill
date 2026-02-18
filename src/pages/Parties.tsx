@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { FileText, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -9,15 +9,18 @@ import PartyFormModal from "../modules/parties/PartyFormModal";
 import {
   computePartyFinancials,
   listParties,
-  removeParty,
-  upsertParty
+  removePartyRemote,
+  syncPartiesFromRemote,
+  upsertPartyRemote
 } from "../modules/parties/store";
 import { formatMoney, normalizeText, outstandingMeta } from "../modules/parties/utils";
 import { authGetUser } from "../services/auth.service";
 import { companyGetProfile } from "../services/company.service";
+import { useToast } from "../context/ToastContext";
 
 export default function Parties() {
   const nav = useNavigate();
+  const toast = useToast();
   const company = companyGetProfile();
   const currency = company?.currency || company?.tax?.currency || "";
 
@@ -27,6 +30,7 @@ export default function Parties() {
   const [modalMode, setModalMode] = useState("create");
   const [activeParty, setActiveParty] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loading, setLoading] = useState(true);
 
   const parties = useMemo(() => listParties(), [refreshKey]);
   const filtered = useMemo(() => {
@@ -67,6 +71,25 @@ export default function Parties() {
     };
   }, [parties, tab]);
 
+  useEffect(() => {
+    let mounted = true;
+    async function loadParties() {
+      setLoading(true);
+      try {
+        await syncPartiesFromRemote();
+        if (mounted) setRefreshKey((prev) => prev + 1);
+      } catch (error: any) {
+        toast.error("Failed to load parties", error?.message || "Could not fetch parties from backend.");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    loadParties();
+    return () => {
+      mounted = false;
+    };
+  }, [toast]);
+
   function openCreate() {
     setActiveParty({ type: tab });
     setModalMode("create");
@@ -84,17 +107,25 @@ export default function Parties() {
     setActiveParty(null);
   }
 
-  function handleSave(party) {
+  async function handleSave(party) {
     const actor = authGetUser()?.name || authGetUser()?.email || "System";
-    upsertParty(party, actor);
-    setRefreshKey((prev) => prev + 1);
-    closeModal();
+    try {
+      await upsertPartyRemote(party, actor);
+      setRefreshKey((prev) => prev + 1);
+      closeModal();
+    } catch (error: any) {
+      toast.error("Failed to save party", error?.message || "Party was not saved.");
+    }
   }
 
-  function handleDelete(party) {
+  async function handleDelete(party) {
     if (!window.confirm(`Delete ${party.name}? This cannot be undone.`)) return;
-    removeParty(party.id);
-    setRefreshKey((prev) => prev + 1);
+    try {
+      await removePartyRemote(party.id);
+      setRefreshKey((prev) => prev + 1);
+    } catch (error: any) {
+      toast.error("Failed to delete party", error?.message || "Party was not deleted.");
+    }
   }
 
   return (
@@ -178,7 +209,13 @@ export default function Parties() {
               </tr>
             </thead>
             <tbody>
-              {rows.length ? (
+              {loading ? (
+                <tr>
+                  <td className="px-4 py-10 text-center text-slate-500" colSpan={5}>
+                    Loading parties...
+                  </td>
+                </tr>
+              ) : rows.length ? (
                 rows.map(({ party, financials }) => {
                   const meta = outstandingMeta(party, financials.outstanding);
                   return (
@@ -266,7 +303,9 @@ export default function Parties() {
         mode={modalMode}
         initialParty={activeParty}
         onClose={closeModal}
-        onSave={handleSave}
+        onSave={(party) => {
+          void handleSave(party);
+        }}
       />
     </div>
   );

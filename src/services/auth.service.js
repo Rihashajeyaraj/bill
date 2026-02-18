@@ -27,6 +27,12 @@ function clearAuthState() {
   lsRemove(LS_KEYS.organization_id);
 }
 
+function hasLocalAuthState() {
+  const token = lsGet(LS_KEYS.auth_token, "");
+  const user = lsGet(LS_KEYS.auth_user, null);
+  return Boolean(token && (user?.id || user?.email));
+}
+
 function setAuthState({ token, user, role, organizationId, companySetupCompleted }) {
   lsSet(LS_KEYS.auth_token, token || "");
   lsSet(LS_KEYS.auth_user, {
@@ -159,11 +165,20 @@ export function authUsingSupabase() {
 export async function authBootstrapSession() {
   if (!isSupabaseConfigured || !supabase) return false;
 
-  const {
-    data: { session }
-  } = await supabase.auth.getSession();
+  let session = null;
+  try {
+    const {
+      data: { session: fetchedSession }
+    } = await supabase.auth.getSession();
+    session = fetchedSession;
+  } catch {
+    if (hasLocalAuthState()) return true;
+    clearAuthState();
+    return false;
+  }
 
   if (!session?.user) {
+    if (hasLocalAuthState()) return true;
     clearAuthState();
     return false;
   }

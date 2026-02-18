@@ -3,9 +3,10 @@ import { ChevronDown, Plus, Save, Share2, Trash2, Upload } from "lucide-react";
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import FormField from "../../components/FormField";
-import { partiesByType } from "../../services/parties.service";
-import { itemsList } from "../../services/items.service";
-import { purchasesCreate } from "../../services/purchases.service";
+import { useToast } from "../../context/ToastContext";
+import { listParties, syncPartiesFromRemote } from "../../modules/parties/store";
+import { listItems, syncItemsFromRemote } from "../../modules/items/store";
+import { purchasesCreate, purchasesList, purchasesSyncFromRemote } from "../../services/purchases.service";
 
 const TAX_RATES = [0, 5, 12, 18, 28];
 const PRICE_TAX_MODES = [
@@ -14,6 +15,7 @@ const PRICE_TAX_MODES = [
 ];
 const DEFAULT_UNITS = ["pcs", "kg", "box", "ltr", "set", "hr"];
 const BLOCKED_UNITS = ["job"];
+const ITEM_DATALIST_ID = "purchase-item-options";
 
 function normalizeUnit(unit) {
   const value = String(unit || "").trim();
@@ -26,6 +28,13 @@ function money(n) {
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function formatDate(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleDateString();
+}
+
 function generateBillNumber() {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2);
@@ -36,8 +45,10 @@ function generateBillNumber() {
 }
 
 function createLine(items) {
-  const item = items[0];
-  const purchaseRate = Number(item?.metadata?.purchasePrice || item?.price || 0);
+  const item = items.find((entry) => entry?.type === "Product") || items[0];
+  const purchaseRate = Number(
+    item?.purchaseRate ?? item?.metadata?.purchasePrice ?? item?.price ?? 0
+  );
   return {
     id: `line_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
     itemId: item?.id || "",
@@ -51,21 +62,84 @@ function createLine(items) {
 }
 
 export default function PurchaseBill() {
-  const suppliers = partiesByType("Supplier");
-  const items = itemsList();
-  const [partyId, setPartyId] = useState(suppliers[0]?.id || "");
+  const toast = useToast();
+  const [suppliers, setSuppliers] = useState(() =>
+    listParties().filter((party) => party.type === "Supplier")
+  );
+  const [items, setItems] = useState(() => listItems());
+  const [partyId, setPartyId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const party = useMemo(() => suppliers.find((x) => x.id === partyId) || null, [suppliers, partyId]);
 
   const [phone, setPhone] = useState(party?.phone || "");
   const [billNumber, setBillNumber] = useState("");
   const [autoBillNumber] = useState(() => generateBillNumber());
   const [billDate, setBillDate] = useState(new Date().toISOString().slice(0, 10));
-  const [lines, setLines] = useState(() => [createLine(items)]);
+  const [lines, setLines] = useState(() => [createLine([])]);
   const [roundOffEnabled, setRoundOffEnabled] = useState(false);
   const [roundOffValue, setRoundOffValue] = useState("0");
   const [paymentType, setPaymentType] = useState("Cash");
   const [shareOpen, setShareOpen] = useState(false);
   const [billFileName, setBillFileName] = useState("");
+  const [savedBills, setSavedBills] = useState(() => purchasesList());
+  const purchasableItems = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          item &&
+          item.status !== "Inactive" &&
+          (item.type === "Product" || item.type === "Service")
+      ),
+    [items]
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadLookups() {
+      setLoading(true);
+      try {
+        const [, , nextBills] = await Promise.all([
+          syncPartiesFromRemote(),
+          syncItemsFromRemote(),
+          purchasesSyncFromRemote()
+        ]);
+        if (!mounted) return;
+        const nextSuppliers = listParties().filter((entry) => entry.type === "Supplier");
+        const nextItems = listItems();
+        const nextPurchasableItems = nextItems.filter(
+          (item) =>
+            item &&
+            item.status !== "Inactive" &&
+            (item.type === "Product" || item.type === "Service")
+        );
+        setSuppliers(nextSuppliers);
+        setItems(nextItems);
+        setSavedBills(Array.isArray(nextBills) ? nextBills : purchasesList());
+        setPartyId((prev) => prev || nextSuppliers[0]?.id || "");
+        setLines((prev) => {
+          if (!prev.length) return [createLine(nextPurchasableItems)];
+          const hasSelectedItem = prev.some((line) => !!line.itemId || !!line.itemName);
+          return hasSelectedItem ? prev : [createLine(nextPurchasableItems)];
+        });
+      } catch (error) {
+        toast.error("Failed to load suppliers/items/bills", error?.message || "Using local cached data.");
+        if (!mounted) return;
+        const cachedSuppliers = listParties().filter((entry) => entry.type === "Supplier");
+        const cachedItems = listItems();
+        setSuppliers(cachedSuppliers);
+        setItems(cachedItems);
+        setSavedBills(purchasesList());
+        setPartyId((prev) => prev || cachedSuppliers[0]?.id || "");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    loadLookups();
+    return () => {
+      mounted = false;
+    };
+  }, [toast]);
 
   useEffect(() => {
     setPhone(party?.phone || "");
@@ -88,11 +162,18 @@ export default function PurchaseBill() {
     );
   }
 
-  function handleItemNameChange(id, value) {
-    const match = items.find((item) => item.name?.toLowerCase() === value.toLowerCase());
+  function handleItemInput(id, inputValue) {
+    const normalizedInput = String(inputValue || "").trim().toLowerCase();
+    const match = purchasableItems.find(
+      (item) => String(item?.name || "").trim().toLowerCase() === normalizedInput
+    );
     updateLine(id, (line) => {
-      if (!match) return { ...line, itemName: value, itemId: "" };
-      const purchaseRate = Number(match?.metadata?.purchasePrice || match?.price || 0);
+      if (!match) {
+        return { ...line, itemName: inputValue, itemId: "" };
+      }
+      const purchaseRate = Number(
+        match?.purchaseRate ?? match?.metadata?.purchasePrice ?? match?.price ?? 0
+      );
       return {
         ...line,
         itemName: match.name,
@@ -105,7 +186,7 @@ export default function PurchaseBill() {
   }
 
   function addLine() {
-    setLines((prev) => [...prev, createLine(items)]);
+    setLines((prev) => [...prev, createLine(purchasableItems)]);
   }
 
   function removeLine(id) {
@@ -137,25 +218,48 @@ export default function PurchaseBill() {
     return { detailed, totalQty, subTotal, taxTotal, grandTotal, roundOff, finalTotal };
   }, [lines, roundOffEnabled, roundOffValue]);
 
-  function save() {
+  async function save() {
+    if (!partyId) {
+      toast.warning("Supplier required", "Select a supplier before saving.");
+      return;
+    }
+    const validLines = computed.detailed.filter((line) => line.itemId);
+    if (!validLines.length) {
+      toast.warning("Items required", "Add at least one line item before saving.");
+      return;
+    }
     const effectiveBillNumber = billNumber || autoBillNumber;
-    purchasesCreate({
-      partyId,
-      partyName: party?.name || "",
-      phone,
-      billNumber: effectiveBillNumber,
-      billDate,
-      paymentType,
-      lines: computed.detailed,
-      totals: {
-        totalQty: computed.totalQty,
-        subTotal: computed.subTotal,
-        taxTotal: computed.taxTotal,
-        roundOff: computed.roundOff,
-        grandTotal: computed.finalTotal
+    setSaving(true);
+    try {
+      await purchasesCreate({
+        partyId,
+        partyName: party?.name || "",
+        phone,
+        billNumber: effectiveBillNumber,
+        billDate,
+        paymentType,
+        lines: validLines,
+        totals: {
+          totalQty: computed.totalQty,
+          subTotal: computed.subTotal,
+          taxTotal: computed.taxTotal,
+          roundOff: computed.roundOff,
+          grandTotal: computed.finalTotal
+        }
+      });
+      toast.success("Purchase bill saved", `Bill ${effectiveBillNumber} saved successfully.`);
+      setSavedBills(purchasesList());
+      try {
+        const syncedBills = await purchasesSyncFromRemote();
+        setSavedBills(Array.isArray(syncedBills) ? syncedBills : purchasesList());
+      } catch {
+        // Keep local list as fallback.
       }
-    });
-    alert("Purchase Bill saved (localStorage).");
+    } catch (error) {
+      toast.error("Failed to save purchase bill", error?.message || "Could not save bill.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -170,6 +274,7 @@ export default function PurchaseBill() {
                 required
                 value={partyId}
                 onChange={(e) => setPartyId(e.target.value)}
+                disabled={loading}
                 className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
               >
                 <option value="">Select supplier</option>
@@ -253,16 +358,22 @@ export default function PurchaseBill() {
               </tr>
             </thead>
             <tbody>
-              {computed.detailed.map((line, index) => (
+              {loading ? (
+                <tr className="border-t border-slate-100">
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
+                    Loading items...
+                  </td>
+                </tr>
+              ) : computed.detailed.map((line, index) => (
                 <tr key={line.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                   <td className="px-3 py-3 text-slate-500">{index + 1}</td>
                   <td className="px-3 py-3">
                     <input
-                      list="purchase-item-options"
-                      value={line.itemName}
-                      onChange={(e) => handleItemNameChange(line.id, e.target.value)}
-                      className="w-48 rounded-xl border border-slate-100 px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
-                      placeholder="Search item"
+                      list={ITEM_DATALIST_ID}
+                      value={line.itemName || ""}
+                      onChange={(e) => handleItemInput(line.id, e.target.value)}
+                      className="w-56 rounded-xl border border-slate-100 bg-white px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      placeholder="Select or type item"
                     />
                   </td>
                   <td className="px-3 py-3">
@@ -339,9 +450,11 @@ export default function PurchaseBill() {
               ))}
             </tbody>
           </table>
-          <datalist id="purchase-item-options">
-            {items.map((item) => (
-              <option key={item.id} value={item.name} />
+          <datalist id={ITEM_DATALIST_ID}>
+            {purchasableItems.map((item) => (
+              <option key={item.id} value={item.name}>
+                {item.type}
+              </option>
             ))}
           </datalist>
         </div>
@@ -461,14 +574,70 @@ export default function PurchaseBill() {
 
           <button
             type="button"
-            onClick={save}
+            onClick={() => {
+              void save();
+            }}
+            disabled={saving || loading}
             className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
           >
             <Save className="h-4 w-4" />
-            Save
+            {saving ? "Saving..." : "Save"}
           </button>
         </div>
       </div>
+
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">Saved Purchase Bills</h2>
+            <p className="text-xs text-slate-500">All purchase bills are listed here in one table.</p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+            {savedBills.length} bills
+          </span>
+        </div>
+
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-[760px] w-full text-left text-sm">
+            <thead className="bg-slate-50 text-slate-600">
+              <tr>
+                <th className="px-3 py-3 font-semibold">Bill No</th>
+                <th className="px-3 py-3 font-semibold">Date</th>
+                <th className="px-3 py-3 font-semibold">Supplier</th>
+                <th className="px-3 py-3 font-semibold">Phone</th>
+                <th className="px-3 py-3 font-semibold text-right">Qty</th>
+                <th className="px-3 py-3 font-semibold text-right">Total</th>
+                <th className="px-3 py-3 font-semibold">Payment</th>
+                <th className="px-3 py-3 font-semibold">Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {savedBills.length === 0 ? (
+                <tr className="border-t border-slate-100">
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
+                    No purchase bills yet.
+                  </td>
+                </tr>
+              ) : (
+                savedBills.map((bill) => (
+                  <tr key={bill.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                    <td className="px-3 py-3 font-semibold text-slate-900">{bill.billNumber || "-"}</td>
+                    <td className="px-3 py-3 text-slate-600">{formatDate(bill.billDate)}</td>
+                    <td className="px-3 py-3 text-slate-700">{bill.partyName || "-"}</td>
+                    <td className="px-3 py-3 text-slate-600">{bill.phone || "-"}</td>
+                    <td className="px-3 py-3 text-right text-slate-700">{money(bill?.totals?.totalQty)}</td>
+                    <td className="px-3 py-3 text-right font-semibold text-slate-900">
+                      {money(bill?.totals?.grandTotal)}
+                    </td>
+                    <td className="px-3 py-3 text-slate-600">{bill.paymentType || "-"}</td>
+                    <td className="px-3 py-3 text-slate-600">{formatDate(bill.created_at)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
     </div>
   );
 }
