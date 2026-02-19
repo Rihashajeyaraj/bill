@@ -581,6 +581,20 @@ const REPORT_CONTENT = {
 
 const PIE_COLORS = ["#1f6b45", "#2e8d5a", "#8fbfa7", "#dbe8e2"];
 
+function toLocalIsoDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatIsoAsDmy(value) {
+  if (!value) return "";
+  const [year, month, day] = String(value).split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
+}
+
 function formatValue(value, format, currency) {
   if (format === "money") return formatMoney(value, currency);
   if (format === "count") return Number(value ?? 0).toLocaleString();
@@ -1198,11 +1212,9 @@ export default function Reports() {
   const currency =
     company?.currency || company?.tax?.currency || CURRENCY_MAP[defaultCountry] || "USD";
 
-  const today = new Date();
-  const [fromDate, setFromDate] = useState(
-    new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10)
-  );
-  const [toDate, setToDate] = useState(today.toISOString().slice(0, 10));
+  const todayIso = toLocalIsoDate(new Date());
+  const [fromDate, setFromDate] = useState(todayIso);
+  const [toDate, setToDate] = useState(todayIso);
   const country = defaultCountry;
   const [scope, setScope] = useState("All");
 
@@ -1404,14 +1416,26 @@ export default function Reports() {
                 <input
                   type="date"
                   value={fromDate}
-                  onChange={(event) => setFromDate(event.target.value)}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setFromDate(next);
+                    if (next && toDate && next > toDate) setToDate(next);
+                  }}
+                  lang="en-GB"
+                  max={toDate || undefined}
                   className="w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm"
                 />
                 <span className="text-xs text-slate-400">to</span>
                 <input
                   type="date"
                   value={toDate}
-                  onChange={(event) => setToDate(event.target.value)}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setToDate(next);
+                    if (next && fromDate && next < fromDate) setFromDate(next);
+                  }}
+                  lang="en-GB"
+                  min={fromDate || undefined}
                   className="w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm"
                 />
               </div>
@@ -1471,7 +1495,7 @@ export default function Reports() {
               {REPORT_CARDS.find((report) => report.id === activeReport)?.label}
             </p>
             <p className="text-xs text-slate-500">
-              Filters applied: {fromDate} to {toDate} - {country}
+              Filters applied: {formatIsoAsDmy(fromDate)} to {formatIsoAsDmy(toDate)} - {country}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

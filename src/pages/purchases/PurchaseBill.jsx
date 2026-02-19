@@ -17,6 +17,7 @@ const PRICE_TAX_MODES = [
 const DEFAULT_UNITS = ["pcs", "kg", "box", "ltr", "set", "hr"];
 const BLOCKED_UNITS = ["job"];
 const ITEM_DATALIST_ID = "purchase-item-options";
+const UNIT_DATALIST_ID = "purchase-unit-options";
 
 function normalizeUnit(unit) {
   const value = String(unit || "").trim();
@@ -390,17 +391,14 @@ export default function PurchaseBill() {
                     />
                   </td>
                   <td className="px-3 py-3">
-                    <select
+                    <input
+                      list={UNIT_DATALIST_ID}
                       value={line.unit}
                       onChange={(e) => updateLine(line.id, { unit: e.target.value })}
+                      onBlur={(e) => updateLine(line.id, { unit: normalizeUnit(e.target.value) })}
                       className="w-24 rounded-xl border border-slate-100 bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
-                    >
-                      {unitOptions.map((unit) => (
-                        <option key={unit} value={unit}>
-                          {unit}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder="Unit"
+                    />
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex flex-col gap-2">
@@ -459,6 +457,11 @@ export default function PurchaseBill() {
               <option key={item.id} value={item.name}>
                 {item.type}
               </option>
+            ))}
+          </datalist>
+          <datalist id={UNIT_DATALIST_ID}>
+            {unitOptions.map((unit) => (
+              <option key={unit} value={unit} />
             ))}
           </datalist>
         </div>
