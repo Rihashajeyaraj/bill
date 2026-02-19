@@ -12,9 +12,13 @@ export default function Expense() {
   const [amount, setAmount] = useState(0);
   const [note, setNote] = useState("");
 
-  function save() {
-    expensesCreate({ date, category, amount, note });
-    alert("Expense saved (localStorage).");
+  async function save() {
+    try {
+      await expensesCreate({ date, category, amount, note });
+      alert("Expense saved successfully.");
+    } catch (error) {
+      alert(error?.message || "Failed to save expense.");
+    }
   }
 
   return (

@@ -1,8 +1,8 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ArrowDownCircle, ArrowUpCircle, FileClock, ReceiptIndianRupee } from "lucide-react";
 import Card from "../components/Card";
-import { invoicesList } from "../services/invoices.service";
-import { paymentsList } from "../services/payments.service";
+import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
+import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
 import { companyGetProfile } from "../services/company.service";
 
 function money(n) {
@@ -13,8 +13,31 @@ function money(n) {
 export default function AccounterDashboard() {
   const company = companyGetProfile();
   const currency = company?.currency || company?.currencies?.[0] || "INR";
-  const invoices = invoicesList();
-  const payments = paymentsList();
+  const [invoices, setInvoices] = useState(() => invoicesList());
+  const [payments, setPayments] = useState(() => paymentsList());
+
+  useEffect(() => {
+    let mounted = true;
+    async function syncDashboardData() {
+      try {
+        const [syncedInvoices, syncedPayments] = await Promise.all([
+          invoicesSyncFromRemote(),
+          paymentsSyncFromRemote()
+        ]);
+        if (!mounted) return;
+        setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
+        setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList());
+      } catch {
+        if (!mounted) return;
+        setInvoices(invoicesList());
+        setPayments(paymentsList());
+      }
+    }
+    syncDashboardData();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const stats = useMemo(() => {
     const totalInvoices = invoices.reduce((sum, invoice) => sum + Number(invoice?.totals?.grandTotal || 0), 0);

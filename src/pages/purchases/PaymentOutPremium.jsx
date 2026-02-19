@@ -14,6 +14,9 @@ import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { companyGetProfile } from "../../services/company.service";
+import { purchasesSyncFromRemote } from "../../services/purchases.service";
+import { syncPaymentOutRemote } from "../../services/payments.service";
+import { syncPartiesFromRemote } from "../../modules/parties/store";
 import {
   allocationsFromBills,
   buildPaymentOutPayload,
@@ -118,6 +121,23 @@ export default function PaymentOutPremium() {
   }, [payments, form.supplierId]);
 
   useEffect(() => {
+    let mounted = true;
+    async function syncReferenceData() {
+      try {
+        await Promise.all([syncPartiesFromRemote(), purchasesSyncFromRemote()]);
+      } catch {
+        // Keep local cache if remote sync fails.
+      } finally {
+        if (mounted) setRefreshKey((prev) => prev + 1);
+      }
+    }
+    syncReferenceData();
+    return () => {
+      mounted = false;
+    };
+  }, [country]);
+
+  useEffect(() => {
     if (!dirty) return;
     const beforeUnload = (event) => {
       event.preventDefault();
@@ -197,7 +217,7 @@ export default function PaymentOutPremium() {
     setDirty(true);
   }
 
-  function persist(status) {
+  async function persist(status) {
     if (!form.supplierId) {
       window.alert("Select a supplier before saving.");
       return;
@@ -209,6 +229,7 @@ export default function PaymentOutPremium() {
         actorName
       );
       const saved = savePaymentOut(payload);
+      await syncPaymentOutRemote(saved);
       setActivePayment(saved);
       setForm({ ...saved, desiredStatus: saved.status });
       setRefreshKey((prev) => prev + 1);

@@ -28,6 +28,9 @@ import { exportCreditNoteSummaryPdf, exportCreditNotesCsv, exportSingleCreditNot
 import type { CreditNoteFormState } from "../../modules/creditNote/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { companyGetProfile } from "../../services/company.service";
+import { invoicesSyncFromRemote } from "../../services/invoices.service";
+import { creditNotesSaveRemote } from "../../services/creditNotes.service";
+import { syncPartiesFromRemote } from "../../modules/parties/store";
 import EmptyState from "../../components/EmptyState";
 import GradientButton from "../../components/GradientButton";
 import { UI } from "../../theme/tokens";
@@ -106,6 +109,24 @@ export default function CreditNotePremium() {
   useEffect(() => {
     if (!country) return;
     setSelectedCreditCountry(country);
+  }, [country]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function syncReferenceData() {
+      if (!country) return;
+      try {
+        await Promise.all([syncPartiesFromRemote(), invoicesSyncFromRemote()]);
+      } catch {
+        // Premium module continues with local cache if remote sync fails.
+      } finally {
+        if (mounted) setRefreshKey((prev) => prev + 1);
+      }
+    }
+    syncReferenceData();
+    return () => {
+      mounted = false;
+    };
   }, [country]);
 
   useEffect(() => {
@@ -257,7 +278,7 @@ export default function CreditNotePremium() {
     return true;
   }
 
-  function persist(targetStatus: CreditStatus, options?: { email?: boolean; download?: boolean }) {
+  async function persist(targetStatus: CreditStatus, options?: { email?: boolean; download?: boolean }) {
     if (!form || !country) return;
     if (!validate(targetStatus)) return;
     try {
@@ -288,6 +309,8 @@ export default function CreditNotePremium() {
         lines: form.lines,
         actor: actorName
       });
+
+      await creditNotesSaveRemote(saved);
 
       if (options?.download) exportSingleCreditNotePdf(saved);
       if (options?.email) window.alert(`Email queued for ${saved.creditNoteNo}.`);

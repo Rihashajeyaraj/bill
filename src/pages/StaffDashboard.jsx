@@ -1,14 +1,40 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ClipboardList, Package, ReceiptIndianRupee, UserRound } from "lucide-react";
 import Card from "../components/Card";
-import { invoicesList } from "../services/invoices.service";
-import { itemsList } from "../services/items.service";
-import { partiesList } from "../services/parties.service";
+import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
+import { listItems, syncItemsFromRemote } from "../modules/items/store";
+import { listParties, syncPartiesFromRemote } from "../modules/parties/store";
 
 export default function StaffDashboard() {
-  const invoices = invoicesList();
-  const items = itemsList();
-  const parties = partiesList();
+  const [invoices, setInvoices] = useState(() => invoicesList());
+  const [items, setItems] = useState(() => listItems());
+  const [parties, setParties] = useState(() => listParties());
+
+  useEffect(() => {
+    let mounted = true;
+    async function syncDashboardData() {
+      try {
+        const [syncedInvoices] = await Promise.all([
+          invoicesSyncFromRemote(),
+          syncItemsFromRemote(),
+          syncPartiesFromRemote()
+        ]);
+        if (!mounted) return;
+        setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
+        setItems(listItems());
+        setParties(listParties());
+      } catch {
+        if (!mounted) return;
+        setInvoices(invoicesList());
+        setItems(listItems());
+        setParties(listParties());
+      }
+    }
+    syncDashboardData();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const stats = useMemo(() => {
     const todaysInvoices = invoices.filter((invoice) => {

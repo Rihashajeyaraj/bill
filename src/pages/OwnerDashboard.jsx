@@ -9,9 +9,9 @@ import {
   RotateCw
 } from "lucide-react";
 import Card from "../components/Card";
-import { invoicesList } from "../services/invoices.service";
-import { purchasesList } from "../services/purchases.service";
-import { paymentsList } from "../services/payments.service";
+import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
+import { purchasesList, purchasesSyncFromRemote } from "../services/purchases.service";
+import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
 import { companyGetProfile } from "../services/company.service";
 import {
   ResponsiveContainer,
@@ -47,10 +47,36 @@ export default function Dashboard() {
 
   const company = companyGetProfile();
   const currency = company?.currency || company?.currencies?.[0] || "INR";
-  const invoices = invoicesList();
-  const purchases = purchasesList();
-  const payments = paymentsList();
+  const [invoices, setInvoices] = useState(() => invoicesList());
+  const [purchases, setPurchases] = useState(() => purchasesList());
+  const [payments, setPayments] = useState(() => paymentsList());
   const [donutTab, setDonutTab] = useState("income");
+
+  useEffect(() => {
+    let mounted = true;
+    async function syncDashboardData() {
+      try {
+        const [syncedInvoices, syncedPurchases, syncedPayments] = await Promise.all([
+          invoicesSyncFromRemote(),
+          purchasesSyncFromRemote(),
+          paymentsSyncFromRemote()
+        ]);
+        if (!mounted) return;
+        setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
+        setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList());
+        setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList());
+      } catch {
+        if (!mounted) return;
+        setInvoices(invoicesList());
+        setPurchases(purchasesList());
+        setPayments(paymentsList());
+      }
+    }
+    syncDashboardData();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const currencyPrefix = currency ? `${currency} ` : "";
   const currencyBadge = currency.slice(0, 3).toUpperCase();

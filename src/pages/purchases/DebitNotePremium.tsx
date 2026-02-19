@@ -28,6 +28,9 @@ import { exportDebitNoteSummaryPdf, exportDebitNotesCsv, exportSingleDebitNotePd
 import type { DebitNoteFormState } from "../../modules/debitNote/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { companyGetProfile } from "../../services/company.service";
+import { purchasesSyncFromRemote } from "../../services/purchases.service";
+import { debitNotesSaveRemote } from "../../services/debitNotes.service";
+import { syncPartiesFromRemote } from "../../modules/parties/store";
 import EmptyState from "../../components/EmptyState";
 import GradientButton from "../../components/GradientButton";
 import { UI } from "../../theme/tokens";
@@ -140,6 +143,24 @@ export default function DebitNotePremium() {
   useEffect(() => {
     if (!country) return;
     setSelectedDebitCountry(country);
+  }, [country]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function syncReferenceData() {
+      if (!country) return;
+      try {
+        await Promise.all([syncPartiesFromRemote(), purchasesSyncFromRemote()]);
+      } catch {
+        // Keep local cache on sync failure.
+      } finally {
+        if (mounted) setRefreshKey((prev) => prev + 1);
+      }
+    }
+    syncReferenceData();
+    return () => {
+      mounted = false;
+    };
   }, [country]);
 
   useEffect(() => {
@@ -306,7 +327,7 @@ export default function DebitNotePremium() {
     return true;
   }
 
-  function persist(targetStatus: DebitStatus, options?: { email?: boolean; download?: boolean }) {
+  async function persist(targetStatus: DebitStatus, options?: { email?: boolean; download?: boolean }) {
     if (!form || !country) return;
     if (!validate(targetStatus)) return;
     try {
@@ -337,6 +358,8 @@ export default function DebitNotePremium() {
         lines: form.lines,
         actor: actorName
       });
+
+      await debitNotesSaveRemote(saved);
 
       if (options?.download) exportSingleDebitNotePdf(saved);
       if (options?.email) window.alert(`Email queued for ${saved.debitNoteNo}.`);

@@ -325,7 +325,7 @@ export function mapInvoicesByCountry(country: CountryCode): CreditInvoice[] {
   const fromStorage: CreditInvoice[] = rawInvoices
     .map((invoice: any) => {
       const mappedCountry = normalizeCountryCode(invoice?.country) || null;
-      if (mappedCountry !== country) return null;
+      if (mappedCountry && mappedCountry !== country) return null;
       const lines = Array.isArray(invoice?.lines)
         ? invoice.lines.map((line: any, idx: number) => ({
             id: line.id || `line_${idx + 1}`,

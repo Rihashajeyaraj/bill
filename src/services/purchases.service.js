@@ -35,6 +35,7 @@ function mapRemotePurchaseBill(row) {
   const metadata = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
   return {
     id: row?.id || uid("pur_"),
+    country: metadata?.country || "",
     partyId: row?.supplier_id || "",
     partyName: metadata?.partyName || "",
     phone: metadata?.phone || "",
@@ -47,8 +48,11 @@ function mapRemotePurchaseBill(row) {
       subTotal: parseNumber(row?.subtotal),
       taxTotal: parseNumber(row?.tax_total),
       roundOff: parseNumber(metadata?.roundOff),
-      grandTotal: parseNumber(row?.grand_total)
+      grandTotal: parseNumber(row?.grand_total),
+      balance: parseNumber(row?.balance_amount)
     },
+    remainingBalance: parseNumber(row?.balance_amount),
+    status: row?.status || "issued",
     lines: []
   };
 }
@@ -61,7 +65,7 @@ export async function purchasesSyncFromRemote() {
 
   const { data, error } = await supabase
     .from("purchase_bills")
-    .select("id,supplier_id,bill_no,bill_date,subtotal,tax_total,grand_total,metadata,created_at")
+    .select("id,supplier_id,bill_no,bill_date,subtotal,tax_total,grand_total,balance_amount,status,metadata,created_at")
     .eq("organization_id", organizationId)
     .order("bill_date", { ascending: false })
     .order("created_at", { ascending: false });
@@ -70,7 +74,45 @@ export async function purchasesSyncFromRemote() {
     throw new Error(normalizeSupabaseError(error, "Failed to load purchase bills"));
   }
 
-  const mapped = Array.isArray(data) ? data.map(mapRemotePurchaseBill) : [];
+  const bills = Array.isArray(data) ? data : [];
+  const billIds = bills.map((entry) => entry.id).filter(Boolean);
+  let lineRows = [];
+  if (billIds.length) {
+    const { data: remoteLines, error: linesError } = await supabase
+      .from("purchase_bill_items")
+      .select("*")
+      .in("bill_id", billIds)
+      .order("id", { ascending: true });
+    if (linesError) {
+      throw new Error(normalizeSupabaseError(linesError, "Failed to load purchase bill items"));
+    }
+    lineRows = Array.isArray(remoteLines) ? remoteLines : [];
+  }
+
+  const lineMap = new Map();
+  lineRows.forEach((line) => {
+    const list = lineMap.get(line.bill_id) || [];
+    list.push({
+      id: line?.id || uid("pur_l_"),
+      itemId: line?.item_id || "",
+      itemName: line?.description || "",
+      qty: parseNumber(line?.qty),
+      rate: parseNumber(line?.unit_price),
+      tax: parseNumber(line?.tax_rate),
+      lineTax:
+        parseNumber(line?.cgst_amount) +
+        parseNumber(line?.sgst_amount) +
+        parseNumber(line?.igst_amount) +
+        parseNumber(line?.vat_amount),
+      amount: parseNumber(line?.line_total)
+    });
+    lineMap.set(line.bill_id, list);
+  });
+
+  const mapped = bills.map((entry) => ({
+    ...mapRemotePurchaseBill(entry),
+    lines: lineMap.get(entry.id) || []
+  }));
   setAll(mapped);
   return mapped;
 }
@@ -101,6 +143,7 @@ export async function purchasesCreate(bill) {
           balance_amount: parseNumber(totals?.grandTotal),
           status: "issued",
           metadata: {
+            country: bill?.country || "",
             partyName: bill?.partyName || "",
             phone: bill?.phone || "",
             paymentType: bill?.paymentType || "",
@@ -143,14 +186,18 @@ export async function purchasesCreate(bill) {
   const next = {
     ...bill,
     id,
+    country: bill?.country || "",
     created_at: now,
     totals: {
       totalQty: parseNumber(totals?.totalQty),
       subTotal: parseNumber(totals?.subTotal),
       taxTotal: parseNumber(totals?.taxTotal),
       roundOff: parseNumber(totals?.roundOff),
-      grandTotal: parseNumber(totals?.grandTotal)
+      grandTotal: parseNumber(totals?.grandTotal),
+      balance: parseNumber(totals?.grandTotal)
     },
+    remainingBalance: parseNumber(totals?.grandTotal),
+    status: "issued",
     lines: lines.map((line) => ({
       ...line,
       qty: parseNumber(line?.qty),

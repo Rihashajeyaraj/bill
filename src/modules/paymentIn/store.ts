@@ -336,7 +336,7 @@ export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvo
   const fromStorage: CustomerOpenInvoice[] = (Array.isArray(rawInvoices) ? rawInvoices : [])
     .map((invoice: any) => {
       const mappedCountry = normalizeCountryCode(invoice?.country);
-      if (mappedCountry !== country) return null;
+      if (mappedCountry && mappedCountry !== country) return null;
       const balanceDue = Math.max(
         0,
         toNumber(invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoice?.totals?.grandTotal ?? invoice?.totals?.total)

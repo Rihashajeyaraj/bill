@@ -12,7 +12,7 @@ import {
   companyGetProfile,
   companySaveProfileRemote
 } from "../services/company.service";
-import { invoicesList } from "../services/invoices.service";
+import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
 import { UI } from "../theme/tokens";
 
 const MAX_CURRENCIES = 3;
@@ -117,7 +117,7 @@ export default function CompanySetup() {
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
   const [vatInput, setVatInput] = useState("");
-  const hasInvoices = invoicesList().length > 0;
+  const [hasInvoices, setHasInvoices] = useState(() => invoicesList().length > 0);
 
   const isIndia = useMemo(() => profile.country === "India", [profile.country]);
   const isVatCountry = useMemo(() => VAT_COUNTRIES.includes(profile.country), [profile.country]);
@@ -131,6 +131,24 @@ export default function CompanySetup() {
     const rate = Number(profile.tax?.vatRate || 0);
     setVatInput(`${rate}%`);
   }, [profile.country]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function syncInvoiceState() {
+      try {
+        const list = await invoicesSyncFromRemote();
+        if (!mounted) return;
+        setHasInvoices(Array.isArray(list) ? list.length > 0 : invoicesList().length > 0);
+      } catch {
+        if (!mounted) return;
+        setHasInvoices(invoicesList().length > 0);
+      }
+    }
+    syncInvoiceState();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   function validate() {
     const next = {};

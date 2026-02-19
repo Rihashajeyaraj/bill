@@ -18,6 +18,9 @@ import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf
 import type { PaymentInFormState } from "../../modules/paymentIn/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { companyGetProfile } from "../../services/company.service";
+import { invoicesSyncFromRemote } from "../../services/invoices.service";
+import { syncPaymentInRemote } from "../../services/payments.service";
+import { syncPartiesFromRemote } from "../../modules/parties/store";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import PaymentModePicker from "../../modules/paymentIn/PaymentModePicker";
@@ -105,6 +108,23 @@ export default function PaymentInPremium() {
 
   useEffect(() => {
     setSelectedPaymentCountry(country);
+  }, [country]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function syncReferenceData() {
+      try {
+        await Promise.all([syncPartiesFromRemote(), invoicesSyncFromRemote()]);
+      } catch {
+        // Continue with local cache.
+      } finally {
+        if (mounted) setRefreshKey((prev) => prev + 1);
+      }
+    }
+    syncReferenceData();
+    return () => {
+      mounted = false;
+    };
   }, [country]);
 
   useEffect(() => {
@@ -259,7 +279,7 @@ export default function PaymentInPremium() {
     };
   }
 
-  function persist(targetStatus: PaymentStatus, options?: { email?: boolean; download?: boolean }) {
+  async function persist(targetStatus: PaymentStatus, options?: { email?: boolean; download?: boolean }) {
     if (!form) return;
     if (!validate(targetStatus)) return;
     try {
@@ -277,6 +297,7 @@ export default function PaymentInPremium() {
         saved = savePaymentIn(payload);
       }
       if (!saved) return;
+      await syncPaymentInRemote(saved);
       if (options?.download) exportSinglePaymentInPdf(saved);
       if (options?.email) window.alert(`Email queued for ${saved.receiptNo}.`);
       setRefreshKey((prev) => prev + 1);
@@ -292,7 +313,7 @@ export default function PaymentInPremium() {
     }
   }
 
-  function undoApplied(record: PaymentInRecord) {
+  async function undoApplied(record: PaymentInRecord) {
     if (!canReopenWithinWindow(record)) return;
     try {
       const saved = savePaymentIn({
@@ -318,6 +339,7 @@ export default function PaymentInPremium() {
         customerOutstandingBefore: record.totals.customerOutstandingBefore,
         actor: actorName
       });
+      await syncPaymentInRemote(saved);
       setRefreshKey((prev) => prev + 1);
       setSuccessMessage(`${saved.receiptNo} reopened as Received.`);
       setErrorMessage("");

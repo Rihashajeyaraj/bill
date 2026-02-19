@@ -9,8 +9,8 @@ import GradientButton from "../components/GradientButton";
 import Modal from "../components/Modal";
 import TaxDropdown from "../components/TaxDropdown";
 import UnitPickerModal from "../components/UnitPickerModal";
-import { itemsUpsert } from "../services/items.service";
-import { api } from "../lib/api";
+import { upsertItemRemote } from "../modules/items/store";
+import { companyGetProfile } from "../services/company.service";
 import { UI } from "../theme/tokens";
 
 const DEFAULT_ITEM = {
@@ -86,24 +86,16 @@ export default function ItemCreate() {
   });
 
   useEffect(() => {
-    let active = true;
-    async function loadCountry() {
-      try {
-        const res = await api.get("/api/company");
-        const data = res.data || {};
-        const normalized = normalizeCountry(
-          data.country || data.country_name || data.countryCode || data.country_code
-        );
-        if (active && normalized) setCompanyCountry(normalized);
-      } catch {
-        const fallback = normalizeCountry(localStorage.getItem("companyCountryCode"));
-        if (active && fallback) setCompanyCountry(fallback);
-      }
+    const profile = companyGetProfile();
+    const normalized = normalizeCountry(
+      profile?.country || profile?.country_name || profile?.countryCode || profile?.country_code
+    );
+    if (normalized) {
+      setCompanyCountry(normalized);
+      return;
     }
-    loadCountry();
-    return () => {
-      active = false;
-    };
+    const fallback = normalizeCountry(localStorage.getItem("companyCountryCode"));
+    if (fallback) setCompanyCountry(fallback);
   }, []);
 
   const isIndia = useMemo(() => companyCountry === "India", [companyCountry]);
@@ -130,40 +122,53 @@ export default function ItemCreate() {
     reader.readAsDataURL(file);
   }
 
-  function saveItem(mode) {
+  async function saveItem(mode) {
     if (!isValid) return;
     const taxRate = parseTaxRate(item.taxLabel);
-    itemsUpsert({
-      name: item.itemName,
-      type: item.type === "PRODUCT" ? "Product" : "Service",
-      price: Number(item.salePrice || 0),
-      unit: item.unit || "pcs",
-      taxRate,
-      taxLabel: item.taxLabel,
-      stockQty: item.trackStock ? Number(item.openingQty || 0) : 0,
-      hsn: item.type === "PRODUCT" ? item.hsn : "",
-      sac: item.type === "SERVICE" ? item.hsn : "",
-      metadata: {
-        category: item.category,
-        itemCode: item.itemCode,
-        salePriceTaxMode: item.salePriceTaxMode,
-        purchasePrice: item.purchasePrice,
-        purchasePriceTaxMode: item.purchasePriceTaxMode,
-        discountValue: item.discountValue,
-        discountType: item.discountType,
-        trackStock: item.trackStock,
-        lowStockQty: item.lowStockQty,
-        warehouse: item.warehouse,
-        imageUrl: item.imageUrl
+    try {
+      await upsertItemRemote(
+        {
+          name: item.itemName,
+          type: item.type === "PRODUCT" ? "Product" : "Service",
+          salesRate: Number(item.salePrice || 0),
+          purchaseRate: Number(item.purchasePrice || 0),
+          unit: item.unit || "pcs",
+          taxRate,
+          taxLabel: item.taxLabel,
+          openingStock: item.trackStock ? Number(item.openingQty || 0) : 0,
+          hsn: item.type === "PRODUCT" ? item.hsn : "",
+          sac: item.type === "SERVICE" ? item.hsn : "",
+          trackInventory: !!item.trackStock,
+          lowStockAlert: Number(item.lowStockQty || 0),
+          status: "Active",
+          category: item.category,
+          sku: item.itemCode,
+          metadata: {
+            category: item.category,
+            itemCode: item.itemCode,
+            salePriceTaxMode: item.salePriceTaxMode,
+            purchasePrice: item.purchasePrice,
+            purchasePriceTaxMode: item.purchasePriceTaxMode,
+            discountValue: item.discountValue,
+            discountType: item.discountType,
+            trackStock: item.trackStock,
+            lowStockQty: item.lowStockQty,
+            warehouse: item.warehouse,
+            imageUrl: item.imageUrl
+          }
+        },
+        companyCountry
+      );
+      localStorage.setItem("itemsDraft", JSON.stringify(item));
+      if (mode === "new") {
+        setItem(DEFAULT_ITEM);
+        setTab("pricing");
+        return;
       }
-    });
-    localStorage.setItem("itemsDraft", JSON.stringify(item));
-    if (mode === "new") {
-      setItem(DEFAULT_ITEM);
-      setTab("pricing");
-      return;
+      nav("/items", { replace: true });
+    } catch (error) {
+      window.alert(error?.message || "Failed to save item.");
     }
-    nav("/items", { replace: true });
   }
 
   function handleCategoryChange(value) {

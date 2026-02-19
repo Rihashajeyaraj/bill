@@ -2,15 +2,19 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   BadgePercent,
+  Banknote,
   BarChart3,
   Boxes,
   Building2,
+  Cloud,
   FileText,
+  LifeBuoy,
   LayoutDashboard,
   LayoutTemplate,
   ReceiptIndianRupee,
   Settings,
-  Users
+  Users,
+  Wallet
 } from "lucide-react";
 
 export const APP_NAV_ITEMS = [
@@ -28,9 +32,13 @@ export const APP_NAV_ITEMS = [
   { to: "/app/purchase/bill", icon: FileText, label: "Purchase Bill", section: "Purchases" },
   { to: "/app/purchase/debit-note", icon: BadgePercent, label: "Debit Note", section: "Purchases" },
   { to: "/app/purchases/payment-out", icon: ArrowUpFromLine, label: "Payment Out", section: "Purchases" },
+  { to: "/app/purchase/expense", icon: Wallet, label: "Expense", section: "Purchases" },
 
   { to: "/app/reports", icon: BarChart3, label: "Reports", shortcut: "G R", section: "Finance" },
-  { to: "/app/company-settings", icon: Settings, label: "Settings", shortcut: "G S", section: "Admin" }
+  { to: "/app/cash-bank", icon: Banknote, label: "Cash & Bank", section: "Finance" },
+  { to: "/app/company-settings", icon: Settings, label: "Settings", shortcut: "G S", section: "Admin" },
+  { to: "/app/backup", icon: Cloud, label: "Backup", section: "Admin" },
+  { to: "/app/help", icon: LifeBuoy, label: "Help", section: "Admin" }
 ];
 
 export const APP_SHORTCUTS = [

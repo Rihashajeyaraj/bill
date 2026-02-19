@@ -10,14 +10,13 @@ import Badge from "../../components/Badge";
 import InvoicePreview from "../../components/InvoicePreview";
 
 import { companyGetProfile } from "../../services/company.service";
-import { partiesByType } from "../../services/parties.service";
-import { itemsList } from "../../services/items.service";
-import { invoicesCreate } from "../../services/invoices.service";
+import { invoicesCreate, invoicesSyncFromRemote } from "../../services/invoices.service";
 import { computeIndiaGST, computeVAT } from "../../services/tax";
 import { LS_KEYS } from "../../services/storage";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
-import { getPartyCreditStatus } from "../../modules/parties/store";
+import { getPartyCreditStatus, listParties, syncPartiesFromRemote } from "../../modules/parties/store";
+import { listItems, syncItemsFromRemote } from "../../modules/items/store";
 import { getInvoiceTemplateConfig } from "../../lib/templateStore";
 
 function money(n) {
@@ -88,8 +87,10 @@ export default function InvoiceCreate() {
   const isIndia = country === "India";
   const currency = company?.currency || company?.tax?.currency || "";
 
-  const customers = partiesByType("Customer");
-  const items = itemsList();
+  const [customers, setCustomers] = useState(() =>
+    listParties().filter((party) => party.type === "Customer")
+  );
+  const [items, setItems] = useState(() => listItems());
   const [itemSearch, setItemSearch] = useState("");
 
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
@@ -130,6 +131,25 @@ export default function InvoiceCreate() {
     return () => {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", syncProfiles);
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadLookups() {
+      try {
+        await Promise.all([syncPartiesFromRemote(), syncItemsFromRemote(), invoicesSyncFromRemote()]);
+      } catch {
+        // Fallback to cached local data.
+      } finally {
+        if (!mounted) return;
+        setCustomers(listParties().filter((party) => party.type === "Customer"));
+        setItems(listItems());
+      }
+    }
+    loadLookups();
+    return () => {
+      mounted = false;
     };
   }, []);
 
@@ -179,7 +199,7 @@ export default function InvoiceCreate() {
         id: `l_${Date.now()}`,
         itemId: item.id,
         qty: 1,
-        rate: item.price || 0,
+        rate: item.salesRate || item.price || 0,
         discount: 0,
         tax: item.taxRate || 0
       };
@@ -379,7 +399,7 @@ export default function InvoiceCreate() {
     alert("Send not connected yet.");
   }
 
-  function saveInvoice() {
+  async function saveInvoice() {
     if (creditBlocked) {
       alert("Credit limit exceeded. Invoice creation is blocked for this party.");
       return;
@@ -417,8 +437,12 @@ export default function InvoiceCreate() {
         grandTotal: computed.grandTotal
       }
     };
-    invoicesCreate(payload);
-    alert("Saved (localStorage).");
+    try {
+      await invoicesCreate(payload);
+      alert("Invoice saved successfully.");
+    } catch (error) {
+      alert(error?.message || "Failed to save invoice.");
+    }
   }
 
   return (
@@ -670,7 +694,7 @@ export default function InvoiceCreate() {
                         const it = items.find((x) => x.id === e.target.value);
                         updateLine(r.id, {
                           itemId: e.target.value,
-                          rate: it?.price || 0,
+                          rate: it?.salesRate || it?.price || 0,
                           tax: it?.taxRate || 0
                         });
                       }}

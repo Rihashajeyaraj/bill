@@ -34,6 +34,13 @@ import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import Badge from "../components/Badge";
 import { companyGetProfile } from "../services/company.service";
+import { LS_KEYS, lsGet } from "../services/storage";
+import { invoicesSyncFromRemote } from "../services/invoices.service";
+import { purchasesSyncFromRemote } from "../services/purchases.service";
+import { paymentsSyncFromRemote } from "../services/payments.service";
+import { expensesSyncFromRemote } from "../services/expenses.service";
+import { syncPartiesFromRemote } from "../modules/parties/store";
+import { syncItemsFromRemote } from "../modules/items/store";
 import { formatMoney, normalizeText } from "../modules/items/utils";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 
@@ -728,6 +735,463 @@ function LoadingBlock() {
     </div>
   );
 }
+
+function parseAmount(value) {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function arrayFromLs(key) {
+  const value = lsGet(key, []);
+  return Array.isArray(value) ? value : [];
+}
+
+function toIsoDate(value) {
+  if (!value) return "";
+  const raw = String(value);
+  if (raw.length >= 10 && raw[4] === "-" && raw[7] === "-") return raw.slice(0, 10);
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toISOString().slice(0, 10);
+}
+
+const COUNTRY_ALIAS = {
+  india: "india",
+  in: "india",
+  "sri lanka": "sri lanka",
+  lk: "sri lanka",
+  sl: "sri lanka",
+  uae: "uae",
+  ae: "uae",
+  usa: "usa",
+  us: "usa",
+  "united states": "usa",
+  uk: "uk",
+  gb: "uk",
+  "united kingdom": "uk",
+  ireland: "ireland",
+  ie: "ireland"
+};
+
+function normalizeCountryKey(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return COUNTRY_ALIAS[key] || key;
+}
+
+function recordCountry(record) {
+  if (!record || typeof record !== "object") return "";
+  return (
+    record.country ||
+    record.countryCode ||
+    record?.metadata?.country ||
+    record?.companySnapshot?.country ||
+    ""
+  );
+}
+
+function countryMatches(recordValue, targetCountry) {
+  const target = normalizeCountryKey(targetCountry);
+  const source = normalizeCountryKey(recordValue);
+  if (!source) return true;
+  return source === target;
+}
+
+function dateInRange(dateValue, fromDate, toDate) {
+  const iso = toIsoDate(dateValue);
+  if (!iso) return false;
+  if (fromDate && iso < fromDate) return false;
+  if (toDate && iso > toDate) return false;
+  return true;
+}
+
+function monthLabelFromDate(dateValue) {
+  const parsed = new Date(`${toIsoDate(dateValue)}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleString(undefined, { month: "short" });
+}
+
+function bucketForDays(days) {
+  if (days <= 30) return "0-30";
+  if (days <= 60) return "31-60";
+  if (days <= 90) return "61-90";
+  return "90+";
+}
+
+function computeDaysOverdue(dueDate) {
+  const iso = toIsoDate(dueDate);
+  if (!iso) return 0;
+  const due = new Date(`${iso}T00:00:00`);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = today.getTime() - due.getTime();
+  return diff > 0 ? Math.floor(diff / (24 * 60 * 60 * 1000)) : 0;
+}
+
+function buildLiveReportContent({ fromDate, toDate, country }) {
+  const invoices = arrayFromLs(LS_KEYS.invoices).filter((row) =>
+    countryMatches(recordCountry(row), country)
+  );
+  const purchases = arrayFromLs(LS_KEYS.purchases).filter((row) =>
+    countryMatches(recordCountry(row), country)
+  );
+  const parties = arrayFromLs(LS_KEYS.parties).filter((row) =>
+    countryMatches(recordCountry(row), country)
+  );
+  const items = arrayFromLs(LS_KEYS.items);
+  const creditLegacy = arrayFromLs(LS_KEYS.creditNotes).filter((row) =>
+    countryMatches(recordCountry(row), country)
+  );
+  const creditPremium = arrayFromLs("creditNotesPremiumV1").filter((row) =>
+    countryMatches(recordCountry(row), country)
+  );
+  const debitPremium = arrayFromLs("debitNotesPremiumV1").filter((row) =>
+    countryMatches(recordCountry(row), country)
+  );
+  const salesPayments = arrayFromLs("paymentInPremiumV1").filter((row) =>
+    countryMatches(recordCountry(row), country)
+  );
+  const purchasePayments = arrayFromLs("paymentOutPremiumV1").filter((row) =>
+    countryMatches(recordCountry(row), country)
+  );
+
+  const invoiceRows = invoices.filter((row) =>
+    dateInRange(row?.invoiceDate || row?.date || row?.created_at, fromDate, toDate)
+  );
+  const purchaseRows = purchases.filter((row) =>
+    dateInRange(row?.billDate || row?.invoiceDate || row?.date || row?.created_at, fromDate, toDate)
+  );
+
+  const creditRows = [...creditLegacy, ...creditPremium].filter((row) =>
+    dateInRange(row?.creditDate || row?.creditNoteDate || row?.created_at, fromDate, toDate)
+  );
+  const debitRows = debitPremium.filter((row) =>
+    dateInRange(row?.debitNoteDate || row?.created_at, fromDate, toDate)
+  );
+
+  const creditByInvoice = new Map();
+  creditRows.forEach((row) => {
+    const amount = parseAmount(
+      row?.totals?.total ?? row?.totals?.grandTotal ?? row?.totals?.amount ?? row?.amount
+    );
+    const key = row?.linkedInvoiceId || row?.referenceInvoiceId || row?.linkedInvoiceNo || row?.referenceInvoiceNo;
+    if (!key) return;
+    creditByInvoice.set(key, (creditByInvoice.get(key) || 0) + amount);
+  });
+
+  const debitByBill = new Map();
+  debitRows.forEach((row) => {
+    const amount = parseAmount(row?.totals?.total ?? row?.totals?.grandTotal ?? row?.amount);
+    const key = row?.linkedPurchaseInvoiceId || row?.relatedBillId || row?.linkedPurchaseInvoiceNo;
+    if (!key) return;
+    debitByBill.set(key, (debitByBill.get(key) || 0) + amount);
+  });
+
+  const salesDetailRows = invoiceRows.map((row) => {
+    const amount = parseAmount(
+      row?.totals?.grandTotal ?? row?.totals?.total ?? row?.grandTotal ?? row?.total
+    );
+    const balance = Math.max(
+      0,
+      parseAmount(
+        row?.totals?.balance ?? row?.remainingBalance ?? row?.balanceAmount ?? amount
+      )
+    );
+    const credit =
+      creditByInvoice.get(row?.id) ||
+      creditByInvoice.get(row?.invoiceNo) ||
+      0;
+    return {
+      id: row?.id || row?.invoiceNo,
+      date: toIsoDate(row?.invoiceDate || row?.date || row?.created_at),
+      doc: row?.invoiceNo || row?.id || "-",
+      party: row?.partyName || row?.buyer?.name || "Customer",
+      amount,
+      credit,
+      net: Math.max(0, amount - credit),
+      status: balance <= 0 ? "Paid" : balance < amount ? "Partial" : "Pending"
+    };
+  });
+
+  const purchaseDetailRows = purchaseRows.map((row) => {
+    const amount = parseAmount(
+      row?.totals?.grandTotal ?? row?.totals?.finalTotal ?? row?.totals?.total ?? row?.grandTotal
+    );
+    const balance = Math.max(
+      0,
+      parseAmount(row?.totals?.balance ?? row?.remainingBalance ?? row?.balanceAmount ?? amount)
+    );
+    const debit =
+      debitByBill.get(row?.id) ||
+      debitByBill.get(row?.billNumber) ||
+      0;
+    return {
+      id: row?.id || row?.billNumber,
+      date: toIsoDate(row?.billDate || row?.invoiceDate || row?.date || row?.created_at),
+      doc: row?.billNumber || row?.invoiceNo || row?.id || "-",
+      party: row?.partyName || row?.supplierName || "Supplier",
+      amount,
+      debit,
+      net: amount + debit,
+      status: balance <= 0 ? "Paid" : balance < amount ? "Partial" : "Pending"
+    };
+  });
+
+  const receivablesRows = invoiceRows
+    .map((row) => {
+      const amount = Math.max(
+        0,
+        parseAmount(
+          row?.totals?.balance ?? row?.remainingBalance ?? row?.balanceAmount ?? row?.totals?.grandTotal
+        )
+      );
+      const paidAmount = Math.max(0, parseAmount(row?.totals?.grandTotal) - amount);
+      if (amount <= 0) return null;
+      const due = toIsoDate(row?.dueDate || row?.invoiceDate || row?.date || row?.created_at);
+      const overdueDays = computeDaysOverdue(due);
+      return {
+        id: row?.id || row?.invoiceNo,
+        party: row?.partyName || row?.buyer?.name || "Customer",
+        invoice: row?.invoiceNo || row?.id || "-",
+        due,
+        amount,
+        paid_amount: paidAmount,
+        bucket: bucketForDays(overdueDays),
+        status: overdueDays > 0 ? "Overdue" : paidAmount > 0 ? "Partial" : "Pending"
+      };
+    })
+    .filter(Boolean);
+
+  const payablesRows = purchaseRows
+    .map((row) => {
+      const amount = Math.max(
+        0,
+        parseAmount(
+          row?.totals?.balance ?? row?.remainingBalance ?? row?.balanceAmount ?? row?.totals?.grandTotal
+        )
+      );
+      const paidAmount = Math.max(0, parseAmount(row?.totals?.grandTotal) - amount);
+      if (amount <= 0) return null;
+      const due = toIsoDate(row?.dueDate || row?.billDate || row?.date || row?.created_at);
+      const overdueDays = computeDaysOverdue(due);
+      return {
+        id: row?.id || row?.billNumber,
+        party: row?.partyName || row?.supplierName || "Supplier",
+        bill: row?.billNumber || row?.invoiceNo || row?.id || "-",
+        due,
+        amount,
+        paid_amount: paidAmount,
+        bucket: bucketForDays(overdueDays),
+        status: overdueDays > 0 ? "Overdue" : paidAmount > 0 ? "Partial" : "Pending"
+      };
+    })
+    .filter(Boolean);
+
+  const salesByMonthMap = new Map();
+  salesDetailRows.forEach((row) => {
+    const label = monthLabelFromDate(row.date);
+    if (!label) return;
+    const current = salesByMonthMap.get(label) || { label, amount: 0, count: 0 };
+    current.amount += parseAmount(row.amount);
+    current.count += 1;
+    salesByMonthMap.set(label, current);
+  });
+  const salesByMonth = Array.from(salesByMonthMap.values());
+
+  const purchasesByMonthMap = new Map();
+  purchaseDetailRows.forEach((row) => {
+    const label = monthLabelFromDate(row.date);
+    if (!label) return;
+    const current = purchasesByMonthMap.get(label) || { label, amount: 0, count: 0 };
+    current.amount += parseAmount(row.amount);
+    current.count += 1;
+    purchasesByMonthMap.set(label, current);
+  });
+  const purchasesByMonth = Array.from(purchasesByMonthMap.values());
+
+  const itemSalesMap = new Map();
+  invoiceRows.forEach((row) => {
+    const lines = Array.isArray(row?.lines) ? row.lines : [];
+    lines.forEach((line) => {
+      const key = line?.itemName || line?.name || "Unknown";
+      const current = itemSalesMap.get(key) || { sold: 0, revenue: 0 };
+      current.sold += parseAmount(line?.qty ?? line?.quantity);
+      current.revenue += parseAmount(line?.amount ?? line?.lineTotal ?? line?.net);
+      itemSalesMap.set(key, current);
+    });
+  });
+
+  const itemDetailsRows = Array.from(itemSalesMap.entries())
+    .map(([itemName, stat]) => {
+      const itemMeta =
+        items.find((entry) => String(entry?.name || "").toLowerCase() === String(itemName).toLowerCase()) ||
+        {};
+      const salesRate = parseAmount(itemMeta?.salesRate ?? itemMeta?.price);
+      const purchaseRate = parseAmount(itemMeta?.purchaseRate ?? itemMeta?.metadata?.purchasePrice);
+      const margin = salesRate > 0 ? ((salesRate - purchaseRate) / salesRate) * 100 : 0;
+      const stock = parseAmount(itemMeta?.stockQty ?? itemMeta?.openingStock ?? itemMeta?.metadata?.openingStock);
+      const lowStockThreshold = parseAmount(itemMeta?.lowStockAlert ?? itemMeta?.metadata?.lowStockQty);
+      return {
+        id: `item_${itemName}`,
+        item: itemName,
+        category: itemMeta?.category || "General",
+        sold: parseAmount(stat.sold),
+        revenue: parseAmount(stat.revenue),
+        margin: Number(margin.toFixed(2)),
+        status: lowStockThreshold > 0 && stock <= lowStockThreshold ? "Low" : "Healthy"
+      };
+    })
+    .sort((a, b) => b.revenue - a.revenue);
+
+  const partyDetailsRows = parties.map((party) => {
+    const type = String(party?.type || "Customer");
+    const byName = String(party?.name || "").toLowerCase();
+    const byId = String(party?.id || "");
+    const sales = salesDetailRows
+      .filter((row) => String(row.party || "").toLowerCase() === byName)
+      .reduce((sum, row) => sum + parseAmount(row.net), 0);
+    const purchase = purchaseDetailRows
+      .filter((row) => String(row.party || "").toLowerCase() === byName)
+      .reduce((sum, row) => sum + parseAmount(row.net), 0);
+    const receivable = receivablesRows
+      .filter((row) => String(row.party || "").toLowerCase() === byName)
+      .reduce((sum, row) => sum + parseAmount(row.amount), 0);
+    const payable = payablesRows
+      .filter((row) => String(row.party || "").toLowerCase() === byName)
+      .reduce((sum, row) => sum + parseAmount(row.amount), 0);
+    const value = type.toLowerCase() === "supplier" ? purchase : sales;
+    const outstanding = type.toLowerCase() === "supplier" ? payable : receivable;
+    return {
+      id: byId || `party_${party?.name || Math.random().toString(16).slice(2)}`,
+      party: party?.name || "Party",
+      type,
+      transactions: type.toLowerCase() === "supplier" ? purchaseDetailRows.length : salesDetailRows.length,
+      value,
+      outstanding,
+      created_at: party?.created_at,
+      status: outstanding > 0 ? "Attention" : "Healthy"
+    };
+  });
+
+  const grossSales = salesDetailRows.reduce((sum, row) => sum + parseAmount(row.amount), 0);
+  const totalCredit = salesDetailRows.reduce((sum, row) => sum + parseAmount(row.credit), 0);
+  const netSales = grossSales - totalCredit;
+
+  const grossPurchase = purchaseDetailRows.reduce((sum, row) => sum + parseAmount(row.amount), 0);
+  const totalDebit = purchaseDetailRows.reduce((sum, row) => sum + parseAmount(row.debit), 0);
+  const netPurchase = grossPurchase + totalDebit;
+
+  const totalReceived = salesPayments.reduce(
+    (sum, row) => sum + parseAmount(row?.totals?.amountReceived),
+    0
+  );
+  const totalPaid = purchasePayments.reduce(
+    (sum, row) => sum + parseAmount(row?.totals?.amountPaid),
+    0
+  );
+
+  return {
+    ...REPORT_CONTENT,
+    sales: {
+      ...REPORT_CONTENT.sales,
+      summary: [
+        { label: "Gross Sales", value: grossSales, tone: "default" },
+        { label: "Credit Given", value: totalCredit, tone: "warn" },
+        { label: "Net Sales", value: netSales, tone: "success" },
+        { label: "Invoice Count", value: salesDetailRows.length, tone: "default", format: "count" }
+      ],
+      chart: { type: "line", data: salesByMonth.length ? salesByMonth : REPORT_CONTENT.sales.chart.data },
+      details: { ...REPORT_CONTENT.sales.details, rows: salesDetailRows.length ? salesDetailRows : REPORT_CONTENT.sales.details.rows }
+    },
+    purchases: {
+      ...REPORT_CONTENT.purchases,
+      summary: [
+        { label: "Gross Purchase", value: grossPurchase, tone: "default" },
+        { label: "Debit Added", value: totalDebit, tone: "warn" },
+        { label: "Net Purchase", value: netPurchase, tone: "danger" },
+        { label: "Bills Pending", value: payablesRows.length, tone: "default", format: "count" }
+      ],
+      chart: {
+        type: "bar",
+        data: purchasesByMonth.length ? purchasesByMonth : REPORT_CONTENT.purchases.chart.data
+      },
+      details: {
+        ...REPORT_CONTENT.purchases.details,
+        rows: purchaseDetailRows.length ? purchaseDetailRows : REPORT_CONTENT.purchases.details.rows
+      }
+    },
+    receivables: {
+      ...REPORT_CONTENT.receivables,
+      summary: [
+        {
+          label: "Total Outstanding",
+          value: receivablesRows.reduce((sum, row) => sum + parseAmount(row.amount), 0),
+          tone: "danger"
+        },
+        {
+          label: "Overdue 60+",
+          value: receivablesRows
+            .filter((row) => computeDaysOverdue(row.due) > 60)
+            .reduce((sum, row) => sum + parseAmount(row.amount), 0),
+          tone: "warn"
+        },
+        { label: "Collected", value: totalReceived, tone: "default" },
+        { label: "Open Invoices", value: receivablesRows.length, tone: "default", format: "count" }
+      ],
+      details: {
+        ...REPORT_CONTENT.receivables.details,
+        rows: receivablesRows.length ? receivablesRows : REPORT_CONTENT.receivables.details.rows
+      }
+    },
+    payables: {
+      ...REPORT_CONTENT.payables,
+      summary: [
+        {
+          label: "Supplier Outstanding",
+          value: payablesRows.reduce((sum, row) => sum + parseAmount(row.amount), 0),
+          tone: "danger"
+        },
+        {
+          label: "Due This Week",
+          value: payablesRows
+            .filter((row) => computeDaysOverdue(row.due) >= 0 && computeDaysOverdue(row.due) <= 7)
+            .reduce((sum, row) => sum + parseAmount(row.amount), 0),
+          tone: "warn"
+        },
+        { label: "Payments Out", value: totalPaid, tone: "default" },
+        { label: "Open Bills", value: payablesRows.length, tone: "default", format: "count" }
+      ],
+      details: {
+        ...REPORT_CONTENT.payables.details,
+        rows: payablesRows.length ? payablesRows : REPORT_CONTENT.payables.details.rows
+      }
+    },
+    items: {
+      ...REPORT_CONTENT.items,
+      details: {
+        ...REPORT_CONTENT.items.details,
+        rows: itemDetailsRows.length ? itemDetailsRows.slice(0, 100) : REPORT_CONTENT.items.details.rows
+      },
+      chart: {
+        ...REPORT_CONTENT.items.chart,
+        data: itemDetailsRows.length
+          ? itemDetailsRows.slice(0, 6).map((row) => ({
+              label: row.item,
+              amount: row.revenue,
+              count: row.sold
+            }))
+          : REPORT_CONTENT.items.chart.data
+      }
+    },
+    parties: {
+      ...REPORT_CONTENT.parties,
+      details: {
+        ...REPORT_CONTENT.parties.details,
+        rows: partyDetailsRows.length ? partyDetailsRows : REPORT_CONTENT.parties.details.rows
+      }
+    }
+  };
+}
+
 export default function Reports() {
   const company = companyGetProfile();
   const defaultCountry = company?.country || "India";
@@ -750,6 +1214,7 @@ export default function Reports() {
   const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
   const [loading, setLoading] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
+  const [dataVersion, setDataVersion] = useState(0);
   useGlobalLoadingBridge(loading, "reports");
 
   const scopedReports = useMemo(() => {
@@ -766,12 +1231,38 @@ export default function Reports() {
   }, [scopedReports, activeReport]);
 
   useEffect(() => {
-    setLoading(true);
-    const timer = window.setTimeout(() => setLoading(false), 280);
-    return () => window.clearTimeout(timer);
-  }, [activeReport, fromDate, toDate, country, scope]);
+    let mounted = true;
+    async function syncReportData() {
+      setLoading(true);
+      try {
+        await Promise.all([
+          syncPartiesFromRemote(),
+          syncItemsFromRemote(),
+          invoicesSyncFromRemote(),
+          purchasesSyncFromRemote(),
+          paymentsSyncFromRemote(),
+          expensesSyncFromRemote()
+        ]);
+      } catch {
+        // Continue with cached local data.
+      } finally {
+        if (!mounted) return;
+        setDataVersion((prev) => prev + 1);
+        setLoading(false);
+      }
+    }
+    syncReportData();
+    return () => {
+      mounted = false;
+    };
+  }, [fromDate, toDate, country, scope]);
 
-  const activeContent = REPORT_CONTENT[activeReport];
+  const reportContent = useMemo(
+    () => buildLiveReportContent({ fromDate, toDate, country }),
+    [fromDate, toDate, country, dataVersion]
+  );
+
+  const activeContent = reportContent?.[activeReport] || REPORT_CONTENT[activeReport];
   const chartLabel = metric === "amount" ? "Amount" : "Count";
   const detailsRows = activeContent?.details?.rows || [];
 
