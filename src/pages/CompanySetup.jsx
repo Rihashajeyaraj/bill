@@ -15,6 +15,7 @@ import {
 } from "../services/company.service";
 import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
 import { UI } from "../theme/tokens";
+import { useOrganization } from "../context/OrganizationContext";
 
 const MAX_CURRENCIES = 3;
 
@@ -104,13 +105,25 @@ function normalizeProfile(user, role, existing) {
   };
 }
 
+function profileIsMostlyEmpty(value) {
+  if (!value) return true;
+  return !(
+    String(value.companyName || "").trim() ||
+    String(value.email || "").trim() ||
+    String(value.phone || "").trim() ||
+    String(value.address?.line1 || "").trim()
+  );
+}
+
 export default function CompanySetup() {
   const nav = useNavigate();
   const user = authGetUser();
   const role = authGetRole();
+  const { profile: organizationProfile } = useOrganization();
+  const current = organizationProfile || companyGetProfile();
 
-  const current = companyGetProfile();
-  const [profile, setProfile] = useState(() => normalizeProfile(user, role, current));
+  const initialProfile = organizationProfile || companyGetProfile();
+  const [profile, setProfile] = useState(() => normalizeProfile(user, role, initialProfile));
   const [pendingCountry, setPendingCountry] = useState("");
   const [countryWarning, setCountryWarning] = useState(false);
 
@@ -132,6 +145,16 @@ export default function CompanySetup() {
     const rate = Number(profile.tax?.vatRate || 0);
     setVatInput(`${rate}%`);
   }, [profile.country]);
+
+  useEffect(() => {
+    const nextProfileSource = organizationProfile || companyGetProfile();
+    if (!nextProfileSource) return;
+
+    setProfile((prev) => {
+      if (!profileIsMostlyEmpty(prev)) return prev;
+      return normalizeProfile(user, role, nextProfileSource);
+    });
+  }, [organizationProfile, user?.id, role]);
 
   useEffect(() => {
     let mounted = true;

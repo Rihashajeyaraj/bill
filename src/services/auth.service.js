@@ -14,6 +14,16 @@ import {
   toDbRole
 } from "./roles";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import {
+  clearSharedSessionActivity,
+  markSharedSessionActivity
+} from "./sessionActivity.service";
+import {
+  clearCurrentTabAuthSession,
+  hasCurrentTabAuthSession,
+  hasLiveAuthSiblingTab,
+  markCurrentTabAuthSession
+} from "./browserSession.service";
 
 const DEMO_USERS = [
   {
@@ -80,6 +90,8 @@ function clearAuthState() {
   lsRemove(LS_KEYS.auth_user);
   lsRemove(LS_KEYS.role);
   lsRemove(LS_KEYS.organization_id);
+  clearSharedSessionActivity();
+  clearCurrentTabAuthSession();
 }
 
 function hasLocalAuthState() {
@@ -111,6 +123,8 @@ function setAuthState({
   lsSetUserScoped(LS_KEYS.organization_id, organizationId || "", safeUser.id);
   lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!companySetupCompleted, safeUser.id);
   lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted, safeUser.id);
+  markSharedSessionActivity(Date.now(), true);
+  markCurrentTabAuthSession();
 }
 
 async function upsertProfileRow(user) {
@@ -254,7 +268,31 @@ export function authUsingSupabase() {
 }
 
 export async function authBootstrapSession() {
-  if (!isSupabaseConfigured || !supabase) return false;
+  if (!isSupabaseConfigured || !supabase) {
+    if (!hasLocalAuthState()) return false;
+    if (hasCurrentTabAuthSession()) return true;
+    const hasSiblingTab = await hasLiveAuthSiblingTab();
+    if (hasSiblingTab) {
+      markCurrentTabAuthSession();
+      return true;
+    }
+    clearAuthState();
+    return false;
+  }
+
+  const tabAlreadyAuthenticated = hasCurrentTabAuthSession();
+  if (!tabAlreadyAuthenticated) {
+    const hasSiblingTab = await hasLiveAuthSiblingTab();
+    if (!hasSiblingTab) {
+      clearAuthState();
+      try {
+        await supabase.auth.signOut({ scope: "local" });
+      } catch {
+        // Ignore sign-out errors and continue with local cleanup.
+      }
+      return false;
+    }
+  }
 
   let session = null;
   try {

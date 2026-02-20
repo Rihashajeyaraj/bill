@@ -239,20 +239,18 @@ export async function companyLoadMyOrganization() {
   }
 
   const userId = await getCurrentUserId();
-  if (!userId) return null;
+  if (!userId) return companyGetProfile();
 
   const { data, error } = await supabase.rpc("get_my_membership_snapshot");
 
   if (error || !data) {
-    companySetCompleted(false);
-    setInvoiceTemplateCompleted(false);
-    return null;
+    return companyGetProfile();
   }
 
   const organization = data?.organization || null;
   const taxProfile = data?.tax_profile || null;
   const profile = mapOrganizationToProfile(organization, taxProfile);
-  if (!profile) return null;
+  if (!profile) return companyGetProfile();
 
   lsSet(LS_KEYS.organization_id, data?.organization_id || "");
   lsSetUserScoped(LS_KEYS.organization_id, data?.organization_id || "");

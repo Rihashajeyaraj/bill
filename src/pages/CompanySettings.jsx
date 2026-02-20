@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   AlertTriangle,
@@ -27,6 +27,7 @@ import {
   findThemePresetBySettings
 } from "../components/theme/themePresets";
 import { useTheme } from "../context/ThemeContext";
+import { useOrganization } from "../context/OrganizationContext";
 import {
   COUNTRIES,
   companyGetProfile,
@@ -514,12 +515,15 @@ function validateProfile(profile) {
 
 export default function CompanySettings() {
   const { setTheme, themePresetId } = useTheme();
-  const currentProfile = companyGetProfile();
+  const { profile: organizationProfile } = useOrganization();
+  const currentProfile = organizationProfile || companyGetProfile();
   const currentUser = authGetUser();
   const currentRole = authGetRole();
   const canGenerateRegisterCodes = isOwnerRole(currentRole);
   const [settings, setSettings] = useState(() => buildDefaultSettings(currentProfile, currentUser));
   const [savedSettings, setSavedSettings] = useState(() => buildDefaultSettings(currentProfile, currentUser));
+  const settingsRef = useRef(settings);
+  const savedSettingsRef = useRef(savedSettings);
   const [activeSection, setActiveSection] = useState("profile");
   const [loadingSection, setLoadingSection] = useState(false);
   const [sectionMessage, setSectionMessage] = useState({});
@@ -550,6 +554,31 @@ export default function CompanySettings() {
       THEME_PRESETS[0],
     [settings.theme, themePresetId]
   );
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  useEffect(() => {
+    savedSettingsRef.current = savedSettings;
+  }, [savedSettings]);
+
+  useEffect(() => {
+    const latestProfile = organizationProfile || companyGetProfile();
+    if (!latestProfile) return;
+
+    const nextDefaults = buildDefaultSettings(latestProfile, currentUser);
+    const liveSettings = settingsRef.current;
+    const liveSavedSettings = savedSettingsRef.current;
+    const hasUnsavedLocalEdits =
+      JSON.stringify(liveSettings) !== JSON.stringify(liveSavedSettings);
+    const looksEmpty = !String(liveSettings?.profile?.companyName || "").trim();
+
+    if (hasUnsavedLocalEdits && !looksEmpty) return;
+
+    setSettings(nextDefaults);
+    setSavedSettings(nextDefaults);
+    setErrors({});
+  }, [organizationProfile, currentUser?.id]);
 
   useEffect(() => {
     if (!hasUnsaved) return;
@@ -1016,7 +1045,7 @@ export default function CompanySettings() {
                           {settings.profile.companyName || "Company Name"}
                         </p>
                         <p className="text-xs text-slate-500">
-                          {settings.localization.currency} · {settings.profile.country}
+                          {settings.localization.currency} | {settings.profile.country}
                         </p>
                       </div>
                     </div>

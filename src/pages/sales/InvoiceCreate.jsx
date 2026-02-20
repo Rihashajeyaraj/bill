@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Plus, Printer, Send, Save } from "lucide-react";
+import { Plus, Printer, Save } from "lucide-react";
 
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
@@ -438,10 +438,6 @@ export default function InvoiceCreate() {
     }
     window.print();
   }
-  function mockEmail() {
-    alert("Send not connected yet.");
-  }
-
   async function saveInvoice() {
     if (creditBlocked) {
       alert("Credit limit exceeded. Invoice creation is blocked for this party.");
@@ -502,13 +498,6 @@ export default function InvoiceCreate() {
               >
                 <Printer className="h-4 w-4" />
                 Print
-              </button>
-              <button
-                onClick={mockEmail}
-                className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
-              >
-                <Send className="h-4 w-4" />
-                Send
               </button>
               <GradientButton onClick={saveInvoice} disabled={creditBlocked} className="disabled:cursor-not-allowed disabled:opacity-60">
                 <Save className="h-4 w-4" />
