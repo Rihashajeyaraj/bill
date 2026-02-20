@@ -80,6 +80,45 @@ function resolveCurrencySymbol(country, currencyCode) {
   return normalized ? `${normalized} ` : "";
 }
 
+function isValidDateParts(year, month, day) {
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  return (
+    candidate.getUTCFullYear() === year &&
+    candidate.getUTCMonth() + 1 === month &&
+    candidate.getUTCDate() === day
+  );
+}
+
+function parseDateToIso(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    const day = Number(isoMatch[3]);
+    if (!isValidDateParts(year, month, day)) return "";
+    return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  const dmyMatch = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (!dmyMatch) return "";
+  const day = Number(dmyMatch[1]);
+  const month = Number(dmyMatch[2]);
+  const year = Number(dmyMatch[3]);
+  if (!isValidDateParts(year, month, day)) return "";
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function formatIsoToDayMonthYear(value) {
+  const text = String(value || "").trim();
+  const iso = parseDateToIso(text);
+  if (!iso) return text;
+  const [, year, month, day] = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/) || [];
+  return `${day}/${month}/${year}`;
+}
+
 export default function InvoiceCreate() {
   const [company, setCompany] = useState(() => companyGetProfile());
   const [templateConfig, setTemplateConfig] = useState(() => getInvoiceTemplateConfig());
@@ -93,7 +132,9 @@ export default function InvoiceCreate() {
   const [items, setItems] = useState(() => listItems());
   const [itemSearch, setItemSearch] = useState("");
 
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const initialInvoiceDate = new Date().toISOString().slice(0, 10);
+  const [invoiceDate, setInvoiceDate] = useState(initialInvoiceDate);
+  const [invoiceDateInput, setInvoiceDateInput] = useState(() => formatIsoToDayMonthYear(initialInvoiceDate));
   const [invoiceNo, setInvoiceNo] = useState(() => generateInvoiceNumber());
   const [partyId, setPartyId] = useState("");
   const party = useMemo(() => customers.find((c) => c.id === partyId) || null, [customers, partyId]);
@@ -216,6 +257,22 @@ export default function InvoiceCreate() {
 
   function removeLine(id) {
     setLines((p) => p.filter((x) => x.id !== id));
+  }
+
+  function handleInvoiceDateChange(value) {
+    setInvoiceDateInput(value);
+    const parsed = parseDateToIso(value);
+    if (parsed) setInvoiceDate(parsed);
+  }
+
+  function handleInvoiceDateBlur() {
+    const parsed = parseDateToIso(invoiceDateInput);
+    if (parsed) {
+      setInvoiceDate(parsed);
+      setInvoiceDateInput(formatIsoToDayMonthYear(parsed));
+      return;
+    }
+    setInvoiceDateInput(formatIsoToDayMonthYear(invoiceDate));
   }
 
   const computed = useMemo(() => {
@@ -503,13 +560,18 @@ export default function InvoiceCreate() {
               />
             </FormField>
 
-            <FormField label="Invoice Date">
+            <FormField label="Invoice Date" hint="DD/MM/YYYY">
               <input
-                type="date"
-                value={invoiceDate}
-                onChange={(e) => setInvoiceDate(e.target.value)}
+                type="text"
+                value={invoiceDateInput}
+                onChange={(e) => handleInvoiceDateChange(e.target.value)}
+                onBlur={handleInvoiceDateBlur}
                 className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
                 style={{ "--tw-ring-color": UI.COLORS.ring }}
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={10}
+                placeholder="DD/MM/YYYY"
               />
             </FormField>
 

@@ -131,6 +131,22 @@ function money(n, currencySymbol) {
   return `${currencySymbol}${formatted}`;
 }
 
+function formatDayMonthYear(value) {
+  if (!value) return "-";
+  const text = String(value).trim();
+  const isoDateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoDateMatch) {
+    const [, year, month, day] = isoDateMatch;
+    return `${day}/${month}/${year}`;
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return text;
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const year = parsed.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
 export default function InvoicePreview({ templateId, styleConfig, invoiceData }) {
   const variant = VARIANTS[templateId] || VARIANTS.standard;
   const { primaryColor, bgColor, fontFamily, logoUrl, logoPosition } = styleConfig || {};
@@ -144,6 +160,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
   const companyAlign = logoPos === "right" ? "flex-row-reverse text-right" : "text-left";
   const taxType = invoiceData.tax?.type || (invoiceData.country === "India" ? "GST" : "NONE");
   const isIndiaGST = taxType === "GST";
+  const formattedInvoiceDate = formatDayMonthYear(invoiceData.invoiceDate);
 
   const seller = invoiceData.seller || {
     name: invoiceData.companyName || "",
@@ -251,7 +268,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
               {title.toUpperCase()}
             </p>
             <p className={clsx("text-slate-500", variant.label)}>No: {invoiceData.invoiceNo || "-"}</p>
-            <p className={clsx("text-slate-500", variant.label)}>Date: {invoiceData.invoiceDate || "-"}</p>
+            <p className={clsx("text-slate-500", variant.label)}>Date: {formattedInvoiceDate}</p>
             <p className={clsx("text-slate-500", variant.label)}>
               Place of Supply: {invoiceData.placeOfSupply || buyer.state || "-"}
             </p>
@@ -273,7 +290,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
             <div className="mt-2 space-y-1">
               <p className={clsx("text-slate-500", variant.label)}>Invoice No: {invoiceData.invoiceNo || "-"}</p>
               <p className={clsx("text-slate-500", variant.label)}>
-                Invoice Date: {invoiceData.invoiceDate || "-"}
+                Invoice Date: {formattedInvoiceDate}
               </p>
               <p className={clsx("text-slate-500", variant.label)}>
                 Place of Supply: {invoiceData.placeOfSupply || buyer.state || "-"}
@@ -336,13 +353,13 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
               <>
                 <div className="flex items-center justify-between">
                   <span className={clsx("text-slate-500", variant.label)}>CGST</span>
-                  <span className={clsx("text-slate-900 font-semibold", variant.value)}>
+                  <span className={clsx("mr-4 text-slate-900 font-semibold", variant.value)}>
                     {money(cgst, currencySymbol)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className={clsx("text-slate-500", variant.label)}>SGST</span>
-                  <span className={clsx("text-slate-900 font-semibold", variant.value)}>
+                  <span className={clsx("mr-4 text-slate-900 font-semibold", variant.value)}>
                     {money(sgst, currencySymbol)}
                   </span>
                 </div>
@@ -412,7 +429,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
                 {title}
               </p>
               <p className={clsx("text-slate-500", variant.label)}>No: {invoiceData.invoiceNo}</p>
-              <p className={clsx("text-slate-500", variant.label)}>Date: {invoiceData.invoiceDate}</p>
+              <p className={clsx("text-slate-500", variant.label)}>Date: {formattedInvoiceDate}</p>
             </div>
           </>
         ) : (
@@ -423,7 +440,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
                   {title}
                 </p>
                 <p className={clsx("text-slate-500", variant.label)}>No: {invoiceData.invoiceNo}</p>
-                <p className={clsx("text-slate-500", variant.label)}>Date: {invoiceData.invoiceDate}</p>
+                <p className={clsx("text-slate-500", variant.label)}>Date: {formattedInvoiceDate}</p>
               </div>
             ) : null}
 
@@ -447,7 +464,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
                   {title}
                 </p>
                 <p className={clsx("text-slate-500", variant.label)}>No: {invoiceData.invoiceNo}</p>
-                <p className={clsx("text-slate-500", variant.label)}>Date: {invoiceData.invoiceDate}</p>
+                <p className={clsx("text-slate-500", variant.label)}>Date: {formattedInvoiceDate}</p>
               </div>
             ) : null}
           </>
