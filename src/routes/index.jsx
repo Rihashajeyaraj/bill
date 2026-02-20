@@ -21,11 +21,8 @@ import DebitNote from "../pages/purchases/DebitNotePremium";
 import PaymentOutPremium from "../pages/purchases/PaymentOutPremium";
 import Expense from "../pages/purchases/Expense";
 
-import CashBank from "../pages/CashBank";
 import Reports from "../pages/Reports";
 import CompanySettings from "../pages/CompanySettings";
-import BackupUtilities from "../pages/BackupUtilities";
-import HelpSupport from "../pages/HelpSupport";
 import NotFound from "../pages/NotFound";
 
 export const routes = [
@@ -79,11 +76,11 @@ export const routes = [
               { path: "/app/purchase/payment-out", element: <Navigate to="/app/purchases/payment-out" replace /> },
               { path: "/app/purchase/expense", element: <Expense /> },
 
-              { path: "/app/cash-bank", element: <CashBank /> },
+              { path: "/app/cash-bank", element: <Navigate to="/dashboard" replace /> },
               { path: "/app/reports", element: <Reports /> },
               { path: "/app/company-settings", element: <CompanySettings /> },
-              { path: "/app/backup", element: <BackupUtilities /> },
-              { path: "/app/help", element: <HelpSupport /> },
+              { path: "/app/backup", element: <Navigate to="/dashboard" replace /> },
+              { path: "/app/help", element: <Navigate to="/dashboard" replace /> },
 
               { path: "*", element: <NotFound /> }
             ]

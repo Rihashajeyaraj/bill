@@ -10,12 +10,9 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   Wallet,
-  Banknote,
   FileText,
   BarChart3,
   Building2,
-  Cloud,
-  LifeBuoy,
   Settings,
   ChevronLeft,
   ChevronRight
@@ -69,11 +66,8 @@ export default function Sidebar({ collapsed, onToggle }) {
       { to: "/app/sales/payment-in", icon: ArrowDownToLine, label: "Payment In" },
       { to: "/app/purchases/payment-out", icon: ArrowUpFromLine, label: "Payment Out" },
       { to: "/app/purchase/expense", icon: Wallet, label: "Expense" },
-      { to: "/app/cash-bank", icon: Banknote, label: "Cash & Bank" },
       { to: "/invoice-template-setup", icon: LayoutTemplate, label: "Invoice Template" },
       { to: "/app/reports", icon: BarChart3, label: "Reports" },
-      { to: "/app/backup", icon: Cloud, label: "Backup" },
-      { to: "/app/help", icon: LifeBuoy, label: "Help" },
       { to: "/app/company-settings", icon: Settings, label: "Settings" }
     ];
     if (showCompanySetup) {

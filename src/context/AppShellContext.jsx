@@ -6,12 +6,10 @@ import { companyIsCompleted } from "../services/company.service";
 import { isOwnerRole } from "../services/roles";
 import {
   ensureActivitySeed,
-  isBackupReminderDue,
   listActivities,
   listNotifications,
   logActivity,
   markAllNotificationsRead,
-  markBackupReminderPrompted,
   markNotificationRead,
   pushNotification
 } from "../services/activity.service";
@@ -30,8 +28,6 @@ export function AppShellProvider({ children }) {
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
   const showCompanySetup = isOwnerRole(role) && !setupComplete;
-
-  const backupReminderDue = useMemo(() => isBackupReminderDue(7), [notifications]);
 
   function refreshFeeds() {
     setNotifications(listNotifications());
@@ -110,16 +106,6 @@ export function AppShellProvider({ children }) {
     refreshFeeds();
   }
 
-  function promptBackupReminder() {
-    markBackupReminderPrompted();
-    createNotification({
-      title: "Backup Reminder",
-      description: "It has been a while since your last backup. Open Backup Utilities to export data.",
-      tone: "warning",
-      link: "/app/backup"
-    });
-  }
-
   const commandItems = useMemo(
     () =>
       APP_NAV_ITEMS.filter((item) => showCompanySetup || item.to !== "/app/company-setup").map((item) => ({
@@ -149,12 +135,10 @@ export function AppShellProvider({ children }) {
       notifications,
       activities,
       unreadCount,
-      backupReminderDue,
       navigateTo,
       createNotification,
       readNotification,
       clearNotificationBadge,
-      promptBackupReminder,
       refreshFeeds
     }),
     [
@@ -164,8 +148,7 @@ export function AppShellProvider({ children }) {
       commandItems,
       notifications,
       activities,
-      unreadCount,
-      backupReminderDue
+      unreadCount
     ]
   );
 
