@@ -1,6 +1,6 @@
 import React from "react";
 import { Navigate } from "react-router-dom";
-import { AuthGuard, SetupGuard } from "./guards";
+import { AuthGuard, CompanySetupGuard, InvoiceTemplateGuard, SetupGuard } from "./guards";
 
 import AppLayout from "../layouts/AppLayout";
 import Login from "../pages/Login";
@@ -33,7 +33,12 @@ export const routes = [
 
   {
     element: <AuthGuard />,
-    children: [{ path: "/company-setup", element: <CompanySetup /> }]
+    children: [
+      {
+        element: <CompanySetupGuard />,
+        children: [{ path: "/company-setup", element: <CompanySetup /> }]
+      }
+    ]
   },
 
   {
@@ -51,8 +56,11 @@ export const routes = [
                 element: <Dashboard />
               },
               { path: "/app/dashboard", element: <Dashboard /> },
-              { path: "/app/company-setup", element: <CompanySetup /> },
-              { path: "/invoice-template-setup", element: <InvoiceTemplateSetup /> },
+              { path: "/app/company-setup", element: <Navigate to="/company-setup" replace /> },
+              {
+                element: <InvoiceTemplateGuard />,
+                children: [{ path: "/invoice-template-setup", element: <InvoiceTemplateSetup /> }]
+              },
 
               { path: "/app/parties", element: <Parties /> },
               { path: "/app/parties/:id/statement", element: <PartyStatement /> },

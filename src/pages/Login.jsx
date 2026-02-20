@@ -8,8 +8,9 @@ import {
   authRegister,
   authUsingSupabase
 } from "../services/auth.service";
-import { companyLoadMyOrganization } from "../services/company.service";
+import { companyIsCompleted, companyLoadMyOrganization } from "../services/company.service";
 import { ROLE_LABELS, ROLE_OPTIONS, isOwnerRole } from "../services/roles";
+import { invoiceTemplateIsCompleted } from "../lib/templateStore";
 
 export default function Login() {
   const nav = useNavigate();
@@ -41,6 +42,22 @@ export default function Login() {
     setNotice(nextNotice);
   }
 
+  function redirectAfterAuth(role) {
+    if (!isOwnerRole(role)) {
+      nav("/dashboard", { replace: true });
+      return;
+    }
+    if (!companyIsCompleted()) {
+      nav("/company-setup", { replace: true });
+      return;
+    }
+    if (!invoiceTemplateIsCompleted()) {
+      nav("/invoice-template-setup", { replace: true });
+      return;
+    }
+    nav("/dashboard", { replace: true });
+  }
+
   async function handleLoginSubmit(e) {
     e.preventDefault();
     setErr("");
@@ -50,12 +67,7 @@ export default function Login() {
     try {
       const result = await authLogin({ email: loginForm.email, password: loginForm.password });
       await companyLoadMyOrganization();
-
-      if (!result.organizationId || !result.companySetupCompleted) {
-        nav("/company-setup", { replace: true });
-      } else {
-        nav("/dashboard", { replace: true });
-      }
+      redirectAfterAuth(result?.role || ROLE_LABELS.staff);
     } catch (ex) {
       setErr(ex.message || "Login failed");
     } finally {
@@ -107,7 +119,7 @@ export default function Login() {
         nav("/company-setup", { replace: true });
       } else {
         await companyLoadMyOrganization();
-        nav("/dashboard", { replace: true });
+        redirectAfterAuth(result?.role || signupForm.role);
       }
     } catch (ex) {
       setErr(ex.message || "Register failed");

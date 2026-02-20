@@ -1,6 +1,11 @@
 import { LS_KEYS, lsGet, lsSet } from "./storage";
 import { authGetOrganizationId, authGetRole, authGetUser, authUsingSupabase } from "./auth.service";
-import { companyGetProfile, companyLoadMyOrganization } from "./company.service";
+import {
+  companyGetProfile,
+  companyLoadMyOrganization,
+  companySaveProfile,
+  companySetCompleted
+} from "./company.service";
 import { invoicesList, invoicesSyncFromRemote } from "./invoices.service";
 import { purchasesList, purchasesSyncFromRemote } from "./purchases.service";
 import { paymentsList, paymentsSyncFromRemote } from "./payments.service";
@@ -12,6 +17,12 @@ import { listCreditNotes } from "../modules/creditNote/store";
 import { listDebitNotes } from "../modules/debitNote/store";
 import { listPaymentIn } from "../modules/paymentIn/store";
 import { listPaymentOut } from "../modules/paymentOut/store";
+import {
+  getInvoiceTemplateConfig,
+  invoiceTemplateIsCompleted,
+  setInvoiceTemplateCompleted,
+  setInvoiceTemplateConfig
+} from "../lib/templateStore";
 
 const BACKUP_SCHEMA_VERSION = 1;
 const BACKUP_APP_NAME = "BillJoy";
@@ -87,8 +98,8 @@ function getSnapshotData() {
     paymentOutPremium: listPaymentOut(),
     paymentOutLedger: lsGet(SUPPORT_KEYS.paymentOutLedger, []),
     paymentOutSequence: lsGet(SUPPORT_KEYS.paymentOutSequence, {}),
-    invoiceTemplateConfig: lsGet(LS_KEYS.invoiceTemplateConfig, null),
-    invoiceTemplateCompleted: !!lsGet(LS_KEYS.invoiceTemplateCompleted, false),
+    invoiceTemplateConfig: getInvoiceTemplateConfig(),
+    invoiceTemplateCompleted: invoiceTemplateIsCompleted(),
     supportRequests: lsGet(SUPPORT_KEYS.supportRequests, [])
   };
 }
@@ -171,8 +182,8 @@ export function restoreBackupSnapshot(snapshot) {
 
   const data = snapshot.data;
   if (data.companyProfile) {
-    lsSet(LS_KEYS.company_profile, data.companyProfile);
-    lsSet(LS_KEYS.companyProfileCompleted, true);
+    companySaveProfile(data.companyProfile);
+    companySetCompleted(true);
   }
 
   lsSet(LS_KEYS.parties, asArray(data.parties));
@@ -192,9 +203,9 @@ export function restoreBackupSnapshot(snapshot) {
   lsSet(SUPPORT_KEYS.supportRequests, asArray(data.supportRequests));
 
   if (data.invoiceTemplateConfig) {
-    lsSet(LS_KEYS.invoiceTemplateConfig, data.invoiceTemplateConfig);
+    setInvoiceTemplateConfig(data.invoiceTemplateConfig);
   }
-  lsSet(LS_KEYS.invoiceTemplateCompleted, !!data.invoiceTemplateCompleted);
+  setInvoiceTemplateCompleted(!!data.invoiceTemplateCompleted);
 
   return {
     counts: dataCounts(snapshot),

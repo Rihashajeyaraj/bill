@@ -12,7 +12,7 @@ import InvoicePreview from "../../components/InvoicePreview";
 import { companyGetProfile } from "../../services/company.service";
 import { invoicesCreate, invoicesSyncFromRemote } from "../../services/invoices.service";
 import { computeIndiaGST, computeVAT } from "../../services/tax";
-import { LS_KEYS } from "../../services/storage";
+import { isUserScopedStorageEventKey, LS_KEYS } from "../../services/storage";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus, listParties, syncPartiesFromRemote } from "../../modules/parties/store";
@@ -161,8 +161,8 @@ export default function InvoiceCreate() {
     const onStorage = (event) => {
       if (
         !event.key ||
-        event.key === LS_KEYS.company_profile ||
-        event.key === LS_KEYS.invoiceTemplateConfig
+        isUserScopedStorageEventKey(LS_KEYS.company_profile, event.key) ||
+        isUserScopedStorageEventKey(LS_KEYS.invoiceTemplateConfig, event.key)
       ) {
         syncProfiles();
       }

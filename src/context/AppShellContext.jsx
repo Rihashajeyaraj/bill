@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { APP_NAV_ITEMS } from "../config/navigation";
+import { authGetRole } from "../services/auth.service";
+import { companyIsCompleted } from "../services/company.service";
+import { isOwnerRole } from "../services/roles";
 import {
   ensureActivitySeed,
   isBackupReminderDue,
@@ -24,6 +27,9 @@ export function AppShellProvider({ children }) {
   const [shortcutHintOpen, setShortcutHintOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [activities, setActivities] = useState([]);
+  const role = authGetRole();
+  const setupComplete = companyIsCompleted();
+  const showCompanySetup = isOwnerRole(role) && !setupComplete;
 
   const backupReminderDue = useMemo(() => isBackupReminderDue(7), [notifications]);
 
@@ -116,14 +122,14 @@ export function AppShellProvider({ children }) {
 
   const commandItems = useMemo(
     () =>
-      APP_NAV_ITEMS.map((item) => ({
+      APP_NAV_ITEMS.filter((item) => showCompanySetup || item.to !== "/app/company-setup").map((item) => ({
         id: item.to,
         title: item.label,
         subtitle: item.section,
         keywords: `${item.label} ${item.section} ${item.shortcut || ""}`,
         to: item.to
       })),
-    []
+    [showCompanySetup]
   );
 
   const unreadCount = useMemo(

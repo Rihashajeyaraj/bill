@@ -7,6 +7,7 @@ import FormField from "../components/FormField";
 import FileUpload from "../components/FileUpload";
 import CurrencyMultiInput from "../components/CurrencyMultiInput";
 import { authGetRole, authGetUser } from "../services/auth.service";
+import { isOwnerRole } from "../services/roles";
 import {
   COUNTRIES,
   companyGetProfile,
@@ -174,7 +175,7 @@ export default function CompanySetup() {
         currency: profile.currencies[0] || "",
         created_at: new Date().toISOString()
       });
-      nav("/dashboard", { replace: true });
+      nav(isOwnerRole(role) ? "/invoice-template-setup" : "/dashboard", { replace: true });
     } catch (error) {
       setSaveError(error?.message || "Failed to save organization details");
     } finally {

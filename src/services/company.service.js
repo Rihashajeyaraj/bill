@@ -1,7 +1,8 @@
-import { authGetOrganizationId, authGetRole } from "./auth.service";
+import { authGetOrganizationId, authGetRole, authGetUser } from "./auth.service";
 import { fromDbRole, isOwnerRole, toDbRole } from "./roles";
-import { LS_KEYS, lsGet, lsSet } from "./storage";
+import { LS_KEYS, lsGet, lsGetUserScoped, lsSet, lsSetUserScoped } from "./storage";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import { setInvoiceTemplateCompleted } from "../lib/templateStore";
 
 export const COUNTRIES = ["India", "Sri Lanka", "UAE", "USA", "United Kingdom", "Ireland"];
 
@@ -165,18 +166,21 @@ async function getCurrentUserId() {
 }
 
 export function companyIsCompleted() {
-  return !!lsGet(LS_KEYS.companyProfileCompleted, false);
+  return !!lsGetUserScoped(LS_KEYS.companyProfileCompleted, false);
 }
 
 export function companySetCompleted(status) {
+  lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!status);
   lsSet(LS_KEYS.companyProfileCompleted, !!status);
 }
 
 export function companyGetProfile() {
-  return lsGet(LS_KEYS.company_profile, null);
+  return lsGetUserScoped(LS_KEYS.company_profile, null);
 }
 
 export function companySaveProfile(profile) {
+  lsSetUserScoped(LS_KEYS.company_profile, profile);
+  lsSetUserScoped(LS_KEYS.companyProfileCompleted, true);
   lsSet(LS_KEYS.company_profile, profile);
   lsSet(LS_KEYS.companyProfileCompleted, true);
   return profile;
@@ -185,6 +189,7 @@ export function companySaveProfile(profile) {
 export function companyUpdateProfile(partial) {
   const prev = companyGetProfile() || {};
   const next = { ...prev, ...partial, updated_at: new Date().toISOString() };
+  lsSetUserScoped(LS_KEYS.company_profile, next);
   lsSet(LS_KEYS.company_profile, next);
   return next;
 }
@@ -201,6 +206,7 @@ export async function companyLoadMyOrganization() {
 
   if (error || !data) {
     companySetCompleted(false);
+    setInvoiceTemplateCompleted(false);
     return null;
   }
 
@@ -210,21 +216,40 @@ export async function companyLoadMyOrganization() {
   if (!profile) return null;
 
   lsSet(LS_KEYS.organization_id, data?.organization_id || "");
+  lsSetUserScoped(LS_KEYS.organization_id, data?.organization_id || "");
   lsSet(LS_KEYS.role, fromDbRole(data?.role));
+  lsSetUserScoped(LS_KEYS.company_profile, profile);
+  lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!organization?.is_setup_completed);
   lsSet(LS_KEYS.company_profile, profile);
   lsSet(LS_KEYS.companyProfileCompleted, !!organization?.is_setup_completed);
+  setInvoiceTemplateCompleted(
+    !!(
+      organization?.settings?.invoice_template_selected ||
+      organization?.settings?.invoiceTemplateSelected ||
+      organization?.settings?.invoiceTemplate?.templateId
+    )
+  );
   return profile;
 }
 
 export async function companySaveProfileRemote(profile) {
-  companySaveProfile({
+  const previous = companyGetProfile() || {};
+  const mergedProfile = {
+    ...previous,
     ...profile,
-    currency: profile?.currencies?.[0] || profile?.currency || "INR",
+    settings: {
+      ...(previous.settings || {}),
+      ...(profile?.settings || {})
+    },
+    currency: profile?.currencies?.[0] || profile?.currency || previous?.currency || "INR",
     updated_at: new Date().toISOString()
-  });
+  };
+  companySaveProfile(mergedProfile);
 
   if (!isSupabaseConfigured || !supabase) {
-    return { profile, organizationId: authGetOrganizationId() || "" };
+    const localOrganizationId = authGetOrganizationId() || "";
+    lsSetUserScoped(LS_KEYS.organization_id, localOrganizationId);
+    return { profile: mergedProfile, organizationId: localOrganizationId };
   }
 
   const userId = await getCurrentUserId();
@@ -233,7 +258,7 @@ export async function companySaveProfileRemote(profile) {
   }
 
   const existingOrgId = authGetOrganizationId();
-  const payload = mapProfileToOrganizationPayload(profile, userId, existingOrgId);
+  const payload = mapProfileToOrganizationPayload(mergedProfile, userId, existingOrgId);
 
   let organizationId = existingOrgId;
 
@@ -280,7 +305,7 @@ export async function companySaveProfileRemote(profile) {
     await upsertMembershipDirectly({ organizationId, userId, role: memberRole });
   }
 
-  const taxPayload = mapProfileToTaxPayload(profile, organizationId);
+  const taxPayload = mapProfileToTaxPayload(mergedProfile, organizationId);
   const { error: taxError } = await supabase
     .from("organization_tax_profiles")
     .upsert(taxPayload, { onConflict: "organization_id" });
@@ -288,6 +313,8 @@ export async function companySaveProfileRemote(profile) {
   if (taxError) throw new Error(taxError.message || "Failed to save tax settings");
 
   lsSet(LS_KEYS.organization_id, organizationId);
+  lsSetUserScoped(LS_KEYS.organization_id, organizationId, authGetUser()?.id);
+  lsSetUserScoped(LS_KEYS.companyProfileCompleted, true, authGetUser()?.id);
   lsSet(LS_KEYS.companyProfileCompleted, true);
 
   return { profile: companyGetProfile(), organizationId };

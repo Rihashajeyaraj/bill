@@ -265,7 +265,8 @@ export default function InvoiceTemplateSetup() {
         ...profile,
         settings: {
           ...(profile.settings || {}),
-          invoiceTemplate: config
+          invoiceTemplate: config,
+          invoice_template_selected: true
         },
         updated_at: new Date().toISOString()
       };

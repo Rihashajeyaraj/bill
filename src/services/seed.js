@@ -1,13 +1,6 @@
 import { LS_KEYS, lsGet, lsSet } from "./storage";
 
 export function ensureSeeded() {
-  if (localStorage.getItem(LS_KEYS.companyProfileCompleted) === null) {
-    lsSet(LS_KEYS.companyProfileCompleted, false);
-  }
-  if (localStorage.getItem(LS_KEYS.invoiceTemplateCompleted) === null) {
-    lsSet(LS_KEYS.invoiceTemplateCompleted, false);
-  }
-
   if (!Array.isArray(lsGet(LS_KEYS.parties, null))) {
     lsSet(LS_KEYS.parties, [
       {

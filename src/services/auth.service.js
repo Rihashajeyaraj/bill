@@ -1,11 +1,42 @@
-import { LS_KEYS, lsGet, lsRemove, lsSet } from "./storage";
-import { fromDbRole, normalizeRoleLabel, ROLE_LABELS, toDbRole } from "./roles";
+import {
+  LS_KEYS,
+  lsGet,
+  lsGetUserScoped,
+  lsRemove,
+  lsSet,
+  lsSetUserScoped
+} from "./storage";
+import {
+  fromDbRole,
+  isOwnerRole,
+  normalizeRoleLabel,
+  ROLE_LABELS,
+  toDbRole
+} from "./roles";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
 const DEMO_USERS = [
-  { email: "owner@demo.com", password: "owner123", name: "Owner User", role: ROLE_LABELS.owner },
-  { email: "accounter@demo.com", password: "accounter123", name: "Accounter User", role: ROLE_LABELS.accounter },
-  { email: "staff@demo.com", password: "staff123", name: "Staff User", role: ROLE_LABELS.staff }
+  {
+    id: "local_owner_demo",
+    email: "owner@demo.com",
+    password: "owner123",
+    name: "Owner User",
+    role: ROLE_LABELS.owner
+  },
+  {
+    id: "local_accounter_demo",
+    email: "accounter@demo.com",
+    password: "accounter123",
+    name: "Accounter User",
+    role: ROLE_LABELS.accounter
+  },
+  {
+    id: "local_staff_demo",
+    email: "staff@demo.com",
+    password: "staff123",
+    name: "Staff User",
+    role: ROLE_LABELS.staff
+  }
 ];
 
 function normalizeEmail(value) {
@@ -18,6 +49,27 @@ function getStoredUsers() {
 
 function setStoredUsers(list) {
   lsSet(LS_KEYS.auth_users, list);
+}
+
+function toLocalUserId(email) {
+  const safe = normalizeEmail(email).replace(/[^a-z0-9]/g, "_");
+  return `local_${safe || "user"}`;
+}
+
+function resolveInvoiceTemplateCompleted(organization) {
+  const settings = organization?.settings || {};
+  return !!(
+    settings.invoice_template_selected ||
+    settings.invoiceTemplateSelected ||
+    settings.invoiceTemplate?.templateId
+  );
+}
+
+function clearLegacyOrganizationCache() {
+  lsRemove(LS_KEYS.company_profile);
+  lsRemove(LS_KEYS.companyProfileCompleted);
+  lsRemove(LS_KEYS.invoiceTemplateConfig);
+  lsRemove(LS_KEYS.invoiceTemplateCompleted);
 }
 
 function clearAuthState() {
@@ -33,16 +85,29 @@ function hasLocalAuthState() {
   return Boolean(token && (user?.id || user?.email));
 }
 
-function setAuthState({ token, user, role, organizationId, companySetupCompleted }) {
-  lsSet(LS_KEYS.auth_token, token || "");
-  lsSet(LS_KEYS.auth_user, {
-    id: user?.id || "",
+function setAuthState({
+  token,
+  user,
+  role,
+  organizationId,
+  companySetupCompleted,
+  invoiceTemplateCompleted
+}) {
+  const safeUser = {
+    id: user?.id || toLocalUserId(user?.email),
     email: user?.email || "",
     name: user?.name || user?.email?.split("@")[0] || ""
-  });
+  };
+
+  lsSet(LS_KEYS.auth_token, token || "");
+  lsSet(LS_KEYS.auth_user, safeUser);
   lsSet(LS_KEYS.role, normalizeRoleLabel(role));
   lsSet(LS_KEYS.organization_id, organizationId || "");
   lsSet(LS_KEYS.companyProfileCompleted, !!companySetupCompleted);
+  lsSet(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted);
+  lsSetUserScoped(LS_KEYS.organization_id, organizationId || "", safeUser.id);
+  lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!companySetupCompleted, safeUser.id);
+  lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted, safeUser.id);
 }
 
 async function upsertProfileRow(user) {
@@ -80,21 +145,36 @@ async function localLogin({ email, password }) {
     throw err;
   }
 
+  const localUserId = found.id || toLocalUserId(found.email);
+  const companySetupCompleted = lsGetUserScoped(
+    LS_KEYS.companyProfileCompleted,
+    !isOwnerRole(found.role),
+    localUserId
+  );
+  const invoiceTemplateCompleted = lsGetUserScoped(
+    LS_KEYS.invoiceTemplateCompleted,
+    !isOwnerRole(found.role),
+    localUserId
+  );
+  const organizationId = lsGetUserScoped(LS_KEYS.organization_id, "", localUserId);
   const token = `mock_${btoa(`${found.email}:${Date.now()}`)}`;
+
   setAuthState({
     token,
-    user: { email: found.email, name: found.name },
+    user: { id: localUserId, email: found.email, name: found.name },
     role: found.role,
-    organizationId: lsGet(LS_KEYS.organization_id, ""),
-    companySetupCompleted: lsGet(LS_KEYS.companyProfileCompleted, false)
+    organizationId,
+    companySetupCompleted,
+    invoiceTemplateCompleted
   });
 
   return {
     token,
-    user: { email: found.email, name: found.name },
+    user: { id: localUserId, email: found.email, name: found.name },
     role: found.role,
-    organizationId: authGetOrganizationId(),
-    companySetupCompleted: lsGet(LS_KEYS.companyProfileCompleted, false)
+    organizationId,
+    companySetupCompleted,
+    invoiceTemplateCompleted
   };
 }
 
@@ -123,20 +203,28 @@ function localRegister({ name, email, password, role, registerCode }) {
     throw err;
   }
 
-  const next = { name: safeName, email: safeEmail, password, role: safeRole };
+  const localUserId = toLocalUserId(safeEmail);
+  const next = {
+    id: localUserId,
+    name: safeName,
+    email: safeEmail,
+    password,
+    role: safeRole
+  };
   setStoredUsers([next, ...getStoredUsers()]);
 
   const token = `mock_${btoa(`${safeEmail}:${Date.now()}`)}`;
   setAuthState({
     token,
-    user: { email: safeEmail, name: safeName },
+    user: { id: localUserId, email: safeEmail, name: safeName },
     role: safeRole,
-    organizationId: authGetOrganizationId(),
-    companySetupCompleted: safeRole !== ROLE_LABELS.owner
+    organizationId: "",
+    companySetupCompleted: safeRole !== ROLE_LABELS.owner,
+    invoiceTemplateCompleted: safeRole !== ROLE_LABELS.owner
   });
 
   return {
-    user: { email: safeEmail, name: safeName },
+    user: { id: localUserId, email: safeEmail, name: safeName },
     role: safeRole,
     next: safeRole === ROLE_LABELS.owner ? "organization_setup" : "dashboard"
   };
@@ -198,7 +286,8 @@ export async function authBootstrapSession() {
     },
     role: membership?.role || session.user.user_metadata?.default_role || ROLE_LABELS.owner,
     organizationId: membership?.organization_id || "",
-    companySetupCompleted: membership?.organization?.is_setup_completed || false
+    companySetupCompleted: membership?.organization?.is_setup_completed || false,
+    invoiceTemplateCompleted: resolveInvoiceTemplateCompleted(membership?.organization)
   });
 
   return true;
@@ -226,6 +315,7 @@ export async function authLogin({ email, password }) {
   const role = membership?.role || user.user_metadata?.default_role || ROLE_LABELS.owner;
   const organizationId = membership?.organization_id || "";
   const companySetupCompleted = membership?.organization?.is_setup_completed || false;
+  const invoiceTemplateCompleted = resolveInvoiceTemplateCompleted(membership?.organization);
 
   setAuthState({
     token: session.access_token,
@@ -236,7 +326,8 @@ export async function authLogin({ email, password }) {
     },
     role,
     organizationId,
-    companySetupCompleted
+    companySetupCompleted,
+    invoiceTemplateCompleted
   });
 
   return {
@@ -244,12 +335,16 @@ export async function authLogin({ email, password }) {
     user: authGetUser(),
     role: normalizeRoleLabel(role),
     organizationId,
-    companySetupCompleted
+    companySetupCompleted,
+    invoiceTemplateCompleted
   };
 }
 
 export async function authRegister({ name, email, password, role, registerCode }) {
   const roleLabel = normalizeRoleLabel(role || ROLE_LABELS.owner);
+  sessionStorage.clear();
+  clearLegacyOrganizationCache();
+  clearAuthState();
 
   if (!isSupabaseConfigured || !supabase) {
     return localRegister({ name, email, password, role: roleLabel, registerCode });
@@ -310,7 +405,8 @@ export async function authRegister({ name, email, password, role, registerCode }
       },
       role: ROLE_LABELS.owner,
       organizationId: "",
-      companySetupCompleted: false
+      companySetupCompleted: false,
+      invoiceTemplateCompleted: false
     });
 
     return {
@@ -334,6 +430,7 @@ export async function authRegister({ name, email, password, role, registerCode }
 
   const membership = await fetchPrimaryMembership(user.id);
   const companySetupCompleted = membership?.organization?.is_setup_completed || false;
+  const invoiceTemplateCompleted = resolveInvoiceTemplateCompleted(membership?.organization);
 
   setAuthState({
     token: session.access_token,
@@ -344,7 +441,8 @@ export async function authRegister({ name, email, password, role, registerCode }
     },
     role: membership?.role || roleLabel,
     organizationId: membership?.organization_id || orgId,
-    companySetupCompleted
+    companySetupCompleted,
+    invoiceTemplateCompleted
   });
 
   return {
@@ -359,5 +457,7 @@ export async function authLogout() {
   if (isSupabaseConfigured && supabase) {
     await supabase.auth.signOut();
   }
+  sessionStorage.clear();
+  clearLegacyOrganizationCache();
   clearAuthState();
 }
