@@ -3,7 +3,7 @@ import { ArrowDownCircle, ArrowUpCircle, Building2, Download, RefreshCw, Wallet 
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import DataTable from "../components/DataTable";
-import { companyGetProfile } from "../services/company.service";
+import { useOrganization } from "../context/OrganizationContext";
 import { formatMoney } from "../modules/items/utils";
 import { loadCashBankSnapshot } from "../services/cashBank.service";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
@@ -55,8 +55,7 @@ function SummaryCard({ title, value, tone = "neutral", icon: Icon }) {
 
 export default function CashBank() {
   const toast = useToast();
-  const company = companyGetProfile();
-  const currency = company?.currency || "INR";
+  const { currency = "INR" } = useOrganization();
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState("All");

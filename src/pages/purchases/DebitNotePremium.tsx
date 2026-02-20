@@ -27,7 +27,7 @@ import { computeEditorTotals, defaultForm, draftLinesFromInvoice, formFromNote, 
 import { exportDebitNoteSummaryPdf, exportDebitNotesCsv, exportSingleDebitNotePdf } from "../../modules/debitNote/pdf";
 import type { DebitNoteFormState } from "../../modules/debitNote/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
-import { companyGetProfile } from "../../services/company.service";
+import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
 import { debitNotesSaveRemote } from "../../services/debitNotes.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
@@ -66,7 +66,7 @@ function roleAccess(role: string, user: any) {
 }
 
 export default function DebitNotePremium() {
-  const company = companyGetProfile();
+  const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
   const user = authGetUser();
   const role = authGetRole();
   const access = useMemo(() => roleAccess(role, user), [role, user]);
@@ -74,10 +74,16 @@ export default function DebitNotePremium() {
   const companyState = company?.address?.state || "";
 
   function resolveInitialCountry(): CountryCode | "" {
-    const saved = getSelectedDebitCountry();
-    if (saved && access.allowedCountries.includes(saved)) return saved;
+    const mappedFromCountryCode = organizationCountryCode === "LK" ? "SL" : organizationCountryCode === "GB" ? "UK" : organizationCountryCode;
+    if (
+      mappedFromCountryCode &&
+      mappedFromCountryCode in COUNTRY_CONFIG &&
+      access.allowedCountries.includes(mappedFromCountryCode as CountryCode)
+    ) {
+      return mappedFromCountryCode as CountryCode;
+    }
 
-    const companyCountryRaw = company?.country || company?.address?.country || "";
+    const companyCountryRaw = organizationCountry || company?.country || company?.address?.country || "";
     const mappedCompanyCountry =
       (companyCountryRaw in COUNTRY_CONFIG
         ? (companyCountryRaw as CountryCode)
@@ -85,6 +91,10 @@ export default function DebitNotePremium() {
     if (mappedCompanyCountry && access.allowedCountries.includes(mappedCompanyCountry)) {
       return mappedCompanyCountry;
     }
+
+    const saved = getSelectedDebitCountry();
+    if (saved && access.allowedCountries.includes(saved)) return saved;
+
     return access.allowedCountries[0] || "";
   }
 
@@ -382,10 +392,10 @@ export default function DebitNotePremium() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-slate-900">Country Context</p>
-              <p className="text-xs text-slate-500">Debit Note is locked to the selected country.</p>
+              <p className="text-xs text-slate-500">Debit Note is locked to {COUNTRY_CONFIG[country].name}.</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
-              {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].name}
+              {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].code} {COUNTRY_CONFIG[country].name}
             </div>
           </div>
         </div>

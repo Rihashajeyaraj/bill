@@ -5,6 +5,7 @@ import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { setInvoiceTemplateCompleted } from "../lib/templateStore";
 
 export const COUNTRIES = ["India", "Sri Lanka", "UAE", "USA", "United Kingdom", "Ireland"];
+export const ORGANIZATION_UPDATED_EVENT = "organization:updated";
 
 const COUNTRY_NAME_TO_CODE = {
   India: "IN",
@@ -32,6 +33,26 @@ function getCountryName(countryCode) {
   return COUNTRY_CODE_TO_NAME[String(countryCode || "").toUpperCase()] || "India";
 }
 
+function emitOrganizationUpdated(profile = null) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent(ORGANIZATION_UPDATED_EVENT, {
+      detail: profile || companyGetProfile() || null
+    })
+  );
+}
+
+function normalizeProfileCountry(profile = {}) {
+  const fromProfileCode = String(profile?.countryCode || "").trim().toUpperCase();
+  const fromProfileCountry = String(profile?.country || "").trim();
+  const normalizedCountry = fromProfileCountry || getCountryName(fromProfileCode);
+  const normalizedCode = fromProfileCode || getCountryCode(normalizedCountry);
+  return {
+    country: normalizedCountry || "India",
+    countryCode: normalizedCode || "IN"
+  };
+}
+
 function deriveTaxRegime(country) {
   if (country === "India") return "gst";
   if (["Sri Lanka", "UAE", "United Kingdom", "Ireland"].includes(country)) return "vat";
@@ -48,6 +69,7 @@ function mapOrganizationToProfile(organization, taxProfile = null) {
     companyName: organization.company_name || "",
     logoBase64: organization.logo_base64 || "",
     country,
+    countryCode: String(organization.country_code || getCountryCode(country)).toUpperCase(),
     currency: baseCurrency,
     currencies: [baseCurrency, ...(organization?.settings?.currencies || [])]
       .map((entry) => String(entry || "").trim().toUpperCase())
@@ -77,7 +99,8 @@ function mapOrganizationToProfile(organization, taxProfile = null) {
 }
 
 function mapProfileToOrganizationPayload(profile, userId, existingOrgId = "") {
-  const country = profile?.country || "India";
+  const countryData = normalizeProfileCountry(profile);
+  const country = countryData.country;
   const currency = profile?.currency || profile?.currencies?.[0] || "INR";
 
   return {
@@ -85,7 +108,7 @@ function mapProfileToOrganizationPayload(profile, userId, existingOrgId = "") {
     owner_user_id: userId,
     company_name: profile?.companyName || "",
     logo_base64: profile?.logoBase64 || "",
-    country_code: getCountryCode(country),
+    country_code: countryData.countryCode,
     state_name: profile?.address?.state || "",
     city: profile?.address?.city || "",
     address_line1: profile?.address?.line1 || "",
@@ -108,12 +131,13 @@ function mapProfileToOrganizationPayload(profile, userId, existingOrgId = "") {
 }
 
 function mapProfileToTaxPayload(profile, organizationId) {
-  const country = profile?.country || "India";
+  const countryData = normalizeProfileCountry(profile);
+  const country = countryData.country;
   const tax = profile?.tax || {};
 
   return {
     organization_id: organizationId,
-    country_code: getCountryCode(country),
+    country_code: countryData.countryCode,
     tax_regime: deriveTaxRegime(country),
     gstin: tax.gstin || "",
     pan: tax.taxId || "",
@@ -172,6 +196,7 @@ export function companyIsCompleted() {
 export function companySetCompleted(status) {
   lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!status);
   lsSet(LS_KEYS.companyProfileCompleted, !!status);
+  emitOrganizationUpdated();
 }
 
 export function companyGetProfile() {
@@ -179,18 +204,32 @@ export function companyGetProfile() {
 }
 
 export function companySaveProfile(profile) {
-  lsSetUserScoped(LS_KEYS.company_profile, profile);
+  const normalizedCountry = normalizeProfileCountry(profile || {});
+  const normalizedProfile = {
+    ...(profile || {}),
+    country: normalizedCountry.country,
+    countryCode: normalizedCountry.countryCode
+  };
+  lsSetUserScoped(LS_KEYS.company_profile, normalizedProfile);
   lsSetUserScoped(LS_KEYS.companyProfileCompleted, true);
-  lsSet(LS_KEYS.company_profile, profile);
+  lsSet(LS_KEYS.company_profile, normalizedProfile);
   lsSet(LS_KEYS.companyProfileCompleted, true);
-  return profile;
+  emitOrganizationUpdated(normalizedProfile);
+  return normalizedProfile;
 }
 
 export function companyUpdateProfile(partial) {
   const prev = companyGetProfile() || {};
-  const next = { ...prev, ...partial, updated_at: new Date().toISOString() };
+  const merged = { ...prev, ...partial, updated_at: new Date().toISOString() };
+  const normalizedCountry = normalizeProfileCountry(merged);
+  const next = {
+    ...merged,
+    country: normalizedCountry.country,
+    countryCode: normalizedCountry.countryCode
+  };
   lsSetUserScoped(LS_KEYS.company_profile, next);
   lsSet(LS_KEYS.company_profile, next);
+  emitOrganizationUpdated(next);
   return next;
 }
 
@@ -229,14 +268,21 @@ export async function companyLoadMyOrganization() {
       organization?.settings?.invoiceTemplate?.templateId
     )
   );
+  emitOrganizationUpdated(profile);
   return profile;
 }
 
 export async function companySaveProfileRemote(profile) {
   const previous = companyGetProfile() || {};
+  const countryData = normalizeProfileCountry({
+    country: profile?.country || previous?.country || "",
+    countryCode: profile?.countryCode || previous?.countryCode || ""
+  });
   const mergedProfile = {
     ...previous,
     ...profile,
+    country: countryData.country,
+    countryCode: countryData.countryCode,
     settings: {
       ...(previous.settings || {}),
       ...(profile?.settings || {})
@@ -383,4 +429,12 @@ export async function organizationListActiveCodes(limit = 10) {
 
   if (error || !Array.isArray(data)) return [];
   return data;
+}
+
+export function companyGetCountryCode(countryName) {
+  return getCountryCode(countryName);
+}
+
+export function companyGetCountryName(countryCode) {
+  return getCountryName(countryCode);
 }

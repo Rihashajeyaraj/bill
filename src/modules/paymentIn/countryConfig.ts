@@ -1,4 +1,4 @@
-export type CountryCode = "SL" | "IN" | "AE" | "SG" | "UK" | "US";
+export type CountryCode = "SL" | "IN" | "AE" | "SG" | "UK" | "IE" | "US";
 
 export type PaymentStatus = "Draft" | "Received" | "Applied";
 
@@ -104,6 +104,21 @@ export const COUNTRY_CONFIG: Record<CountryCode, CountryConfig> = {
     legalFooter: "Reference this receipt with the original invoice in VAT records.",
     paymentModes: COMMON_MODES
   },
+  IE: {
+    code: "IE",
+    name: "Ireland",
+    flag: "\u{1F1EE}\u{1F1EA}",
+    currency: "EUR",
+    taxLabel: "VAT",
+    receiptLabel: "Payment Receipt",
+    numberPrefix: "PR-IE-",
+    registrationLabel: "VAT Registration Number",
+    registrationRequired: false,
+    registrationRegex: /^(IE)?[0-9A-Z]{7,9}$/,
+    legalWording: "Receipt issued in line with Irish VAT documentation practices.",
+    legalFooter: "Keep this receipt with the original invoice for VAT records.",
+    paymentModes: COMMON_MODES
+  },
   US: {
     code: "US",
     name: "USA",
@@ -129,8 +144,10 @@ export const COUNTRY_NAME_TO_CODE: Record<string, CountryCode> = {
   UAE: "AE",
   Singapore: "SG",
   UK: "UK",
+  IE: "IE",
   USA: "US",
   "United Kingdom": "UK",
+  Ireland: "IE",
   "United States": "US"
 };
 

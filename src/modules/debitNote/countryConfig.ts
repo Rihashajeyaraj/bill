@@ -1,4 +1,4 @@
-export type CountryCode = "SL" | "IN" | "AE" | "SG" | "UK" | "US";
+export type CountryCode = "SL" | "IN" | "AE" | "SG" | "UK" | "IE" | "US";
 
 export type DebitStatus = "Draft" | "Issued" | "Applied";
 
@@ -122,6 +122,24 @@ export const COUNTRY_CONFIG: Record<CountryCode, CountryConfig> = {
     addressFormat: "Address, Postcode, United Kingdom",
     legalFooter: "Reference this debit note against the original purchase VAT invoice."
   },
+  IE: {
+    code: "IE",
+    name: "Ireland",
+    flag: "\u{1F1EE}\u{1F1EA}",
+    numberPrefix: "DN-IE-",
+    label: "VAT Debit Note",
+    currency: "EUR",
+    taxModel: "VAT",
+    taxLabel: "VAT",
+    defaultTaxRate: 23,
+    registrationLabel: "VAT Registration Number",
+    registrationRequired: true,
+    registrationRegex: /^(IE)?[0-9A-Z]{7,9}$/,
+    hsnSacRequired: false,
+    legalWording: "Irish Revenue-compliant VAT debit note.",
+    addressFormat: "Address, Eircode, Ireland",
+    legalFooter: "Reference this debit note against the original Irish VAT purchase invoice."
+  },
   US: {
     code: "US",
     name: "USA",
@@ -150,8 +168,10 @@ export const COUNTRY_NAME_TO_CODE: Record<string, CountryCode> = {
   UAE: "AE",
   Singapore: "SG",
   UK: "UK",
+  IE: "IE",
   USA: "US",
   "United Kingdom": "UK",
+  Ireland: "IE",
   "United States": "US"
 };
 

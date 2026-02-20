@@ -6,7 +6,7 @@ import EmptyState from "../components/EmptyState";
 import Badge from "../components/Badge";
 import { buildPartyStatement, computePartyFinancials, getParty } from "../modules/parties/store";
 import { formatMoney, outstandingMeta } from "../modules/parties/utils";
-import { companyGetProfile } from "../services/company.service";
+import { useOrganization } from "../context/OrganizationContext";
 
 const DOC_TYPES = [
   "Invoice",
@@ -19,8 +19,7 @@ const DOC_TYPES = [
 export default function PartyStatement() {
   const { id } = useParams();
   const party = getParty(id);
-  const company = companyGetProfile();
-  const currency = company?.currency || company?.tax?.currency || "";
+  const { currency = "" } = useOrganization();
 
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");

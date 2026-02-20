@@ -33,7 +33,7 @@ import {
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import Badge from "../components/Badge";
-import { companyGetProfile } from "../services/company.service";
+import { useOrganization } from "../context/OrganizationContext";
 import { LS_KEYS, lsGet } from "../services/storage";
 import { invoicesSyncFromRemote } from "../services/invoices.service";
 import { purchasesSyncFromRemote } from "../services/purchases.service";
@@ -43,15 +43,6 @@ import { syncPartiesFromRemote } from "../modules/parties/store";
 import { syncItemsFromRemote } from "../modules/items/store";
 import { formatMoney, normalizeText } from "../modules/items/utils";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
-
-const CURRENCY_MAP = {
-  India: "INR",
-  "Sri Lanka": "LKR",
-  UAE: "AED",
-  USA: "USD",
-  "United Kingdom": "GBP",
-  Ireland: "EUR"
-};
 
 const SCOPE_OPTIONS = ["All", "Sales", "Purchase", "Party", "Item"];
 
@@ -1207,15 +1198,11 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
 }
 
 export default function Reports() {
-  const company = companyGetProfile();
-  const defaultCountry = company?.country || "India";
-  const currency =
-    company?.currency || company?.tax?.currency || CURRENCY_MAP[defaultCountry] || "USD";
+  const { country = "India", countryCode = "IN", currency = "USD" } = useOrganization();
 
   const todayIso = toLocalIsoDate(new Date());
   const [fromDate, setFromDate] = useState(todayIso);
   const [toDate, setToDate] = useState(todayIso);
-  const country = defaultCountry;
   const [scope, setScope] = useState("All");
 
   const [activeReport, setActiveReport] = useState("sales");
@@ -1444,7 +1431,7 @@ export default function Reports() {
           <div>
             <p className="text-xs font-semibold text-slate-500">Country</p>
             <div className="mt-2 w-full rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700">
-              {country}
+              {countryCode} {country}
             </div>
           </div>
           <div>
@@ -1495,7 +1482,7 @@ export default function Reports() {
               {REPORT_CARDS.find((report) => report.id === activeReport)?.label}
             </p>
             <p className="text-xs text-slate-500">
-              Filters applied: {formatIsoAsDmy(fromDate)} to {formatIsoAsDmy(toDate)} - {country}
+              Filters applied: {formatIsoAsDmy(fromDate)} to {formatIsoAsDmy(toDate)} - {countryCode} {country}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

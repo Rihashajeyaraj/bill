@@ -10,7 +10,7 @@ import Modal from "../components/Modal";
 import TaxDropdown from "../components/TaxDropdown";
 import UnitPickerModal from "../components/UnitPickerModal";
 import { upsertItemRemote } from "../modules/items/store";
-import { companyGetProfile } from "../services/company.service";
+import { useOrganization } from "../context/OrganizationContext";
 import { UI } from "../theme/tokens";
 
 const DEFAULT_ITEM = {
@@ -67,6 +67,7 @@ function parseTaxRate(label) {
 }
 
 export default function ItemCreate() {
+  const { country: organizationCountry = "", countryCode: organizationCountryCode = "" } = useOrganization();
   const nav = useNavigate();
   const [item, setItem] = useState(DEFAULT_ITEM);
   const [tab, setTab] = useState("pricing");
@@ -86,17 +87,14 @@ export default function ItemCreate() {
   });
 
   useEffect(() => {
-    const profile = companyGetProfile();
-    const normalized = normalizeCountry(
-      profile?.country || profile?.country_name || profile?.countryCode || profile?.country_code
-    );
+    const normalized = normalizeCountry(organizationCountry || organizationCountryCode);
     if (normalized) {
       setCompanyCountry(normalized);
       return;
     }
     const fallback = normalizeCountry(localStorage.getItem("companyCountryCode"));
     if (fallback) setCompanyCountry(fallback);
-  }, []);
+  }, [organizationCountry, organizationCountryCode]);
 
   const isIndia = useMemo(() => companyCountry === "India", [companyCountry]);
   const isValid = item.itemName.trim().length > 0;

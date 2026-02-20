@@ -3,7 +3,7 @@ import { ArrowDownCircle, ArrowUpCircle, FileClock, ReceiptIndianRupee } from "l
 import Card from "../components/Card";
 import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
 import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
-import { companyGetProfile } from "../services/company.service";
+import { useOrganization } from "../context/OrganizationContext";
 
 function money(n) {
   const value = Number(n || 0);
@@ -11,8 +11,7 @@ function money(n) {
 }
 
 export default function AccounterDashboard() {
-  const company = companyGetProfile();
-  const currency = company?.currency || company?.currencies?.[0] || "INR";
+  const { currency = "INR" } = useOrganization();
   const [invoices, setInvoices] = useState(() => invoicesList());
   const [payments, setPayments] = useState(() => paymentsList());
 

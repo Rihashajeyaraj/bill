@@ -17,7 +17,7 @@ import { allocationsFromInvoices, computeEditorTotals, defaultForm, formFromReco
 import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf } from "../../modules/paymentIn/pdf";
 import type { PaymentInFormState } from "../../modules/paymentIn/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
-import { companyGetProfile } from "../../services/company.service";
+import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesSyncFromRemote } from "../../services/invoices.service";
 import { syncPaymentInRemote } from "../../services/payments.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
@@ -54,8 +54,13 @@ function canReopenWithinWindow(record: PaymentInRecord | null) {
   return Number.isFinite(touched) && Date.now() - touched <= EDIT_WINDOW_MS;
 }
 
-function resolveFixedCountry(company: any): CountryCode {
-  const raw = String(company?.countryCode || company?.country || "").trim();
+function resolveFixedCountry(organizationCountry: string, organizationCountryCode: string): CountryCode {
+  const rawCode = String(organizationCountryCode || "").trim().toUpperCase();
+  if (rawCode === "LK") return "SL";
+  if (rawCode === "GB") return "UK";
+  if (rawCode && rawCode in COUNTRY_CONFIG) return rawCode as CountryCode;
+
+  const raw = String(organizationCountry || "").trim();
   if (raw && raw in COUNTRY_CONFIG) return raw as CountryCode;
   if (raw && COUNTRY_NAME_TO_CODE[raw]) return COUNTRY_NAME_TO_CODE[raw];
   const saved = getSelectedPaymentCountry();
@@ -64,12 +69,15 @@ function resolveFixedCountry(company: any): CountryCode {
 }
 
 export default function PaymentInPremium() {
-  const company = companyGetProfile();
+  const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
   const user = authGetUser();
   const access = useMemo(() => roleAccess(authGetRole(), user), [user]);
   const actorName = user?.name || user?.email || "System User";
 
-  const country = useMemo<CountryCode>(() => resolveFixedCountry(company), [company]);
+  const country = useMemo<CountryCode>(
+    () => resolveFixedCountry(organizationCountry, organizationCountryCode),
+    [organizationCountry, organizationCountryCode]
+  );
   const [panelMode, setPanelMode] = useState<PanelMode>("feed");
   const [flowMode, setFlowMode] = useState<FlowMode>("create");
   const [activeStep, setActiveStep] = useState(0);
@@ -359,7 +367,7 @@ export default function PaymentInPremium() {
             <p className="text-xs text-slate-500">Receive money from customers</p>
           </div>
           <div className="mx-auto w-full max-w-xs rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm font-semibold text-slate-700 sm:mx-0 sm:flex-1 sm:max-w-sm">
-            {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].name} | {COUNTRY_CONFIG[country].currency}
+            {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].code} {COUNTRY_CONFIG[country].name} | {COUNTRY_CONFIG[country].currency}
           </div>
           <button onClick={startNewPayment} disabled={!allowed} className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
             <Plus className="h-4 w-4" />
@@ -423,9 +431,10 @@ export default function PaymentInPremium() {
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                   <FlowCard title="Country Context" subtitle="Auto updates currency, label and legal wording">
                     <div className="space-y-3">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">{COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].name}</div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">{COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].code} {COUNTRY_CONFIG[country].name}</div>
                       <p className="text-sm text-slate-700">Currency: <span className="font-semibold">{COUNTRY_CONFIG[country].currency}</span></p>
                       <p className="text-sm text-slate-700">Receipt Label: <span className="font-semibold">{COUNTRY_CONFIG[country].receiptLabel}</span></p>
+                      <p className="text-xs text-slate-500">Payment In is locked to {COUNTRY_CONFIG[country].name}.</p>
                       <p className="text-xs text-slate-500">{COUNTRY_CONFIG[country].legalWording}</p>
                     </div>
                   </FlowCard>

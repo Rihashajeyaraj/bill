@@ -13,7 +13,7 @@ import EmptyState from "../../components/EmptyState";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import { authGetRole, authGetUser } from "../../services/auth.service";
-import { companyGetProfile } from "../../services/company.service";
+import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
 import { syncPaymentOutRemote } from "../../services/payments.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
@@ -46,9 +46,12 @@ function statusBadge(status) {
 }
 
 export default function PaymentOutPremium() {
-  const company = companyGetProfile();
-  const country = company?.country || "India";
-  const currency = company?.currency || company?.tax?.currency || "";
+  const {
+    country = "India",
+    countryCode = "IN",
+    currency = "",
+    currencySymbol = ""
+  } = useOrganization();
   const user = authGetUser();
   const role = authGetRole();
   const actorName = user?.name || user?.email || "System User";
@@ -251,7 +254,7 @@ export default function PaymentOutPremium() {
             <p className="text-xs text-slate-500">Pay suppliers and track payables</p>
           </div>
           <div className="mx-auto w-full max-w-xs rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm font-semibold text-slate-700 sm:mx-0 sm:flex-1 sm:max-w-sm">
-            {country} | {currency || "N/A"}
+            {countryCode} {country} | {currencySymbol || currency || "N/A"}
           </div>
           {panelMode === "list" ? (
             <button
@@ -440,11 +443,12 @@ export default function PaymentOutPremium() {
               <FlowCard title="Country Context" subtitle="Auto updates currency and payment numbering">
                 <div className="space-y-3">
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
-                    {country}
+                    {countryCode} {country}
                   </div>
                   <p className="text-sm text-slate-700">
-                    Currency: <span className="font-semibold">{currency || "-"}</span>
+                    Currency: <span className="font-semibold">{currencySymbol || currency || "-"}</span>
                   </p>
+                  <p className="text-xs text-slate-500">Payment Out is locked to {country}.</p>
                   <p className="text-sm text-slate-700">
                     Payment Number: <span className="font-semibold">{form.paymentNo || "Auto-generated on save"}</span>
                   </p>
@@ -636,7 +640,7 @@ export default function PaymentOutPremium() {
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                     <p className="font-semibold text-slate-900">{selectedSupplier?.name || form.supplierName || "-"}</p>
                     <p className="text-xs text-slate-500">
-                      {country} | {currency || "-"} | {form.paymentDate || "-"}
+                      {countryCode} {country} | {currencySymbol || currency || "-"} | {form.paymentDate || "-"}
                     </p>
                   </div>
                   <div className="flex items-center justify-between">

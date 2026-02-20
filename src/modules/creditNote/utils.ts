@@ -19,7 +19,7 @@ export function companyRegistration(company: any, country: CountryCode) {
   const tax = company?.tax || {};
   if (country === "IN") return tax.gstin || "";
   if (country === "AE") return tax.trn || tax.vatNumber || "";
-  if (country === "SL" || country === "UK") return tax.vatNumber || "";
+  if (country === "SL" || country === "UK" || country === "IE") return tax.vatNumber || "";
   if (country === "SG") return tax.gstRegNo || tax.gstin || "";
   if (country === "US") return tax.salesTaxPermit || "";
   return "";

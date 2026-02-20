@@ -9,7 +9,7 @@ import DataTable from "../../components/DataTable";
 import Badge from "../../components/Badge";
 import InvoicePreview from "../../components/InvoicePreview";
 
-import { companyGetProfile } from "../../services/company.service";
+import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesCreate, invoicesSyncFromRemote } from "../../services/invoices.service";
 import { computeIndiaGST, computeVAT } from "../../services/tax";
 import { isUserScopedStorageEventKey, LS_KEYS } from "../../services/storage";
@@ -54,15 +54,6 @@ const INDIA_STATES = [
   "West Bengal"
 ];
 const VAT_RATES = { "Sri Lanka": 18, "United Kingdom": 20, UK: 20, Ireland: 23 };
-const CURRENCY_SYMBOLS = {
-  INR: "₹",
-  LKR: "₨",
-  AED: "AED ",
-  USD: "$",
-  GBP: "£",
-  EUR: "€"
-};
-
 function getVatRate(country, company) {
   return company?.tax?.vatRate || VAT_RATES[country] || 0;
 }
@@ -73,10 +64,9 @@ function parseRateInput(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function resolveCurrencySymbol(country, currencyCode) {
+function resolveCurrencySymbol(symbol, currencyCode) {
+  if (symbol) return symbol;
   const normalized = String(currencyCode || "").trim().toUpperCase();
-  if (CURRENCY_SYMBOLS[normalized]) return CURRENCY_SYMBOLS[normalized];
-  if (country === "India") return "₹";
   return normalized ? `${normalized} ` : "";
 }
 
@@ -120,11 +110,9 @@ function formatIsoToDayMonthYear(value) {
 }
 
 export default function InvoiceCreate() {
-  const [company, setCompany] = useState(() => companyGetProfile());
+  const { profile: company = {}, country = "", currency = "", currencySymbol = "" } = useOrganization();
   const [templateConfig, setTemplateConfig] = useState(() => getInvoiceTemplateConfig());
-  const country = company?.country || "";
   const isIndia = country === "India";
-  const currency = company?.currency || company?.tax?.currency || "";
 
   const [customers, setCustomers] = useState(() =>
     listParties().filter((party) => party.type === "Customer")
@@ -155,13 +143,11 @@ export default function InvoiceCreate() {
 
   useEffect(() => {
     const syncProfiles = () => {
-      setCompany(companyGetProfile());
       setTemplateConfig(getInvoiceTemplateConfig());
     };
     const onStorage = (event) => {
       if (
         !event.key ||
-        isUserScopedStorageEventKey(LS_KEYS.company_profile, event.key) ||
         isUserScopedStorageEventKey(LS_KEYS.invoiceTemplateConfig, event.key)
       ) {
         syncProfiles();
@@ -373,7 +359,7 @@ export default function InvoiceCreate() {
       title: isIndia ? "Tax Invoice" : "Invoice",
       country,
       companyName: company?.companyName || "",
-      currencySymbol: resolveCurrencySymbol(country, currency),
+      currencySymbol: resolveCurrencySymbol(currencySymbol, currency),
       invoiceNo: invoiceNo || "-",
       invoiceDate,
       dueDate: invoiceDate,
@@ -878,3 +864,4 @@ export default function InvoiceCreate() {
     </div>
   );
 }
+

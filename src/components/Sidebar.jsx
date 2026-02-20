@@ -21,9 +21,10 @@ import {
   ChevronRight
 } from "lucide-react";
 import clsx from "clsx";
-import { companyGetProfile, companyIsCompleted } from "../services/company.service";
+import { companyIsCompleted } from "../services/company.service";
 import { authGetRole } from "../services/auth.service";
 import { isOwnerRole } from "../services/roles";
+import { useOrganization } from "../context/OrganizationContext";
 
 const base = "app-sidebar-item";
 const active = "app-sidebar-item is-active";
@@ -47,7 +48,7 @@ function Item({ to, icon: Icon, label, collapsed }) {
 
 export default function Sidebar({ collapsed, onToggle }) {
   const width = collapsed ? "w-[84px]" : "w-[260px]";
-  const company = companyGetProfile();
+  const { profile: company = {} } = useOrganization();
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
   const showCompanySetup = isOwnerRole(role) && !setupComplete;

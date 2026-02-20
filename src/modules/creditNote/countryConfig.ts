@@ -1,4 +1,4 @@
-export type CountryCode = "SL" | "IN" | "AE" | "SG" | "UK" | "US";
+export type CountryCode = "SL" | "IN" | "AE" | "SG" | "UK" | "IE" | "US";
 
 export type CreditStatus = "Draft" | "Issued" | "Applied";
 
@@ -127,6 +127,25 @@ export const COUNTRY_CONFIG: Record<CountryCode, CountryConfig> = {
     addressFormat: "Address, Postcode, United Kingdom",
     legalFooter: "This document must be referenced against the original VAT invoice."
   },
+  IE: {
+    code: "IE",
+    name: "Ireland",
+    flag: "\u{1F1EE}\u{1F1EA}",
+    numberPrefix: "CN-IE-",
+    label: "VAT Credit Note",
+    currency: "EUR",
+    currencySymbol: "EUR",
+    taxModel: "VAT",
+    taxLabel: "VAT",
+    defaultTaxRate: 23,
+    registrationLabel: "VAT Registration Number",
+    registrationRequired: true,
+    registrationRegex: /^(IE)?[0-9A-Z]{7,9}$/,
+    hsnSacRequired: false,
+    legalWording: "Irish Revenue-compliant VAT credit note.",
+    addressFormat: "Address, Eircode, Ireland",
+    legalFooter: "This document must reference the original Irish VAT invoice."
+  },
   US: {
     code: "US",
     name: "USA",
@@ -156,8 +175,10 @@ export const COUNTRY_NAME_TO_CODE: Record<string, CountryCode> = {
   UAE: "AE",
   Singapore: "SG",
   UK: "UK",
+  IE: "IE",
   USA: "US",
   "United Kingdom": "UK",
+  Ireland: "IE",
   "United States": "US"
 };
 

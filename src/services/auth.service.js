@@ -70,6 +70,9 @@ function clearLegacyOrganizationCache() {
   lsRemove(LS_KEYS.companyProfileCompleted);
   lsRemove(LS_KEYS.invoiceTemplateConfig);
   lsRemove(LS_KEYS.invoiceTemplateCompleted);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("organization:updated", { detail: null }));
+  }
 }
 
 function clearAuthState() {

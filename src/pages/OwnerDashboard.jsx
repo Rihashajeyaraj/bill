@@ -12,7 +12,7 @@ import Card from "../components/Card";
 import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
 import { purchasesList, purchasesSyncFromRemote } from "../services/purchases.service";
 import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
-import { companyGetProfile } from "../services/company.service";
+import { useOrganization } from "../context/OrganizationContext";
 import {
   ResponsiveContainer,
   BarChart,
@@ -36,6 +36,8 @@ function buildMonthLabels() {
 }
 
 export default function Dashboard() {
+  const { currency = "INR" } = useOrganization();
+
   useEffect(() => {
     const token = beginPageLoading("dashboard");
     const timer = window.setTimeout(() => endPageLoading(token), 260);
@@ -45,8 +47,6 @@ export default function Dashboard() {
     };
   }, []);
 
-  const company = companyGetProfile();
-  const currency = company?.currency || company?.currencies?.[0] || "INR";
   const [invoices, setInvoices] = useState(() => invoicesList());
   const [purchases, setPurchases] = useState(() => purchasesList());
   const [payments, setPayments] = useState(() => paymentsList());

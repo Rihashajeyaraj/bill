@@ -16,11 +16,11 @@ import {
   setInvoiceTemplateCompleted
 } from "../lib/templateStore";
 import {
-  companyGetProfile,
   companyLoadMyOrganization,
   companySaveProfileRemote,
   companyUpdateProfile
 } from "../services/company.service";
+import { useOrganization } from "../context/OrganizationContext";
 import { UI } from "../theme/tokens";
 import {
   getCountryInvoiceConfig,
@@ -158,9 +158,9 @@ function computePreviewTotals(preview) {
 
 export default function InvoiceTemplateSetup() {
   const nav = useNavigate();
-  const company = companyGetProfile();
+  const { profile: organizationProfile = {}, country = "India" } = useOrganization();
+  const company = organizationProfile;
   const companyName = company?.companyName || FALLBACK_COMPANY;
-  const country = company?.country || "India";
   const countryConfig = getCountryInvoiceConfig(country);
   const countryTemplates = getCountryTemplates(country);
   const [config, setConfig] = useState(() => {
@@ -187,7 +187,7 @@ export default function InvoiceTemplateSetup() {
     async function load() {
       const remoteProfile = await companyLoadMyOrganization();
       if (!active) return;
-      const profile = remoteProfile || companyGetProfile() || {};
+      const profile = remoteProfile || organizationProfile || {};
       const mapped = profile?.settings?.invoiceTemplate || null;
       if (mapped && typeof mapped === "object") {
         setConfig((prev) => {
@@ -260,7 +260,7 @@ export default function InvoiceTemplateSetup() {
       setInvoiceTemplateConfig(config);
       setInvoiceTemplateCompleted(true);
 
-      const profile = companyGetProfile() || {};
+      const profile = organizationProfile || {};
       const nextProfile = {
         ...profile,
         settings: {

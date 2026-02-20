@@ -15,14 +15,13 @@ import {
 } from "../modules/parties/store";
 import { formatMoney, normalizeText, outstandingMeta } from "../modules/parties/utils";
 import { authGetUser } from "../services/auth.service";
-import { companyGetProfile } from "../services/company.service";
+import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 
 export default function Parties() {
   const nav = useNavigate();
   const toast = useToast();
-  const company = companyGetProfile();
-  const currency = company?.currency || company?.tax?.currency || "";
+  const { currency = "" } = useOrganization();
 
   const [tab, setTab] = useState("Customer");
   const [search, setSearch] = useState("");

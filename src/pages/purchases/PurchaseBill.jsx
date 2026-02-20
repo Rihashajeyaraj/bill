@@ -7,7 +7,7 @@ import { useToast } from "../../context/ToastContext";
 import { listParties, syncPartiesFromRemote } from "../../modules/parties/store";
 import { listItems, syncItemsFromRemote } from "../../modules/items/store";
 import { purchasesCreate, purchasesList, purchasesSyncFromRemote } from "../../services/purchases.service";
-import { companyGetProfile } from "../../services/company.service";
+import { useOrganization } from "../../context/OrganizationContext";
 
 const TAX_RATES = [0, 5, 12, 18, 28];
 const PRICE_TAX_MODES = [
@@ -64,8 +64,7 @@ function createLine(items) {
 }
 
 export default function PurchaseBill() {
-  const company = companyGetProfile();
-  const country = company?.country || "";
+  const { country = "" } = useOrganization();
   const toast = useToast();
   const [suppliers, setSuppliers] = useState(() =>
     listParties().filter((party) => party.type === "Supplier")

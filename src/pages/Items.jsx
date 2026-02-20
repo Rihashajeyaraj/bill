@@ -4,7 +4,7 @@ import PageHeader from "../components/PageHeader";
 import Tabs from "../components/Tabs";
 import Badge from "../components/Badge";
 import ItemFormModal from "../modules/items/ItemFormModal";
-import { companyGetProfile } from "../services/company.service";
+import { useOrganization } from "../context/OrganizationContext";
 import {
   computeItemStock,
   computeItemUsage,
@@ -18,9 +18,7 @@ import { useToast } from "../context/ToastContext";
 
 export default function Items() {
   const toast = useToast();
-  const company = companyGetProfile();
-  const country = company?.country || "India";
-  const currency = company?.currency || company?.tax?.currency || "";
+  const { country = "India", currency = "" } = useOrganization();
 
   const [tab, setTab] = useState("Product");
   const [search, setSearch] = useState("");

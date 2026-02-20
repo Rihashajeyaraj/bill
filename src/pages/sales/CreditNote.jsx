@@ -7,7 +7,8 @@ import Card from "../../components/Card";
 import FormField from "../../components/FormField";
 import GradientButton from "../../components/GradientButton";
 import CreditNotePreview from "../../components/CreditNotePreview";
-import { companyGetProfile, COUNTRIES } from "../../services/company.service";
+import { COUNTRIES } from "../../services/company.service";
+import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesList } from "../../services/invoices.service";
 import { itemsList } from "../../services/items.service";
 import { partiesByType } from "../../services/parties.service";
@@ -80,13 +81,13 @@ function mapInvoiceLines(invoice, items) {
 }
 
 export default function CreditNote() {
-  const company = companyGetProfile();
+  const { profile: company = {}, country: organizationCountry = "India", currency: organizationCurrency = "" } = useOrganization();
   const invoices = invoicesList();
   const items = itemsList();
   const customers = partiesByType("Customer");
   const templateConfig = getInvoiceTemplateConfig();
 
-  const [country, setCountry] = useState(company?.country || "India");
+  const [country, setCountry] = useState(organizationCountry || "India");
   const [creditNoteNo] = useState(() => generateCreditNoteNumber());
   const [creditDate, setCreditDate] = useState(new Date().toISOString().slice(0, 10));
   const [pdfLoading, setPdfLoading] = useState(false);
@@ -109,10 +110,10 @@ export default function CreditNote() {
       setLines([]);
       return;
     }
-    setCountry(referenceInvoice.country || company?.country || "India");
+    setCountry(referenceInvoice.country || organizationCountry || "India");
     setLines(mapInvoiceLines(referenceInvoice, items));
     setPlaceOfSupply(referenceInvoice.placeOfSupply || referenceInvoice?.buyer?.state || "");
-  }, [referenceInvoice, items, company?.country]);
+  }, [referenceInvoice, items, organizationCountry]);
 
   const seller = useMemo(
     () => ({
@@ -197,7 +198,7 @@ export default function CreditNote() {
   }, [lines, seller.state, buyer.state, placeOfSupply, isIndia]);
 
   const canSave = referenceInvoiceId && computed.detailed.length;
-  const currency = company?.currency || CURRENCY_BY_COUNTRY[country] || "";
+  const currency = organizationCurrency || CURRENCY_BY_COUNTRY[country] || "";
 
   function saveNote() {
     if (!canSave) return;
