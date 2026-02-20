@@ -1,5 +1,5 @@
-import React, { useMemo } from "react";
-import { NavLink } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   LayoutTemplate,
@@ -14,6 +14,7 @@ import {
   BarChart3,
   Building2,
   Settings,
+  ChevronDown,
   ChevronLeft,
   ChevronRight
 } from "lucide-react";
@@ -43,12 +44,34 @@ function Item({ to, icon: Icon, label, collapsed }) {
   );
 }
 
+function routeMatches(pathname, to) {
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
+
 export default function Sidebar({ collapsed, onToggle }) {
+  const location = useLocation();
   const width = collapsed ? "w-[84px]" : "w-[260px]";
   const { profile: company = {} } = useOrganization();
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
   const showCompanySetup = isOwnerRole(role) && !setupComplete;
+  const adjustmentsActive = routeMatches(location.pathname, "/app/sales/credit-note") ||
+    routeMatches(location.pathname, "/app/purchase/debit-note");
+  const paymentsActive = routeMatches(location.pathname, "/app/sales/payment-in") ||
+    routeMatches(location.pathname, "/app/purchases/payment-out") ||
+    routeMatches(location.pathname, "/app/purchase/payment-out");
+  const [openGroups, setOpenGroups] = useState(() => ({
+    adjustments: adjustmentsActive,
+    payments: paymentsActive
+  }));
+
+  useEffect(() => {
+    setOpenGroups((prev) => ({
+      adjustments: prev.adjustments || adjustmentsActive,
+      payments: prev.payments || paymentsActive
+    }));
+  }, [adjustmentsActive, paymentsActive]);
+
   const companyName = useMemo(() => {
     const value = String(company?.companyName || "").trim();
     return value || "BillJoy";
@@ -61,17 +84,38 @@ export default function Sidebar({ collapsed, onToggle }) {
       { to: "/app/items", icon: Boxes, label: "Items" },
       { to: "/app/sales/invoice", icon: ReceiptIndianRupee, label: "Invoices" },
       { to: "/app/purchase/bill", icon: FileText, label: "Purchases" },
-      { to: "/app/sales/credit-note", icon: BadgePercent, label: "Credit Note" },
-      { to: "/app/purchase/debit-note", icon: BadgePercent, label: "Debit Note" },
-      { to: "/app/sales/payment-in", icon: ArrowDownToLine, label: "Payment In" },
-      { to: "/app/purchases/payment-out", icon: ArrowUpFromLine, label: "Payment Out" },
+      {
+        type: "group",
+        key: "adjustments",
+        icon: BadgePercent,
+        label: "Adjustments",
+        children: [
+          { to: "/app/sales/credit-note", icon: BadgePercent, label: "Credit Note" },
+          { to: "/app/purchase/debit-note", icon: BadgePercent, label: "Debit Note" }
+        ]
+      },
+      {
+        type: "group",
+        key: "payments",
+        icon: Wallet,
+        label: "Payments",
+        children: [
+          { to: "/app/sales/payment-in", icon: ArrowDownToLine, label: "Payment In" },
+          { to: "/app/purchases/payment-out", icon: ArrowUpFromLine, label: "Payment Out" }
+        ]
+      },
       { to: "/app/purchase/expense", icon: Wallet, label: "Expense" },
       { to: "/invoice-template-setup", icon: LayoutTemplate, label: "Invoice Template" },
       { to: "/app/reports", icon: BarChart3, label: "Reports" },
       { to: "/app/company-settings", icon: Settings, label: "Settings" }
     ];
     if (showCompanySetup) {
-      baseItems.splice(11, 0, { to: "/app/company-setup", icon: Building2, label: "Company Setup" });
+      const insertAt = baseItems.findIndex((item) => item.to === "/invoice-template-setup");
+      baseItems.splice(insertAt === -1 ? baseItems.length : insertAt, 0, {
+        to: "/app/company-setup",
+        icon: Building2,
+        label: "Company Setup"
+      });
     }
     return baseItems;
   }, [showCompanySetup]);
@@ -116,10 +160,39 @@ export default function Sidebar({ collapsed, onToggle }) {
         </div>
 
         <nav className="px-3 py-2 flex-1 overflow-auto">
-          {items.map((it, idx) =>
-            it.section ? (
-              <div key={`sec_${idx}`} className={clsx("mt-3 mb-2", collapsed ? "px-1" : "px-2")}>
-                {!collapsed ? <p className="app-sidebar-subtitle text-xs font-semibold uppercase">{it.section}</p> : null}
+          {items.map((it) =>
+            it.type === "group" ? (
+              <div key={it.key} className="mb-1">
+                <button
+                  type="button"
+                  onClick={() => setOpenGroups((prev) => ({ ...prev, [it.key]: !prev[it.key] }))}
+                  className={clsx(
+                    "w-full flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-colors",
+                    (it.key === "adjustments" && adjustmentsActive) || (it.key === "payments" && paymentsActive)
+                      ? active
+                      : base
+                  )}
+                >
+                  <it.icon className="h-4.5 w-4.5" />
+                  {!collapsed ? (
+                    <>
+                      <span className="truncate">{it.label}</span>
+                      <ChevronDown
+                        className={clsx(
+                          "ml-auto h-4 w-4 transition-transform",
+                          openGroups[it.key] ? "rotate-180" : ""
+                        )}
+                      />
+                    </>
+                  ) : null}
+                </button>
+                {openGroups[it.key] && !collapsed ? (
+                  <div className="mt-1 space-y-1 pl-4">
+                    {it.children.map((child) => (
+                      <Item key={child.to} {...child} collapsed={false} />
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div key={it.to} className="mb-1">
