@@ -41,11 +41,9 @@ export function SetupGuard() {
 export function InvoiceTemplateGuard() {
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
-  const done = invoiceTemplateIsCompleted();
 
   if (!isOwnerRole(role)) return <Outlet />;
   if (!setupComplete) return <Navigate to="/company-setup" replace />;
-  if (done) return <Navigate to="/dashboard" replace />;
 
   return <Outlet />;
 }
