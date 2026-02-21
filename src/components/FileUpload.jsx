@@ -11,13 +11,24 @@ export default function FileUpload({ value, onChange }) {
   }
 
   return (
-    <div className="flex items-center gap-3">
-      <input type="file" accept="image/*" onChange={handleFile} />
-      {value ? (
-        <img src={value} alt="logo" className="h-10 w-10 rounded-xl border border-slate-100 object-cover" />
-      ) : (
-        <span className="text-xs text-slate-500">No logo</span>
-      )}
+    <div className="grid max-w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 overflow-hidden">
+      <input
+        type="file"
+        accept="image/*"
+        onChange={handleFile}
+        className="min-w-0 w-full text-sm"
+      />
+      <div className="shrink-0">
+        {value ? (
+          <img
+            src={value}
+            alt="logo"
+            className="h-10 w-10 rounded-xl border border-slate-100 object-cover"
+          />
+        ) : (
+          <span className="text-xs text-slate-500">No logo</span>
+        )}
+      </div>
     </div>
   );
 }

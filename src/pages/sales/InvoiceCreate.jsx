@@ -53,7 +53,13 @@ const INDIA_STATES = [
   "Telangana",
   "West Bengal"
 ];
-const VAT_RATES = { "Sri Lanka": 18, "United Kingdom": 20, UK: 20, Ireland: 23 };
+const VAT_RATES = {
+  "Sri Lanka": 18,
+  UAE: 5,
+  "United Kingdom": 20,
+  UK: 20,
+  Ireland: 23
+};
 function getVatRate(country, company) {
   return company?.tax?.vatRate || VAT_RATES[country] || 0;
 }

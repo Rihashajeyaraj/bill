@@ -101,6 +101,26 @@ const VARIANTS = {
     total: "text-base",
     header: "",
     divider: "border-t border-slate-100"
+  },
+  simple: {
+    padding: "p-6",
+    title: "text-xl",
+    label: "text-xs",
+    value: "text-sm",
+    tableHead: "text-xs",
+    total: "text-base",
+    header: "",
+    divider: "border-t border-slate-100"
+  },
+  professional: {
+    padding: "p-7",
+    title: "text-2xl",
+    label: "text-xs uppercase tracking-widest",
+    value: "text-sm",
+    tableHead: "text-xs uppercase tracking-widest",
+    total: "text-lg",
+    header: "rounded-2xl border border-slate-200 p-4",
+    divider: "border-t-2 border-slate-200"
   }
 };
 
