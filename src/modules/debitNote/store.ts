@@ -1,4 +1,4 @@
-import { LS_KEYS, lsGet, lsSet } from "../../services/storage";
+import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped } from "../../services/storage";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW } from "./countryConfig";
 import type { CountryCode, DebitStatus, DebitType } from "./countryConfig";
 import { MOCK_PURCHASE_INVOICES, MOCK_SUPPLIERS } from "./mockData";
@@ -169,13 +169,13 @@ function toNumber(value: unknown) {
 
 function appliedPaymentOutForBill(billId: string) {
   if (!billId) return 0;
-  const legacy = (lsGet(LS_KEYS.payments, []) as any[])
+  const legacy = (lsGetOrganizationScoped(LS_KEYS.payments, []) as any[])
     .filter((entry) => String(entry?.direction || "").toUpperCase() === "OUT")
     .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PO:"))
     .filter((entry) => String(entry?.billId || entry?.bill_id || "") === String(billId))
     .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.amount)), 0);
 
-  const premium = (lsGet(PAYMENT_OUT_PREMIUM_KEY, []) as any[])
+  const premium = (lsGetOrganizationScoped(PAYMENT_OUT_PREMIUM_KEY, []) as any[])
     .filter((entry) => String(entry?.status || "") === "Applied")
     .reduce(
       (sum, entry) =>
@@ -198,27 +198,27 @@ function appliedDebitForBill(billId: string) {
 }
 
 function getAllNotes(): DebitNoteRecord[] {
-  return lsGet(DEBIT_NOTE_STORE_KEY, []);
+  return lsGetOrganizationScoped(DEBIT_NOTE_STORE_KEY, []);
 }
 
 function setAllNotes(list: DebitNoteRecord[]) {
-  lsSet(DEBIT_NOTE_STORE_KEY, list);
+  lsSetOrganizationScoped(DEBIT_NOTE_STORE_KEY, list);
 }
 
 function getAllLedgerEntries(): DebitLedgerEntry[] {
-  return lsGet(DEBIT_NOTE_LEDGER_KEY, []);
+  return lsGetOrganizationScoped(DEBIT_NOTE_LEDGER_KEY, []);
 }
 
 function setAllLedgerEntries(list: DebitLedgerEntry[]) {
-  lsSet(DEBIT_NOTE_LEDGER_KEY, list);
+  lsSetOrganizationScoped(DEBIT_NOTE_LEDGER_KEY, list);
 }
 
 function getSequenceStore(): SequenceStore {
-  return lsGet(DEBIT_NOTE_SEQUENCE_KEY, {});
+  return lsGetOrganizationScoped(DEBIT_NOTE_SEQUENCE_KEY, {});
 }
 
 function setSequenceStore(value: SequenceStore) {
-  lsSet(DEBIT_NOTE_SEQUENCE_KEY, value);
+  lsSetOrganizationScoped(DEBIT_NOTE_SEQUENCE_KEY, value);
 }
 
 function inferCurrentCountrySequence(country: CountryCode, notes: DebitNoteRecord[]) {
@@ -367,12 +367,12 @@ function postLedgerEntry(note: DebitNoteRecord, actor: string) {
 }
 
 export function getSelectedDebitCountry(): CountryCode | "" {
-  const saved = lsGet(SELECTED_COUNTRY_KEY, "");
+  const saved = lsGetOrganizationScoped(SELECTED_COUNTRY_KEY, "");
   return normalizeCountryCode(saved) || "";
 }
 
 export function setSelectedDebitCountry(country: CountryCode) {
-  lsSet(SELECTED_COUNTRY_KEY, country);
+  lsSetOrganizationScoped(SELECTED_COUNTRY_KEY, country);
 }
 
 export function listDebitNotes(country?: CountryCode) {
@@ -392,7 +392,7 @@ export function listDebitLedger(country?: CountryCode) {
 }
 
 export function mapPurchaseInvoicesByCountry(country: CountryCode): PurchaseInvoice[] {
-  const rawInvoices = lsGet(LS_KEYS.purchases, []);
+  const rawInvoices = lsGetOrganizationScoped(LS_KEYS.purchases, []);
   const fromStorage: PurchaseInvoice[] = rawInvoices
     .map((invoice: any) => {
       const mappedCountry = normalizeCountryCode(invoice?.country);
@@ -446,7 +446,7 @@ export function mapPurchaseInvoicesByCountry(country: CountryCode): PurchaseInvo
 }
 
 export function mapSuppliersByCountry(country: CountryCode): SupplierOption[] {
-  const parties = lsGet(LS_KEYS.parties, []);
+  const parties = lsGetOrganizationScoped(LS_KEYS.parties, []);
   const purchaseInvoices = mapPurchaseInvoicesByCountry(country);
 
   const fromParties = parties

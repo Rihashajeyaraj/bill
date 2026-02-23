@@ -1,4 +1,9 @@
-import { LS_KEYS, lsGet, lsSet, uid } from "../../services/storage";
+import {
+  LS_KEYS,
+  lsGetOrganizationScoped,
+  lsSetOrganizationScoped,
+  uid
+} from "../../services/storage";
 import { authGetOrganizationId, authGetUser } from "../../services/auth.service";
 import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
 import type { LedgerEntry, PartyDraft, PartyFinancials, PartyRecord, PartyType, StatementDocType } from "./types";
@@ -168,7 +173,7 @@ function toRemotePayload(draft: PartyDraft) {
 }
 
 function basePartyList() {
-  return ensureArray(lsGet(LS_KEYS.parties, []));
+  return ensureArray(lsGetOrganizationScoped(LS_KEYS.parties, []));
 }
 
 export function listParties(): PartyRecord[] {
@@ -209,7 +214,7 @@ export function upsertParty(draft: PartyDraft, actor?: string): PartyRecord {
       creditLimit: Math.max(0, parseNumber(incoming.creditLimit))
     };
     list[idx] = next;
-    lsSet(LS_KEYS.parties, list);
+    lsSetOrganizationScoped(LS_KEYS.parties, list);
     return normalizeParty(next);
   }
 
@@ -232,12 +237,12 @@ export function upsertParty(draft: PartyDraft, actor?: string): PartyRecord {
     openingBalance: Math.abs(parseNumber(incoming.openingBalance)),
     creditLimit: Math.max(0, parseNumber(incoming.creditLimit))
   };
-  lsSet(LS_KEYS.parties, [next, ...list]);
+  lsSetOrganizationScoped(LS_KEYS.parties, [next, ...list]);
   return normalizeParty(next);
 }
 
 export function removeParty(id: string) {
-  lsSet(
+  lsSetOrganizationScoped(
     LS_KEYS.parties,
     basePartyList().filter((party: any) => party.id !== id)
   );
@@ -260,12 +265,8 @@ export async function syncPartiesFromRemote(): Promise<PartyRecord[]> {
     throw new Error(normalizeSupabaseError(error, "Failed to load parties"));
   }
 
-  const cached = listParties();
   const mapped = ensureArray<any>(data).map(mapRemoteParty);
-  if (!mapped.length && cached.length) {
-    return cached;
-  }
-  lsSet(LS_KEYS.parties, mapped);
+  lsSetOrganizationScoped(LS_KEYS.parties, mapped);
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -318,7 +319,7 @@ export async function upsertPartyRemote(draft: PartyDraft, actor?: string): Prom
 
   const saved = mapRemoteParty(remoteRow);
   const nextList = basePartyList().filter((party: any) => party.id !== saved.id && party.id !== incoming.id);
-  lsSet(LS_KEYS.parties, [saved, ...nextList]);
+  lsSetOrganizationScoped(LS_KEYS.parties, [saved, ...nextList]);
   return saved;
 }
 
@@ -416,35 +417,35 @@ function extractDebitAmount(record: any) {
 }
 
 function listLegacyCreditNotes() {
-  return ensureArray(lsGet(LS_KEYS.creditNotes, []));
+  return ensureArray(lsGetOrganizationScoped(LS_KEYS.creditNotes, []));
 }
 
 function listPremiumCreditNotes() {
-  return ensureArray(lsGet(CREDIT_NOTES_PREMIUM_KEY, []));
+  return ensureArray(lsGetOrganizationScoped(CREDIT_NOTES_PREMIUM_KEY, []));
 }
 
 function listPremiumDebitNotes() {
-  return ensureArray(lsGet(DEBIT_NOTES_PREMIUM_KEY, []));
+  return ensureArray(lsGetOrganizationScoped(DEBIT_NOTES_PREMIUM_KEY, []));
 }
 
 function listLegacyPayments() {
-  return ensureArray(lsGet(LS_KEYS.payments, []));
+  return ensureArray(lsGetOrganizationScoped(LS_KEYS.payments, []));
 }
 
 function listPremiumPayments() {
-  return ensureArray(lsGet(PAYMENT_IN_PREMIUM_KEY, []));
+  return ensureArray(lsGetOrganizationScoped(PAYMENT_IN_PREMIUM_KEY, []));
 }
 
 function listPremiumPaymentOut() {
-  return ensureArray(lsGet(PAYMENT_OUT_PREMIUM_KEY, []));
+  return ensureArray(lsGetOrganizationScoped(PAYMENT_OUT_PREMIUM_KEY, []));
 }
 
 function listInvoices() {
-  return ensureArray(lsGet(LS_KEYS.invoices, []));
+  return ensureArray(lsGetOrganizationScoped(LS_KEYS.invoices, []));
 }
 
 function listPurchases() {
-  return ensureArray(lsGet(LS_KEYS.purchases, []));
+  return ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
 }
 
 function customerTotals(party: PartyRecord) {

@@ -1,4 +1,10 @@
-import { LS_KEYS, lsGet, lsSet } from "./storage";
+import {
+  LS_KEYS,
+  lsGet,
+  lsGetOrganizationScoped,
+  lsSet,
+  lsSetOrganizationScoped
+} from "./storage";
 import { authGetOrganizationId, authGetRole, authGetUser, authUsingSupabase } from "./auth.service";
 import {
   companyGetProfile,
@@ -96,8 +102,8 @@ function getSnapshotData() {
     debitNotesPremium: listDebitNotes(),
     paymentInPremium: listPaymentIn(),
     paymentOutPremium: listPaymentOut(),
-    paymentOutLedger: lsGet(SUPPORT_KEYS.paymentOutLedger, []),
-    paymentOutSequence: lsGet(SUPPORT_KEYS.paymentOutSequence, {}),
+    paymentOutLedger: lsGetOrganizationScoped(SUPPORT_KEYS.paymentOutLedger, []),
+    paymentOutSequence: lsGetOrganizationScoped(SUPPORT_KEYS.paymentOutSequence, {}),
     invoiceTemplateConfig: getInvoiceTemplateConfig(),
     invoiceTemplateCompleted: invoiceTemplateIsCompleted(),
     supportRequests: lsGet(SUPPORT_KEYS.supportRequests, [])
@@ -186,20 +192,20 @@ export function restoreBackupSnapshot(snapshot) {
     companySetCompleted(true);
   }
 
-  lsSet(LS_KEYS.parties, asArray(data.parties));
-  lsSet(LS_KEYS.items, asArray(data.items));
-  lsSet(LS_KEYS.invoices, asArray(data.invoices));
-  lsSet(LS_KEYS.purchases, asArray(data.purchases));
-  lsSet(LS_KEYS.payments, asArray(data.payments));
-  lsSet(LS_KEYS.expenses, asArray(data.expenses));
-  lsSet(LS_KEYS.creditNotes, asArray(data.creditNotesLegacy));
+  lsSetOrganizationScoped(LS_KEYS.parties, asArray(data.parties));
+  lsSetOrganizationScoped(LS_KEYS.items, asArray(data.items));
+  lsSetOrganizationScoped(LS_KEYS.invoices, asArray(data.invoices));
+  lsSetOrganizationScoped(LS_KEYS.purchases, asArray(data.purchases));
+  lsSetOrganizationScoped(LS_KEYS.payments, asArray(data.payments));
+  lsSetOrganizationScoped(LS_KEYS.expenses, asArray(data.expenses));
+  lsSetOrganizationScoped(LS_KEYS.creditNotes, asArray(data.creditNotesLegacy));
 
-  lsSet(SUPPORT_KEYS.creditNotesPremium, asArray(data.creditNotesPremium));
-  lsSet(SUPPORT_KEYS.debitNotesPremium, asArray(data.debitNotesPremium));
-  lsSet(SUPPORT_KEYS.paymentInPremium, asArray(data.paymentInPremium));
-  lsSet(SUPPORT_KEYS.paymentOutPremium, asArray(data.paymentOutPremium));
-  lsSet(SUPPORT_KEYS.paymentOutLedger, asArray(data.paymentOutLedger));
-  lsSet(SUPPORT_KEYS.paymentOutSequence, data.paymentOutSequence || {});
+  lsSetOrganizationScoped(SUPPORT_KEYS.creditNotesPremium, asArray(data.creditNotesPremium));
+  lsSetOrganizationScoped(SUPPORT_KEYS.debitNotesPremium, asArray(data.debitNotesPremium));
+  lsSetOrganizationScoped(SUPPORT_KEYS.paymentInPremium, asArray(data.paymentInPremium));
+  lsSetOrganizationScoped(SUPPORT_KEYS.paymentOutPremium, asArray(data.paymentOutPremium));
+  lsSetOrganizationScoped(SUPPORT_KEYS.paymentOutLedger, asArray(data.paymentOutLedger));
+  lsSetOrganizationScoped(SUPPORT_KEYS.paymentOutSequence, data.paymentOutSequence || {});
   lsSet(SUPPORT_KEYS.supportRequests, asArray(data.supportRequests));
 
   if (data.invoiceTemplateConfig) {

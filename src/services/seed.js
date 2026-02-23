@@ -1,8 +1,8 @@
-import { LS_KEYS, lsGet, lsSet } from "./storage";
+import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped } from "./storage";
 
 export function ensureSeeded() {
-  if (!Array.isArray(lsGet(LS_KEYS.parties, null))) {
-    lsSet(LS_KEYS.parties, [
+  if (!Array.isArray(lsGetOrganizationScoped(LS_KEYS.parties, null))) {
+    lsSetOrganizationScoped(LS_KEYS.parties, [
       {
         id: "pty_1",
         type: "Customer",
@@ -24,8 +24,8 @@ export function ensureSeeded() {
     ]);
   }
 
-  if (!Array.isArray(lsGet(LS_KEYS.items, null))) {
-    lsSet(LS_KEYS.items, [
+  if (!Array.isArray(lsGetOrganizationScoped(LS_KEYS.items, null))) {
+    lsSetOrganizationScoped(LS_KEYS.items, [
       {
         id: "itm_1",
         name: "Granite Slab",
@@ -49,9 +49,19 @@ export function ensureSeeded() {
     ]);
   }
 
-  if (!Array.isArray(lsGet(LS_KEYS.invoices, null))) lsSet(LS_KEYS.invoices, []);
-  if (!Array.isArray(lsGet(LS_KEYS.creditNotes, null))) lsSet(LS_KEYS.creditNotes, []);
-  if (!Array.isArray(lsGet(LS_KEYS.purchases, null))) lsSet(LS_KEYS.purchases, []);
-  if (!Array.isArray(lsGet(LS_KEYS.payments, null))) lsSet(LS_KEYS.payments, []);
-  if (!Array.isArray(lsGet(LS_KEYS.expenses, null))) lsSet(LS_KEYS.expenses, []);
+  if (!Array.isArray(lsGetOrganizationScoped(LS_KEYS.invoices, null))) {
+    lsSetOrganizationScoped(LS_KEYS.invoices, []);
+  }
+  if (!Array.isArray(lsGetOrganizationScoped(LS_KEYS.creditNotes, null))) {
+    lsSetOrganizationScoped(LS_KEYS.creditNotes, []);
+  }
+  if (!Array.isArray(lsGetOrganizationScoped(LS_KEYS.purchases, null))) {
+    lsSetOrganizationScoped(LS_KEYS.purchases, []);
+  }
+  if (!Array.isArray(lsGetOrganizationScoped(LS_KEYS.payments, null))) {
+    lsSetOrganizationScoped(LS_KEYS.payments, []);
+  }
+  if (!Array.isArray(lsGetOrganizationScoped(LS_KEYS.expenses, null))) {
+    lsSetOrganizationScoped(LS_KEYS.expenses, []);
+  }
 }

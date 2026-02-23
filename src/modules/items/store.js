@@ -1,4 +1,9 @@
-import { LS_KEYS, lsGet, lsSet, uid } from "../../services/storage";
+import {
+  LS_KEYS,
+  lsGetOrganizationScoped,
+  lsSetOrganizationScoped,
+  uid
+} from "../../services/storage";
 import { authGetOrganizationId, authGetUser } from "../../services/auth.service";
 import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
 import { buildTaxLabel, normalizeItemType, normalizeText, parseNumber } from "./utils";
@@ -130,7 +135,7 @@ function toRemotePayload(draft) {
 }
 
 function listRawItems() {
-  return ensureArray(lsGet(LS_KEYS.items, []));
+  return ensureArray(lsGetOrganizationScoped(LS_KEYS.items, []));
 }
 
 export function listItems() {
@@ -184,12 +189,12 @@ export function upsertItem(draft, country) {
   } else {
     list.unshift({ ...payload, created_at: now });
   }
-  lsSet(LS_KEYS.items, list);
+  lsSetOrganizationScoped(LS_KEYS.items, list);
   return id;
 }
 
 export function removeItem(id) {
-  lsSet(
+  lsSetOrganizationScoped(
     LS_KEYS.items,
     listRawItems().filter((item) => item.id !== id)
   );
@@ -211,12 +216,8 @@ export async function syncItemsFromRemote() {
     throw new Error(normalizeSupabaseError(error, "Failed to load items"));
   }
 
-  const cached = listItems();
   const mapped = ensureArray(data).map(mapRemoteItem);
-  if (!mapped.length && cached.length) {
-    return cached;
-  }
-  lsSet(LS_KEYS.items, mapped);
+  lsSetOrganizationScoped(LS_KEYS.items, mapped);
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -269,7 +270,7 @@ export async function upsertItemRemote(draft, country) {
 
   const saved = mapRemoteItem(remoteRow);
   const nextList = listRawItems().filter((item) => item.id !== incoming.id && item.id !== saved.id);
-  lsSet(LS_KEYS.items, [saved, ...nextList]);
+  lsSetOrganizationScoped(LS_KEYS.items, [saved, ...nextList]);
   return saved.id;
 }
 
@@ -320,11 +321,11 @@ export function computeItemUsage(item) {
   let count = 0;
   let lastUsed = "";
 
-  const invoices = ensureArray(lsGet(LS_KEYS.invoices, []));
-  const purchases = ensureArray(lsGet(LS_KEYS.purchases, []));
-  const creditLegacy = ensureArray(lsGet(LS_KEYS.creditNotes, []));
-  const creditPremium = ensureArray(lsGet(CREDIT_NOTES_PREMIUM_KEY, []));
-  const debitPremium = ensureArray(lsGet(DEBIT_NOTES_PREMIUM_KEY, []));
+  const invoices = ensureArray(lsGetOrganizationScoped(LS_KEYS.invoices, []));
+  const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
+  const creditLegacy = ensureArray(lsGetOrganizationScoped(LS_KEYS.creditNotes, []));
+  const creditPremium = ensureArray(lsGetOrganizationScoped(CREDIT_NOTES_PREMIUM_KEY, []));
+  const debitPremium = ensureArray(lsGetOrganizationScoped(DEBIT_NOTES_PREMIUM_KEY, []));
 
   const consider = (record, dateField) => {
     const candidate = record?.[dateField] || record?.date || record?.created_at || "";
@@ -359,11 +360,11 @@ export function computeItemStock(item) {
   if (!item.trackInventory) return { available: 0, lowStock: false };
 
   let available = parseNumber(item.openingStock);
-  const invoices = ensureArray(lsGet(LS_KEYS.invoices, []));
-  const purchases = ensureArray(lsGet(LS_KEYS.purchases, []));
-  const creditLegacy = ensureArray(lsGet(LS_KEYS.creditNotes, []));
-  const creditPremium = ensureArray(lsGet(CREDIT_NOTES_PREMIUM_KEY, []));
-  const debitPremium = ensureArray(lsGet(DEBIT_NOTES_PREMIUM_KEY, []));
+  const invoices = ensureArray(lsGetOrganizationScoped(LS_KEYS.invoices, []));
+  const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
+  const creditLegacy = ensureArray(lsGetOrganizationScoped(LS_KEYS.creditNotes, []));
+  const creditPremium = ensureArray(lsGetOrganizationScoped(CREDIT_NOTES_PREMIUM_KEY, []));
+  const debitPremium = ensureArray(lsGetOrganizationScoped(DEBIT_NOTES_PREMIUM_KEY, []));
 
   collectFromLines(purchases, item, (line) => {
     available += parseNumber(line.qty ?? line.quantity ?? line.qtyOrdered);

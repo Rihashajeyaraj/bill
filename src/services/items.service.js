@@ -1,10 +1,10 @@
-import { LS_KEYS, lsGet, lsSet, uid } from "./storage";
+import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 
 function getAll() {
-  return lsGet(LS_KEYS.items, []);
+  return lsGetOrganizationScoped(LS_KEYS.items, []);
 }
 function setAll(list) {
-  lsSet(LS_KEYS.items, list);
+  lsSetOrganizationScoped(LS_KEYS.items, list);
 }
 
 export function itemsList() {

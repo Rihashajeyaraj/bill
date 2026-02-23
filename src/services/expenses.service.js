@@ -1,12 +1,12 @@
-import { LS_KEYS, lsGet, lsSet, uid } from "./storage";
+import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
 function getAll() {
-  return lsGet(LS_KEYS.expenses, []);
+  return lsGetOrganizationScoped(LS_KEYS.expenses, []);
 }
 function setAll(list) {
-  lsSet(LS_KEYS.expenses, list);
+  lsSetOrganizationScoped(LS_KEYS.expenses, list);
 }
 
 function parseNumber(value) {

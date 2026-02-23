@@ -1,4 +1,4 @@
-import { LS_KEYS, lsGet, lsSet, uid } from "./storage";
+import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -30,10 +30,10 @@ function deriveBillStatus(grandTotal, balanceAmount) {
 }
 
 function getAll() {
-  return lsGet(LS_KEYS.purchases, []);
+  return lsGetOrganizationScoped(LS_KEYS.purchases, []);
 }
 function setAll(list) {
-  lsSet(LS_KEYS.purchases, list);
+  lsSetOrganizationScoped(LS_KEYS.purchases, list);
 }
 
 export function purchasesList() {
@@ -173,10 +173,6 @@ export async function purchasesSyncFromRemote() {
     ),
     lines: lineMap.get(entry.id) || []
   }));
-  const cached = purchasesList();
-  if (!mapped.length && cached.length) {
-    return cached;
-  }
   setAll(mapped);
   return mapped;
 }

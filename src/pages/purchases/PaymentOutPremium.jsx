@@ -18,7 +18,7 @@ import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
 import { syncPaymentOutRemote } from "../../services/payments.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
-import { LS_KEYS, lsGet } from "../../services/storage";
+import { LS_KEYS, lsGetOrganizationScoped } from "../../services/storage";
 import {
   allocationsFromBills,
   buildPaymentOutPayload,
@@ -158,7 +158,7 @@ export default function PaymentOutPremium() {
     if (!prefillBillId) return;
     let bill = bills.find((entry) => entry.id === prefillBillId) || null;
     if (!bill) {
-      const cached = lsGet(LS_KEYS.purchases, []);
+      const cached = lsGetOrganizationScoped(LS_KEYS.purchases, []);
       const rawBills = Array.isArray(cached) ? cached : [];
       const rawBill = rawBills.find((entry) => String(entry?.id) === String(prefillBillId));
       if (rawBill) {

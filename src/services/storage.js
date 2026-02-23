@@ -32,10 +32,21 @@ function getCurrentAuthScopeId() {
   return normalizeScopeValue(candidate);
 }
 
+function getCurrentOrganizationScopeId() {
+  const organizationId = lsGet(LS_KEYS.organization_id, "");
+  return normalizeScopeValue(organizationId);
+}
+
 export function toUserScopedKey(baseKey, userId = "") {
   const scopeId = normalizeScopeValue(userId || getCurrentAuthScopeId());
   if (!scopeId) return baseKey;
   return `${baseKey}__user_${scopeId}`;
+}
+
+export function toOrganizationScopedKey(baseKey, organizationId = "") {
+  const scopeId = normalizeScopeValue(organizationId || getCurrentOrganizationScopeId());
+  if (scopeId) return `${baseKey}__org_${scopeId}`;
+  return toUserScopedKey(baseKey);
 }
 
 export function lsGetUserScoped(baseKey, fallback = null, userId = "") {
@@ -61,6 +72,51 @@ export function lsRemoveUserScoped(baseKey, userId = "") {
 export function isUserScopedStorageEventKey(baseKey, storageKey) {
   if (!storageKey) return true;
   return storageKey === baseKey || storageKey.startsWith(`${baseKey}__user_`);
+}
+
+export function lsGetOrganizationScoped(baseKey, fallback = null, organizationId = "") {
+  const scopedKey = toOrganizationScopedKey(baseKey, organizationId);
+  if (scopedKey === baseKey) return lsGet(baseKey, fallback);
+
+  const raw = localStorage.getItem(scopedKey);
+  if (raw === null) {
+    // Backward compatibility: migrate legacy unscoped/user-scoped values
+    // to the org-scoped key once, then keep reads isolated by organization.
+    const legacyKeys = [toUserScopedKey(baseKey), baseKey].filter(
+      (key, index, list) => key !== scopedKey && list.indexOf(key) === index
+    );
+    for (const legacyKey of legacyKeys) {
+      if (!legacyKey) continue;
+      const legacyRaw = localStorage.getItem(legacyKey);
+      if (legacyRaw === null) continue;
+      const legacyValue = lsGet(legacyKey, fallback);
+      lsSet(scopedKey, legacyValue);
+      lsRemove(legacyKey);
+      return legacyValue;
+    }
+    return fallback;
+  }
+  return lsGet(scopedKey, fallback);
+}
+
+export function lsSetOrganizationScoped(baseKey, value, organizationId = "") {
+  const scopedKey = toOrganizationScopedKey(baseKey, organizationId);
+  lsSet(scopedKey, value);
+  return scopedKey;
+}
+
+export function lsRemoveOrganizationScoped(baseKey, organizationId = "") {
+  const scopedKey = toOrganizationScopedKey(baseKey, organizationId);
+  lsRemove(scopedKey);
+}
+
+export function isOrganizationScopedStorageEventKey(baseKey, storageKey) {
+  if (!storageKey) return true;
+  return (
+    storageKey === baseKey ||
+    storageKey.startsWith(`${baseKey}__org_`) ||
+    storageKey.startsWith(`${baseKey}__user_`)
+  );
 }
 
 export function lsGet(key, fallback = null) {

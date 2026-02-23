@@ -1,4 +1,8 @@
-import { LS_KEYS, lsGet, lsSet } from "../../services/storage";
+import {
+  LS_KEYS,
+  lsGetOrganizationScoped,
+  lsSetOrganizationScoped
+} from "../../services/storage";
 import { countryCodeFromName, normalizeText, parseNumber, toIsoDate } from "./utils";
 
 const PAYMENT_OUT_STORE_KEY = "paymentOutPremiumV1";
@@ -30,27 +34,27 @@ function normalizeCountry(value) {
 }
 
 function getAllPayments() {
-  return ensureArray(lsGet(PAYMENT_OUT_STORE_KEY, []));
+  return ensureArray(lsGetOrganizationScoped(PAYMENT_OUT_STORE_KEY, []));
 }
 
 function setAllPayments(list) {
-  lsSet(PAYMENT_OUT_STORE_KEY, list);
+  lsSetOrganizationScoped(PAYMENT_OUT_STORE_KEY, list);
 }
 
 function getLedgerEntries() {
-  return ensureArray(lsGet(PAYMENT_OUT_LEDGER_KEY, []));
+  return ensureArray(lsGetOrganizationScoped(PAYMENT_OUT_LEDGER_KEY, []));
 }
 
 function setLedgerEntries(list) {
-  lsSet(PAYMENT_OUT_LEDGER_KEY, list);
+  lsSetOrganizationScoped(PAYMENT_OUT_LEDGER_KEY, list);
 }
 
 function getSequenceStore() {
-  return lsGet(PAYMENT_OUT_SEQUENCE_KEY, {});
+  return lsGetOrganizationScoped(PAYMENT_OUT_SEQUENCE_KEY, {});
 }
 
 function setSequenceStore(value) {
-  lsSet(PAYMENT_OUT_SEQUENCE_KEY, value);
+  lsSetOrganizationScoped(PAYMENT_OUT_SEQUENCE_KEY, value);
 }
 
 function inferSequence(country, list) {
@@ -119,7 +123,7 @@ function computeTotals(payload) {
 
 function appliedPaymentOutForBill(billId) {
   if (!billId) return 0;
-  const legacy = ensureArray(lsGet(LS_KEYS.payments, []))
+  const legacy = ensureArray(lsGetOrganizationScoped(LS_KEYS.payments, []))
     .filter((entry) => String(entry?.direction || "").toUpperCase() === "OUT")
     .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PO:"))
     .filter((entry) => String(entry?.billId || entry?.bill_id || "") === String(billId))
@@ -141,7 +145,7 @@ function appliedPaymentOutForBill(billId) {
 
 function appliedDebitForBill(billId) {
   if (!billId) return 0;
-  return ensureArray(lsGet(DEBIT_NOTES_PREMIUM_KEY, []))
+  return ensureArray(lsGetOrganizationScoped(DEBIT_NOTES_PREMIUM_KEY, []))
     .filter((entry) => String(entry?.status || "") === "Applied")
     .filter((entry) => String(entry?.linkedPurchaseInvoiceId || "") === String(billId))
     .reduce((sum, entry) => sum + Math.max(0, parseNumber(entry?.totals?.total)), 0);
@@ -188,8 +192,8 @@ export function listPaymentOutLedger(country) {
 
 export function mapSuppliersByCountry(country) {
   const target = normalizeCountry(country);
-  const parties = ensureArray(lsGet(LS_KEYS.parties, []));
-  const purchases = ensureArray(lsGet(LS_KEYS.purchases, []));
+  const parties = ensureArray(lsGetOrganizationScoped(LS_KEYS.parties, []));
+  const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
 
   const fromParties = parties
     .map((party) => {
@@ -225,7 +229,7 @@ export function mapSuppliersByCountry(country) {
 
 export function mapOpenBillsByCountry(country) {
   const target = normalizeCountry(country);
-  const purchases = ensureArray(lsGet(LS_KEYS.purchases, []));
+  const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
 
   return purchases
     .map((bill) => {

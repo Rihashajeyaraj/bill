@@ -1,15 +1,15 @@
-import { LS_KEYS, lsGet, lsSet, uid } from "./storage";
+import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function getAll() {
-  return lsGet(LS_KEYS.creditNotes, []);
+  return lsGetOrganizationScoped(LS_KEYS.creditNotes, []);
 }
 
 function setAll(list) {
-  lsSet(LS_KEYS.creditNotes, list);
+  lsSetOrganizationScoped(LS_KEYS.creditNotes, list);
 }
 
 function parseNumber(value) {
@@ -29,7 +29,7 @@ function normalizeSupabaseError(error, fallback) {
 }
 
 function updateStock(lines) {
-  const items = lsGet(LS_KEYS.items, []);
+  const items = lsGetOrganizationScoped(LS_KEYS.items, []);
   if (!items.length || !Array.isArray(lines)) return;
   const byId = lines.reduce((acc, line) => {
     if (!line.itemId) return acc;
@@ -43,7 +43,7 @@ function updateStock(lines) {
     if (!addQty) return item;
     return { ...item, stockQty: Number(item.stockQty || 0) + addQty };
   });
-  lsSet(LS_KEYS.items, next);
+  lsSetOrganizationScoped(LS_KEYS.items, next);
 }
 
 export function creditNotesList() {

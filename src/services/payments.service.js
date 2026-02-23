@@ -1,14 +1,14 @@
-import { LS_KEYS, lsGet, lsSet, uid } from "./storage";
+import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function getAll() {
-  return lsGet(LS_KEYS.payments, []);
+  return lsGetOrganizationScoped(LS_KEYS.payments, []);
 }
 function setAll(list) {
-  lsSet(LS_KEYS.payments, list);
+  lsSetOrganizationScoped(LS_KEYS.payments, list);
 }
 
 function parseNumber(value) {

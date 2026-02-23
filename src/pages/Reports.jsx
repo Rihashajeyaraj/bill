@@ -34,7 +34,7 @@ import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import Badge from "../components/Badge";
 import { useOrganization } from "../context/OrganizationContext";
-import { LS_KEYS, lsGet } from "../services/storage";
+import { LS_KEYS, lsGetOrganizationScoped } from "../services/storage";
 import { invoicesSyncFromRemote } from "../services/invoices.service";
 import { purchasesSyncFromRemote } from "../services/purchases.service";
 import { paymentsSyncFromRemote } from "../services/payments.service";
@@ -747,7 +747,7 @@ function parseAmount(value) {
 }
 
 function arrayFromLs(key) {
-  const value = lsGet(key, []);
+  const value = lsGetOrganizationScoped(key, []);
   return Array.isArray(value) ? value : [];
 }
 

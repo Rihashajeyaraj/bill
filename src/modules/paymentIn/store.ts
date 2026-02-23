@@ -1,4 +1,4 @@
-import { LS_KEYS, lsGet, lsSet } from "../../services/storage";
+import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped } from "../../services/storage";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW } from "./countryConfig";
 import type { CountryCode, PaymentMode, PaymentStatus } from "./countryConfig";
 import type { PaymentAttachmentMeta } from "./types";
@@ -136,19 +136,19 @@ function normalizeCountryCode(value: unknown): CountryCode | null {
 }
 
 function getAllPayments(): PaymentInRecord[] {
-  return lsGet(PAYMENT_STORE_KEY, []);
+  return lsGetOrganizationScoped(PAYMENT_STORE_KEY, []);
 }
 
 function setAllPayments(list: PaymentInRecord[]) {
-  lsSet(PAYMENT_STORE_KEY, list);
+  lsSetOrganizationScoped(PAYMENT_STORE_KEY, list);
 }
 
 function getLedgerEntries(): PaymentLedgerEntry[] {
-  return lsGet(PAYMENT_LEDGER_KEY, []);
+  return lsGetOrganizationScoped(PAYMENT_LEDGER_KEY, []);
 }
 
 function setLedgerEntries(list: PaymentLedgerEntry[]) {
-  lsSet(PAYMENT_LEDGER_KEY, list);
+  lsSetOrganizationScoped(PAYMENT_LEDGER_KEY, list);
 }
 
 function isAppliedLikeStatus(status: unknown) {
@@ -159,7 +159,7 @@ function isAppliedLikeStatus(status: unknown) {
 
 function appliedPaymentInForInvoice(invoiceId: string) {
   if (!invoiceId) return 0;
-  const legacy = (lsGet(LS_KEYS.payments, []) as any[])
+  const legacy = (lsGetOrganizationScoped(LS_KEYS.payments, []) as any[])
     .filter((entry) => String(entry?.direction || "").toUpperCase() === "IN")
     .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PI:"))
     .filter((entry) => String(entry?.invoiceId || entry?.invoice_id || "") === String(invoiceId))
@@ -182,7 +182,7 @@ function appliedPaymentInForInvoice(invoiceId: string) {
 function appliedCreditForInvoice(invoiceId: string) {
   if (!invoiceId) return 0;
 
-  const legacy = (lsGet(LS_KEYS.creditNotes, []) as any[])
+  const legacy = (lsGetOrganizationScoped(LS_KEYS.creditNotes, []) as any[])
     .filter((entry) => isAppliedLikeStatus(entry?.status))
     .filter(
       (entry) =>
@@ -205,7 +205,7 @@ function appliedCreditForInvoice(invoiceId: string) {
       0
     );
 
-  const premium = (lsGet(CREDIT_NOTES_PREMIUM_KEY, []) as any[])
+  const premium = (lsGetOrganizationScoped(CREDIT_NOTES_PREMIUM_KEY, []) as any[])
     .filter((entry) => String(entry?.status || "") === "Applied")
     .filter((entry) => String(entry?.linkedInvoiceId || "") === String(invoiceId))
     .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.totals?.total)), 0);
@@ -214,11 +214,11 @@ function appliedCreditForInvoice(invoiceId: string) {
 }
 
 function getSequenceStore(): SequenceStore {
-  return lsGet(PAYMENT_SEQUENCE_KEY, {});
+  return lsGetOrganizationScoped(PAYMENT_SEQUENCE_KEY, {});
 }
 
 function setSequenceStore(value: SequenceStore) {
-  lsSet(PAYMENT_SEQUENCE_KEY, value);
+  lsSetOrganizationScoped(PAYMENT_SEQUENCE_KEY, value);
 }
 
 function inferCurrentCountrySequence(country: CountryCode, notes: PaymentInRecord[]) {
@@ -320,12 +320,12 @@ function postLedgerEntry(note: PaymentInRecord, actor: string) {
 }
 
 export function getSelectedPaymentCountry(): CountryCode | "" {
-  const saved = lsGet(SELECTED_COUNTRY_KEY, "");
+  const saved = lsGetOrganizationScoped(SELECTED_COUNTRY_KEY, "");
   return normalizeCountryCode(saved) || "";
 }
 
 export function setSelectedPaymentCountry(country: CountryCode) {
-  lsSet(SELECTED_COUNTRY_KEY, country);
+  lsSetOrganizationScoped(SELECTED_COUNTRY_KEY, country);
 }
 
 export function listPaymentIn(country?: CountryCode) {
@@ -345,7 +345,7 @@ export function listPaymentLedger(country?: CountryCode) {
 }
 
 export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvoice[] {
-  const rawInvoices = lsGet(LS_KEYS.invoices, []);
+  const rawInvoices = lsGetOrganizationScoped(LS_KEYS.invoices, []);
   const fromStorage: CustomerOpenInvoice[] = (Array.isArray(rawInvoices) ? rawInvoices : [])
     .map((invoice: any) => {
       const mappedCountry = normalizeCountryCode(invoice?.country);
@@ -384,7 +384,7 @@ export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvo
 }
 
 export function mapCustomersByCountry(country: CountryCode): CustomerOption[] {
-  const parties = lsGet(LS_KEYS.parties, []);
+  const parties = lsGetOrganizationScoped(LS_KEYS.parties, []);
   const invoices = mapOpenInvoicesByCountry(country);
 
   const fromParties = (Array.isArray(parties) ? parties : [])
