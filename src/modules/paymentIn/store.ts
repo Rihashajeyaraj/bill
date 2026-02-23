@@ -8,6 +8,7 @@ const PAYMENT_STORE_KEY = "paymentInPremiumV1";
 const PAYMENT_SEQUENCE_KEY = "paymentInPremiumSequenceV1";
 const PAYMENT_LEDGER_KEY = "paymentInPremiumLedgerV1";
 const SELECTED_COUNTRY_KEY = "paymentInSelectedCountryV1";
+const CREDIT_NOTES_PREMIUM_KEY = "creditNotesPremiumV1";
 
 export interface CustomerOpenInvoice {
   id: string;
@@ -150,6 +151,68 @@ function setLedgerEntries(list: PaymentLedgerEntry[]) {
   lsSet(PAYMENT_LEDGER_KEY, list);
 }
 
+function isAppliedLikeStatus(status: unknown) {
+  const normalized = String(status || "").toLowerCase();
+  if (!normalized) return true;
+  return normalized === "applied" || normalized === "issued" || normalized === "posted";
+}
+
+function appliedPaymentInForInvoice(invoiceId: string) {
+  if (!invoiceId) return 0;
+  const legacy = (lsGet(LS_KEYS.payments, []) as any[])
+    .filter((entry) => String(entry?.direction || "").toUpperCase() === "IN")
+    .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PI:"))
+    .filter((entry) => String(entry?.invoiceId || entry?.invoice_id || "") === String(invoiceId))
+    .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.amount)), 0);
+
+  const premium = getAllPayments()
+    .filter((entry) => entry.status === "Applied")
+    .reduce(
+      (sum, entry) =>
+        sum +
+        entry.allocations
+          .filter((line) => String(line.invoiceId) === String(invoiceId))
+          .reduce((lineSum, line) => lineSum + Math.max(0, toNumber(line.applyAmount)), 0),
+      0
+    );
+
+  return legacy + premium;
+}
+
+function appliedCreditForInvoice(invoiceId: string) {
+  if (!invoiceId) return 0;
+
+  const legacy = (lsGet(LS_KEYS.creditNotes, []) as any[])
+    .filter((entry) => isAppliedLikeStatus(entry?.status))
+    .filter(
+      (entry) =>
+        String(entry?.referenceInvoiceId || entry?.linkedInvoiceId || entry?.related_invoice_id || "") ===
+        String(invoiceId)
+    )
+    .reduce(
+      (sum, entry) =>
+        sum +
+        Math.max(
+          0,
+          toNumber(
+            entry?.totals?.grandTotal ??
+              entry?.totals?.total ??
+              entry?.grand_total ??
+              entry?.grandTotal ??
+              entry?.amount
+          )
+        ),
+      0
+    );
+
+  const premium = (lsGet(CREDIT_NOTES_PREMIUM_KEY, []) as any[])
+    .filter((entry) => String(entry?.status || "") === "Applied")
+    .filter((entry) => String(entry?.linkedInvoiceId || "") === String(invoiceId))
+    .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.totals?.total)), 0);
+
+  return legacy + premium;
+}
+
 function getSequenceStore(): SequenceStore {
   return lsGet(PAYMENT_SEQUENCE_KEY, {});
 }
@@ -233,56 +296,6 @@ function computeTotals(payload: SavePaymentInPayload) {
   };
 }
 
-function adjustInvoicesBalance(allocations: PaymentAllocationDraft[], direction: "apply" | "revert") {
-  const invoices = lsGet(LS_KEYS.invoices, []);
-  if (!Array.isArray(invoices) || !invoices.length) return;
-
-  const applyMap = new Map<string, number>();
-  allocations.forEach((line) => {
-    const amount = toNumber(line.applyAmount);
-    if (amount > 0) applyMap.set(line.invoiceId, amount);
-  });
-  if (!applyMap.size) return;
-
-  const next = invoices.map((invoice: any) => {
-    const applyAmount = applyMap.get(invoice.id) || 0;
-    if (!applyAmount) return invoice;
-    const currentBalance = Math.max(
-      0,
-      toNumber(invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoice?.totals?.grandTotal ?? invoice?.totals?.total)
-    );
-    const nextBalance =
-      direction === "apply"
-        ? Math.max(0, currentBalance - applyAmount)
-        : Math.max(0, currentBalance + applyAmount);
-    return {
-      ...invoice,
-      remainingBalance: nextBalance,
-      totals: { ...(invoice.totals || {}), balance: nextBalance },
-      updated_at: nowIso()
-    };
-  });
-
-  lsSet(LS_KEYS.invoices, next);
-}
-
-function adjustCustomerBalance(customerId: string, appliedAmount: number, direction: "apply" | "revert") {
-  if (!customerId || appliedAmount <= 0) return;
-  const parties = lsGet(LS_KEYS.parties, []);
-  if (!Array.isArray(parties) || !parties.length) return;
-  const idx = parties.findIndex((party: any) => party.id === customerId);
-  if (idx < 0) return;
-  const current = toNumber(parties[idx].balance);
-  const nextBalance =
-    direction === "apply" ? current - appliedAmount : current + appliedAmount;
-  parties[idx] = {
-    ...parties[idx],
-    balance: nextBalance,
-    updated_at: nowIso()
-  };
-  lsSet(LS_KEYS.parties, parties);
-}
-
 function postLedgerEntry(note: PaymentInRecord, actor: string) {
   if (note.status === "Draft") return;
   const ledger = getLedgerEntries();
@@ -337,15 +350,21 @@ export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvo
     .map((invoice: any) => {
       const mappedCountry = normalizeCountryCode(invoice?.country);
       if (mappedCountry && mappedCountry !== country) return null;
-      const balanceDue = Math.max(
+      const invoiceTotal = Math.max(
         0,
-        toNumber(invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoice?.totals?.grandTotal ?? invoice?.totals?.total)
-      );
-      if (balanceDue <= 0) return null;
-      const invoiceAmount = Math.max(
-        balanceDue,
         toNumber(invoice?.totals?.grandTotal ?? invoice?.totals?.total ?? invoice?.totals?.subTotal)
       );
+      const paymentApplied = appliedPaymentInForInvoice(invoice?.id);
+      const creditApplied = appliedCreditForInvoice(invoice?.id);
+      const storedBalance = Math.max(
+        0,
+        toNumber(invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoiceTotal)
+      );
+      const hasLinkedActivity = paymentApplied > 0 || creditApplied > 0;
+      const balanceDue = hasLinkedActivity
+        ? Math.max(0, invoiceTotal - paymentApplied - creditApplied)
+        : storedBalance;
+      if (balanceDue <= 0) return null;
       return {
         id: invoice.id,
         invoiceNo: invoice.invoiceNo || invoice.id,
@@ -353,7 +372,7 @@ export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvo
         customerId: invoice.partyId || invoice.customerId || invoice.buyer?.id || invoice.partyName || "unknown_customer",
         customerName: invoice.partyName || invoice.customerName || invoice.buyer?.name || "Customer",
         invoiceDate: invoice.invoiceDate || invoice.date || "",
-        invoiceAmount,
+        invoiceAmount: invoiceTotal,
         balanceDue
       } satisfies CustomerOpenInvoice;
     })
@@ -456,16 +475,6 @@ export function savePaymentIn(payload: SavePaymentInPayload): PaymentInRecord {
   const calculated = computeTotals(payload);
   const receiptNo = existing?.receiptNo || nextReceiptNumber(payload.country);
   const id = existing?.id || `pr_${Date.now().toString(16)}`;
-
-  if (previousStatus === "Applied" && nextStatus !== "Applied" && existing) {
-    adjustInvoicesBalance(existing.allocations, "revert");
-    adjustCustomerBalance(payload.customerId, existing.totals.amountApplied, "revert");
-  }
-
-  if (nextStatus === "Applied" && previousStatus !== "Applied") {
-    adjustInvoicesBalance(calculated.allocations, "apply");
-    adjustCustomerBalance(payload.customerId, calculated.totals.amountApplied, "apply");
-  }
 
   const note: PaymentInRecord = {
     id,

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Plus, Save, Share2, Trash2, Upload } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import FormField from "../../components/FormField";
@@ -64,6 +65,7 @@ function createLine(items) {
 }
 
 export default function PurchaseBill() {
+  const navigate = useNavigate();
   const { country = "" } = useOrganization();
   const toast = useToast();
   const [suppliers, setSuppliers] = useState(() =>
@@ -615,12 +617,13 @@ export default function PurchaseBill() {
                 <th className="px-3 py-3 font-semibold text-right">Total</th>
                 <th className="px-3 py-3 font-semibold">Payment</th>
                 <th className="px-3 py-3 font-semibold">Created</th>
+                <th className="px-3 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
               {savedBills.length === 0 ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={9}>
                     No purchase bills yet.
                   </td>
                 </tr>
@@ -637,6 +640,28 @@ export default function PurchaseBill() {
                     </td>
                     <td className="px-3 py-3 text-slate-600">{bill.paymentType || "-"}</td>
                     <td className="px-3 py-3 text-slate-600">{formatDate(bill.created_at)}</td>
+                    <td className="px-3 py-3">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            navigate(`/app/purchases/payment-out?billId=${encodeURIComponent(bill.id)}`)
+                          }
+                          className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Record Payment
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            navigate(`/app/purchase/debit-note?billId=${encodeURIComponent(bill.id)}`)
+                          }
+                          className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Create Debit Note
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))
               )}

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, FileDown, FileSpreadsheet, Plus } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import CountrySelector from "../../modules/debitNote/CountrySelector";
 import DebitNoteSkeleton from "../../modules/debitNote/DebitNoteSkeleton";
 import DebitNoteListTable from "../../modules/debitNote/DebitNoteListTable";
@@ -66,6 +67,7 @@ function roleAccess(role: string, user: any) {
 }
 
 export default function DebitNotePremium() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
   const user = authGetUser();
   const role = authGetRole();
@@ -139,6 +141,7 @@ export default function DebitNotePremium() {
     [form, country, selectedInvoice?.remainingBalance, companyState]
   );
   const allowed = !country || access.allowedCountries.includes(country);
+  const prefillBillId = searchParams.get("billId") || "";
 
   const appliedCount = useMemo(() => notes.filter((note) => note.status === "Applied").length, [notes]);
   const pendingCount = useMemo(() => notes.filter((note) => note.status !== "Applied").length, [notes]);
@@ -182,6 +185,35 @@ export default function DebitNotePremium() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
+
+  useEffect(() => {
+    if (!country || !prefillBillId) return;
+    const bill = invoices.find((entry) => entry.id === prefillBillId);
+    if (!bill) return;
+
+    setViewMode("create");
+    setActiveNote(null);
+    setForm((prev) => {
+      const base = prev || defaultForm(country, company);
+      return {
+        ...base,
+        linkedPurchaseInvoiceId: bill.id,
+        supplierId: bill.supplierId,
+        supplierInput: bill.supplierName,
+        placeOfSupply: bill.placeOfSupply || base.placeOfSupply,
+        taxRate: bill.lines[0]?.taxRate || base.taxRate,
+        lines: draftLinesFromInvoice(bill)
+      };
+    });
+    setDirty(false);
+    setFieldErrors({});
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("billId");
+    setSearchParams(next, { replace: true });
+  }, [country, prefillBillId, invoices, company, searchParams, setSearchParams]);
 
   const filteredNotes = useMemo(
     () =>

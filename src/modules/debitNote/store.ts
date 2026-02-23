@@ -7,6 +7,7 @@ const DEBIT_NOTE_STORE_KEY = "debitNotesPremiumV1";
 const DEBIT_NOTE_SEQUENCE_KEY = "debitNotesPremiumSequenceV1";
 const DEBIT_NOTE_LEDGER_KEY = "debitNotesPremiumLedgerV1";
 const SELECTED_COUNTRY_KEY = "debitNoteSelectedCountryV1";
+const PAYMENT_OUT_PREMIUM_KEY = "paymentOutPremiumV1";
 
 export interface PurchaseInvoiceLine {
   id: string;
@@ -166,6 +167,36 @@ function toNumber(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function appliedPaymentOutForBill(billId: string) {
+  if (!billId) return 0;
+  const legacy = (lsGet(LS_KEYS.payments, []) as any[])
+    .filter((entry) => String(entry?.direction || "").toUpperCase() === "OUT")
+    .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PO:"))
+    .filter((entry) => String(entry?.billId || entry?.bill_id || "") === String(billId))
+    .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.amount)), 0);
+
+  const premium = (lsGet(PAYMENT_OUT_PREMIUM_KEY, []) as any[])
+    .filter((entry) => String(entry?.status || "") === "Applied")
+    .reduce(
+      (sum, entry) =>
+        sum +
+        (Array.isArray(entry?.allocations) ? entry.allocations : [])
+          .filter((line: any) => String(line?.billId || "") === String(billId))
+          .reduce((lineSum: number, line: any) => lineSum + Math.max(0, toNumber(line?.applyAmount)), 0),
+      0
+    );
+
+  return legacy + premium;
+}
+
+function appliedDebitForBill(billId: string) {
+  if (!billId) return 0;
+  return getAllNotes()
+    .filter((entry) => entry.status === "Applied")
+    .filter((entry) => String(entry.linkedPurchaseInvoiceId || "") === String(billId))
+    .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.totals?.total)), 0);
+}
+
 function getAllNotes(): DebitNoteRecord[] {
   return lsGet(DEBIT_NOTE_STORE_KEY, []);
 }
@@ -304,29 +335,6 @@ function computeTotals(
   };
 }
 
-function updatePurchasePayable(linkedPurchaseInvoiceId: string, amount: number) {
-  if (!linkedPurchaseInvoiceId || amount <= 0) return;
-  const purchases = lsGet(LS_KEYS.purchases, []);
-  const idx = purchases.findIndex((invoice: any) => invoice.id === linkedPurchaseInvoiceId);
-  if (idx < 0) return;
-
-  const invoice = purchases[idx];
-  const currentBalance = toNumber(
-    invoice?.totals?.balance ??
-      invoice?.remainingBalance ??
-      invoice?.totals?.grandTotal ??
-      invoice?.totals?.total
-  );
-  const nextBalance = currentBalance + amount;
-  purchases[idx] = {
-    ...invoice,
-    remainingBalance: nextBalance,
-    totals: { ...(invoice.totals || {}), balance: nextBalance },
-    updated_at: nowIso()
-  };
-  lsSet(LS_KEYS.purchases, purchases);
-}
-
 function buildHistory(
   previous: DebitNoteRecord | undefined,
   status: DebitStatus,
@@ -408,12 +416,24 @@ export function mapPurchaseInvoicesByCountry(country: CountryCode): PurchaseInvo
         supplierId: invoice.partyId || invoice.supplierId || invoice.vendorId || invoice.partyName || "unknown_supplier",
         supplierName: invoice.partyName || invoice.supplierName || invoice.vendorName || "Supplier",
         invoiceDate: invoice.billDate || invoice.invoiceDate || invoice.date || "",
-        remainingBalance: toNumber(
-          invoice?.totals?.balance ??
-            invoice?.remainingBalance ??
+        remainingBalance: (() => {
+          const billTotal = toNumber(
             invoice?.totals?.grandTotal ??
-            invoice?.totals?.total
-        ),
+              invoice?.totals?.total ??
+              invoice?.totals?.finalTotal ??
+              invoice?.totals?.subTotal
+          );
+          const paymentApplied = appliedPaymentOutForBill(invoice?.id);
+          const debitApplied = appliedDebitForBill(invoice?.id);
+          const storedBalance = toNumber(
+            invoice?.totals?.balance ?? invoice?.remainingBalance ?? billTotal
+          );
+          const hasLinkedActivity = paymentApplied > 0 || debitApplied > 0;
+          return Math.max(
+            0,
+            hasLinkedActivity ? billTotal + debitApplied - paymentApplied : storedBalance
+          );
+        })(),
         placeOfSupply: invoice.placeOfSupply || invoice.state || "",
         lines
       } satisfies PurchaseInvoice;
@@ -500,10 +520,6 @@ export function saveDebitNote(payload: SaveDebitNotePayload): DebitNoteRecord {
   );
   const debitNoteNo = existing?.debitNoteNo || nextDebitNoteNumber(payload.country);
   const id = existing?.id || `dnt_${Date.now().toString(16)}`;
-
-  if (nextStatus === "Applied" && previousStatus !== "Applied") {
-    updatePurchasePayable(payload.linkedPurchaseInvoiceId, totals.total);
-  }
 
   const note: DebitNoteRecord = {
     id,

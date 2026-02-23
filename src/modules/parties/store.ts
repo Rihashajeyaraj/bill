@@ -446,7 +446,11 @@ function listPurchases() {
 function customerTotals(party: PartyRecord) {
   const invoices = listInvoices().filter((record) => matchesParty(party, record));
   const paymentsLegacy = listLegacyPayments().filter(
-    (record) => record?.direction === "IN" && matchesParty(party, record)
+    (record) =>
+      record?.direction === "IN" &&
+      matchesParty(party, record) &&
+      !String(record?.referenceNo || record?.reference_no || "").startsWith("PI:") &&
+      !!(record?.invoiceId || record?.invoice_id)
   );
   const paymentsPremium = listPremiumPayments().filter(
     (record) => record?.status !== "Draft" && matchesParty(party, record)
@@ -460,7 +464,7 @@ function customerTotals(party: PartyRecord) {
     invoices: sumRecords(invoices, extractInvoiceAmount),
     payments:
       sumRecords(paymentsLegacy, (record) => parseNumber(record?.amount)) +
-      sumRecords(paymentsPremium, (record) => parseNumber(record?.totals?.amountReceived)),
+      sumRecords(paymentsPremium, (record) => parseNumber(record?.totals?.amountApplied)),
     creditNotes:
       sumRecords(creditLegacy, extractCreditAmount) +
       sumRecords(creditPremium, extractCreditAmount),
@@ -471,7 +475,11 @@ function customerTotals(party: PartyRecord) {
 function supplierTotals(party: PartyRecord) {
   const purchases = listPurchases().filter((record) => matchesParty(party, record));
   const paymentsLegacy = listLegacyPayments().filter(
-    (record) => record?.direction === "OUT" && matchesParty(party, record)
+    (record) =>
+      record?.direction === "OUT" &&
+      matchesParty(party, record) &&
+      !String(record?.referenceNo || record?.reference_no || "").startsWith("PO:") &&
+      !!(record?.billId || record?.bill_id)
   );
   const paymentsPremium = listPremiumPaymentOut().filter(
     (record) => record?.status !== "Draft" && matchesParty(party, record)
@@ -484,7 +492,7 @@ function supplierTotals(party: PartyRecord) {
     invoices: sumRecords(purchases, extractPurchaseAmount),
     payments:
       sumRecords(paymentsLegacy, (record) => parseNumber(record?.amount)) +
-      sumRecords(paymentsPremium, (record) => parseNumber(record?.totals?.amountPaid)),
+      sumRecords(paymentsPremium, (record) => parseNumber(record?.totals?.amountApplied)),
     creditNotes: 0,
     debitNotes: sumRecords(debitPremium, extractDebitAmount)
   };
@@ -498,8 +506,8 @@ export function computePartyFinancials(party: PartyRecord): PartyFinancials {
       ? openingBalance +
         totals.invoices -
         totals.payments -
-        totals.debitNotes +
-        totals.creditNotes
+        totals.creditNotes +
+        totals.debitNotes
       : openingBalance +
         totals.invoices -
         totals.payments -
@@ -587,7 +595,13 @@ export function buildPartyLedger(
       });
 
     listLegacyPayments()
-      .filter((record) => record?.direction === "IN" && matchesParty(party, record))
+      .filter(
+        (record) =>
+          record?.direction === "IN" &&
+          matchesParty(party, record) &&
+          !String(record?.referenceNo || record?.reference_no || "").startsWith("PI:") &&
+          !!(record?.invoiceId || record?.invoice_id)
+      )
       .forEach((record) => {
         addEntry(entries, {
           id: record.id || `pay_${Math.random().toString(16).slice(2)}`,
@@ -602,13 +616,15 @@ export function buildPartyLedger(
     listPremiumPayments()
       .filter((record) => record?.status !== "Draft" && matchesParty(party, record))
       .forEach((record) => {
+        const appliedAmount = parseNumber(record?.totals?.amountApplied);
+        if (appliedAmount <= 0) return;
         addEntry(entries, {
           id: record.id || `pay_${Math.random().toString(16).slice(2)}`,
           date: toIsoDate(record.paymentDate || record.created_at),
           type: "Payment",
           documentNo: record.receiptNo || record.id || "",
           debit: 0,
-          credit: parseNumber(record?.totals?.amountReceived)
+          credit: appliedAmount
         }, typeFilter);
       });
 
@@ -652,7 +668,13 @@ export function buildPartyLedger(
       });
 
     listLegacyPayments()
-      .filter((record) => record?.direction === "OUT" && matchesParty(party, record))
+      .filter(
+        (record) =>
+          record?.direction === "OUT" &&
+          matchesParty(party, record) &&
+          !String(record?.referenceNo || record?.reference_no || "").startsWith("PO:") &&
+          !!(record?.billId || record?.bill_id)
+      )
       .forEach((record) => {
         addEntry(entries, {
           id: record.id || `pay_${Math.random().toString(16).slice(2)}`,
@@ -664,6 +686,21 @@ export function buildPartyLedger(
         }, typeFilter);
       });
 
+    listPremiumPaymentOut()
+      .filter((record) => record?.status !== "Draft" && matchesParty(party, record))
+      .forEach((record) => {
+        const appliedAmount = parseNumber(record?.totals?.amountApplied);
+        if (appliedAmount <= 0) return;
+        addEntry(entries, {
+          id: record.id || `pay_${Math.random().toString(16).slice(2)}`,
+          date: toIsoDate(record.paymentDate || record.created_at),
+          type: "Payment",
+          documentNo: record.paymentNo || record.id || "",
+          debit: 0,
+          credit: appliedAmount
+        }, typeFilter);
+      });
+
     listPremiumDebitNotes()
       .filter((record) => record?.status === "Applied" && matchesParty(party, record))
       .forEach((record) => {
@@ -672,8 +709,8 @@ export function buildPartyLedger(
           date: toIsoDate(record.debitNoteDate || record.created_at),
           type: "Debit Note",
           documentNo: record.debitNoteNo || record.id || "",
-          debit: 0,
-          credit: extractDebitAmount(record)
+          debit: extractDebitAmount(record),
+          credit: 0
         }, typeFilter);
       });
   }

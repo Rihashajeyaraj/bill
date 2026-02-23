@@ -6,6 +6,7 @@ import { MOCK_CUSTOMERS, MOCK_INVOICES } from "./mockData";
 const CREDIT_NOTE_STORE_KEY = "creditNotesPremiumV1";
 const CREDIT_NOTE_SEQUENCE_KEY = "creditNotesPremiumSequenceV1";
 const SELECTED_COUNTRY_KEY = "creditNoteSelectedCountryV1";
+const PAYMENT_IN_PREMIUM_KEY = "paymentInPremiumV1";
 
 export interface CreditInvoiceLine {
   id: string;
@@ -190,6 +191,61 @@ function toNumber(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function appliedPaymentInForInvoice(invoiceId: string) {
+  if (!invoiceId) return 0;
+  const legacy = (lsGet(LS_KEYS.payments, []) as any[])
+    .filter((entry) => String(entry?.direction || "").toUpperCase() === "IN")
+    .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PI:"))
+    .filter((entry) => String(entry?.invoiceId || entry?.invoice_id || "") === String(invoiceId))
+    .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.amount)), 0);
+
+  const premium = (lsGet(PAYMENT_IN_PREMIUM_KEY, []) as any[])
+    .filter((entry) => String(entry?.status || "") === "Applied")
+    .reduce(
+      (sum, entry) =>
+        sum +
+        (Array.isArray(entry?.allocations) ? entry.allocations : [])
+          .filter((line: any) => String(line?.invoiceId || "") === String(invoiceId))
+          .reduce((lineSum: number, line: any) => lineSum + Math.max(0, toNumber(line?.applyAmount)), 0),
+      0
+    );
+
+  return legacy + premium;
+}
+
+function appliedCreditForInvoice(invoiceId: string) {
+  if (!invoiceId) return 0;
+  const premium = getAllNotes()
+    .filter((entry) => entry.status === "Applied")
+    .filter((entry) => String(entry.linkedInvoiceId || "") === String(invoiceId))
+    .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.totals?.total)), 0);
+
+  const legacy = (lsGet(LS_KEYS.creditNotes, []) as any[])
+    .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
+    .filter(
+      (entry) =>
+        String(entry?.referenceInvoiceId || entry?.linkedInvoiceId || entry?.related_invoice_id || "") ===
+        String(invoiceId)
+    )
+    .reduce(
+      (sum, entry) =>
+        sum +
+        Math.max(
+          0,
+          toNumber(
+            entry?.totals?.grandTotal ??
+              entry?.totals?.total ??
+              entry?.grand_total ??
+              entry?.grandTotal ??
+              entry?.amount
+          )
+        ),
+      0
+    );
+
+  return premium + legacy;
+}
+
 function computeLines(
   lines: CreditLineDraft[],
   _creditType: CreditType,
@@ -269,25 +325,6 @@ function computeTotals(
   };
 }
 
-function applyInvoiceBalance(linkedInvoiceId: string, amount: number) {
-  if (!linkedInvoiceId || amount <= 0) return;
-  const invoices = lsGet(LS_KEYS.invoices, []);
-  const idx = invoices.findIndex((invoice: any) => invoice.id === linkedInvoiceId);
-  if (idx < 0) return;
-
-  const invoice = invoices[idx];
-  const currentBalance = toNumber(
-    invoice?.totals?.balance ?? invoice?.totals?.grandTotal ?? invoice?.totals?.total ?? invoice?.remainingBalance
-  );
-  const nextBalance = Math.max(0, currentBalance - amount);
-  invoices[idx] = {
-    ...invoice,
-    totals: { ...(invoice.totals || {}), balance: nextBalance },
-    updated_at: nowIso()
-  };
-  lsSet(LS_KEYS.invoices, invoices);
-}
-
 function buildHistory(
   previous: CreditNoteRecord | undefined,
   status: CreditStatus,
@@ -344,12 +381,36 @@ export function mapInvoicesByCountry(country: CountryCode): CreditInvoice[] {
         customerId: invoice.partyId || invoice.customerId || invoice.buyer?.id || invoice.customerName || "unknown_customer",
         customerName: invoice.partyName || invoice.customerName || invoice.buyer?.name || "Customer",
         invoiceDate: invoice.invoiceDate || invoice.date || "",
-        remainingBalance: toNumber(
-          invoice?.totals?.balance ?? invoice?.totals?.grandTotal ?? invoice?.totals?.total ?? invoice?.remainingBalance
-        ),
-        balanceAmount: toNumber(
-          invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoice?.totals?.grandTotal ?? invoice?.totals?.total
-        ),
+        remainingBalance: (() => {
+          const invoiceTotal = toNumber(
+            invoice?.totals?.grandTotal ?? invoice?.totals?.total ?? invoice?.totals?.subTotal
+          );
+          const paymentApplied = appliedPaymentInForInvoice(invoice?.id);
+          const creditApplied = appliedCreditForInvoice(invoice?.id);
+          const storedBalance = toNumber(
+            invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoiceTotal
+          );
+          const hasLinkedActivity = paymentApplied > 0 || creditApplied > 0;
+          return Math.max(
+            0,
+            hasLinkedActivity ? invoiceTotal - paymentApplied - creditApplied : storedBalance
+          );
+        })(),
+        balanceAmount: (() => {
+          const invoiceTotal = toNumber(
+            invoice?.totals?.grandTotal ?? invoice?.totals?.total ?? invoice?.totals?.subTotal
+          );
+          const paymentApplied = appliedPaymentInForInvoice(invoice?.id);
+          const creditApplied = appliedCreditForInvoice(invoice?.id);
+          const storedBalance = toNumber(
+            invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoiceTotal
+          );
+          const hasLinkedActivity = paymentApplied > 0 || creditApplied > 0;
+          return Math.max(
+            0,
+            hasLinkedActivity ? invoiceTotal - paymentApplied - creditApplied : storedBalance
+          );
+        })(),
         status: invoice?.status || invoice?.paymentStatus || "Issued",
         placeOfSupply: invoice.placeOfSupply || invoice.buyer?.state || "",
         lines
@@ -425,10 +486,6 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
   const totals = computeTotals(payload.country, lines, payload.invoiceBalanceBefore, payload.partialAmountCap);
   const creditNoteNo = existing?.creditNoteNo || nextCreditNoteNumber(payload.country);
   const id = existing?.id || `crn_${Date.now().toString(16)}`;
-
-  if (nextStatus === "Applied" && previousStatus !== "Applied") {
-    applyInvoiceBalance(payload.linkedInvoiceId, totals.total);
-  }
 
   const note: CreditNoteRecord = {
     id,

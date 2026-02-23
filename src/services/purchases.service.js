@@ -20,6 +20,15 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
+function deriveBillStatus(grandTotal, balanceAmount) {
+  const grand = Math.max(0, parseNumber(grandTotal));
+  const balance = Math.max(0, parseNumber(balanceAmount));
+  if (grand <= 0) return "draft";
+  if (balance <= 0) return "paid";
+  if (balance < grand) return "partial";
+  return "issued";
+}
+
 function getAll() {
   return lsGet(LS_KEYS.purchases, []);
 }
@@ -31,8 +40,14 @@ export function purchasesList() {
   return getAll();
 }
 
-function mapRemotePurchaseBill(row) {
+function mapRemotePurchaseBill(row, balanceAmount) {
   const metadata = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  const grandTotal = parseNumber(row?.grand_total);
+  const effectiveBalance = Math.max(0, parseNumber(balanceAmount));
+  const status =
+    String(row?.status || "").toLowerCase() === "cancelled"
+      ? "cancelled"
+      : deriveBillStatus(grandTotal, effectiveBalance);
   return {
     id: row?.id || uid("pur_"),
     country: metadata?.country || "",
@@ -48,11 +63,11 @@ function mapRemotePurchaseBill(row) {
       subTotal: parseNumber(row?.subtotal),
       taxTotal: parseNumber(row?.tax_total),
       roundOff: parseNumber(metadata?.roundOff),
-      grandTotal: parseNumber(row?.grand_total),
-      balance: parseNumber(row?.balance_amount)
+      grandTotal,
+      balance: effectiveBalance
     },
-    remainingBalance: parseNumber(row?.balance_amount),
-    status: row?.status || "issued",
+    remainingBalance: effectiveBalance,
+    status,
     lines: []
   };
 }
@@ -65,7 +80,7 @@ export async function purchasesSyncFromRemote() {
 
   const { data, error } = await supabase
     .from("purchase_bills")
-    .select("id,supplier_id,bill_no,bill_date,subtotal,tax_total,grand_total,balance_amount,status,metadata,created_at")
+    .select("id,supplier_id,bill_no,bill_date,subtotal,tax_total,grand_total,status,metadata,created_at")
     .eq("organization_id", organizationId)
     .order("bill_date", { ascending: false })
     .order("created_at", { ascending: false });
@@ -77,6 +92,8 @@ export async function purchasesSyncFromRemote() {
   const bills = Array.isArray(data) ? data : [];
   const billIds = bills.map((entry) => entry.id).filter(Boolean);
   let lineRows = [];
+  let paymentRows = [];
+  let debitRows = [];
   if (billIds.length) {
     const { data: remoteLines, error: linesError } = await supabase
       .from("purchase_bill_items")
@@ -87,6 +104,28 @@ export async function purchasesSyncFromRemote() {
       throw new Error(normalizeSupabaseError(linesError, "Failed to load purchase bill items"));
     }
     lineRows = Array.isArray(remoteLines) ? remoteLines : [];
+
+    const { data: paymentData, error: paymentError } = await supabase
+      .from("payments")
+      .select("bill_id,amount,status,direction")
+      .eq("organization_id", organizationId)
+      .eq("direction", "out")
+      .in("bill_id", billIds);
+    if (paymentError) {
+      throw new Error(normalizeSupabaseError(paymentError, "Failed to load purchase bill payments"));
+    }
+    paymentRows = Array.isArray(paymentData) ? paymentData : [];
+
+    const { data: debitData, error: debitError } = await supabase
+      .from("debit_notes")
+      .select("related_bill_id,grand_total,status")
+      .eq("organization_id", organizationId)
+      .eq("status", "applied")
+      .in("related_bill_id", billIds);
+    if (debitError) {
+      throw new Error(normalizeSupabaseError(debitError, "Failed to load applied debit notes"));
+    }
+    debitRows = Array.isArray(debitData) ? debitData : [];
   }
 
   const lineMap = new Map();
@@ -109,8 +148,29 @@ export async function purchasesSyncFromRemote() {
     lineMap.set(line.bill_id, list);
   });
 
+  const paymentMap = new Map();
+  paymentRows.forEach((row) => {
+    const billId = row?.bill_id;
+    if (!billId) return;
+    const status = String(row?.status || "").toLowerCase();
+    if (status === "draft" || status === "cancelled") return;
+    const current = paymentMap.get(billId) || 0;
+    paymentMap.set(billId, current + Math.max(0, parseNumber(row?.amount)));
+  });
+
+  const debitMap = new Map();
+  debitRows.forEach((row) => {
+    const billId = row?.related_bill_id;
+    if (!billId) return;
+    const current = debitMap.get(billId) || 0;
+    debitMap.set(billId, current + Math.max(0, parseNumber(row?.grand_total)));
+  });
+
   const mapped = bills.map((entry) => ({
-    ...mapRemotePurchaseBill(entry),
+    ...mapRemotePurchaseBill(
+      entry,
+      parseNumber(entry?.grand_total) + (debitMap.get(entry.id) || 0) - (paymentMap.get(entry.id) || 0)
+    ),
     lines: lineMap.get(entry.id) || []
   }));
   setAll(mapped);
@@ -139,8 +199,6 @@ export async function purchasesCreate(bill) {
           subtotal: parseNumber(totals?.subTotal),
           tax_total: parseNumber(totals?.taxTotal),
           grand_total: parseNumber(totals?.grandTotal),
-          paid_amount: 0,
-          balance_amount: parseNumber(totals?.grandTotal),
           status: "issued",
           metadata: {
             country: bill?.country || "",

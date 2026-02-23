@@ -6,7 +6,6 @@ const PAYMENT_OUT_SEQUENCE_KEY = "paymentOutPremiumSequenceV1";
 const PAYMENT_OUT_LEDGER_KEY = "paymentOutPremiumLedgerV1";
 
 const DEBIT_NOTES_PREMIUM_KEY = "debitNotesPremiumV1";
-const CREDIT_NOTES_PREMIUM_KEY = "creditNotesPremiumV1";
 
 const STATUS_FLOW = {
   Draft: ["Paid", "Applied"],
@@ -118,44 +117,34 @@ function computeTotals(payload) {
   };
 }
 
-function adjustBillsBalance(allocations, direction) {
-  const purchases = ensureArray(lsGet(LS_KEYS.purchases, []));
-  if (!purchases.length) return;
+function appliedPaymentOutForBill(billId) {
+  if (!billId) return 0;
+  const legacy = ensureArray(lsGet(LS_KEYS.payments, []))
+    .filter((entry) => String(entry?.direction || "").toUpperCase() === "OUT")
+    .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PO:"))
+    .filter((entry) => String(entry?.billId || entry?.bill_id || "") === String(billId))
+    .reduce((sum, entry) => sum + Math.max(0, parseNumber(entry?.amount)), 0);
 
-  const applyMap = new Map();
-  allocations.forEach((line) => {
-    const amount = parseNumber(line.applyAmount);
-    if (amount > 0) applyMap.set(line.billId, amount);
-  });
-
-  if (!applyMap.size) return;
-
-  const next = purchases.map((bill) => {
-    const applyAmount = applyMap.get(bill.id) || 0;
-    if (!applyAmount) return bill;
-    const currentBalance = Math.max(
-      0,
-      parseNumber(
-        bill?.totals?.balance ??
-          bill?.remainingBalance ??
-          bill?.totals?.grandTotal ??
-          bill?.totals?.total ??
-          bill?.totals?.finalTotal
-      )
+  const premium = getAllPayments()
+    .filter((entry) => String(entry?.status || "") === "Applied")
+    .reduce(
+      (sum, entry) =>
+        sum +
+        ensureArray(entry?.allocations)
+          .filter((line) => String(line?.billId || "") === String(billId))
+          .reduce((lineSum, line) => lineSum + Math.max(0, parseNumber(line?.applyAmount)), 0),
+      0
     );
-    const nextBalance =
-      direction === "apply"
-        ? Math.max(0, currentBalance - applyAmount)
-        : Math.max(0, currentBalance + applyAmount);
-    return {
-      ...bill,
-      remainingBalance: nextBalance,
-      totals: { ...(bill.totals || {}), balance: nextBalance },
-      updated_at: nowIso()
-    };
-  });
 
-  lsSet(LS_KEYS.purchases, next);
+  return legacy + premium;
+}
+
+function appliedDebitForBill(billId) {
+  if (!billId) return 0;
+  return ensureArray(lsGet(DEBIT_NOTES_PREMIUM_KEY, []))
+    .filter((entry) => String(entry?.status || "") === "Applied")
+    .filter((entry) => String(entry?.linkedPurchaseInvoiceId || "") === String(billId))
+    .reduce((sum, entry) => sum + Math.max(0, parseNumber(entry?.totals?.total)), 0);
 }
 
 function postLedgerEntry(note, actor) {
@@ -250,7 +239,9 @@ export function mapOpenBillsByCountry(country) {
           bill?.grandTotal ??
           bill?.total
       );
-      const balanceDue = Math.max(
+      const paymentApplied = appliedPaymentOutForBill(bill?.id);
+      const debitApplied = appliedDebitForBill(bill?.id);
+      const storedBalance = Math.max(
         0,
         parseNumber(
           bill?.totals?.balance ??
@@ -259,6 +250,11 @@ export function mapOpenBillsByCountry(country) {
             bill?.totals?.total ??
             bill?.totals?.finalTotal
         )
+      );
+      const hasLinkedActivity = paymentApplied > 0 || debitApplied > 0;
+      const balanceDue = Math.max(
+        0,
+        hasLinkedActivity ? billAmount + debitApplied - paymentApplied : storedBalance
       );
       if (balanceDue <= 0) return null;
       return {
@@ -278,38 +274,9 @@ export function mapOpenBillsByCountry(country) {
 
 export function outstandingBySupplier(country, supplierId) {
   if (!supplierId) return 0;
-  const purchases = ensureArray(lsGet(LS_KEYS.purchases, []))
-    .filter((bill) => {
-      const mapped = normalizeCountry(bill?.country);
-      if (country && mapped && mapped !== normalizeCountry(country)) return false;
-      const id = bill.partyId || bill.supplierId || bill.vendorId || bill.partyName;
-      return String(id) === String(supplierId);
-    })
-    .reduce((sum, bill) => {
-      const total = parseNumber(
-        bill?.totals?.finalTotal ??
-          bill?.totals?.grandTotal ??
-          bill?.totals?.total ??
-          bill?.totals?.subTotal ??
-          bill?.grandTotal ??
-          bill?.total
-      );
-      return sum + total;
-    }, 0);
-
-  const payments = listPaymentOut(country)
-    .filter((entry) => entry.supplierId === supplierId && entry.status !== "Draft")
-    .reduce((sum, entry) => sum + parseNumber(entry?.totals?.amountPaid), 0);
-
-  const debitNotes = ensureArray(lsGet(DEBIT_NOTES_PREMIUM_KEY, []))
-    .filter((entry) => entry?.status === "Applied" && String(entry?.supplierId) === String(supplierId))
-    .reduce((sum, entry) => sum + parseNumber(entry?.totals?.total), 0);
-
-  const creditNotes = ensureArray(lsGet(CREDIT_NOTES_PREMIUM_KEY, []))
-    .filter((entry) => entry?.status === "Applied" && String(entry?.supplierId) === String(supplierId))
-    .reduce((sum, entry) => sum + parseNumber(entry?.totals?.total), 0);
-
-  return purchases - payments - debitNotes + creditNotes;
+  return mapOpenBillsByCountry(country)
+    .filter((bill) => String(bill.supplierId) === String(supplierId))
+    .reduce((sum, bill) => sum + parseNumber(bill.balanceDue), 0);
 }
 
 export function savePaymentOut(payload) {
@@ -323,14 +290,6 @@ export function savePaymentOut(payload) {
   const calculated = computeTotals(payload);
   const paymentNo = existing?.paymentNo || nextPaymentNumber(payload.country);
   const id = existing?.id || `pout_${Date.now().toString(16)}`;
-
-  if (previousStatus === "Applied" && nextStatus !== "Applied" && existing) {
-    adjustBillsBalance(existing.allocations, "revert");
-  }
-
-  if (nextStatus === "Applied" && previousStatus !== "Applied") {
-    adjustBillsBalance(calculated.allocations, "apply");
-  }
 
   const note = {
     id,

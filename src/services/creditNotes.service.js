@@ -28,33 +28,6 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
-function updateInvoiceBalance(referenceInvoiceId, creditTotal, creditNoteId) {
-  const invoices = lsGet(LS_KEYS.invoices, []);
-  const idx = invoices.findIndex((inv) => inv.id === referenceInvoiceId);
-  if (idx < 0) return;
-  const current = invoices[idx];
-  const baseBalance = Number(
-    current?.totals?.balance ?? current?.totals?.grandTotal ?? current?.totals?.total ?? 0
-  );
-  const nextBalance = Math.max(0, baseBalance - Number(creditTotal || 0));
-  invoices[idx] = {
-    ...current,
-    totals: { ...(current.totals || {}), balance: nextBalance },
-    lastCreditNoteId: creditNoteId
-  };
-  lsSet(LS_KEYS.invoices, invoices);
-}
-
-function updateCustomerBalance(partyId, creditTotal) {
-  if (!partyId) return;
-  const parties = lsGet(LS_KEYS.parties, []);
-  const idx = parties.findIndex((p) => p.id === partyId);
-  if (idx < 0) return;
-  const balance = Number(parties[idx].balance || 0);
-  parties[idx] = { ...parties[idx], balance: balance - Number(creditTotal || 0) };
-  lsSet(LS_KEYS.parties, parties);
-}
-
 function updateStock(lines) {
   const items = lsGet(LS_KEYS.items, []);
   if (!items.length || !Array.isArray(lines)) return;
@@ -125,31 +98,6 @@ function findInvoiceRowId(note) {
     return note.linkedInvoiceId || note.referenceInvoiceId;
   }
   return null;
-}
-
-async function applyCreditToInvoice(invoiceId, creditAmount) {
-  if (!invoiceId || !supabase) return;
-  const { data: invoiceRow, error: fetchError } = await supabase
-    .from("invoices")
-    .select("id,grand_total,paid_amount,balance_amount")
-    .eq("id", invoiceId)
-    .maybeSingle();
-
-  if (fetchError || !invoiceRow) return;
-
-  const balanceBefore = Math.max(0, parseNumber(invoiceRow.balance_amount));
-  const nextBalance = Math.max(0, balanceBefore - Math.max(0, parseNumber(creditAmount)));
-  const paidAmount = Math.max(0, parseNumber(invoiceRow.grand_total) - nextBalance);
-  const status = nextBalance <= 0 ? "paid" : paidAmount > 0 ? "partial" : "issued";
-
-  await supabase
-    .from("invoices")
-    .update({
-      paid_amount: paidAmount,
-      balance_amount: nextBalance,
-      status
-    })
-    .eq("id", invoiceId);
 }
 
 export async function creditNotesSaveRemote(note) {
@@ -236,10 +184,6 @@ export async function creditNotesSaveRemote(note) {
     }
   }
 
-  if (status === "applied" && relatedInvoiceId) {
-    await applyCreditToInvoice(relatedInvoiceId, grandTotal);
-  }
-
   return header;
 }
 
@@ -248,8 +192,6 @@ export function creditNotesCreate(note) {
   const next = { ...note, id, created_at: new Date().toISOString() };
   setAll([next, ...getAll()]);
 
-  updateInvoiceBalance(note.referenceInvoiceId, note?.totals?.grandTotal || 0, id);
-  updateCustomerBalance(note.partyId, note?.totals?.grandTotal || 0);
   if (note.returnToStock) updateStock(note.lines || []);
 
   void creditNotesSaveRemote(next);

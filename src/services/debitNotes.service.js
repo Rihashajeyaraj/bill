@@ -35,31 +35,6 @@ async function resolveRelatedBillId(organizationId, note) {
   return data?.id || null;
 }
 
-async function applyDebitToBill(billId, debitAmount) {
-  if (!billId || !supabase) return;
-
-  const { data: row } = await supabase
-    .from("purchase_bills")
-    .select("id,grand_total,paid_amount,balance_amount")
-    .eq("id", billId)
-    .maybeSingle();
-  if (!row) return;
-
-  const nextBalance = Math.max(0, parseNumber(row.balance_amount) + Math.max(0, parseNumber(debitAmount)));
-  const grandTotal = Math.max(0, parseNumber(row.grand_total));
-  const paidAmount = Math.max(0, grandTotal - nextBalance);
-  const status = nextBalance <= 0 ? "paid" : paidAmount > 0 ? "partial" : "issued";
-
-  await supabase
-    .from("purchase_bills")
-    .update({
-      paid_amount: paidAmount,
-      balance_amount: nextBalance,
-      status
-    })
-    .eq("id", billId);
-}
-
 export async function debitNotesSaveRemote(note) {
   if (!isSupabaseConfigured || !supabase || !note) return null;
 
@@ -126,10 +101,6 @@ export async function debitNotesSaveRemote(note) {
     if (insertItemsError) {
       throw new Error(normalizeSupabaseError(insertItemsError, "Failed to save debit note items"));
     }
-  }
-
-  if (status === "applied" && relatedBillId) {
-    await applyDebitToBill(relatedBillId, totals?.total);
   }
 
   return header;

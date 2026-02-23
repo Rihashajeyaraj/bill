@@ -27,46 +27,6 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
-async function adjustInvoiceBalance(invoiceId, amount, direction) {
-  if (!supabase || !invoiceId || !amount) return;
-  const { data: row } = await supabase
-    .from("invoices")
-    .select("id,grand_total,paid_amount,balance_amount")
-    .eq("id", invoiceId)
-    .maybeSingle();
-  if (!row) return;
-  const paidBefore = parseNumber(row.paid_amount);
-  const delta = Math.max(0, parseNumber(amount)) * direction;
-  const nextPaid = Math.max(0, paidBefore + delta);
-  const grand = Math.max(0, parseNumber(row.grand_total));
-  const nextBalance = Math.max(0, grand - nextPaid);
-  const status = nextBalance <= 0 ? "paid" : nextPaid > 0 ? "partial" : "issued";
-  await supabase
-    .from("invoices")
-    .update({ paid_amount: nextPaid, balance_amount: nextBalance, status })
-    .eq("id", invoiceId);
-}
-
-async function adjustBillBalance(billId, amount, direction) {
-  if (!supabase || !billId || !amount) return;
-  const { data: row } = await supabase
-    .from("purchase_bills")
-    .select("id,grand_total,paid_amount,balance_amount")
-    .eq("id", billId)
-    .maybeSingle();
-  if (!row) return;
-  const paidBefore = parseNumber(row.paid_amount);
-  const delta = Math.max(0, parseNumber(amount)) * direction;
-  const nextPaid = Math.max(0, paidBefore + delta);
-  const grand = Math.max(0, parseNumber(row.grand_total));
-  const nextBalance = Math.max(0, grand - nextPaid);
-  const status = nextBalance <= 0 ? "paid" : nextPaid > 0 ? "partial" : "issued";
-  await supabase
-    .from("purchase_bills")
-    .update({ paid_amount: nextPaid, balance_amount: nextBalance, status })
-    .eq("id", billId);
-}
-
 async function findInvoiceIdByNumber(organizationId, invoiceNo) {
   if (!supabase || !organizationId || !invoiceNo) return null;
   const { data } = await supabase
@@ -172,21 +132,6 @@ export async function syncPaymentInRemote(record) {
   const shouldApply = String(record?.status || "").toLowerCase() === "applied";
   const shouldPost = String(record?.status || "").toLowerCase() !== "draft";
 
-  const { data: existingRows, error: existingError } = await supabase
-    .from("payments")
-    .select("id,invoice_id,amount")
-    .eq("organization_id", organizationId)
-    .ilike("reference_no", `${sourcePrefix}%`);
-  if (existingError) {
-    throw new Error(normalizeSupabaseError(existingError, "Failed to load existing payment-in rows"));
-  }
-
-  for (const row of Array.isArray(existingRows) ? existingRows : []) {
-    if (row?.invoice_id && parseNumber(row?.amount) > 0) {
-      await adjustInvoiceBalance(row.invoice_id, row.amount, -1);
-    }
-  }
-
   const { error: deleteError } = await supabase
     .from("payments")
     .delete()
@@ -275,13 +220,6 @@ export async function syncPaymentInRemote(record) {
     }
   }
 
-  if (shouldApply) {
-    for (const row of rows) {
-      if (row.invoice_id && parseNumber(row.amount) > 0) {
-        await adjustInvoiceBalance(row.invoice_id, row.amount, 1);
-      }
-    }
-  }
 }
 
 export async function syncPaymentOutRemote(record) {
@@ -294,21 +232,6 @@ export async function syncPaymentOutRemote(record) {
   const sourcePrefix = `PO:${record.id}:`;
   const shouldApply = String(record?.status || "").toLowerCase() === "applied";
   const shouldPost = String(record?.status || "").toLowerCase() !== "draft";
-
-  const { data: existingRows, error: existingError } = await supabase
-    .from("payments")
-    .select("id,bill_id,amount")
-    .eq("organization_id", organizationId)
-    .ilike("reference_no", `${sourcePrefix}%`);
-  if (existingError) {
-    throw new Error(normalizeSupabaseError(existingError, "Failed to load existing payment-out rows"));
-  }
-
-  for (const row of Array.isArray(existingRows) ? existingRows : []) {
-    if (row?.bill_id && parseNumber(row?.amount) > 0) {
-      await adjustBillBalance(row.bill_id, row.amount, -1);
-    }
-  }
 
   const { error: deleteError } = await supabase
     .from("payments")
@@ -395,11 +318,4 @@ export async function syncPaymentOutRemote(record) {
     }
   }
 
-  if (shouldApply) {
-    for (const row of rows) {
-      if (row.bill_id && parseNumber(row.amount) > 0) {
-        await adjustBillBalance(row.bill_id, row.amount, 1);
-      }
-    }
-  }
 }

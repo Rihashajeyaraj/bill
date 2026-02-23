@@ -8,6 +8,7 @@ import {
   Send,
   Wallet
 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import Badge from "../../components/Badge";
 import EmptyState from "../../components/EmptyState";
 import FlowCard from "../../modules/paymentIn/FlowCard";
@@ -17,6 +18,7 @@ import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
 import { syncPaymentOutRemote } from "../../services/payments.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
+import { LS_KEYS, lsGet } from "../../services/storage";
 import {
   allocationsFromBills,
   buildPaymentOutPayload,
@@ -46,6 +48,7 @@ function statusBadge(status) {
 }
 
 export default function PaymentOutPremium() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     country = "India",
     countryCode = "IN",
@@ -69,6 +72,7 @@ export default function PaymentOutPremium() {
   const [modeFilter, setModeFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const prefillBillId = searchParams.get("billId") || "";
 
   const payments = useMemo(() => listPaymentOut(country), [country, refreshKey]);
   const suppliers = useMemo(() => mapSuppliersByCountry(country), [country, refreshKey]);
@@ -149,6 +153,72 @@ export default function PaymentOutPremium() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
+
+  useEffect(() => {
+    if (!prefillBillId) return;
+    let bill = bills.find((entry) => entry.id === prefillBillId) || null;
+    if (!bill) {
+      const cached = lsGet(LS_KEYS.purchases, []);
+      const rawBills = Array.isArray(cached) ? cached : [];
+      const rawBill = rawBills.find((entry) => String(entry?.id) === String(prefillBillId));
+      if (rawBill) {
+        bill = {
+          id: rawBill.id,
+          billNo: rawBill.billNumber || rawBill.invoiceNo || rawBill.id,
+          billDate: rawBill.billDate || rawBill.invoiceDate || rawBill.date || "",
+          supplierId: rawBill.partyId || rawBill.supplierId || rawBill.vendorId || "",
+          supplierName: rawBill.partyName || rawBill.supplierName || "Supplier",
+          billAmount: Math.max(
+            0,
+            parseNumber(
+              rawBill?.totals?.finalTotal ??
+                rawBill?.totals?.grandTotal ??
+                rawBill?.totals?.total ??
+                rawBill?.totals?.subTotal
+            )
+          ),
+          balanceDue: Math.max(
+            0,
+            parseNumber(
+              rawBill?.totals?.balance ??
+                rawBill?.remainingBalance ??
+                rawBill?.totals?.grandTotal ??
+                rawBill?.totals?.total
+            )
+          )
+        };
+      }
+    }
+    if (!bill) return;
+
+    const supplierBills = bills.filter((entry) => entry.supplierId === bill.supplierId);
+    const seededAllocations = allocationsFromBills(supplierBills);
+    if (!seededAllocations.some((line) => line.billId === bill.id)) {
+      seededAllocations.push({
+        billId: bill.id,
+        billNo: bill.billNo,
+        billDate: bill.billDate,
+        billAmount: bill.billAmount,
+        balanceDue: bill.balanceDue,
+        applyAmount: 0
+      });
+    }
+    setForm(() => ({
+      ...defaultPaymentForm(country, currency),
+      supplierId: bill.supplierId,
+      supplierName: bill.supplierName,
+      allocations: seededAllocations.map((line) =>
+        line.billId === bill.id ? { ...line, applyAmount: line.balanceDue } : line
+      )
+    }));
+    setPanelMode("form");
+    setActiveStep(1);
+    setDirty(false);
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("billId");
+    setSearchParams(next, { replace: true });
+  }, [prefillBillId, bills, country, currency, searchParams, setSearchParams]);
 
   function startNew() {
     setForm(defaultPaymentForm(country, currency));

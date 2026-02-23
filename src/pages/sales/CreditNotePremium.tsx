@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, FileDown, FileSpreadsheet, Plus } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import CountrySelector from "../../modules/creditNote/CountrySelector";
 import CreditNoteSkeleton from "../../modules/creditNote/CreditNoteSkeleton";
 import CreditNoteListTable from "../../modules/creditNote/CreditNoteListTable";
@@ -54,6 +55,7 @@ function roleAccess(role: string, user: any) {
 }
 
 export default function CreditNotePremium() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
   const user = authGetUser();
   const role = authGetRole();
@@ -115,6 +117,7 @@ export default function CreditNotePremium() {
   const selectedCustomer = useMemo(() => customers.find((customer) => customer.id === form?.customerId) || null, [customers, form?.customerId]);
   const totals = useMemo(() => (form && country ? computeEditorTotals(form, country, selectedInvoice?.remainingBalance || 0, companyState) : { detailed: [], subtotal: 0, taxTotal: 0, total: 0, remaining: 0, cgst: 0, sgst: 0, igst: 0 }), [form, country, selectedInvoice?.remainingBalance, companyState]);
   const allowed = !country || access.allowedCountries.includes(country);
+  const prefillInvoiceId = searchParams.get("invoiceId") || "";
 
   useEffect(() => {
     if (!country) return;
@@ -155,6 +158,35 @@ export default function CreditNotePremium() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
+
+  useEffect(() => {
+    if (!country || !prefillInvoiceId) return;
+    const invoice = invoices.find((entry) => entry.id === prefillInvoiceId);
+    if (!invoice) return;
+
+    setViewMode("create");
+    setActiveNote(null);
+    setForm((prev) => {
+      const base = prev || defaultForm(country, company);
+      return {
+        ...base,
+        linkedInvoiceId: invoice.id,
+        customerId: invoice.customerId,
+        customerInput: invoice.customerName,
+        placeOfSupply: invoice.placeOfSupply || base.placeOfSupply,
+        taxRate: invoice.lines[0]?.taxRate || base.taxRate,
+        lines: draftLinesFromInvoice(invoice)
+      };
+    });
+    setDirty(false);
+    setFieldErrors({});
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("invoiceId");
+    setSearchParams(next, { replace: true });
+  }, [country, prefillInvoiceId, invoices, company, searchParams, setSearchParams]);
 
   const filteredNotes = useMemo(
     () =>

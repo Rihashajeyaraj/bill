@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Plus, Printer, Save } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
@@ -116,6 +117,7 @@ function formatIsoToDayMonthYear(value) {
 }
 
 export default function InvoiceCreate() {
+  const navigate = useNavigate();
   const { profile: company = {}, country = "", currency = "", currencySymbol = "" } = useOrganization();
   const [templateConfig, setTemplateConfig] = useState(() => getInvoiceTemplateConfig());
   const isIndia = country === "India";
@@ -135,6 +137,7 @@ export default function InvoiceCreate() {
   const [placeOfSupply, setPlaceOfSupply] = useState("");
 
   const [lines, setLines] = useState([]);
+  const [lastSavedInvoiceId, setLastSavedInvoiceId] = useState("");
 
   const companyState = company?.address?.state || "";
   const customerState = isIndia ? placeOfSupply || party?.state || "" : party?.state || "";
@@ -483,7 +486,8 @@ export default function InvoiceCreate() {
       }
     };
     try {
-      await invoicesCreate(payload);
+      const savedInvoiceId = await invoicesCreate(payload);
+      setLastSavedInvoiceId(savedInvoiceId || "");
       alert("Invoice saved successfully.");
     } catch (error) {
       alert(error?.message || "Failed to save invoice.");
@@ -677,6 +681,32 @@ export default function InvoiceCreate() {
               ) : (
                 <p className="mt-1 text-xs">Within approved credit limit.</p>
               )}
+            </div>
+          ) : null}
+
+          {lastSavedInvoiceId ? (
+            <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 p-3">
+              <p className="text-xs font-semibold text-blue-700">Invoice linked actions</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate(`/app/sales/payment-in?invoiceId=${encodeURIComponent(lastSavedInvoiceId)}`)
+                  }
+                  className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                >
+                  Record Payment
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate(`/app/sales/credit-note?invoiceId=${encodeURIComponent(lastSavedInvoiceId)}`)
+                  }
+                  className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                >
+                  Create Credit Note
+                </button>
+              </div>
             </div>
           ) : null}
 

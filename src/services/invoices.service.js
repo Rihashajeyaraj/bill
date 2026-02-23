@@ -37,7 +37,7 @@ function deriveInvoiceStatus(grandTotal, balanceAmount) {
   return "issued";
 }
 
-function mapRemoteInvoiceRow(row, itemRows) {
+function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
   const metadata = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
   const tax = {
     type: metadata?.taxType || "GST/VAT",
@@ -67,6 +67,13 @@ function mapRemoteInvoiceRow(row, itemRows) {
     hsn: line?.hsn_sac || ""
   }));
 
+  const effectiveBalance = Math.max(0, parseNumber(balanceAmount));
+  const grandTotal = parseNumber(row?.grand_total);
+  const status =
+    String(row?.status || "").toLowerCase() === "cancelled"
+      ? "cancelled"
+      : deriveInvoiceStatus(grandTotal, effectiveBalance);
+
   return {
     id: row?.id || uid("inv_"),
     invoiceNo: row?.invoice_no || "",
@@ -82,11 +89,11 @@ function mapRemoteInvoiceRow(row, itemRows) {
     totals: {
       subTotal: parseNumber(row?.subtotal),
       tax,
-      grandTotal: parseNumber(row?.grand_total),
-      balance: parseNumber(row?.balance_amount)
+      grandTotal,
+      balance: effectiveBalance
     },
-    remainingBalance: parseNumber(row?.balance_amount),
-    status: row?.status || "issued",
+    remainingBalance: effectiveBalance,
+    status,
     created_at: row?.created_at || new Date().toISOString(),
     updated_at: row?.updated_at || row?.created_at || new Date().toISOString()
   };
@@ -156,8 +163,10 @@ export async function invoicesSyncFromRemote() {
 
   const ids = (Array.isArray(invoiceRows) ? invoiceRows : []).map((row) => row.id).filter(Boolean);
   let lineRows = [];
+  let paymentRows = [];
+  let creditRows = [];
   if (ids.length) {
-    const { data, error } = await supabase
+    const { data: linesData, error } = await supabase
       .from("invoice_items")
       .select("*")
       .in("invoice_id", ids)
@@ -165,7 +174,29 @@ export async function invoicesSyncFromRemote() {
     if (error) {
       throw new Error(normalizeSupabaseError(error, "Failed to load invoice lines"));
     }
-    lineRows = Array.isArray(data) ? data : [];
+    lineRows = Array.isArray(linesData) ? linesData : [];
+
+    const { data: paymentData, error: paymentError } = await supabase
+      .from("payments")
+      .select("invoice_id,amount,status,direction")
+      .eq("organization_id", organizationId)
+      .eq("direction", "in")
+      .in("invoice_id", ids);
+    if (paymentError) {
+      throw new Error(normalizeSupabaseError(paymentError, "Failed to load invoice payment allocations"));
+    }
+    paymentRows = Array.isArray(paymentData) ? paymentData : [];
+
+    const { data: creditData, error: creditError } = await supabase
+      .from("credit_notes")
+      .select("related_invoice_id,grand_total,status")
+      .eq("organization_id", organizationId)
+      .eq("status", "applied")
+      .in("related_invoice_id", ids);
+    if (creditError) {
+      throw new Error(normalizeSupabaseError(creditError, "Failed to load applied credit notes"));
+    }
+    creditRows = Array.isArray(creditData) ? creditData : [];
   }
 
   const lineMap = new Map();
@@ -175,8 +206,30 @@ export async function invoicesSyncFromRemote() {
     lineMap.set(line.invoice_id, list);
   });
 
+  const paymentMap = new Map();
+  paymentRows.forEach((row) => {
+    const invoiceId = row?.invoice_id;
+    if (!invoiceId) return;
+    const status = String(row?.status || "").toLowerCase();
+    if (status === "draft" || status === "cancelled") return;
+    const current = paymentMap.get(invoiceId) || 0;
+    paymentMap.set(invoiceId, current + Math.max(0, parseNumber(row?.amount)));
+  });
+
+  const creditMap = new Map();
+  creditRows.forEach((row) => {
+    const invoiceId = row?.related_invoice_id;
+    if (!invoiceId) return;
+    const current = creditMap.get(invoiceId) || 0;
+    creditMap.set(invoiceId, current + Math.max(0, parseNumber(row?.grand_total)));
+  });
+
   const mapped = (Array.isArray(invoiceRows) ? invoiceRows : []).map((row) =>
-    mapRemoteInvoiceRow(row, lineMap.get(row.id) || [])
+    mapRemoteInvoiceRow(
+      row,
+      lineMap.get(row.id) || [],
+      parseNumber(row?.grand_total) - (paymentMap.get(row.id) || 0) - (creditMap.get(row.id) || 0)
+    )
   );
 
   setAll(mapped);
@@ -191,8 +244,6 @@ export async function invoicesCreate(invoice) {
   const tax = totals?.tax || {};
   const subTotal = parseNumber(totals?.subTotal);
   const grandTotal = parseNumber(totals?.grandTotal);
-  const balanceAmount = parseNumber(totals?.balance ?? grandTotal);
-  const paidAmount = Math.max(0, grandTotal - balanceAmount);
 
   let id = uid("inv_");
 
@@ -221,9 +272,7 @@ export async function invoicesCreate(invoice) {
         tax_total: parseNumber(tax?.totalTax ?? tax),
         round_off: parseNumber(totals?.roundOff),
         grand_total: grandTotal,
-        paid_amount: paidAmount,
-        balance_amount: balanceAmount,
-        status: deriveInvoiceStatus(grandTotal, balanceAmount),
+        status: deriveInvoiceStatus(grandTotal, grandTotal),
         metadata: {
           country: invoice?.country || "",
           partyName: invoice?.partyName || "",
@@ -278,9 +327,9 @@ export async function invoicesCreate(invoice) {
       ...totals,
       subTotal,
       grandTotal,
-      balance: balanceAmount
+      balance: grandTotal
     },
-    remainingBalance: balanceAmount,
+    remainingBalance: grandTotal,
     created_at: now,
     updated_at: now
   };

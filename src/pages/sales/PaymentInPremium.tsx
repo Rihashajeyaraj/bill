@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Send, Sparkles } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, COUNTRY_OPTIONS, type CountryCode, type PaymentMode, type PaymentStatus } from "../../modules/paymentIn/countryConfig";
 import {
   getSelectedPaymentCountry,
@@ -69,6 +70,7 @@ function resolveFixedCountry(organizationCountry: string, organizationCountryCod
 }
 
 export default function PaymentInPremium() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
   const user = authGetUser();
   const access = useMemo(() => roleAccess(authGetRole(), user), [user]);
@@ -113,6 +115,7 @@ export default function PaymentInPremium() {
 
   const allowed = access.allowedCountries.includes(country);
   const readOnly = flowMode === "view";
+  const prefillInvoiceId = searchParams.get("invoiceId") || "";
 
   useEffect(() => {
     setSelectedPaymentCountry(country);
@@ -150,6 +153,35 @@ export default function PaymentInPremium() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
+
+  useEffect(() => {
+    if (!prefillInvoiceId) return;
+    const invoice = openInvoices.find((entry) => entry.id === prefillInvoiceId);
+    if (!invoice) return;
+
+    const linkedInvoices = openInvoices.filter((entry) => entry.customerId === invoice.customerId);
+    const nextAllocations = allocationsFromInvoices(linkedInvoices).map((line) =>
+      line.invoiceId === invoice.id ? { ...line, applyAmount: line.balanceDue } : line
+    );
+
+    setForm((prev) => {
+      const base = prev || defaultForm(country, company);
+      return {
+        ...base,
+        customerId: invoice.customerId,
+        customerInput: invoice.customerName,
+        allocations: nextAllocations
+      };
+    });
+    setPanelMode("flow");
+    setFlowMode("create");
+    setActiveStep(1);
+    setDirty(false);
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("invoiceId");
+    setSearchParams(next, { replace: true });
+  }, [prefillInvoiceId, openInvoices, country, company, searchParams, setSearchParams]);
 
   function clearMessages() {
     setErrorMessage("");
