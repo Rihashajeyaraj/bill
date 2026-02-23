@@ -260,7 +260,11 @@ export async function syncPartiesFromRemote(): Promise<PartyRecord[]> {
     throw new Error(normalizeSupabaseError(error, "Failed to load parties"));
   }
 
+  const cached = listParties();
   const mapped = ensureArray<any>(data).map(mapRemoteParty);
+  if (!mapped.length && cached.length) {
+    return cached;
+  }
   lsSet(LS_KEYS.parties, mapped);
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
 }

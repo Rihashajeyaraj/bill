@@ -232,6 +232,10 @@ export async function invoicesSyncFromRemote() {
     )
   );
 
+  const cached = invoicesList();
+  if (!mapped.length && cached.length) {
+    return cached;
+  }
   setAll(mapped);
   return mapped;
 }

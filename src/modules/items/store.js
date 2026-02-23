@@ -211,7 +211,11 @@ export async function syncItemsFromRemote() {
     throw new Error(normalizeSupabaseError(error, "Failed to load items"));
   }
 
+  const cached = listItems();
   const mapped = ensureArray(data).map(mapRemoteItem);
+  if (!mapped.length && cached.length) {
+    return cached;
+  }
   lsSet(LS_KEYS.items, mapped);
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
 }
