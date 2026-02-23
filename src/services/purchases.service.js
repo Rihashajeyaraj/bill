@@ -173,6 +173,10 @@ export async function purchasesSyncFromRemote() {
     ),
     lines: lineMap.get(entry.id) || []
   }));
+  const cached = purchasesList();
+  if (!mapped.length && cached.length) {
+    return cached;
+  }
   setAll(mapped);
   return mapped;
 }

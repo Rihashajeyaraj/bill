@@ -12,6 +12,7 @@ import Card from "../components/Card";
 import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
 import { purchasesList, purchasesSyncFromRemote } from "../services/purchases.service";
 import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
+import { mapOpenBillsByCountry } from "../modules/paymentOut/store";
 import { useOrganization } from "../context/OrganizationContext";
 import {
   ResponsiveContainer,
@@ -84,6 +85,7 @@ export default function Dashboard() {
   const totals = useMemo(() => {
     const sales = invoices.reduce((a, x) => a + Number(x?.totals?.grandTotal || 0), 0);
     const purchase = purchases.reduce((a, x) => a + Number(x?.totals?.grandTotal || 0), 0);
+    const payables = mapOpenBillsByCountry().reduce((sum, bill) => sum + Number(bill?.balanceDue || 0), 0);
 
     const received = payments.filter((p) => p.direction === "IN").reduce((a, x) => a + Number(x.amount || 0), 0);
     const paid = payments.filter((p) => p.direction === "OUT").reduce((a, x) => a + Number(x.amount || 0), 0);
@@ -128,7 +130,7 @@ export default function Dashboard() {
     return {
       totalSales: sales,
       receivables: Math.max(0, sales - received),
-      payables: Math.max(0, purchase - paid),
+      payables: Math.max(0, payables),
       cashBalance: Math.max(0, received - paid),
       overdueAmount: Math.max(0, overdueAmount),
       expenses: purchase,
