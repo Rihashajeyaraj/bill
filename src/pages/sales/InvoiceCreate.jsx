@@ -138,6 +138,8 @@ export default function InvoiceCreate() {
 
   const [lines, setLines] = useState([]);
   const [lastSavedInvoiceId, setLastSavedInvoiceId] = useState("");
+  const [printInvoiceData, setPrintInvoiceData] = useState(null);
+  const [printQueued, setPrintQueued] = useState(false);
 
   const companyState = company?.address?.state || "";
   const customerState = isIndia ? placeOfSupply || party?.state || "" : party?.state || "";
@@ -212,6 +214,26 @@ export default function InvoiceCreate() {
     );
     setPlaceOfSupply(normalizedCompany || "");
   }, [party?.state, companyState, isIndia]);
+
+  useEffect(() => {
+    if (!printQueued || !printInvoiceData) return;
+
+    const handleAfterPrint = () => {
+      setPrintQueued(false);
+      setPrintInvoiceData(null);
+      window.removeEventListener("afterprint", handleAfterPrint);
+    };
+
+    window.addEventListener("afterprint", handleAfterPrint);
+    const timerId = window.setTimeout(() => {
+      window.print();
+    }, 80);
+
+    return () => {
+      window.clearTimeout(timerId);
+      window.removeEventListener("afterprint", handleAfterPrint);
+    };
+  }, [printQueued, printInvoiceData]);
 
   function addLine() {
     setLines((p) => [
@@ -436,21 +458,10 @@ export default function InvoiceCreate() {
     taxRate
   ]);
 
-  function handlePrint() {
-    if (!partyId) {
-      alert("Select customer before printing.");
-      return;
-    }
-    if (!computed.enriched.length) {
-      alert("Add at least one line item before printing.");
-      return;
-    }
-    window.print();
-  }
-  async function saveInvoice() {
+  async function saveInvoice({ silent = false } = {}) {
     if (creditBlocked) {
       alert("Credit limit exceeded. Invoice creation is blocked for this party.");
-      return;
+      return null;
     }
     const seller = {
       name: company?.companyName || "",
@@ -488,10 +499,31 @@ export default function InvoiceCreate() {
     try {
       const savedInvoiceId = await invoicesCreate(payload);
       setLastSavedInvoiceId(savedInvoiceId || "");
-      alert("Invoice saved successfully.");
+      if (!silent) {
+        alert("Invoice saved successfully.");
+      }
+      return savedInvoiceId || "";
     } catch (error) {
       alert(error?.message || "Failed to save invoice.");
+      return null;
     }
+  }
+
+  async function handleSaveAndPrint() {
+    if (!partyId) {
+      alert("Select customer before saving and printing.");
+      return;
+    }
+    if (!computed.enriched.length) {
+      alert("Add at least one line item before saving and printing.");
+      return;
+    }
+
+    const savedInvoiceId = await saveInvoice({ silent: true });
+    if (!savedInvoiceId) return;
+
+    setPrintInvoiceData(invoicePreviewData);
+    setPrintQueued(true);
   }
 
   return (
@@ -499,15 +531,15 @@ export default function InvoiceCreate() {
       <div className="print-hide">
         <PageHeader
           title="Sales - Invoice"
-          subtitle="Create invoice - line items - country tax breakdown - preview panel"
+          subtitle="Create invoice with line items and country-wise tax breakdown"
           right={
             <div className="flex items-center gap-2">
               <button
-                onClick={handlePrint}
+                onClick={handleSaveAndPrint}
                 className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
               >
                 <Printer className="h-4 w-4" />
-                Print
+                Save & Print
               </button>
               <GradientButton onClick={saveInvoice} disabled={creditBlocked} className="disabled:cursor-not-allowed disabled:opacity-60">
                 <Save className="h-4 w-4" />
@@ -845,33 +877,37 @@ export default function InvoiceCreate() {
           </div>
         </Card>
 
-        <Card className="p-5 print-sheet">
-          <div className="print-hide">
-            <p className="text-sm font-semibold text-slate-900">Invoice Preview</p>
-            <p className="text-xs text-slate-500 mt-1">Print uses selected template</p>
+        <Card className="p-5">
+          <p className="text-sm font-semibold text-slate-900">Invoice Summary</p>
+          <p className="text-xs text-slate-500 mt-1">
+            Bill template is shown only when you click Save & Print.
+          </p>
 
-            <div className="mt-4 flex items-center justify-between text-sm">
-              <span className="text-slate-600">Sub Total</span>
-              <span className="font-semibold text-slate-900">{money(computed.subTotal)}</span>
-            </div>
-            <div className="mt-2 flex items-center justify-between text-sm">
-              <span className="text-slate-600">{computed.tax.type}</span>
-              <span className="font-semibold text-slate-900">{money(computed.tax.totalTax)}</span>
-            </div>
-            <div className="mt-2 flex items-center justify-between text-base">
-              <span className="font-semibold text-slate-900">Grand Total</span>
-              <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span>
-            </div>
-
-            <div className="mt-4">
-              <GradientButton className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60" onClick={saveInvoice} disabled={creditBlocked}>
-                <Save className="h-4 w-4" />
-                Save Invoice
-              </GradientButton>
-            </div>
+          <div className="mt-4 flex items-center justify-between text-sm">
+            <span className="text-slate-600">Sub Total</span>
+            <span className="font-semibold text-slate-900">{money(computed.subTotal)}</span>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-sm">
+            <span className="text-slate-600">{computed.tax.type}</span>
+            <span className="font-semibold text-slate-900">{money(computed.tax.totalTax)}</span>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-base">
+            <span className="font-semibold text-slate-900">Grand Total</span>
+            <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span>
           </div>
 
-          <div className="invoice-preview mt-4">
+          <div className="mt-4">
+            <GradientButton className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60" onClick={saveInvoice} disabled={creditBlocked}>
+              <Save className="h-4 w-4" />
+              Save Invoice
+            </GradientButton>
+          </div>
+        </Card>
+      </div>
+
+      {printInvoiceData ? (
+        <div className="hidden print:block print-sheet">
+          <div className="invoice-preview">
             <InvoicePreview
               templateId={templateConfig.templateId}
               styleConfig={{
@@ -881,11 +917,11 @@ export default function InvoiceCreate() {
                 logoUrl: templateConfig.logoUrl,
                 logoPosition: templateConfig.logoPosition
               }}
-              invoiceData={invoicePreviewData}
+              invoiceData={printInvoiceData}
             />
           </div>
-        </Card>
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
