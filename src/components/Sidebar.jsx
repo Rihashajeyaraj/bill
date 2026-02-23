@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
-  LayoutTemplate,
   Users,
   Boxes,
   ReceiptIndianRupee,
@@ -105,12 +104,11 @@ export default function Sidebar({ collapsed, onToggle }) {
         ]
       },
       { to: "/app/purchase/expense", icon: Wallet, label: "Expense" },
-      { to: "/invoice-template-setup", icon: LayoutTemplate, label: "Invoice Template" },
       { to: "/app/reports", icon: BarChart3, label: "Reports" },
       { to: "/app/company-settings", icon: Settings, label: "Settings" }
     ];
     if (showCompanySetup) {
-      const insertAt = baseItems.findIndex((item) => item.to === "/invoice-template-setup");
+      const insertAt = baseItems.findIndex((item) => item.to === "/app/company-settings");
       baseItems.splice(insertAt === -1 ? baseItems.length : insertAt, 0, {
         to: "/app/company-setup",
         icon: Building2,

@@ -7,7 +7,6 @@ import {
   Building2,
   FileText,
   LayoutDashboard,
-  LayoutTemplate,
   ReceiptIndianRupee,
   Settings,
   Users,
@@ -17,7 +16,6 @@ import {
 export const APP_NAV_ITEMS = [
   { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard", shortcut: "G D", section: "Overview" },
   { to: "/app/company-setup", icon: Building2, label: "Company Setup", shortcut: "G C", section: "Setup" },
-  { to: "/invoice-template-setup", icon: LayoutTemplate, label: "Invoice Template", section: "Setup" },
 
   { to: "/app/parties", icon: Users, label: "Parties", shortcut: "G P", section: "Masters" },
   { to: "/app/items", icon: Boxes, label: "Items", shortcut: "G I", section: "Masters" },

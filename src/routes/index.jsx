@@ -5,6 +5,7 @@ import { AuthGuard, CompanySetupGuard, InvoiceTemplateGuard, SetupGuard } from "
 import AppLayout from "../layouts/AppLayout";
 import Login from "../pages/Login";
 import CompanySetup from "../pages/CompanySetup";
+import OrganizationSelect from "../pages/OrganizationSelect";
 import InvoiceTemplateSetup from "../pages/InvoiceTemplateSetup";
 import Dashboard from "../pages/Dashboard";
 import Parties from "../pages/Parties";
@@ -31,6 +32,11 @@ export const routes = [
   {
     element: <AuthGuard />,
     children: [
+      { path: "/organization-select", element: <OrganizationSelect /> },
+      {
+        element: <InvoiceTemplateGuard />,
+        children: [{ path: "/invoice-template-setup", element: <InvoiceTemplateSetup /> }]
+      },
       {
         element: <CompanySetupGuard />,
         children: [{ path: "/company-setup", element: <CompanySetup /> }]
@@ -55,8 +61,8 @@ export const routes = [
               { path: "/app/dashboard", element: <Dashboard /> },
               { path: "/app/company-setup", element: <Navigate to="/company-setup" replace /> },
               {
-                element: <InvoiceTemplateGuard />,
-                children: [{ path: "/invoice-template-setup", element: <InvoiceTemplateSetup /> }]
+                path: "/app/invoice-template-setup",
+                element: <Navigate to="/invoice-template-setup" replace />
               },
 
               { path: "/app/parties", element: <Parties /> },

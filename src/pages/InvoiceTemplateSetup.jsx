@@ -255,9 +255,9 @@ export default function InvoiceTemplateSetup() {
   async function saveTemplate() {
     setSaving(true);
     setSaveError("");
+    const safeTemplate = setInvoiceTemplateConfig(config);
 
     try {
-      setInvoiceTemplateConfig(config);
       setInvoiceTemplateCompleted(true);
 
       const profile = organizationProfile || {};
@@ -265,7 +265,7 @@ export default function InvoiceTemplateSetup() {
         ...profile,
         settings: {
           ...(profile.settings || {}),
-          invoiceTemplate: config,
+          invoiceTemplate: safeTemplate,
           invoice_template_selected: true
         },
         updated_at: new Date().toISOString()
@@ -276,7 +276,6 @@ export default function InvoiceTemplateSetup() {
       nav("/dashboard", { replace: true });
     } catch (error) {
       setSaveError(error?.message || "Template saved locally but cloud sync failed.");
-      setInvoiceTemplateConfig(config);
       setInvoiceTemplateCompleted(true);
       nav("/dashboard", { replace: true });
     } finally {
@@ -285,7 +284,7 @@ export default function InvoiceTemplateSetup() {
   }
 
   return (
-    <div className="max-w-6xl">
+    <div className="mx-auto max-w-6xl px-5 py-6">
       <PageHeader
         title="Invoice Template Setup"
         subtitle="Choose a template and brand colors before accessing the dashboard."

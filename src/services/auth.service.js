@@ -127,6 +127,35 @@ function setAuthState({
   markCurrentTabAuthSession();
 }
 
+function mapSessionUser(user) {
+  return {
+    id: user?.id || "",
+    email: user?.email || "",
+    name: user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email?.split("@")[0] || ""
+  };
+}
+
+function resolveNextStep(role, organization) {
+  const safeRole = normalizeRoleLabel(role);
+  if (!isOwnerRole(safeRole)) return "dashboard";
+  if (!organization) return "organization_setup";
+  if (!organization?.is_setup_completed) return "organization_setup";
+  if (!resolveInvoiceTemplateCompleted(organization)) return "invoice_template_setup";
+  return "dashboard";
+}
+
+function mapMembershipSummary(entry) {
+  const organization = entry?.organization || null;
+  return {
+    organizationId: entry?.organization_id || "",
+    role: normalizeRoleLabel(entry?.role),
+    companyName: organization?.company_name || "Untitled Company",
+    countryCode: String(organization?.country_code || "IN").toUpperCase(),
+    companySetupCompleted: !!organization?.is_setup_completed,
+    invoiceTemplateCompleted: resolveInvoiceTemplateCompleted(organization)
+  };
+}
+
 async function upsertProfileRow(user) {
   if (!isSupabaseConfigured || !supabase || !user?.id) return;
   const payload = {
@@ -149,6 +178,37 @@ async function fetchPrimaryMembership(userId) {
     role: fromDbRole(data?.role),
     organization
   };
+}
+
+async function fetchAllMemberships(userId) {
+  if (!isSupabaseConfigured || !supabase || !userId) return [];
+
+  const { data: memberRows, error: memberError } = await supabase
+    .from("organization_members")
+    .select("organization_id,role,status,created_at")
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .order("created_at", { ascending: true });
+  if (memberError || !Array.isArray(memberRows) || !memberRows.length) return [];
+
+  const organizationIds = [...new Set(memberRows.map((row) => row.organization_id).filter(Boolean))];
+  if (!organizationIds.length) return [];
+
+  const { data: organizationRows, error: organizationError } = await supabase
+    .from("organizations")
+    .select("id,company_name,country_code,is_setup_completed,settings,created_at,updated_at")
+    .in("id", organizationIds);
+  if (organizationError || !Array.isArray(organizationRows)) return [];
+
+  const byOrgId = new Map(organizationRows.map((row) => [row.id, row]));
+  return memberRows
+    .map((row) => ({
+      organization_id: row.organization_id,
+      role: fromDbRole(row.role),
+      created_at: row.created_at,
+      organization: byOrgId.get(row.organization_id) || null
+    }))
+    .filter((row) => row.organization_id);
 }
 
 async function localLogin({ email, password }) {
@@ -191,7 +251,11 @@ async function localLogin({ email, password }) {
     role: found.role,
     organizationId,
     companySetupCompleted,
-    invoiceTemplateCompleted
+    invoiceTemplateCompleted,
+    next: resolveNextStep(found.role, {
+      is_setup_completed: !!companySetupCompleted,
+      settings: { invoice_template_selected: !!invoiceTemplateCompleted }
+    })
   };
 }
 
@@ -267,6 +331,89 @@ export function authUsingSupabase() {
   return isSupabaseConfigured;
 }
 
+export async function authListOrganizations() {
+  if (!isSupabaseConfigured || !supabase) {
+    const organizationId = authGetOrganizationId();
+    if (!organizationId) return [];
+    return [
+      {
+        organizationId,
+        role: authGetRole(),
+        companyName: lsGetUserScoped(LS_KEYS.company_profile, null)?.companyName || "Local Company",
+        countryCode: "IN",
+        companySetupCompleted: !!lsGetUserScoped(LS_KEYS.companyProfileCompleted, false),
+        invoiceTemplateCompleted: !!lsGetUserScoped(LS_KEYS.invoiceTemplateCompleted, false)
+      }
+    ];
+  }
+
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+  if (!user?.id) return [];
+  const memberships = await fetchAllMemberships(user.id);
+  return memberships.map(mapMembershipSummary);
+}
+
+export async function authSelectOrganization(organizationId) {
+  const safeOrganizationId = String(organizationId || "").trim();
+  if (!safeOrganizationId) throw new Error("Organization selection is required.");
+
+  const currentUser = authGetUser();
+  const currentToken = authGetToken();
+  const fallbackRole = authGetRole();
+
+  if (!isSupabaseConfigured || !supabase) {
+    const companySetupCompleted = !!lsGetUserScoped(LS_KEYS.companyProfileCompleted, false);
+    const invoiceTemplateCompleted = !!lsGetUserScoped(LS_KEYS.invoiceTemplateCompleted, false);
+    setAuthState({
+      token: currentToken,
+      user: currentUser,
+      role: fallbackRole,
+      organizationId: safeOrganizationId,
+      companySetupCompleted,
+      invoiceTemplateCompleted
+    });
+    return {
+      organizationId: safeOrganizationId,
+      role: normalizeRoleLabel(fallbackRole),
+      next: resolveNextStep(fallbackRole, {
+        is_setup_completed: companySetupCompleted,
+        settings: { invoice_template_selected: invoiceTemplateCompleted }
+      })
+    };
+  }
+
+  const {
+    data: { session }
+  } = await supabase.auth.getSession();
+  const sessionUser = session?.user || currentUser;
+  if (!sessionUser?.id) throw new Error("Login required.");
+
+  const memberships = await fetchAllMemberships(sessionUser.id);
+  const selected = memberships.find(
+    (entry) => String(entry?.organization_id || "") === safeOrganizationId
+  );
+  if (!selected) {
+    throw new Error("Selected organization is not available for this user.");
+  }
+
+  setAuthState({
+    token: session?.access_token || currentToken,
+    user: mapSessionUser(sessionUser),
+    role: selected.role,
+    organizationId: selected.organization_id,
+    companySetupCompleted: !!selected.organization?.is_setup_completed,
+    invoiceTemplateCompleted: resolveInvoiceTemplateCompleted(selected.organization)
+  });
+
+  return {
+    organizationId: selected.organization_id,
+    role: normalizeRoleLabel(selected.role),
+    next: resolveNextStep(selected.role, selected.organization)
+  };
+}
+
 export async function authBootstrapSession() {
   if (!isSupabaseConfigured || !supabase) {
     if (!hasLocalAuthState()) return false;
@@ -313,22 +460,24 @@ export async function authBootstrapSession() {
   }
 
   await upsertProfileRow(session.user);
-  const membership = await fetchPrimaryMembership(session.user.id);
+  const fallbackRole = normalizeRoleLabel(
+    session.user.user_metadata?.default_role || ROLE_LABELS.owner
+  );
+  const memberships = await fetchAllMemberships(session.user.id);
+  const storedOrganizationId = lsGetUserScoped(LS_KEYS.organization_id, "", session.user.id);
+  const selectedMembership =
+    memberships.find(
+      (entry) => String(entry?.organization_id || "") === String(storedOrganizationId || "")
+    ) ||
+    (memberships.length === 1 ? memberships[0] : null);
 
   setAuthState({
     token: session.access_token,
-    user: {
-      id: session.user.id,
-      email: session.user.email,
-      name:
-        session.user.user_metadata?.full_name ||
-        session.user.user_metadata?.name ||
-        session.user.email?.split("@")[0]
-    },
-    role: membership?.role || session.user.user_metadata?.default_role || ROLE_LABELS.owner,
-    organizationId: membership?.organization_id || "",
-    companySetupCompleted: membership?.organization?.is_setup_completed || false,
-    invoiceTemplateCompleted: resolveInvoiceTemplateCompleted(membership?.organization)
+    user: mapSessionUser(session.user),
+    role: selectedMembership?.role || fallbackRole,
+    organizationId: selectedMembership?.organization_id || "",
+    companySetupCompleted: !!selectedMembership?.organization?.is_setup_completed,
+    invoiceTemplateCompleted: resolveInvoiceTemplateCompleted(selectedMembership?.organization)
   });
 
   return true;
@@ -351,25 +500,38 @@ export async function authLogin({ email, password }) {
   }
 
   await upsertProfileRow(user);
-  const membership = await fetchPrimaryMembership(user.id);
+  const fallbackRole = normalizeRoleLabel(user.user_metadata?.default_role || ROLE_LABELS.owner);
+  const memberships = await fetchAllMemberships(user.id);
+  const isOwner = isOwnerRole(fallbackRole);
 
-  const role = membership?.role || user.user_metadata?.default_role || ROLE_LABELS.owner;
-  const organizationId = membership?.organization_id || "";
-  const companySetupCompleted = membership?.organization?.is_setup_completed || false;
-  const invoiceTemplateCompleted = resolveInvoiceTemplateCompleted(membership?.organization);
+  let selectedMembership = null;
+  if (memberships.length === 1) {
+    selectedMembership = memberships[0];
+  } else if (!isOwner && memberships.length > 1) {
+    selectedMembership = memberships[0];
+  }
+
+  const role = selectedMembership?.role || fallbackRole;
+  const organizationId = selectedMembership?.organization_id || "";
+  const companySetupCompleted = !!selectedMembership?.organization?.is_setup_completed;
+  const invoiceTemplateCompleted = resolveInvoiceTemplateCompleted(
+    selectedMembership?.organization
+  );
 
   setAuthState({
     token: session.access_token,
-    user: {
-      id: user.id,
-      email: user.email,
-      name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0]
-    },
+    user: mapSessionUser(user),
     role,
     organizationId,
     companySetupCompleted,
     invoiceTemplateCompleted
   });
+
+  const organizationSummaries = memberships.map(mapMembershipSummary);
+  const next =
+    isOwner && memberships.length > 1
+      ? "organization_select"
+      : resolveNextStep(role, selectedMembership?.organization);
 
   return {
     token: session.access_token,
@@ -377,7 +539,9 @@ export async function authLogin({ email, password }) {
     role: normalizeRoleLabel(role),
     organizationId,
     companySetupCompleted,
-    invoiceTemplateCompleted
+    invoiceTemplateCompleted,
+    organizations: organizationSummaries,
+    next
   };
 }
 

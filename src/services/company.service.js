@@ -1,6 +1,6 @@
 import { authGetOrganizationId, authGetRole, authGetUser } from "./auth.service";
 import { fromDbRole, isOwnerRole, toDbRole } from "./roles";
-import { LS_KEYS, lsGet, lsGetUserScoped, lsSet, lsSetUserScoped } from "./storage";
+import { LS_KEYS, lsGet, lsGetUserScoped, lsRemove, lsSet, lsSetUserScoped } from "./storage";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { setInvoiceTemplateCompleted } from "../lib/templateStore";
 
@@ -161,6 +161,54 @@ function pickTaxProfile(organization) {
   return raw || null;
 }
 
+function isQuotaExceededError(error) {
+  return (
+    error?.name === "QuotaExceededError" ||
+    error?.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    error?.code === 22 ||
+    error?.code === 1014
+  );
+}
+
+function trimHeavyProfileFields(profile) {
+  const base = { ...(profile || {}) };
+  base.logoBase64 = "";
+  if (base?.settings && typeof base.settings === "object") {
+    base.settings = { ...base.settings };
+    if (base.settings?.profile && typeof base.settings.profile === "object") {
+      base.settings.profile = { ...base.settings.profile, logoBase64: "" };
+    }
+    if (base.settings?.invoiceTemplate && typeof base.settings.invoiceTemplate === "object") {
+      base.settings.invoiceTemplate = { ...base.settings.invoiceTemplate, logoUrl: "" };
+    }
+  }
+  return base;
+}
+
+function persistProfileLocal(profile, { completedStatus = true } = {}) {
+  let toPersist = profile;
+
+  // Remove duplicated legacy copy to reduce storage usage.
+  lsRemove(LS_KEYS.company_profile);
+
+  try {
+    lsSetUserScoped(LS_KEYS.company_profile, toPersist);
+  } catch (error) {
+    if (!isQuotaExceededError(error)) throw error;
+    toPersist = trimHeavyProfileFields(profile);
+    try {
+      lsSetUserScoped(LS_KEYS.company_profile, toPersist);
+    } catch (retryError) {
+      if (!isQuotaExceededError(retryError)) throw retryError;
+      throw new Error("Storage is full. Remove old local data and try again.");
+    }
+  }
+
+  lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!completedStatus);
+  lsSet(LS_KEYS.companyProfileCompleted, !!completedStatus);
+  return toPersist;
+}
+
 async function upsertMembershipDirectly({ organizationId, userId, role }) {
   const { error: memberError } = await supabase.from("organization_members").upsert(
     {
@@ -210,12 +258,9 @@ export function companySaveProfile(profile) {
     country: normalizedCountry.country,
     countryCode: normalizedCountry.countryCode
   };
-  lsSetUserScoped(LS_KEYS.company_profile, normalizedProfile);
-  lsSetUserScoped(LS_KEYS.companyProfileCompleted, true);
-  lsSet(LS_KEYS.company_profile, normalizedProfile);
-  lsSet(LS_KEYS.companyProfileCompleted, true);
-  emitOrganizationUpdated(normalizedProfile);
-  return normalizedProfile;
+  const savedProfile = persistProfileLocal(normalizedProfile, { completedStatus: true });
+  emitOrganizationUpdated(savedProfile);
+  return savedProfile;
 }
 
 export function companyUpdateProfile(partial) {
@@ -227,13 +272,31 @@ export function companyUpdateProfile(partial) {
     country: normalizedCountry.country,
     countryCode: normalizedCountry.countryCode
   };
-  lsSetUserScoped(LS_KEYS.company_profile, next);
-  lsSet(LS_KEYS.company_profile, next);
-  emitOrganizationUpdated(next);
-  return next;
+  const savedProfile = persistProfileLocal(next, { completedStatus: companyIsCompleted() });
+  emitOrganizationUpdated(savedProfile);
+  return savedProfile;
 }
 
-export async function companyLoadMyOrganization() {
+async function fetchOrganizationBundle(organizationId) {
+  if (!organizationId) return null;
+
+  const { data: organization, error: organizationError } = await supabase
+    .from("organizations")
+    .select("*")
+    .eq("id", organizationId)
+    .maybeSingle();
+  if (organizationError || !organization) return null;
+
+  const { data: taxProfile } = await supabase
+    .from("organization_tax_profiles")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  return { organization, taxProfile: taxProfile || null };
+}
+
+export async function companyLoadMyOrganization(selectedOrganizationId = "") {
   if (!isSupabaseConfigured || !supabase) {
     return companyGetProfile();
   }
@@ -241,24 +304,35 @@ export async function companyLoadMyOrganization() {
   const userId = await getCurrentUserId();
   if (!userId) return companyGetProfile();
 
-  const { data, error } = await supabase.rpc("get_my_membership_snapshot");
-
-  if (error || !data) {
-    return companyGetProfile();
+  const activeOrganizationId = String(selectedOrganizationId || authGetOrganizationId() || "").trim();
+  if (!activeOrganizationId) {
+    return null;
   }
 
-  const organization = data?.organization || null;
-  const taxProfile = data?.tax_profile || null;
+  const bundle = await fetchOrganizationBundle(activeOrganizationId);
+  if (!bundle?.organization) return null;
+
+  const organization = bundle.organization;
+  const taxProfile = bundle.taxProfile;
   const profile = mapOrganizationToProfile(organization, taxProfile);
   if (!profile) return companyGetProfile();
 
-  lsSet(LS_KEYS.organization_id, data?.organization_id || "");
-  lsSetUserScoped(LS_KEYS.organization_id, data?.organization_id || "");
-  lsSet(LS_KEYS.role, fromDbRole(data?.role));
-  lsSetUserScoped(LS_KEYS.company_profile, profile);
-  lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!organization?.is_setup_completed);
-  lsSet(LS_KEYS.company_profile, profile);
-  lsSet(LS_KEYS.companyProfileCompleted, !!organization?.is_setup_completed);
+  const { data: membership } = await supabase
+    .from("organization_members")
+    .select("role")
+    .eq("organization_id", activeOrganizationId)
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  lsSet(LS_KEYS.organization_id, activeOrganizationId);
+  lsSetUserScoped(LS_KEYS.organization_id, activeOrganizationId, authGetUser()?.id);
+  if (membership?.role) {
+    lsSet(LS_KEYS.role, fromDbRole(membership.role));
+  }
+  const savedProfile = persistProfileLocal(profile, {
+    completedStatus: !!organization?.is_setup_completed
+  });
   setInvoiceTemplateCompleted(
     !!(
       organization?.settings?.invoice_template_selected ||
@@ -266,12 +340,13 @@ export async function companyLoadMyOrganization() {
       organization?.settings?.invoiceTemplate?.templateId
     )
   );
-  emitOrganizationUpdated(profile);
-  return profile;
+  emitOrganizationUpdated(savedProfile);
+  return savedProfile;
 }
 
-export async function companySaveProfileRemote(profile) {
-  const previous = companyGetProfile() || {};
+export async function companySaveProfileRemote(profile, options = {}) {
+  const forceCreate = !!options?.forceCreate;
+  const previous = forceCreate ? {} : companyGetProfile() || {};
   const countryData = normalizeProfileCountry({
     country: profile?.country || previous?.country || "",
     countryCode: profile?.countryCode || previous?.countryCode || ""
@@ -291,8 +366,16 @@ export async function companySaveProfileRemote(profile) {
   companySaveProfile(mergedProfile);
 
   if (!isSupabaseConfigured || !supabase) {
-    const localOrganizationId = authGetOrganizationId() || "";
-    lsSetUserScoped(LS_KEYS.organization_id, localOrganizationId);
+    const localOrganizationId = forceCreate
+      ? `org_${Date.now().toString(16)}`
+      : authGetOrganizationId() || "";
+    lsSet(LS_KEYS.organization_id, localOrganizationId);
+    lsSetUserScoped(LS_KEYS.organization_id, localOrganizationId, authGetUser()?.id);
+    if (forceCreate) {
+      setInvoiceTemplateCompleted(false);
+      lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, false, authGetUser()?.id);
+      lsSet(LS_KEYS.invoiceTemplateCompleted, false);
+    }
     return { profile: mergedProfile, organizationId: localOrganizationId };
   }
 
@@ -301,7 +384,7 @@ export async function companySaveProfileRemote(profile) {
     throw new Error("Login required before organization setup");
   }
 
-  const existingOrgId = authGetOrganizationId();
+  const existingOrgId = forceCreate ? "" : authGetOrganizationId();
   const payload = mapProfileToOrganizationPayload(mergedProfile, userId, existingOrgId);
 
   let organizationId = existingOrgId;
@@ -360,6 +443,11 @@ export async function companySaveProfileRemote(profile) {
   lsSetUserScoped(LS_KEYS.organization_id, organizationId, authGetUser()?.id);
   lsSetUserScoped(LS_KEYS.companyProfileCompleted, true, authGetUser()?.id);
   lsSet(LS_KEYS.companyProfileCompleted, true);
+  if (forceCreate || !existingOrgId) {
+    setInvoiceTemplateCompleted(false);
+    lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, false, authGetUser()?.id);
+    lsSet(LS_KEYS.invoiceTemplateCompleted, false);
+  }
 
   return { profile: companyGetProfile(), organizationId };
 }

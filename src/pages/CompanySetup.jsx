@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import Card from "../components/Card";
 import PageHeader from "../components/PageHeader";
 import GradientButton from "../components/GradientButton";
@@ -117,12 +117,14 @@ function profileIsMostlyEmpty(value) {
 
 export default function CompanySetup() {
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
   const user = authGetUser();
   const role = authGetRole();
+  const createMode = isOwnerRole(role) && searchParams.get("mode") === "create";
   const { profile: organizationProfile } = useOrganization();
-  const current = organizationProfile || companyGetProfile();
+  const current = createMode ? null : organizationProfile || companyGetProfile();
 
-  const initialProfile = organizationProfile || companyGetProfile();
+  const initialProfile = createMode ? {} : organizationProfile || companyGetProfile();
   const [profile, setProfile] = useState(() => normalizeProfile(user, role, initialProfile));
   const [pendingCountry, setPendingCountry] = useState("");
   const [countryWarning, setCountryWarning] = useState(false);
@@ -147,6 +149,7 @@ export default function CompanySetup() {
   }, [profile.country]);
 
   useEffect(() => {
+    if (createMode) return;
     const nextProfileSource = organizationProfile || companyGetProfile();
     if (!nextProfileSource) return;
 
@@ -154,9 +157,13 @@ export default function CompanySetup() {
       if (!profileIsMostlyEmpty(prev)) return prev;
       return normalizeProfile(user, role, nextProfileSource);
     });
-  }, [organizationProfile, user?.id, role]);
+  }, [createMode, organizationProfile, user?.id, role]);
 
   useEffect(() => {
+    if (createMode) {
+      setHasInvoices(false);
+      return;
+    }
     let mounted = true;
     async function syncInvoiceState() {
       try {
@@ -172,7 +179,7 @@ export default function CompanySetup() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [createMode]);
 
   function validate() {
     const next = {};
@@ -197,7 +204,7 @@ export default function CompanySetup() {
         ...profile,
         currency: profile.currencies[0] || "",
         created_at: new Date().toISOString()
-      });
+      }, { forceCreate: createMode });
       nav(isOwnerRole(role) ? "/invoice-template-setup" : "/dashboard", { replace: true });
     } catch (error) {
       setSaveError(error?.message || "Failed to save organization details");
@@ -221,8 +228,12 @@ export default function CompanySetup() {
   return (
     <div className="px-5 py-6 max-w-6xl mx-auto">
       <PageHeader
-        title="Company Setup"
-        subtitle="Create your organization and tax profile to unlock dashboards."
+        title={createMode ? "Create Company" : "Company Setup"}
+        subtitle={
+          createMode
+            ? "Create an additional organization profile."
+            : "Create your organization and tax profile to unlock dashboards."
+        }
         right={<GradientButton onClick={save}>{saving ? "Saving..." : "Save & Continue"}</GradientButton>}
       />
 
@@ -570,6 +581,15 @@ export default function CompanySetup() {
             <GradientButton className="w-full justify-center" onClick={save}>
               {saving ? "Saving..." : "Save & Continue"}
             </GradientButton>
+            {createMode ? (
+              <button
+                type="button"
+                onClick={() => nav("/app/company-settings")}
+                className="mt-2 w-full rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            ) : null}
           </div>
         </Card>
       </div>

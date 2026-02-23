@@ -42,7 +42,19 @@ export default function Login() {
     setNotice(nextNotice);
   }
 
-  function redirectAfterAuth(role) {
+  function redirectAfterAuth(next, role) {
+    if (next === "organization_select") {
+      nav("/organization-select", { replace: true });
+      return;
+    }
+    if (next === "organization_setup") {
+      nav("/company-setup", { replace: true });
+      return;
+    }
+    if (next === "invoice_template_setup") {
+      nav("/invoice-template-setup", { replace: true });
+      return;
+    }
     if (!isOwnerRole(role)) {
       nav("/dashboard", { replace: true });
       return;
@@ -66,8 +78,10 @@ export default function Login() {
 
     try {
       const result = await authLogin({ email: loginForm.email, password: loginForm.password });
-      await companyLoadMyOrganization();
-      redirectAfterAuth(result?.role || ROLE_LABELS.staff);
+      if (result?.organizationId) {
+        await companyLoadMyOrganization(result.organizationId);
+      }
+      redirectAfterAuth(result?.next, result?.role || ROLE_LABELS.staff);
     } catch (ex) {
       setErr(ex.message || "Login failed");
     } finally {
@@ -118,8 +132,10 @@ export default function Login() {
       if (result?.next === "organization_setup") {
         nav("/company-setup", { replace: true });
       } else {
-        await companyLoadMyOrganization();
-        redirectAfterAuth(result?.role || signupForm.role);
+        if (result?.organizationId) {
+          await companyLoadMyOrganization(result.organizationId);
+        }
+        redirectAfterAuth(result?.next, result?.role || signupForm.role);
       }
     } catch (ex) {
       setErr(ex.message || "Register failed");

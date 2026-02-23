@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
+import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   BadgeCheck,
@@ -8,6 +9,7 @@ import {
   Database,
   Globe,
   Hash,
+  LayoutTemplate,
   Palette,
   Percent,
   Plus,
@@ -41,6 +43,13 @@ import { isOwnerRole, normalizeRoleLabel } from "../services/roles";
 import { uid } from "../services/storage";
 import { UI } from "../theme/tokens";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
+import {
+  DEFAULT_TEMPLATE_CONFIG,
+  getInvoiceTemplateConfig,
+  setInvoiceTemplateCompleted,
+  setInvoiceTemplateConfig
+} from "../lib/templateStore";
+import { getCountryTemplates } from "../data/invoiceCountryConfig";
 
 const SECTION_ITEMS = [
   {
@@ -72,6 +81,12 @@ const SECTION_ITEMS = [
     label: "Theme & Appearance",
     description: "Brand colors and invoice styling.",
     icon: Palette
+  },
+  {
+    id: "invoiceTemplate",
+    label: "Invoice Template",
+    description: "Template, logo and print appearance.",
+    icon: LayoutTemplate
   },
   {
     id: "users",
@@ -108,6 +123,7 @@ const TIMEZONES = [
 const DATE_FORMATS = ["DD MMM YYYY", "DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"];
 const NUMBER_FORMATS = ["1,23,456.78", "123,456.78", "123.456,78"];
 const MAX_CURRENCIES = 3;
+const TEMPLATE_FONT_OPTIONS = ["Inter", "Roboto", "Poppins"];
 
 const COUNTRY_META = {
   India: { currency: "INR", code: "IN", gstDefault: 18 },
@@ -264,6 +280,21 @@ function buildDefaultSettings(profile, currentUser) {
     accentColor: themeStored.accentColor || UI.COLORS.blush,
     invoiceTheme: themeStored.invoiceTheme || "Classic"
   };
+  const templateStored = stored.invoiceTemplate || {};
+  const templateConfig = getInvoiceTemplateConfig();
+  const countryTemplates = getCountryTemplates(baseCountry);
+  const fallbackTemplateId = countryTemplates[0]?.id || DEFAULT_TEMPLATE_CONFIG.templateId;
+  const mergedTemplate = {
+    ...DEFAULT_TEMPLATE_CONFIG,
+    ...templateConfig,
+    ...templateStored
+  };
+  const isTemplateAllowed = countryTemplates.some((entry) => entry.id === mergedTemplate.templateId);
+  const invoiceTemplate = {
+    ...mergedTemplate,
+    templateId: isTemplateAllowed ? mergedTemplate.templateId : fallbackTemplateId,
+    logoUrl: mergedTemplate.logoUrl || profile?.logoBase64 || ""
+  };
 
   const members = Array.isArray(stored.users?.members) && stored.users.members.length
     ? stored.users.members
@@ -309,6 +340,7 @@ function buildDefaultSettings(profile, currentUser) {
     tax,
     numbering,
     theme,
+    invoiceTemplate,
     users,
     preferences
   };
@@ -327,7 +359,8 @@ function mapSettingsToProfile(settings) {
       ...settings.localization,
       currency: primaryCurrency,
       currencies: normalizedCurrencies
-    }
+    },
+    invoice_template_selected: true
   };
 
   return {
@@ -514,6 +547,7 @@ function validateProfile(profile) {
 }
 
 export default function CompanySettings() {
+  const navigate = useNavigate();
   const { setTheme, themePresetId } = useTheme();
   const { profile: organizationProfile } = useOrganization();
   const currentProfile = organizationProfile || companyGetProfile();
@@ -616,6 +650,10 @@ export default function CompanySettings() {
   const isIndia = country === "India";
   const isVat = VAT_COUNTRIES.includes(country);
   const isUsa = country === "USA";
+  const templateOptions = useMemo(
+    () => getCountryTemplates(settings.localization.defaultCountry),
+    [settings.localization.defaultCountry]
+  );
   const sectionTitle = formatSectionTitle(activeSection);
 
   function updateSection(section, patch) {
@@ -627,6 +665,7 @@ export default function CompanySettings() {
 
   function applyCountryChange(nextCountry) {
     const nextMeta = getCountryMeta(nextCountry);
+    const templateOptions = getCountryTemplates(nextCountry);
     setSettings((prev) => {
       const nextPrefixes = refreshPrefixes(prev.numbering.prefixes, prev.localization.defaultCountry, nextCountry);
       const nextCurrencies = normalizeLocalizationCurrencies({
@@ -646,6 +685,10 @@ export default function CompanySettings() {
       if (nextCountry === "USA") {
         nextTax.enableSalesTax = true;
       }
+      const fallbackTemplateId = templateOptions[0]?.id || DEFAULT_TEMPLATE_CONFIG.templateId;
+      const keepCurrentTemplate = templateOptions.some(
+        (entry) => entry.id === prev.invoiceTemplate.templateId
+      );
       return {
         ...prev,
         profile: {
@@ -663,6 +706,10 @@ export default function CompanySettings() {
         numbering: {
           ...prev.numbering,
           prefixes: nextPrefixes
+        },
+        invoiceTemplate: {
+          ...prev.invoiceTemplate,
+          templateId: keepCurrentTemplate ? prev.invoiceTemplate.templateId : fallbackTemplateId
         }
       };
     });
@@ -699,8 +746,16 @@ export default function CompanySettings() {
       setErrors((prev) => ({ ...prev, profile: {} }));
     }
 
-    setSavedSettings((prev) => ({ ...prev, [section]: settings[section] }));
-    const nextProfile = mapSettingsToProfile(settings);
+    let nextSettings = settings;
+    if (section === "invoiceTemplate") {
+      const persistedTemplate = setInvoiceTemplateConfig(settings.invoiceTemplate);
+      setInvoiceTemplateCompleted(true);
+      nextSettings = { ...settings, invoiceTemplate: persistedTemplate };
+      setSettings(nextSettings);
+    }
+
+    setSavedSettings((prev) => ({ ...prev, [section]: nextSettings[section] }));
+    const nextProfile = mapSettingsToProfile(nextSettings);
     companyUpdateProfile(nextProfile);
 
     try {
@@ -827,9 +882,21 @@ export default function CompanySettings() {
         title="Company Settings"
         subtitle="Admin-grade configuration for billing, tax, and user access."
         right={
-          <GradientButton onClick={() => handleSave(activeSection)}>
-            Save {sectionTitle}
-          </GradientButton>
+          <div className="flex items-center gap-2">
+            {canGenerateRegisterCodes ? (
+              <button
+                type="button"
+                onClick={() => navigate("/company-setup?mode=create")}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Plus className="h-4 w-4" />
+                Create New Company
+              </button>
+            ) : null}
+            <GradientButton onClick={() => handleSave(activeSection)}>
+              Save {sectionTitle}
+            </GradientButton>
+          </div>
         }
       />
 
@@ -1617,6 +1684,97 @@ export default function CompanySettings() {
                       });
                       setThemeModalOpen(false);
                     }}
+                  />
+                </Card>
+              ) : null}
+              {activeSection === "invoiceTemplate" ? (
+                <Card className="p-6">
+                  <SectionHeader
+                    title="Invoice Template"
+                    description="Edit invoice template, logo and print appearance from settings."
+                  />
+
+                  <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <FormField label="Template">
+                      <select
+                        value={settings.invoiceTemplate.templateId}
+                        onChange={(event) =>
+                          updateSection("invoiceTemplate", { templateId: event.target.value })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                      >
+                        {templateOptions.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </FormField>
+
+                    <FormField label="Font">
+                      <select
+                        value={settings.invoiceTemplate.fontFamily}
+                        onChange={(event) =>
+                          updateSection("invoiceTemplate", { fontFamily: event.target.value })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                      >
+                        {TEMPLATE_FONT_OPTIONS.map((font) => (
+                          <option key={font} value={font}>
+                            {font}
+                          </option>
+                        ))}
+                      </select>
+                    </FormField>
+
+                    <FormField label="Background Color">
+                      <input
+                        type="color"
+                        value={settings.invoiceTemplate.bgColor}
+                        onChange={(event) =>
+                          updateSection("invoiceTemplate", { bgColor: event.target.value })
+                        }
+                        className="h-10 w-full rounded-2xl border border-slate-200 bg-white p-1"
+                      />
+                    </FormField>
+
+                    <FormField label="Primary Color">
+                      <input
+                        type="color"
+                        value={settings.invoiceTemplate.primaryColor}
+                        onChange={(event) =>
+                          updateSection("invoiceTemplate", { primaryColor: event.target.value })
+                        }
+                        className="h-10 w-full rounded-2xl border border-slate-200 bg-white p-1"
+                      />
+                    </FormField>
+
+                    <FormField label="Logo Position">
+                      <select
+                        value={settings.invoiceTemplate.logoPosition}
+                        onChange={(event) =>
+                          updateSection("invoiceTemplate", { logoPosition: event.target.value })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="left">Left</option>
+                        <option value="center">Center</option>
+                        <option value="right">Right</option>
+                      </select>
+                    </FormField>
+
+                    <FormField label="Logo">
+                      <FileUpload
+                        value={settings.invoiceTemplate.logoUrl}
+                        onChange={(value) => updateSection("invoiceTemplate", { logoUrl: value })}
+                      />
+                    </FormField>
+                  </div>
+
+                  <ActionRow
+                    dirty={sectionDirty}
+                    onSave={() => handleSave("invoiceTemplate")}
+                    onCancel={() => handleCancel("invoiceTemplate")}
                   />
                 </Card>
               ) : null}

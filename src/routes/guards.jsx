@@ -1,6 +1,6 @@
 import React from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { authGetRole, authGetToken } from "../services/auth.service";
+import { authGetOrganizationId, authGetRole, authGetToken } from "../services/auth.service";
 import { companyIsCompleted } from "../services/company.service";
 import { invoiceTemplateIsCompleted } from "../lib/templateStore";
 import { isOwnerRole } from "../services/roles";
@@ -15,8 +15,13 @@ export function AuthGuard() {
 export function SetupGuard() {
   const loc = useLocation();
   const role = authGetRole();
+  const organizationId = authGetOrganizationId();
   const setupComplete = companyIsCompleted();
   const invoiceTemplateSelected = invoiceTemplateIsCompleted();
+
+  if (isOwnerRole(role) && !organizationId && loc.pathname !== "/organization-select") {
+    return <Navigate to="/organization-select" replace />;
+  }
 
   if (isOwnerRole(role) && !setupComplete) {
     return <Navigate to="/company-setup" replace />;
@@ -49,11 +54,14 @@ export function InvoiceTemplateGuard() {
 }
 
 export function CompanySetupGuard() {
+  const loc = useLocation();
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
   const invoiceTemplateSelected = invoiceTemplateIsCompleted();
+  const createMode = new URLSearchParams(loc.search).get("mode") === "create";
 
   if (!isOwnerRole(role)) return <Navigate to="/dashboard" replace />;
+  if (createMode) return <Outlet />;
   if (setupComplete && !invoiceTemplateSelected) return <Navigate to="/invoice-template-setup" replace />;
   if (setupComplete && invoiceTemplateSelected) return <Navigate to="/dashboard" replace />;
 
