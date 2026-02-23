@@ -4,7 +4,10 @@ import {
   lsGetUserScoped,
   lsRemove,
   lsSet,
-  lsSetUserScoped
+  lsSetUserScoped,
+  ssGet,
+  ssRemove,
+  ssSet
 } from "./storage";
 import {
   fromDbRole,
@@ -21,7 +24,6 @@ import {
 import {
   clearCurrentTabAuthSession,
   hasCurrentTabAuthSession,
-  hasLiveAuthSiblingTab,
   markCurrentTabAuthSession
 } from "./browserSession.service";
 
@@ -86,17 +88,19 @@ function clearLegacyOrganizationCache() {
 }
 
 function clearAuthState() {
-  lsRemove(LS_KEYS.auth_token);
-  lsRemove(LS_KEYS.auth_user);
-  lsRemove(LS_KEYS.role);
-  lsRemove(LS_KEYS.organization_id);
+  ssRemove(LS_KEYS.auth_token);
+  ssRemove(LS_KEYS.auth_user);
+  ssRemove(LS_KEYS.role);
+  ssRemove(LS_KEYS.organization_id);
+  ssRemove(LS_KEYS.companyProfileCompleted);
+  ssRemove(LS_KEYS.invoiceTemplateCompleted);
   clearSharedSessionActivity();
   clearCurrentTabAuthSession();
 }
 
 function hasLocalAuthState() {
-  const token = lsGet(LS_KEYS.auth_token, "");
-  const user = lsGet(LS_KEYS.auth_user, null);
+  const token = ssGet(LS_KEYS.auth_token, "");
+  const user = ssGet(LS_KEYS.auth_user, null);
   return Boolean(token && (user?.id || user?.email));
 }
 
@@ -114,12 +118,12 @@ function setAuthState({
     name: user?.name || user?.email?.split("@")[0] || ""
   };
 
-  lsSet(LS_KEYS.auth_token, token || "");
-  lsSet(LS_KEYS.auth_user, safeUser);
-  lsSet(LS_KEYS.role, normalizeRoleLabel(role));
-  lsSet(LS_KEYS.organization_id, organizationId || "");
-  lsSet(LS_KEYS.companyProfileCompleted, !!companySetupCompleted);
-  lsSet(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted);
+  ssSet(LS_KEYS.auth_token, token || "");
+  ssSet(LS_KEYS.auth_user, safeUser);
+  ssSet(LS_KEYS.role, normalizeRoleLabel(role));
+  ssSet(LS_KEYS.organization_id, organizationId || "");
+  ssSet(LS_KEYS.companyProfileCompleted, !!companySetupCompleted);
+  ssSet(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted);
   lsSetUserScoped(LS_KEYS.organization_id, organizationId || "", safeUser.id);
   lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!companySetupCompleted, safeUser.id);
   lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted, safeUser.id);
@@ -312,19 +316,23 @@ function localRegister({ name, email, password, role, registerCode }) {
 }
 
 export function authGetToken() {
-  return lsGet(LS_KEYS.auth_token, "");
+  if (!hasCurrentTabAuthSession()) return "";
+  return ssGet(LS_KEYS.auth_token, "");
 }
 
 export function authGetUser() {
-  return lsGet(LS_KEYS.auth_user, null);
+  if (!hasCurrentTabAuthSession()) return null;
+  return ssGet(LS_KEYS.auth_user, null);
 }
 
 export function authGetRole() {
-  return normalizeRoleLabel(lsGet(LS_KEYS.role, ROLE_LABELS.staff));
+  if (!hasCurrentTabAuthSession()) return ROLE_LABELS.staff;
+  return normalizeRoleLabel(ssGet(LS_KEYS.role, ROLE_LABELS.staff));
 }
 
 export function authGetOrganizationId() {
-  return lsGet(LS_KEYS.organization_id, "");
+  if (!hasCurrentTabAuthSession()) return "";
+  return ssGet(LS_KEYS.organization_id, "");
 }
 
 export function authUsingSupabase() {
@@ -416,30 +424,15 @@ export async function authSelectOrganization(organizationId) {
 
 export async function authBootstrapSession() {
   if (!isSupabaseConfigured || !supabase) {
-    if (!hasLocalAuthState()) return false;
-    if (hasCurrentTabAuthSession()) return true;
-    const hasSiblingTab = await hasLiveAuthSiblingTab();
-    if (hasSiblingTab) {
-      markCurrentTabAuthSession();
-      return true;
-    }
-    clearAuthState();
-    return false;
-  }
-
-  const tabAlreadyAuthenticated = hasCurrentTabAuthSession();
-  if (!tabAlreadyAuthenticated) {
-    const hasSiblingTab = await hasLiveAuthSiblingTab();
-    if (!hasSiblingTab) {
+    if (!hasCurrentTabAuthSession()) return false;
+    if (!hasLocalAuthState()) {
       clearAuthState();
-      try {
-        await supabase.auth.signOut({ scope: "local" });
-      } catch {
-        // Ignore sign-out errors and continue with local cleanup.
-      }
       return false;
     }
+    return true;
   }
+
+  if (!hasCurrentTabAuthSession()) return false;
 
   let session = null;
   try {
@@ -464,7 +457,8 @@ export async function authBootstrapSession() {
     session.user.user_metadata?.default_role || ROLE_LABELS.owner
   );
   const memberships = await fetchAllMemberships(session.user.id);
-  const storedOrganizationId = lsGetUserScoped(LS_KEYS.organization_id, "", session.user.id);
+  const storedOrganizationId =
+    ssGet(LS_KEYS.organization_id, "") || lsGetUserScoped(LS_KEYS.organization_id, "", session.user.id);
   const selectedMembership =
     memberships.find(
       (entry) => String(entry?.organization_id || "") === String(storedOrganizationId || "")
@@ -547,7 +541,6 @@ export async function authLogin({ email, password }) {
 
 export async function authRegister({ name, email, password, role, registerCode }) {
   const roleLabel = normalizeRoleLabel(role || ROLE_LABELS.owner);
-  sessionStorage.clear();
   clearLegacyOrganizationCache();
   clearAuthState();
 
@@ -662,7 +655,6 @@ export async function authLogout() {
   if (isSupabaseConfigured && supabase) {
     await supabase.auth.signOut();
   }
-  sessionStorage.clear();
   clearLegacyOrganizationCache();
   clearAuthState();
 }

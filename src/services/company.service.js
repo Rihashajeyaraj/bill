@@ -1,6 +1,16 @@
 import { authGetOrganizationId, authGetRole, authGetUser } from "./auth.service";
 import { fromDbRole, isOwnerRole, toDbRole } from "./roles";
-import { LS_KEYS, lsGet, lsGetUserScoped, lsRemove, lsSet, lsSetUserScoped } from "./storage";
+import {
+  LS_KEYS,
+  lsGetUserScoped,
+  lsGetOrganizationScoped,
+  lsRemove,
+  lsSet,
+  lsSetOrganizationScoped,
+  lsSetUserScoped,
+  ssGet,
+  ssSet
+} from "./storage";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { setInvoiceTemplateCompleted } from "../lib/templateStore";
 
@@ -192,11 +202,13 @@ function persistProfileLocal(profile, { completedStatus = true } = {}) {
   lsRemove(LS_KEYS.company_profile);
 
   try {
+    lsSetOrganizationScoped(LS_KEYS.company_profile, toPersist);
     lsSetUserScoped(LS_KEYS.company_profile, toPersist);
   } catch (error) {
     if (!isQuotaExceededError(error)) throw error;
     toPersist = trimHeavyProfileFields(profile);
     try {
+      lsSetOrganizationScoped(LS_KEYS.company_profile, toPersist);
       lsSetUserScoped(LS_KEYS.company_profile, toPersist);
     } catch (retryError) {
       if (!isQuotaExceededError(retryError)) throw retryError;
@@ -204,8 +216,10 @@ function persistProfileLocal(profile, { completedStatus = true } = {}) {
     }
   }
 
+  lsSetOrganizationScoped(LS_KEYS.companyProfileCompleted, !!completedStatus);
   lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!completedStatus);
   lsSet(LS_KEYS.companyProfileCompleted, !!completedStatus);
+  ssSet(LS_KEYS.companyProfileCompleted, !!completedStatus);
   return toPersist;
 }
 
@@ -238,16 +252,24 @@ async function getCurrentUserId() {
 }
 
 export function companyIsCompleted() {
+  const sessionValue = ssGet(LS_KEYS.companyProfileCompleted, null);
+  if (typeof sessionValue === "boolean") return sessionValue;
+  const orgScoped = lsGetOrganizationScoped(LS_KEYS.companyProfileCompleted, null);
+  if (typeof orgScoped === "boolean") return orgScoped;
   return !!lsGetUserScoped(LS_KEYS.companyProfileCompleted, false);
 }
 
 export function companySetCompleted(status) {
+  lsSetOrganizationScoped(LS_KEYS.companyProfileCompleted, !!status);
   lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!status);
   lsSet(LS_KEYS.companyProfileCompleted, !!status);
+  ssSet(LS_KEYS.companyProfileCompleted, !!status);
   emitOrganizationUpdated();
 }
 
 export function companyGetProfile() {
+  const orgScoped = lsGetOrganizationScoped(LS_KEYS.company_profile, null);
+  if (orgScoped) return orgScoped;
   return lsGetUserScoped(LS_KEYS.company_profile, null);
 }
 
@@ -326,9 +348,11 @@ export async function companyLoadMyOrganization(selectedOrganizationId = "") {
     .maybeSingle();
 
   lsSet(LS_KEYS.organization_id, activeOrganizationId);
+  ssSet(LS_KEYS.organization_id, activeOrganizationId);
   lsSetUserScoped(LS_KEYS.organization_id, activeOrganizationId, authGetUser()?.id);
   if (membership?.role) {
     lsSet(LS_KEYS.role, fromDbRole(membership.role));
+    ssSet(LS_KEYS.role, fromDbRole(membership.role));
   }
   const savedProfile = persistProfileLocal(profile, {
     completedStatus: !!organization?.is_setup_completed
@@ -370,11 +394,13 @@ export async function companySaveProfileRemote(profile, options = {}) {
       ? `org_${Date.now().toString(16)}`
       : authGetOrganizationId() || "";
     lsSet(LS_KEYS.organization_id, localOrganizationId);
+    ssSet(LS_KEYS.organization_id, localOrganizationId);
     lsSetUserScoped(LS_KEYS.organization_id, localOrganizationId, authGetUser()?.id);
     if (forceCreate) {
       setInvoiceTemplateCompleted(false);
       lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, false, authGetUser()?.id);
       lsSet(LS_KEYS.invoiceTemplateCompleted, false);
+      ssSet(LS_KEYS.invoiceTemplateCompleted, false);
     }
     return { profile: mergedProfile, organizationId: localOrganizationId };
   }
@@ -440,13 +466,16 @@ export async function companySaveProfileRemote(profile, options = {}) {
   if (taxError) throw new Error(taxError.message || "Failed to save tax settings");
 
   lsSet(LS_KEYS.organization_id, organizationId);
+  ssSet(LS_KEYS.organization_id, organizationId);
   lsSetUserScoped(LS_KEYS.organization_id, organizationId, authGetUser()?.id);
   lsSetUserScoped(LS_KEYS.companyProfileCompleted, true, authGetUser()?.id);
   lsSet(LS_KEYS.companyProfileCompleted, true);
+  ssSet(LS_KEYS.companyProfileCompleted, true);
   if (forceCreate || !existingOrgId) {
     setInvoiceTemplateCompleted(false);
     lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, false, authGetUser()?.id);
     lsSet(LS_KEYS.invoiceTemplateCompleted, false);
+    ssSet(LS_KEYS.invoiceTemplateCompleted, false);
   }
 
   return { profile: companyGetProfile(), organizationId };
@@ -482,7 +511,7 @@ export async function organizationGenerateCode({ targetRole = "Accounter", maxUs
       organization_id: organizationId,
       code,
       target_role: toDbRole(targetRole),
-      created_by: lsGet(LS_KEYS.auth_user, null)?.id || null,
+      created_by: authGetUser()?.id || null,
       expires_at: expiresAt,
       max_uses: Math.max(1, Number(maxUses || 1)),
       used_count: 0,

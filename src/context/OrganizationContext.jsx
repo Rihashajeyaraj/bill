@@ -5,7 +5,11 @@ import {
   companyGetProfile,
   ORGANIZATION_UPDATED_EVENT
 } from "../services/company.service";
-import { isUserScopedStorageEventKey, LS_KEYS } from "../services/storage";
+import {
+  isOrganizationScopedStorageEventKey,
+  isUserScopedStorageEventKey,
+  LS_KEYS
+} from "../services/storage";
 
 function normalizeCurrencyCode(value) {
   return String(value || "")
@@ -65,9 +69,9 @@ export function OrganizationProvider({ children }) {
     const onStorage = (event) => {
       if (
         !event?.key ||
-        isUserScopedStorageEventKey(LS_KEYS.company_profile, event.key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.company_profile, event.key) ||
         isUserScopedStorageEventKey(LS_KEYS.organization_id, event.key) ||
-        isUserScopedStorageEventKey(LS_KEYS.companyProfileCompleted, event.key)
+        isOrganizationScopedStorageEventKey(LS_KEYS.companyProfileCompleted, event.key)
       ) {
         refreshOrganization();
       }

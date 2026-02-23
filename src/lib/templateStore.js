@@ -1,4 +1,13 @@
-import { LS_KEYS, lsGet, lsGetUserScoped, lsSetUserScoped } from "../services/storage";
+import {
+  LS_KEYS,
+  lsGet,
+  lsGetOrganizationScoped,
+  lsGetUserScoped,
+  lsSetOrganizationScoped,
+  lsSetUserScoped,
+  ssGet,
+  ssSet
+} from "../services/storage";
 
 export const DEFAULT_TEMPLATE_CONFIG = {
   templateId: "standard",
@@ -29,9 +38,23 @@ function slimTemplateConfig(config = {}) {
 }
 
 export function getInvoiceTemplateConfig() {
-  const scoped = lsGetUserScoped(LS_KEYS.invoiceTemplateConfig, null);
+  const sessionValue = ssGet(LS_KEYS.invoiceTemplateConfig, null);
+  if (sessionValue && typeof sessionValue === "object") {
+    const normalized = normalizeTemplateConfig(sessionValue);
+    runtimeTemplateConfig = normalized;
+    return normalized;
+  }
+
+  const scoped = lsGetOrganizationScoped(LS_KEYS.invoiceTemplateConfig, null);
   if (scoped && typeof scoped === "object") {
     const normalized = normalizeTemplateConfig(scoped);
+    runtimeTemplateConfig = normalized;
+    return normalized;
+  }
+
+  const userScoped = lsGetUserScoped(LS_KEYS.invoiceTemplateConfig, null);
+  if (userScoped && typeof userScoped === "object") {
+    const normalized = normalizeTemplateConfig(userScoped);
     runtimeTemplateConfig = normalized;
     return normalized;
   }
@@ -51,6 +74,8 @@ export function setInvoiceTemplateConfig(config) {
   runtimeTemplateConfig = normalized;
 
   try {
+    ssSet(LS_KEYS.invoiceTemplateConfig, normalized);
+    lsSetOrganizationScoped(LS_KEYS.invoiceTemplateConfig, normalized);
     lsSetUserScoped(LS_KEYS.invoiceTemplateConfig, normalized);
     return normalized;
   } catch (error) {
@@ -58,6 +83,8 @@ export function setInvoiceTemplateConfig(config) {
     const slim = slimTemplateConfig(normalized);
     runtimeTemplateConfig = slim;
     try {
+      ssSet(LS_KEYS.invoiceTemplateConfig, slim);
+      lsSetOrganizationScoped(LS_KEYS.invoiceTemplateConfig, slim);
       lsSetUserScoped(LS_KEYS.invoiceTemplateConfig, slim);
     } catch {
       // Best effort only: keep runtime config even when persistent storage is full.
@@ -67,9 +94,15 @@ export function setInvoiceTemplateConfig(config) {
 }
 
 export function invoiceTemplateIsCompleted() {
+  const sessionValue = ssGet(LS_KEYS.invoiceTemplateCompleted, null);
+  if (typeof sessionValue === "boolean") return sessionValue;
+  const orgScoped = lsGetOrganizationScoped(LS_KEYS.invoiceTemplateCompleted, null);
+  if (typeof orgScoped === "boolean") return orgScoped;
   return !!lsGetUserScoped(LS_KEYS.invoiceTemplateCompleted, false);
 }
 
 export function setInvoiceTemplateCompleted(status) {
+  ssSet(LS_KEYS.invoiceTemplateCompleted, !!status);
+  lsSetOrganizationScoped(LS_KEYS.invoiceTemplateCompleted, !!status);
   lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, !!status);
 }

@@ -19,6 +19,27 @@ export const LS_KEYS = {
   expenses: "expenses"
 };
 
+export function ssGet(key, fallback = null) {
+  try {
+    if (typeof window === "undefined") return fallback;
+    const raw = window.sessionStorage.getItem(key);
+    if (raw === null) return fallback;
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+export function ssSet(key, value) {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(key, JSON.stringify(value));
+}
+
+export function ssRemove(key) {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(key);
+}
+
 function normalizeScopeValue(value) {
   return String(value || "")
     .trim()
@@ -27,13 +48,13 @@ function normalizeScopeValue(value) {
 }
 
 function getCurrentAuthScopeId() {
-  const user = lsGet(LS_KEYS.auth_user, null);
+  const user = ssGet(LS_KEYS.auth_user, null) || lsGet(LS_KEYS.auth_user, null);
   const candidate = user?.id || user?.email || "";
   return normalizeScopeValue(candidate);
 }
 
 function getCurrentOrganizationScopeId() {
-  const organizationId = lsGet(LS_KEYS.organization_id, "");
+  const organizationId = ssGet(LS_KEYS.organization_id, "") || lsGet(LS_KEYS.organization_id, "");
   return normalizeScopeValue(organizationId);
 }
 
