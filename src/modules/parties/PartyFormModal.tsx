@@ -5,7 +5,7 @@ import FormField from "../../components/FormField";
 import GradientButton from "../../components/GradientButton";
 import { COUNTRIES } from "../../services/company.service";
 import type { PartyAttachment, PartyDraft, PartyType } from "./types";
-import { defaultOpeningBalanceType, parseNumber, taxIdMeta } from "./utils";
+import { defaultOpeningBalanceType, parseNumber } from "./utils";
 import { useOrganization } from "../../context/OrganizationContext";
 import { normalizeContactType, validateContactTax } from "../../services/customerTax";
 
@@ -79,7 +79,6 @@ export default function PartyFormModal({
     );
   }, [open, initialParty]);
 
-  const taxMeta = useMemo(() => taxIdMeta(form.country), [form.country]);
   const orgContext = useMemo(
     () => ({
       ...organizationProfile,
@@ -87,24 +86,18 @@ export default function PartyFormModal({
     }),
     [organizationProfile, organizationCountry]
   );
-  const taxValidationPreview = useMemo(() => validateContactTax(form, orgContext), [form, orgContext]);
-  const showTaxIdField = taxValidationPreview.showGSTINField;
-  const taxFieldLabel =
-    taxValidationPreview.isGSTMode && taxValidationPreview.isBusiness
-      ? "GSTIN"
-      : `Tax ID (${taxMeta.label})`;
+  const selectedContactType = normalizeContactType(form.contactType ?? form.customerType, form.taxId);
+  const isIndiaCountry = String(form.country || "").trim().toLowerCase() === "india";
+  const showGSTINField = selectedContactType === "Business" && isIndiaCountry;
+  const entityLabel = form.type === "Customer" ? "Customer" : "Supplier";
+  const modalTitle = mode === "edit" ? `Edit ${entityLabel}` : `Create ${entityLabel}`;
+  const submitLabel = mode === "edit" ? `Update ${entityLabel}` : `Create ${entityLabel}`;
+  const inputClassName =
+    "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100";
+  const mutedInputClassName = `${inputClassName} disabled:bg-slate-50 disabled:text-slate-500`;
 
   function updateField<K extends keyof PartyDraft>(key: K, value: PartyDraft[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
-  }
-
-  function updateType(next: PartyType) {
-    setForm((prev) => ({
-      ...prev,
-      type: next,
-      contactType: normalizeContactType(prev.contactType ?? prev.customerType, prev.taxId),
-      openingBalanceType: defaultOpeningBalanceType(next)
-    }));
   }
 
   function addAttachments(files: FileList | null) {
@@ -151,7 +144,14 @@ export default function PartyFormModal({
       creditLimitDays: Math.max(0, parseNumber(form.creditLimitDays)),
       creditLimitEnabled: !!form.creditLimitEnabled
     };
-    const taxValidation = validateContactTax(normalized, orgContext);
+    const normalizedCountry = String(normalized.country || "").trim().toLowerCase();
+    const normalizedContactType = normalizeContactType(
+      normalized.contactType ?? normalized.customerType,
+      normalized.taxId
+    );
+    const shouldValidateGST = normalizedCountry === "india" && normalizedContactType === "Business";
+    const validationOrgContext = shouldValidateGST ? { ...orgContext, country: "India" } : { ...orgContext, country: "" };
+    const taxValidation = validateContactTax(normalized, validationOrgContext);
     if (taxValidation.error) {
       setError(taxValidation.error);
       return;
@@ -173,7 +173,7 @@ export default function PartyFormModal({
   return (
     <Modal
       open={open}
-      title={mode === "edit" ? "Edit Party" : "Add Party"}
+      title={modalTitle}
       onClose={onClose}
       footer={
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -190,237 +190,247 @@ export default function PartyFormModal({
               Cancel
             </button>
             <GradientButton onClick={handleSave}>
-              {mode === "edit" ? "Update Party" : "Create Party"}
+              {submitLabel}
             </GradientButton>
           </div>
         </div>
       }
     >
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <FormField label="Party Type">
-          <select
-            value={form.type}
-            onChange={(event) => {
-              setError("");
-              setWarning("");
-              updateType(event.target.value as PartyType);
-            }}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none"
-          >
-            <option value="Customer">Customer</option>
-            <option value="Supplier">Supplier</option>
-          </select>
-        </FormField>
-
-        <FormField label="Contact Type">
-            <select
-              value={normalizeContactType(form.contactType ?? form.customerType, form.taxId)}
-              onChange={(event) => {
-                const nextType = event.target.value as PartyDraft["contactType"];
-                setError("");
-                setWarning("");
-                updateField("contactType", nextType);
-                if (form.type === "Customer") {
-                  updateField("customerType", nextType as PartyDraft["customerType"]);
-                }
-                if (nextType === "Individual") {
-                  updateField("taxId", "");
-                }
-              }}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none"
-            >
-              <option value="Individual">Individual</option>
-              <option value="Business">Business</option>
-            </select>
-          </FormField>
-
-        <FormField label="Name">
-          <input
-            value={form.name}
-            onChange={(event) => updateField("name", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder="Party legal name"
-          />
-        </FormField>
-
-        <FormField label="Phone">
-          <input
-            value={form.phone}
-            onChange={(event) => updateField("phone", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder="+1 555 000 1234"
-          />
-        </FormField>
-
-        <FormField label="Email">
-          <input
-            value={form.email}
-            onChange={(event) => updateField("email", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder="finance@party.com"
-          />
-        </FormField>
-
-        <FormField label="Country">
-          <select
-            value={form.country}
-            onChange={(event) => updateField("country", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none"
-          >
-            <option value="">Select country</option>
-            {COUNTRIES.map((country) => (
-              <option key={country} value={country}>
-                {country}
-              </option>
-            ))}
-          </select>
-        </FormField>
-
-        <FormField label="State / Region">
-          <input
-            value={form.state}
-            onChange={(event) => updateField("state", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder="State, province, or region"
-          />
-        </FormField>
-
-        <FormField label="Address" className="md:col-span-2">
-          <textarea
-            value={form.address}
-            onChange={(event) => updateField("address", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            rows={2}
-            placeholder="Street, city, zip/postal"
-          />
-        </FormField>
-
-        {showTaxIdField ? (
-          <FormField
-            label={taxFieldLabel}
-            hint={taxValidationPreview.isGSTMode ? "Recommended for Business contacts in India" : "Optional"}
-          >
-            <input
-              value={form.taxId}
-              onChange={(event) => {
-                setError("");
-                setWarning("");
-                updateField("taxId", event.target.value);
-              }}
-              className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-              placeholder={taxValidationPreview.isGSTMode ? "15 character GSTIN" : taxMeta.placeholder}
-            />
-          </FormField>
-        ) : null}
-
-        <FormField label="Opening Balance">
-          <input
-            type="number"
-            min={0}
-            value={form.openingBalance}
-            onChange={(event) => updateField("openingBalance", parseNumber(event.target.value))}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-          />
-        </FormField>
-
-        <FormField label="Credit Monitoring" hint="Amount or overdue days">
-          <label className="flex items-center gap-2 text-xs text-slate-600">
-            <input
-              type="checkbox"
-              checked={form.creditLimitEnabled}
-              onChange={(event) => updateField("creditLimitEnabled", event.target.checked)}
-              className="h-4 w-4 rounded border-slate-300"
-            />
-            Enable limit checks
-          </label>
-
-          <select
-            value={form.creditLimitType}
-            onChange={(event) => updateField("creditLimitType", event.target.value as PartyDraft["creditLimitType"])}
-            disabled={!form.creditLimitEnabled}
-            className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none disabled:bg-slate-50"
-          >
-            <option value="Amount">By Amount</option>
-            <option value="Days">By Overdue Days</option>
-          </select>
-
-          {form.creditLimitType === "Days" ? (
-            <input
-              type="number"
-              min={0}
-              value={form.creditLimitDays}
-              onChange={(event) => updateField("creditLimitDays", parseNumber(event.target.value))}
-              disabled={!form.creditLimitEnabled}
-              className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none disabled:bg-slate-50"
-              placeholder="Allowed overdue days"
-            />
-          ) : (
-            <input
-              type="number"
-              min={0}
-              value={form.creditLimit}
-              onChange={(event) => updateField("creditLimit", parseNumber(event.target.value))}
-              disabled={!form.creditLimitEnabled}
-              className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none disabled:bg-slate-50"
-              placeholder="Credit amount limit"
-            />
-          )}
-        </FormField>
-
-        <FormField label="Notes" className="md:col-span-2">
-          <textarea
-            value={form.notes}
-            onChange={(event) => updateField("notes", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            rows={3}
-            placeholder="Internal notes, contact preferences, or reminders."
-          />
-        </FormField>
-
-        <div className="md:col-span-2">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-slate-700">Attachments</p>
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+      <div className="space-y-4">
+        <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">Basic Details</p>
+          <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <FormField label="Name" className="md:col-span-2">
               <input
-                type="file"
-                multiple
-                className="hidden"
-                onChange={(event) => addAttachments(event.target.files)}
+                value={form.name}
+                onChange={(event) => updateField("name", event.target.value)}
+                className={inputClassName}
+                placeholder="Party legal name"
               />
-              <Plus className="h-3.5 w-3.5" />
-              Add Files
-            </label>
+            </FormField>
+
+            <FormField label="Contact Type">
+              <select
+                value={selectedContactType}
+                onChange={(event) => {
+                  const nextType = event.target.value as PartyDraft["contactType"];
+                  setError("");
+                  setWarning("");
+                  updateField("contactType", nextType);
+                  if (form.type === "Customer") {
+                    updateField("customerType", nextType as PartyDraft["customerType"]);
+                  }
+                  if (nextType === "Individual") {
+                    updateField("taxId", "");
+                  }
+                }}
+                className={inputClassName}
+              >
+                <option value="Individual">Individual</option>
+                <option value="Business">Business</option>
+              </select>
+            </FormField>
+
+            <FormField label="Phone">
+              <input
+                value={form.phone}
+                onChange={(event) => updateField("phone", event.target.value)}
+                className={inputClassName}
+                placeholder="+1 555 000 1234"
+              />
+            </FormField>
+
+            <FormField label="Email" className="md:col-span-2">
+              <input
+                value={form.email}
+                onChange={(event) => updateField("email", event.target.value)}
+                className={inputClassName}
+                placeholder="finance@party.com"
+              />
+            </FormField>
           </div>
-          {form.attachments?.length ? (
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {form.attachments.map((file) => (
-                <div
-                  key={file.name}
-                  className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"
-                >
-                  <div>
-                    <p className="font-semibold text-slate-700">{file.name}</p>
-                    <p>
-                      {(file.size / 1024).toFixed(1)} KB | {file.type || "document"}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(file.name)}
-                    className="h-7 w-7 rounded-full border border-slate-200 bg-white hover:bg-rose-50 flex items-center justify-center"
-                  >
-                    <Trash2 className="h-3.5 w-3.5 text-rose-500" />
-                  </button>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">Address And Tax</p>
+          <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <FormField label="Country">
+              <select
+                value={form.country}
+                onChange={(event) => {
+                  const nextCountry = event.target.value;
+                  updateField("country", nextCountry);
+                  if (String(nextCountry || "").trim().toLowerCase() !== "india") {
+                    updateField("taxId", "");
+                  }
+                }}
+                className={inputClassName}
+              >
+                <option value="">Select country</option>
+                {COUNTRIES.map((country) => (
+                  <option key={country} value={country}>
+                    {country}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+
+            <FormField label="State / Region">
+              <input
+                value={form.state}
+                onChange={(event) => updateField("state", event.target.value)}
+                className={inputClassName}
+                placeholder="State, province, or region"
+              />
+            </FormField>
+
+            {showGSTINField ? (
+              <FormField label="GSTIN" hint="Shown only for Business + India" className="md:col-span-2">
+                <input
+                  value={form.taxId}
+                  onChange={(event) => {
+                    setError("");
+                    setWarning("");
+                    updateField("taxId", event.target.value);
+                  }}
+                  className={inputClassName}
+                  placeholder="15 character GSTIN"
+                />
+              </FormField>
+            ) : null}
+
+            <FormField label="Address" className="md:col-span-2">
+              <textarea
+                value={form.address}
+                onChange={(event) => updateField("address", event.target.value)}
+                className={inputClassName}
+                rows={2}
+                placeholder="Street, city, zip/postal"
+              />
+            </FormField>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">Accounting</p>
+          <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <FormField label="Opening Balance">
+              <input
+                type="number"
+                min={0}
+                value={form.openingBalance}
+                onChange={(event) => updateField("openingBalance", parseNumber(event.target.value))}
+                className={inputClassName}
+              />
+            </FormField>
+
+            <FormField label="Credit Monitoring" hint="Amount or overdue days">
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={form.creditLimitEnabled}
+                  onChange={(event) => updateField("creditLimitEnabled", event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                Enable limit checks
+              </label>
+
+              <select
+                value={form.creditLimitType}
+                onChange={(event) =>
+                  updateField("creditLimitType", event.target.value as PartyDraft["creditLimitType"])
+                }
+                disabled={!form.creditLimitEnabled}
+                className={`mt-2 ${mutedInputClassName}`}
+              >
+                <option value="Amount">By Amount</option>
+                <option value="Days">By Overdue Days</option>
+              </select>
+
+              {form.creditLimitType === "Days" ? (
+                <input
+                  type="number"
+                  min={0}
+                  value={form.creditLimitDays}
+                  onChange={(event) => updateField("creditLimitDays", parseNumber(event.target.value))}
+                  disabled={!form.creditLimitEnabled}
+                  className={`mt-2 ${mutedInputClassName}`}
+                  placeholder="Allowed overdue days"
+                />
+              ) : (
+                <input
+                  type="number"
+                  min={0}
+                  value={form.creditLimit}
+                  onChange={(event) => updateField("creditLimit", parseNumber(event.target.value))}
+                  disabled={!form.creditLimitEnabled}
+                  className={`mt-2 ${mutedInputClassName}`}
+                  placeholder="Credit amount limit"
+                />
+              )}
+            </FormField>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">Notes And Files</p>
+          <div className="mt-3 space-y-4">
+            <FormField label="Notes">
+              <textarea
+                value={form.notes}
+                onChange={(event) => updateField("notes", event.target.value)}
+                className={inputClassName}
+                rows={3}
+                placeholder="Internal notes, contact preferences, or reminders."
+              />
+            </FormField>
+
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-slate-700">Attachments</p>
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                  <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(event) => addAttachments(event.target.files)}
+                  />
+                  <Plus className="h-3.5 w-3.5" />
+                  Add Files
+                </label>
+              </div>
+              {form.attachments?.length ? (
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {form.attachments.map((file) => (
+                    <div
+                      key={file.name}
+                      className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"
+                    >
+                      <div>
+                        <p className="font-semibold text-slate-700">{file.name}</p>
+                        <p>
+                          {(file.size / 1024).toFixed(1)} KB | {file.type || "document"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(file.name)}
+                        className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-rose-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              ) : (
+                <p className="mt-2 text-xs text-slate-500">Upload KYC docs, agreements, or compliance files.</p>
+              )}
             </div>
-          ) : (
-            <p className="mt-2 text-xs text-slate-500">Upload KYC docs, agreements, or compliance files.</p>
-          )}
-        </div>
+          </div>
+        </section>
 
         {form.audit ? (
-          <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
             <p className="font-semibold text-slate-700">Audit Trail</p>
             <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <p>Created: {form.audit.createdAt} by {form.audit.createdBy}</p>

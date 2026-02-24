@@ -139,7 +139,7 @@ export default function Parties() {
     <div className="mx-auto max-w-[1360px] space-y-4 pb-24">
       <PageHeader
         title="Parties"
-        subtitle={`Customers & Suppliers \u2022 Create/Edit modal \u2022 Statement ready`}
+        subtitle="Customers and suppliers with statement tracking"
         right={
           <div className="flex flex-wrap items-center gap-2">
             <Tabs
@@ -156,7 +156,7 @@ export default function Parties() {
               className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-slate-800"
             >
               <Plus className="h-4 w-4" />
-              Add Party
+              {tab === "Customer" ? "Add Customer" : "Add Supplier"}
             </button>
           </div>
         }
