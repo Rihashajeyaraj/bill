@@ -3,6 +3,7 @@ import { Plus, Trash2 } from "lucide-react";
 import Modal from "../../components/Modal";
 import FormField from "../../components/FormField";
 import GradientButton from "../../components/GradientButton";
+import { getNextItemCode } from "./store";
 import { buildTaxLabel, parseNumber, taxContext } from "./utils";
 
 const UNITS = ["pcs", "kg", "box", "litre", "mtr", "set", "hr"];
@@ -65,24 +66,26 @@ export default function ItemFormModal({
   useEffect(() => {
     if (!open) return;
     setError("");
-    setForm(initialItem ? { ...defaultItem(initialItem.type), ...initialItem } : defaultItem("Product"));
-  }, [open, initialItem]);
+    const next = initialItem ? { ...defaultItem(initialItem.type), ...initialItem } : defaultItem("Product");
+    if (mode !== "edit" && !String(next.itemCode || "").trim()) {
+      next.itemCode = getNextItemCode(next.type);
+    }
+    if (!String(next.sku || "").trim()) {
+      next.sku = next.itemCode || "";
+    }
+    setForm(next);
+  }, [open, initialItem, mode]);
 
   const taxCfg = useMemo(() => taxContext(country, form.type), [country, form.type]);
   const showStock = form.type === "Product";
+  const itemLabel = form.type === "Service" ? "Service" : "Product";
+  const modalTitle = mode === "edit" ? `Edit ${itemLabel}` : `Create ${itemLabel}`;
+  const submitLabel = mode === "edit" ? `Update ${itemLabel}` : `Create ${itemLabel}`;
+  const inputClassName =
+    "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100";
 
   function updateField(key, value) {
     setForm((prev) => ({ ...prev, [key]: value }));
-  }
-
-  function updateType(next) {
-    setForm((prev) => ({
-      ...prev,
-      type: next,
-      trackInventory: next === "Product" ? prev.trackInventory : false,
-      hsn: next === "Product" ? prev.hsn : "",
-      sac: next === "Service" ? prev.sac : ""
-    }));
   }
 
   function addPriceLevel() {
@@ -168,7 +171,7 @@ export default function ItemFormModal({
   return (
     <Modal
       open={open}
-      title={mode === "edit" ? "Edit Item" : "Add Item"}
+      title={modalTitle}
       onClose={onClose}
       footer={
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -182,226 +185,213 @@ export default function ItemFormModal({
               Cancel
             </button>
             <GradientButton onClick={handleSave}>
-              {mode === "edit" ? "Update Item" : "Create Item"}
+              {submitLabel}
             </GradientButton>
           </div>
         </div>
       }
     >
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <FormField label="Item Type">
-          <select
-            value={form.type}
-            onChange={(event) => updateType(event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none"
-          >
-            <option value="Product">Product</option>
-            <option value="Service">Service</option>
-          </select>
-        </FormField>
+      <div className="space-y-4">
+        <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <FormField label="Item Name">
+              <input
+                value={form.name}
+                onChange={(event) => updateField("name", event.target.value)}
+                className={inputClassName}
+                placeholder="Premium marble, consulting, etc."
+              />
+            </FormField>
 
-        <FormField label="Status">
-          <select
-            value={form.status}
-            onChange={(event) => updateField("status", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none"
-          >
-            <option value="Active">Active</option>
-            <option value="Inactive">Inactive</option>
-          </select>
-        </FormField>
+            <FormField label="Status">
+              <select
+                value={form.status}
+                onChange={(event) => updateField("status", event.target.value)}
+                className={inputClassName}
+              >
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+              </select>
+            </FormField>
 
-        <FormField label="Item Name">
-          <input
-            value={form.name}
-            onChange={(event) => updateField("name", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder="Premium marble, consulting, etc."
-          />
-        </FormField>
+            <FormField label={taxCfg.codeLabel} hint={form.type === "Service" ? "Required for Service" : "Optional"}>
+              <input
+                value={form.type === "Service" ? form.sac : form.hsn}
+                onChange={(event) =>
+                  updateField(form.type === "Service" ? "sac" : "hsn", event.target.value)
+                }
+                className={inputClassName}
+                placeholder={form.type === "Service" ? "SAC code" : "HSN code"}
+              />
+            </FormField>
 
-        <FormField label="Item ID">
-          <input
-            value={form.itemCode}
-            onChange={(event) => updateField("itemCode", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder="ITEM-1001"
-          />
-        </FormField>
+            <FormField label="Unit of Measure">
+              <input
+                list="item-units"
+                value={form.unit}
+                onChange={(event) => updateField("unit", event.target.value)}
+                className={inputClassName}
+                placeholder="pcs, kg, hr"
+              />
+              <datalist id="item-units">
+                {UNITS.map((unit) => (
+                  <option key={unit} value={unit} />
+                ))}
+              </datalist>
+            </FormField>
 
-        <FormField label="Category">
-          <input
-            value={form.category}
-            onChange={(event) => updateField("category", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder="Tiles, Services, Hardware"
-          />
-        </FormField>
+            <FormField label="Category">
+              <input
+                value={form.category}
+                onChange={(event) => updateField("category", event.target.value)}
+                className={inputClassName}
+                placeholder="Tiles, Services, Hardware"
+              />
+            </FormField>
 
-        <FormField label="Description" className="md:col-span-2">
-          <textarea
-            value={form.description}
-            onChange={(event) => updateField("description", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            rows={2}
-            placeholder="Short description for invoices."
-          />
-        </FormField>
+            <FormField label="SKU">
+              <input
+                value={form.sku}
+                onChange={(event) => updateField("sku", event.target.value)}
+                className={inputClassName}
+                placeholder="SKU-001"
+              />
+            </FormField>
 
-        <FormField label={taxCfg.codeLabel}>
-          <input
-            value={form.type === "Service" ? form.sac : form.hsn}
-            onChange={(event) =>
-              updateField(form.type === "Service" ? "sac" : "hsn", event.target.value)
-            }
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder={form.type === "Service" ? "SAC code" : "HSN code"}
-          />
-          {form.type === "Service" ? (
-            <p className="mt-2 text-xs text-slate-500">SAC code is mandatory for services.</p>
-          ) : null}
-        </FormField>
+            <FormField label="Barcode" className="md:col-span-2">
+              <input
+                value={form.barcode}
+                onChange={(event) => updateField("barcode", event.target.value)}
+                className={inputClassName}
+                placeholder="EAN / UPC"
+              />
+            </FormField>
 
-        <FormField label="Unit of Measure">
-          <input
-            list="item-units"
-            value={form.unit}
-            onChange={(event) => updateField("unit", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder="pcs, kg, hr"
-          />
-          <datalist id="item-units">
-            {UNITS.map((unit) => (
-              <option key={unit} value={unit} />
-            ))}
-          </datalist>
-        </FormField>
+            <FormField label="Description" className="md:col-span-2">
+              <textarea
+                value={form.description}
+                onChange={(event) => updateField("description", event.target.value)}
+                className={inputClassName}
+                rows={2}
+                placeholder="Short description for invoices."
+              />
+            </FormField>
+          </div>
+        </section>
 
-        <FormField label="Sales Rate">
-          <input
-            type="number"
-            min={0}
-            value={form.salesRate}
-            onChange={(event) => updateField("salesRate", parseNumber(event.target.value))}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-          />
-        </FormField>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <FormField label="Sales Rate">
+              <input
+                type="number"
+                min={0}
+                value={form.salesRate}
+                onChange={(event) => updateField("salesRate", parseNumber(event.target.value))}
+                className={inputClassName}
+              />
+            </FormField>
 
-        <FormField label="Purchase Rate">
-          <input
-            type="number"
-            min={0}
-            value={form.purchaseRate}
-            onChange={(event) => updateField("purchaseRate", parseNumber(event.target.value))}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-          />
-        </FormField>
+            <FormField label="Purchase Rate">
+              <input
+                type="number"
+                min={0}
+                value={form.purchaseRate}
+                onChange={(event) => updateField("purchaseRate", parseNumber(event.target.value))}
+                className={inputClassName}
+              />
+            </FormField>
 
-        <FormField label={taxCfg.label}>
-          <input
-            list="tax-rate-options"
-            value={form.taxRate}
-            onChange={(event) => updateField("taxRate", parseNumber(event.target.value))}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder="0"
-          />
-          <datalist id="tax-rate-options">
-            {taxCfg.rates.map((rate) => (
-              <option key={rate} value={rate} />
-            ))}
-          </datalist>
-          <p className="mt-2 text-xs text-slate-500">
-            Default label: {buildTaxLabel(country, parseNumber(form.taxRate))}
-          </p>
-        </FormField>
+            <FormField label={taxCfg.label}>
+              <input
+                list="tax-rate-options"
+                value={form.taxRate}
+                onChange={(event) => updateField("taxRate", parseNumber(event.target.value))}
+                className={inputClassName}
+                placeholder="0"
+              />
+              <datalist id="tax-rate-options">
+                {taxCfg.rates.map((rate) => (
+                  <option key={rate} value={rate} />
+                ))}
+              </datalist>
+              <p className="mt-2 text-xs text-slate-500">
+                Default label: {buildTaxLabel(country, parseNumber(form.taxRate))}
+              </p>
+            </FormField>
 
-        <FormField label="Tax Inclusive?">
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            <input
-              type="checkbox"
-              checked={form.taxInclusive}
-              onChange={(event) => updateField("taxInclusive", event.target.checked)}
-              className="h-4 w-4 rounded border-slate-300"
-            />
-            Prices include tax
-          </label>
-        </FormField>
-
-        {showStock ? (
-          <>
-            <FormField label="Track Inventory">
-              <label className="flex items-center gap-2 text-sm text-slate-600">
+            <FormField label="Tax Inclusive">
+              <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
                 <input
                   type="checkbox"
-                  checked={form.trackInventory}
-                  onChange={(event) => updateField("trackInventory", event.target.checked)}
+                  checked={form.taxInclusive}
+                  onChange={(event) => updateField("taxInclusive", event.target.checked)}
                   className="h-4 w-4 rounded border-slate-300"
                 />
-                Track stock for this product
+                Prices include tax
               </label>
             </FormField>
-
-            <FormField label="Opening Stock">
-              <input
-                type="number"
-                min={0}
-                value={form.openingStock}
-                onChange={(event) => updateField("openingStock", parseNumber(event.target.value))}
-                className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-                disabled={!form.trackInventory}
-              />
-            </FormField>
-
-            <FormField label="Opening Stock Value">
-              <input
-                type="number"
-                min={0}
-                value={form.openingStockValue}
-                onChange={(event) => updateField("openingStockValue", parseNumber(event.target.value))}
-                className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-                disabled={!form.trackInventory}
-              />
-            </FormField>
-
-            <FormField label="Low Stock Alert">
-              <input
-                type="number"
-                min={0}
-                value={form.lowStockAlert}
-                onChange={(event) => updateField("lowStockAlert", parseNumber(event.target.value))}
-                className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-                disabled={!form.trackInventory}
-              />
-            </FormField>
-          </>
-        ) : (
-          <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            Inventory is disabled for services.
           </div>
-        )}
+        </section>
 
-        <FormField label="SKU / Item Code">
-          <input
-            value={form.sku}
-            onChange={(event) => updateField("sku", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder="SKU-001"
-          />
-        </FormField>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          {showStock ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <FormField label="Track Inventory">
+                <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={form.trackInventory}
+                    onChange={(event) => updateField("trackInventory", event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  Track stock for this product
+                </label>
+              </FormField>
 
-        <FormField label="Barcode">
-          <input
-            value={form.barcode}
-            onChange={(event) => updateField("barcode", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder="EAN / UPC"
-          />
-        </FormField>
+              <FormField label="Opening Stock">
+                <input
+                  type="number"
+                  min={0}
+                  value={form.openingStock}
+                  onChange={(event) => updateField("openingStock", parseNumber(event.target.value))}
+                  className={inputClassName}
+                  disabled={!form.trackInventory}
+                />
+              </FormField>
 
-        <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <FormField label="Opening Stock Value">
+                <input
+                  type="number"
+                  min={0}
+                  value={form.openingStockValue}
+                  onChange={(event) => updateField("openingStockValue", parseNumber(event.target.value))}
+                  className={inputClassName}
+                  disabled={!form.trackInventory}
+                />
+              </FormField>
+
+              <FormField label="Low Stock Alert">
+                <input
+                  type="number"
+                  min={0}
+                  value={form.lowStockAlert}
+                  onChange={(event) => updateField("lowStockAlert", parseNumber(event.target.value))}
+                  className={inputClassName}
+                  disabled={!form.trackInventory}
+                />
+              </FormField>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              Inventory is disabled for services.
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-semibold text-slate-900">Multiple Price Levels</p>
+              <p className="text-sm font-semibold text-slate-900">Price Levels</p>
               <p className="text-xs text-slate-500">Add wholesale or tiered pricing.</p>
             </div>
             <button
@@ -410,7 +400,7 @@ export default function ItemFormModal({
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
             >
               <Plus className="h-3.5 w-3.5" />
-              Add Level
+              Add
             </button>
           </div>
           {form.priceLevels.length ? (
@@ -434,7 +424,7 @@ export default function ItemFormModal({
                   <button
                     type="button"
                     onClick={() => removePriceLevel(level.id)}
-                    className="h-7 w-7 rounded-full border border-slate-200 bg-white hover:bg-rose-50 flex items-center justify-center"
+                    className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-rose-50"
                   >
                     <Trash2 className="h-3.5 w-3.5 text-rose-500" />
                   </button>
@@ -444,12 +434,12 @@ export default function ItemFormModal({
           ) : (
             <p className="mt-3 text-xs text-slate-500">No price levels configured.</p>
           )}
-        </div>
+        </section>
 
-        <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+        <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-semibold text-slate-900">Country-wise Tax Mapping</p>
+              <p className="text-sm font-semibold text-slate-900">Country Tax Mapping</p>
               <p className="text-xs text-slate-500">Override tax for specific countries.</p>
             </div>
             <button
@@ -458,7 +448,7 @@ export default function ItemFormModal({
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
             >
               <Plus className="h-3.5 w-3.5" />
-              Add Mapping
+              Add
             </button>
           </div>
           {form.taxMappings.length ? (
@@ -482,7 +472,7 @@ export default function ItemFormModal({
                   <button
                     type="button"
                     onClick={() => removeTaxMapping(row.id)}
-                    className="h-7 w-7 rounded-full border border-slate-200 bg-white hover:bg-rose-50 flex items-center justify-center"
+                    className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-rose-50"
                   >
                     <Trash2 className="h-3.5 w-3.5 text-rose-500" />
                   </button>
@@ -492,7 +482,7 @@ export default function ItemFormModal({
           ) : (
             <p className="mt-3 text-xs text-slate-500">No custom tax mappings added.</p>
           )}
-        </div>
+        </section>
       </div>
     </Modal>
   );

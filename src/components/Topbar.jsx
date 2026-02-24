@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { ChevronDown, LogOut, Search } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, LogOut } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { authGetRole, authGetUser, authLogout } from "../services/auth.service";
 import { useOrganization } from "../context/OrganizationContext";
@@ -12,6 +12,67 @@ export default function Topbar() {
   const companyName = String(company?.companyName || "").trim();
 
   const [menu, setMenu] = useState(false);
+  const [now, setNow] = useState(() => new Date());
+  const menuRef = useRef(null);
+
+  const weekdayText = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        weekday: "long"
+      }).format(now),
+    [now]
+  );
+  const dateText = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        day: "2-digit",
+        month: "short",
+        year: "numeric"
+      }).format(now),
+    [now]
+  );
+  const timeText = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true
+      }).format(now),
+    [now]
+  );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!menu) return;
+
+    function handleOutside(event) {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(event.target)) {
+        setMenu(false);
+      }
+    }
+
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setMenu(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("touchstart", handleOutside);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("touchstart", handleOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [menu]);
 
   async function logout() {
     await authLogout();
@@ -21,18 +82,16 @@ export default function Topbar() {
   return (
     <header className="app-topbar sticky top-0 z-40 backdrop-blur">
       <div className="px-5 py-4 flex items-center justify-between gap-3">
-        <div className="hidden md:flex items-center gap-2 flex-1">
-          <div className="relative">
-            <Search className="app-topbar-subtitle absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" />
-            <input
-              placeholder="Search (optional)"
-              className="app-topbar-search w-[320px] rounded-2xl px-10 py-2 text-sm outline-none"
-              style={{ boxShadow: "none" }}
-            />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-col">
+            <p className="app-topbar-title truncate text-base font-semibold">{companyName || "My Shop"}</p>
+            <p className="app-topbar-subtitle text-xs">
+              {weekdayText} | {dateText} | {timeText}
+            </p>
           </div>
         </div>
 
-        <div className="relative">
+        <div className="relative" ref={menuRef}>
           <button
             onClick={() => setMenu((v) => !v)}
             className="app-topbar-user-btn rounded-2xl px-3 py-2 shadow-soft flex items-center gap-2"

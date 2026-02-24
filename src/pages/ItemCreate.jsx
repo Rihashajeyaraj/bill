@@ -108,7 +108,7 @@ export default function ItemCreate() {
   }
 
   function handleAssignCode() {
-    updateItem({ itemCode: getNextItemCode() });
+    updateItem({ itemCode: getNextItemCode(item.type === "SERVICE" ? "Service" : "Product") });
   }
 
   function handleLogoFile(e) {

@@ -168,7 +168,7 @@ export default function Items() {
     <div className="mx-auto max-w-[1360px] space-y-4 pb-24">
       <PageHeader
         title="Items"
-        subtitle="Products & Services • Tax ready • Inventory optional"
+        subtitle="Products and services with tax and inventory controls"
         right={
           <div className="flex flex-wrap items-center gap-2">
             <Tabs
@@ -185,7 +185,7 @@ export default function Items() {
               className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-slate-800"
             >
               <Plus className="h-4 w-4" />
-              Add Item
+              {tab === "Service" ? "Add Service" : "Add Product"}
             </button>
           </div>
         }
@@ -453,3 +453,4 @@ export default function Items() {
     </div>
   );
 }
+

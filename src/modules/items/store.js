@@ -11,9 +11,11 @@ import { buildTaxLabel, normalizeItemType, normalizeText, parseNumber } from "./
 const CREDIT_NOTES_PREMIUM_KEY = "creditNotesPremiumV1";
 const DEBIT_NOTES_PREMIUM_KEY = "debitNotesPremiumV1";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ITEM_CODE_PREFIX = "ITM-";
 const ITEM_CODE_MIN_DIGITS = 4;
-const ITEM_CODE_SEQUENCE_PATTERN = /^ITM-(\d+)$/i;
+const ITEM_CODE_CONFIG_BY_TYPE = {
+  Product: { prefix: "PRD-", pattern: /^PRD-(\d+)$/i },
+  Service: { prefix: "SER-", pattern: /^SER-(\d+)$/i }
+};
 
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
@@ -44,19 +46,28 @@ function normalizeItemCodeValue(value) {
   return String(value || "").trim().toUpperCase();
 }
 
-function parseItemCodeSequence(value) {
+function itemCodeConfig(type) {
+  const normalizedType = normalizeItemType(type);
+  return ITEM_CODE_CONFIG_BY_TYPE[normalizedType] || ITEM_CODE_CONFIG_BY_TYPE.Product;
+}
+
+function parseItemCodeSequence(value, type) {
   const normalized = normalizeItemCodeValue(value);
-  const match = normalized.match(ITEM_CODE_SEQUENCE_PATTERN);
+  const match = normalized.match(itemCodeConfig(type).pattern);
   if (!match) return 0;
   const sequence = Number(match[1]);
   if (!Number.isFinite(sequence) || sequence <= 0) return 0;
   return Math.floor(sequence);
 }
 
-function formatItemCodeSequence(sequence) {
+function formatItemCodeSequence(sequence, type) {
   const safeSequence = Math.max(1, Number(sequence) || 1);
   const width = Math.max(ITEM_CODE_MIN_DIGITS, String(safeSequence).length);
-  return `${ITEM_CODE_PREFIX}${String(safeSequence).padStart(width, "0")}`;
+  return `${itemCodeConfig(type).prefix}${String(safeSequence).padStart(width, "0")}`;
+}
+
+function resolveItemTypeForSequence(item) {
+  return normalizeItemType(item?.type || item?.item_type || item?.metadata?.type || "Product");
 }
 
 function listTakenItemCodes(list, itemIdToIgnore) {
@@ -69,26 +80,29 @@ function listTakenItemCodes(list, itemIdToIgnore) {
   return taken;
 }
 
-function getMaxItemCodeSequence(list, itemIdToIgnore) {
+function getMaxItemCodeSequence(list, itemIdToIgnore, type) {
+  const targetType = normalizeItemType(type);
   return ensureArray(list).reduce((max, item) => {
     if (itemIdToIgnore && item?.id === itemIdToIgnore) return max;
-    const sequence = parseItemCodeSequence(extractRawItemCode(item));
+    if (resolveItemTypeForSequence(item) !== targetType) return max;
+    const sequence = parseItemCodeSequence(extractRawItemCode(item), targetType);
     return sequence > max ? sequence : max;
   }, 0);
 }
 
-function generateUniqueItemCode(list, itemIdToIgnore) {
+function generateUniqueItemCode(list, itemIdToIgnore, type) {
   const taken = listTakenItemCodes(list, itemIdToIgnore);
-  let nextSequence = getMaxItemCodeSequence(list, itemIdToIgnore) + 1;
-  let candidate = formatItemCodeSequence(nextSequence);
+  const targetType = normalizeItemType(type);
+  let nextSequence = getMaxItemCodeSequence(list, itemIdToIgnore, targetType) + 1;
+  let candidate = formatItemCodeSequence(nextSequence, targetType);
   while (taken.has(candidate)) {
     nextSequence += 1;
-    candidate = formatItemCodeSequence(nextSequence);
+    candidate = formatItemCodeSequence(nextSequence, targetType);
   }
   return candidate;
 }
 
-function resolveItemCodeForUpsert({ draftItemCode, id, list }) {
+function resolveItemCodeForUpsert({ draftItemCode, id, list, type }) {
   const existing = ensureArray(list).find((entry) => entry?.id === id);
   const requestedCode = normalizeItemCodeValue(draftItemCode);
   const existingCode = normalizeItemCodeValue(extractRawItemCode(existing));
@@ -97,7 +111,7 @@ function resolveItemCodeForUpsert({ draftItemCode, id, list }) {
     const taken = listTakenItemCodes(list, id);
     if (!taken.has(preferredCode)) return preferredCode;
   }
-  return generateUniqueItemCode(list, id);
+  return generateUniqueItemCode(list, id, type);
 }
 
 function normalizeItem(raw) {
@@ -208,8 +222,8 @@ function listRawItems() {
   return ensureArray(lsGetOrganizationScoped(LS_KEYS.items, []));
 }
 
-export function getNextItemCode() {
-  return generateUniqueItemCode(listRawItems(), null);
+export function getNextItemCode(type = "Product") {
+  return generateUniqueItemCode(listRawItems(), null, type);
 }
 
 export function listItems() {
@@ -222,10 +236,12 @@ export function upsertItem(draft, country) {
   const list = listRawItems();
   const now = new Date().toISOString();
   const id = draft.id || uid("itm_");
+  const itemType = normalizeItemType(draft?.type);
   const itemCode = resolveItemCodeForUpsert({
     draftItemCode: draft?.itemCode,
     id,
-    list
+    list,
+    type: itemType
   });
   const taxLabel = buildTaxLabel(country, parseNumber(draft.taxRate));
 
@@ -314,10 +330,12 @@ export async function upsertItemRemote(draft, country) {
 
   const list = listRawItems();
   const id = draft?.id || uid("itm_");
+  const itemType = normalizeItemType(draft?.type);
   const itemCode = resolveItemCodeForUpsert({
     draftItemCode: draft?.itemCode,
     id,
-    list
+    list,
+    type: itemType
   });
   const incoming = normalizeItem({
     ...draft,
