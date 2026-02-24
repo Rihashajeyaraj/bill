@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { BarChart3, FileSpreadsheet, Plus, Search, Trash2 } from "lucide-react";
+import { BarChart3, Clock3, Eye, FileSpreadsheet, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { createPortal } from "react-dom";
 import PageHeader from "../components/PageHeader";
 import Tabs from "../components/Tabs";
 import Badge from "../components/Badge";
@@ -30,6 +31,9 @@ export default function Items() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState("create");
   const [activeItem, setActiveItem] = useState(null);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewItem, setViewItem] = useState(null);
+  const [actionMenu, setActionMenu] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyItem, setHistoryItem] = useState(null);
   const [historyRows, setHistoryRows] = useState([]);
@@ -57,13 +61,12 @@ export default function Items() {
     });
   }, [items, tab, statusFilter, search]);
 
-  const tradeSummaryByItem = useMemo(() => {
-    const map = new Map();
-    filtered.forEach((item) => {
-      map.set(item.id, getItemTradeSummary(item.id));
-    });
-    return map;
-  }, [filtered]);
+  const viewTradeSummary = useMemo(() => {
+    if (!viewItem?.id) {
+      return { totalSales: 0, totalPurchase: 0, salesQty: 0, purchaseQty: 0 };
+    }
+    return getItemTradeSummary(viewItem.id);
+  }, [viewItem]);
 
   const summary = useMemo(() => {
     const scoped = items.filter((item) => item.type === tab);
@@ -95,6 +98,29 @@ export default function Items() {
     };
   }, [toast]);
 
+  useEffect(() => {
+    function handleClickOutside(event) {
+      const target = event.target;
+      if (target?.closest?.("[data-item-actions-root='true']")) return;
+      if (target?.closest?.("[data-item-actions-menu='true']")) return;
+      setActionMenu(null);
+    }
+    window.addEventListener("pointerdown", handleClickOutside);
+    return () => window.removeEventListener("pointerdown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    function closeActionMenu() {
+      setActionMenu(null);
+    }
+    window.addEventListener("resize", closeActionMenu);
+    window.addEventListener("scroll", closeActionMenu, true);
+    return () => {
+      window.removeEventListener("resize", closeActionMenu);
+      window.removeEventListener("scroll", closeActionMenu, true);
+    };
+  }, []);
+
   function openCreate() {
     setActiveItem({ type: tab });
     setModalMode("create");
@@ -110,6 +136,11 @@ export default function Items() {
   function closeModal() {
     setModalOpen(false);
     setActiveItem(null);
+  }
+
+  function openView(item) {
+    setViewItem(item);
+    setViewOpen(true);
   }
 
   async function openPurchaseHistory(item) {
@@ -243,18 +274,13 @@ export default function Items() {
           </div>
         </div>
 
-        <div className="overflow-auto">
-          <table className="w-full min-w-[1200px] text-left text-sm">
+      <div className="relative overflow-x-auto overflow-y-visible">
+          <table className="w-full text-left text-sm">
             <thead className="sticky top-0 bg-slate-50">
               <tr>
-                <th className="px-4 py-3 font-semibold text-slate-700">Product Name</th>
-                <th className="px-4 py-3 font-semibold text-slate-700">Item ID</th>
+                <th className="px-4 py-3 font-semibold text-slate-700">Name</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Type</th>
-                <th className="px-4 py-3 font-semibold text-slate-700">HSN / SAC</th>
                 <th className="px-4 py-3 font-semibold text-slate-700 text-right">Sales Rate</th>
-                <th className="px-4 py-3 font-semibold text-slate-700 text-right">Purchase Rate</th>
-                <th className="px-4 py-3 font-semibold text-slate-700 text-right">Total Purchase</th>
-                <th className="px-4 py-3 font-semibold text-slate-700 text-right">Total Sales</th>
                 <th className="px-4 py-3 font-semibold text-slate-700 text-right">Tax %</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Stock</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Status</th>
@@ -264,7 +290,7 @@ export default function Items() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
                     Loading items...
                   </td>
                 </tr>
@@ -273,23 +299,11 @@ export default function Items() {
                   const usage = computeItemUsage(item);
                   const stock = computeItemStock(item);
                   const canDelete = !usage.used;
-                  const tradeSummary = tradeSummaryByItem.get(item.id) || {
-                    totalPurchase: 0,
-                    totalSales: 0
-                  };
                   return (
                     <tr key={item.id} className="border-t border-slate-100 hover:bg-slate-50/70">
-                      <td className="px-4 py-3">
+                      <td className="relative px-4 py-3">
                         <div className="flex flex-col gap-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void openPurchaseHistory(item);
-                            }}
-                            className="w-fit text-left font-semibold text-slate-900 hover:text-blue-700 hover:underline"
-                          >
-                            {item.name}
-                          </button>
+                          <p className="font-semibold text-slate-900">{item.name}</p>
                           <p className="text-xs text-slate-500">
                             {item.category || "Uncategorized"} | SKU {item.sku || "-"}
                           </p>
@@ -301,24 +315,9 @@ export default function Items() {
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-700">
-                        {item.itemCode || "-"}
-                      </td>
                       <td className="px-4 py-3 text-slate-700">{item.type}</td>
-                      <td className="px-4 py-3 text-slate-700">
-                        {item.type === "Service" ? item.sac || "-" : item.hsn || "-"}
-                      </td>
                       <td className="px-4 py-3 text-right text-slate-700">
                         {formatMoney(item.salesRate, currency)}
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-700">
-                        {formatMoney(item.purchaseRate, currency)}
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-700">
-                        {formatMoney(tradeSummary.totalPurchase, currency)}
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-700">
-                        {formatMoney(tradeSummary.totalSales, currency)}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-700">
                         {item.taxRate ? `${item.taxRate}%` : "-"}
@@ -343,23 +342,37 @@ export default function Items() {
                         <Badge tone={item.status === "Active" ? "success" : "neutral"}>{item.status}</Badge>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="relative inline-flex" data-item-actions-root="true">
                           <button
                             type="button"
-                            onClick={() => openEdit(item)}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                            onClick={(event) => {
+                              const triggerRect = event.currentTarget.getBoundingClientRect();
+                              const menuWidth = 160;
+                              const estimatedMenuHeight = 160;
+                              const left = Math.min(
+                                window.innerWidth - menuWidth - 8,
+                                Math.max(8, triggerRect.right - menuWidth)
+                              );
+                              const preferredTop = triggerRect.bottom + 4;
+                              const top =
+                                preferredTop + estimatedMenuHeight > window.innerHeight - 8
+                                  ? Math.max(8, triggerRect.top - estimatedMenuHeight - 8)
+                                  : preferredTop;
+                              setActionMenu((current) =>
+                                current?.item?.id === item.id
+                                  ? null
+                                  : {
+                                      item,
+                                      canDelete,
+                                      top,
+                                      left
+                                    }
+                              );
+                            }}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                            aria-label="Open actions"
                           >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(item)}
-                            disabled={!canDelete}
-                            title={canDelete ? "Delete" : "Item already used in transactions"}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete
+                            <MoreHorizontal className="h-4 w-4" />
                           </button>
                         </div>
                       </td>
@@ -368,7 +381,7 @@ export default function Items() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={12} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
                     No items found
                   </td>
                 </tr>
@@ -388,6 +401,119 @@ export default function Items() {
           void handleSave(item);
         }}
       />
+
+      {actionMenu && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              data-item-actions-menu="true"
+              className="fixed z-[140] w-40 rounded-xl border border-slate-200 bg-white p-1 shadow-lg"
+              style={{ top: actionMenu.top, left: actionMenu.left }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  const selectedItem = actionMenu.item;
+                  setActionMenu(null);
+                  openView(selectedItem);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                View
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const selectedItem = actionMenu.item;
+                  setActionMenu(null);
+                  openEdit(selectedItem);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const selectedItem = actionMenu.item;
+                  setActionMenu(null);
+                  void openPurchaseHistory(selectedItem);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Clock3 className="h-3.5 w-3.5" />
+                History
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const selectedItem = actionMenu.item;
+                  setActionMenu(null);
+                  void handleDelete(selectedItem);
+                }}
+                disabled={!actionMenu.canDelete}
+                title={actionMenu.canDelete ? "Delete" : "Item already used in transactions"}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            </div>,
+            document.body
+          )
+        : null}
+
+      <Modal
+        open={viewOpen}
+        title={viewItem ? `Item Details - ${viewItem.name}` : "Item Details"}
+        onClose={() => setViewOpen(false)}
+      >
+        {viewItem ? (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Item ID</p>
+                <p className="font-semibold text-slate-900">{viewItem.itemCode || "-"}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Type</p>
+                <p className="font-semibold text-slate-900">{viewItem.type}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Sales Rate</p>
+                <p className="font-semibold text-slate-900">{formatMoney(viewItem.salesRate, currency)}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Purchase Rate</p>
+                <p className="font-semibold text-slate-900">{formatMoney(viewItem.purchaseRate, currency)}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Tax %</p>
+                <p className="font-semibold text-slate-900">{viewItem.taxRate ? `${viewItem.taxRate}%` : "-"}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">HSN / SAC</p>
+                <p className="font-semibold text-slate-900">
+                  {viewItem.type === "Service" ? viewItem.sac || "-" : viewItem.hsn || "-"}
+                </p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Total Purchase</p>
+                <p className="font-semibold text-slate-900">{formatMoney(viewTradeSummary.totalPurchase, currency)}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Total Sales</p>
+                <p className="font-semibold text-slate-900">{formatMoney(viewTradeSummary.totalSales, currency)}</p>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs text-slate-500">Description</p>
+              <p className="font-semibold text-slate-900">{viewItem.description || "-"}</p>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
 
       <Modal
         open={historyOpen}

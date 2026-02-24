@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { FileText, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
 
 import PageHeader from "../components/PageHeader";
 import Tabs from "../components/Tabs";
@@ -29,7 +30,11 @@ export default function Parties() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState("create");
   const [activeParty, setActiveParty] = useState(null);
-  const [openActionId, setOpenActionId] = useState<string | null>(null);
+  const [actionMenu, setActionMenu] = useState<{
+    party: any;
+    top: number;
+    left: number;
+  } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -95,15 +100,28 @@ export default function Parties() {
     function handleClickOutside(event: MouseEvent) {
       const target = event.target as HTMLElement | null;
       if (target?.closest("[data-party-actions-root='true']")) return;
-      setOpenActionId(null);
+      if (target?.closest("[data-party-actions-menu='true']")) return;
+      setActionMenu(null);
     }
     window.addEventListener("pointerdown", handleClickOutside);
     return () => window.removeEventListener("pointerdown", handleClickOutside);
   }, []);
 
   useEffect(() => {
-    setOpenActionId(null);
+    setActionMenu(null);
   }, [tab, search, loading]);
+
+  useEffect(() => {
+    function closeActionMenu() {
+      setActionMenu(null);
+    }
+    window.addEventListener("resize", closeActionMenu);
+    window.addEventListener("scroll", closeActionMenu, true);
+    return () => {
+      window.removeEventListener("resize", closeActionMenu);
+      window.removeEventListener("scroll", closeActionMenu, true);
+    };
+  }, []);
 
   function openCreate() {
     setActiveParty({ type: tab });
@@ -276,51 +294,34 @@ export default function Parties() {
                         <div className="relative inline-flex" data-party-actions-root="true">
                           <button
                             type="button"
-                            onClick={() =>
-                              setOpenActionId((current) => (current === party.id ? null : party.id))
-                            }
+                            onClick={(event) => {
+                              const triggerRect = (event.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                              const menuWidth = 160;
+                              const estimatedMenuHeight = 132;
+                              const left = Math.min(
+                                window.innerWidth - menuWidth - 8,
+                                Math.max(8, triggerRect.right - menuWidth)
+                              );
+                              const preferredTop = triggerRect.bottom + 4;
+                              const top =
+                                preferredTop + estimatedMenuHeight > window.innerHeight - 8
+                                  ? Math.max(8, triggerRect.top - estimatedMenuHeight - 4)
+                                  : preferredTop;
+                              setActionMenu((current) =>
+                                current?.party?.id === party.id
+                                  ? null
+                                  : {
+                                      party,
+                                      top,
+                                      left
+                                    }
+                              );
+                            }}
                             className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                             aria-label="Open actions"
                           >
                             <MoreHorizontal className="h-4 w-4" />
                           </button>
-                          {openActionId === party.id ? (
-                            <div className="absolute right-0 top-10 z-20 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenActionId(null);
-                                  nav(`/app/parties/${party.id}/statement`);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                              >
-                                <FileText className="h-3.5 w-3.5" />
-                                Statement
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenActionId(null);
-                                  openEdit(party);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenActionId(null);
-                                  void handleDelete(party);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Delete
-                              </button>
-                            </div>
-                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -347,6 +348,54 @@ export default function Parties() {
           void handleSave(party);
         }}
       />
+
+      {actionMenu && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              data-party-actions-menu="true"
+              className="fixed z-[140] w-40 rounded-xl border border-slate-200 bg-white p-1 shadow-lg"
+              style={{ top: actionMenu.top, left: actionMenu.left }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  const selected = actionMenu.party;
+                  setActionMenu(null);
+                  nav(`/app/parties/${selected.id}/statement`);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                Statement
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const selected = actionMenu.party;
+                  setActionMenu(null);
+                  openEdit(selected);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const selected = actionMenu.party;
+                  setActionMenu(null);
+                  void handleDelete(selected);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
