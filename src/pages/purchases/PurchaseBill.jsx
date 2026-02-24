@@ -68,6 +68,13 @@ function extractCity(address) {
   return firstSegment || "";
 }
 
+function supplierAddressSummary(supplier) {
+  return [supplier?.address, supplier?.state, supplier?.country]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
 function generateBillNumber() {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2);
@@ -111,6 +118,7 @@ export default function PurchaseBill() {
 
   const [phone, setPhone] = useState(party?.phone || "");
   const [supplierSearchPhone, setSupplierSearchPhone] = useState("");
+  const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
   const [supplierSearchError, setSupplierSearchError] = useState("");
   const [supplierAddress, setSupplierAddress] = useState("");
   const [billNumber, setBillNumber] = useState("");
@@ -215,6 +223,30 @@ export default function PurchaseBill() {
     return Array.from(new Set([...DEFAULT_UNITS, ...itemUnits]));
   }, [items]);
 
+  const supplierLookupResults = useMemo(() => {
+    const query = String(supplierLookupQuery || "").trim().toLowerCase();
+    if (!query) return [];
+    const normalizedPhoneQuery = normalizePhoneForLookup(query);
+    return suppliers
+      .filter((supplier) => {
+        const text = [
+          supplier?.name,
+          supplier?.email,
+          supplier?.address,
+          supplier?.state,
+          supplier?.country
+        ]
+          .map((value) => String(value || "").toLowerCase())
+          .join(" ");
+        const supplierPhone = normalizePhoneForLookup(supplier?.phone);
+        return (
+          text.includes(query) ||
+          (normalizedPhoneQuery && supplierPhone && supplierPhone.includes(normalizedPhoneQuery))
+        );
+      })
+      .slice(0, 8);
+  }, [suppliers, supplierLookupQuery]);
+
   function updateLine(id, patch) {
     setLines((prev) =>
       prev.map((line) => {
@@ -264,6 +296,7 @@ export default function PurchaseBill() {
     setPhone(nextSupplier.phone || "");
     setSupplierAddress(nextSupplier.address || "");
     setSupplierSearchPhone(String(nextSupplier.phone || "").replace(/\D/g, "").slice(-10));
+    setSupplierLookupQuery("");
   }
 
   function handleSupplierPhoneChange(value) {
@@ -277,20 +310,44 @@ export default function PurchaseBill() {
     }
   }
 
+  function handleSupplierLookupChange(value) {
+    setSupplierLookupQuery(value);
+    setSupplierSearchError("");
+  }
+
   function handleSupplierSearch() {
     const normalizedQuery = normalizePhoneForLookup(supplierSearchPhone);
-    if (!normalizedQuery || normalizedQuery.length < 6) {
-      setSupplierSearchError("Enter a valid supplier mobile number.");
+    const phoneDigits = String(supplierSearchPhone || "").replace(/\D/g, "");
+    if (phoneDigits) {
+      if (phoneDigits.length !== 10) {
+        setSupplierSearchError("Enter a valid 10-digit supplier mobile number.");
+        return;
+      }
+      const matchedSupplier = suppliers.find(
+        (supplier) => normalizePhoneForLookup(supplier?.phone) === normalizedQuery
+      );
+      if (!matchedSupplier) {
+        setSupplierSearchError("No supplier found for this mobile number.");
+        return;
+      }
+      applySupplierSelection(matchedSupplier);
       return;
     }
-    const matchedSupplier = suppliers.find(
-      (supplier) => normalizePhoneForLookup(supplier?.phone) === normalizedQuery
-    );
-    if (!matchedSupplier) {
-      setSupplierSearchError("No supplier found for this mobile number.");
+
+    const query = String(supplierLookupQuery || "").trim();
+    if (query.length < 2) {
+      setSupplierSearchError("Enter mobile number or name/email/address to search.");
       return;
     }
-    applySupplierSelection(matchedSupplier);
+    if (supplierLookupResults.length === 1) {
+      applySupplierSelection(supplierLookupResults[0]);
+      return;
+    }
+    if (!supplierLookupResults.length) {
+      setSupplierSearchError("No supplier found for this search.");
+      return;
+    }
+    setSupplierSearchError("Multiple suppliers found. Choose one from the list below.");
   }
 
   function resetSupplier() {
@@ -299,6 +356,7 @@ export default function PurchaseBill() {
     setSupplierAddress("");
     setSupplierSearchError("");
     setSupplierSearchPhone("");
+    setSupplierLookupQuery("");
   }
 
   const computed = useMemo(() => {
@@ -532,29 +590,29 @@ export default function PurchaseBill() {
       <PageHeader title="Purchase Bill" subtitle="Search supplier by mobile and create the bill." />
 
       <Card className="p-5">
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">1. Find Supplier</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Enter supplier mobile number and click search.
-            </p>
-            <div className="mt-4 flex flex-wrap items-end gap-3">
-              <FormField label="Supplier Mobile Number" className="flex-1 min-w-[220px]">
-                <input
-                  value={supplierSearchPhone}
-                  onChange={(event) => handleSupplierPhoneChange(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      handleSupplierSearch();
-                    }
-                  }}
-                  inputMode="numeric"
-                  maxLength={10}
-                  placeholder="Enter 10-digit mobile number"
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
-                />
-              </FormField>
+        <h2 className="text-base font-semibold text-slate-900">1. Find Supplier</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Default search starts with mobile number. You can also search by name, email, or address.
+        </p>
+
+        <div className="mt-4 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4">
+          <FormField label="Supplier Mobile Number">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={supplierSearchPhone}
+                autoFocus
+                onChange={(event) => handleSupplierPhoneChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleSupplierSearch();
+                  }
+                }}
+                inputMode="numeric"
+                maxLength={10}
+                placeholder="Enter 10-digit mobile number"
+                className="min-w-[220px] flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+              />
               <button
                 type="button"
                 onClick={handleSupplierSearch}
@@ -570,40 +628,62 @@ export default function PurchaseBill() {
                   onClick={resetSupplier}
                   className="inline-flex h-[42px] items-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
-                  Change Supplier
+                  Clear
                 </button>
               ) : null}
             </div>
-            {supplierSearchError ? (
-              <p className="mt-2 text-xs font-medium text-rose-600">{supplierSearchError}</p>
-            ) : null}
-          </div>
+          </FormField>
 
-          <div>
-            <FormField label="Or Select Supplier" hint="Fallback option">
-              <select
-                value={partyId}
-                onChange={(event) => {
-                  const selected = suppliers.find((supplier) => supplier.id === event.target.value);
-                  if (!selected) {
-                    resetSupplier();
-                    return;
-                  }
-                  applySupplierSelection(selected);
-                }}
-                disabled={loading}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
-              >
-                <option value="">Select supplier</option>
-                {suppliers.map((supplier) => (
-                  <option key={supplier.id} value={supplier.id}>
-                    {supplier.name}
-                  </option>
-                ))}
-              </select>
-            </FormField>
-          </div>
+          <FormField label="Search by Name / Email / Address">
+            <input
+              value={supplierLookupQuery}
+              onChange={(event) => handleSupplierLookupChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  handleSupplierSearch();
+                }
+              }}
+              placeholder="Type supplier name, email, or address"
+              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+            />
+          </FormField>
         </div>
+
+        {supplierSearchError ? (
+          <p className="mt-2 text-xs font-medium text-rose-600">{supplierSearchError}</p>
+        ) : null}
+
+        {supplierLookupQuery.trim() ? (
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Matching Suppliers
+            </p>
+            {supplierLookupResults.length ? (
+              <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                {supplierLookupResults.map((supplier) => (
+                  <button
+                    key={supplier.id}
+                    type="button"
+                    onClick={() => applySupplierSelection(supplier)}
+                    className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left transition hover:border-blue-200 hover:bg-blue-50/30"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-900">{supplier.name || "-"}</p>
+                      <p className="text-xs text-slate-600">{supplier.phone || "-"}</p>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-600">{supplier.email || "-"}</p>
+                    <p className="mt-1 text-xs text-slate-500">{supplierAddressSummary(supplier) || "-"}</p>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                No supplier found. Try another mobile, name, email, or address.
+              </p>
+            )}
+          </div>
+        ) : null}
       </Card>
 
       {partyId ? (
@@ -916,7 +996,7 @@ export default function PurchaseBill() {
       ) : (
         <Card className="p-6">
           <p className="text-sm text-slate-600">
-            Search supplier by mobile number to load supplier details, then bill ID, bill date, and item entry will appear.
+            Search supplier by mobile, name, email, or address to load supplier details. Then bill ID, bill date, and items will appear.
           </p>
         </Card>
       )}
