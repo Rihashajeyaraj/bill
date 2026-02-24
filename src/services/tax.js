@@ -38,19 +38,20 @@ export function extractStateCodeFromGstin(gstin = "") {
 function resolveSupplyType({ orgState = "", partyState = "", orgGstin = "", partyGstin = "" }) {
   const normalizedOrgState = normalizeText(orgState);
   const normalizedPartyState = normalizeText(partyState);
+  const orgCode = extractStateCodeFromGstin(orgGstin);
+  const partyCode = extractStateCodeFromGstin(partyGstin);
 
-  if (normalizedOrgState && normalizedPartyState) {
+  // Prefer GSTIN-derived state codes when both are available.
+  if (orgCode && partyCode) {
     return {
-      supplyType: normalizedOrgState === normalizedPartyState ? "INTRA" : "INTER",
+      supplyType: orgCode === partyCode ? "INTRA" : "INTER",
       warning: ""
     };
   }
 
-  const orgCode = extractStateCodeFromGstin(orgGstin);
-  const partyCode = extractStateCodeFromGstin(partyGstin);
-  if (orgCode && partyCode) {
+  if (normalizedOrgState && normalizedPartyState) {
     return {
-      supplyType: orgCode === partyCode ? "INTRA" : "INTER",
+      supplyType: normalizedOrgState === normalizedPartyState ? "INTRA" : "INTER",
       warning: ""
     };
   }

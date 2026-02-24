@@ -396,10 +396,6 @@ export default function PurchaseBill() {
       toast.warning("Supplier required", "Select a supplier before saving.");
       return;
     }
-    if (isIndiaOrg && computed.tax?.warning) {
-      toast.warning("State required", computed.tax.warning);
-      return;
-    }
     setSaving(true);
     try {
       const resolvedLines = await resolveLinesWithItems(computed.detailed);

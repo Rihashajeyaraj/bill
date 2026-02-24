@@ -17,11 +17,12 @@ import { formatMoney, normalizeText, outstandingMeta } from "../modules/parties/
 import { authGetUser } from "../services/auth.service";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
+import { validateContactTax } from "../services/customerTax";
 
 export default function Parties() {
   const nav = useNavigate();
   const toast = useToast();
-  const { currency = "" } = useOrganization();
+  const { currency = "", profile: organizationProfile = {}, country: organizationCountry = "" } = useOrganization();
 
   const [tab, setTab] = useState("Customer");
   const [search, setSearch] = useState("");
@@ -108,6 +109,13 @@ export default function Parties() {
 
   async function handleSave(party) {
     const actor = authGetUser()?.name || authGetUser()?.email || "System";
+    const taxValidation = validateContactTax(party, {
+      ...organizationProfile,
+      country: organizationCountry || organizationProfile?.country || ""
+    });
+    if (taxValidation.warning) {
+      toast.warning("Tax ID advisory", taxValidation.warning);
+    }
     try {
       await upsertPartyRemote(party, actor);
       setRefreshKey((prev) => prev + 1);

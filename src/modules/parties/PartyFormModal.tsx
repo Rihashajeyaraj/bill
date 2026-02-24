@@ -6,6 +6,8 @@ import GradientButton from "../../components/GradientButton";
 import { COUNTRIES } from "../../services/company.service";
 import type { PartyAttachment, PartyDraft, PartyType } from "./types";
 import { defaultOpeningBalanceType, parseNumber, taxIdMeta } from "./utils";
+import { useOrganization } from "../../context/OrganizationContext";
+import { normalizeContactType, validateContactTax } from "../../services/customerTax";
 
 interface PartyFormModalProps {
   open: boolean;
@@ -18,6 +20,8 @@ interface PartyFormModalProps {
 function createDraft(type: PartyType): PartyDraft {
   return {
     type,
+    contactType: type === "Customer" ? "Individual" : "Business",
+    customerType: type === "Customer" ? "Individual" : "Business",
     name: "",
     phone: "",
     email: "",
@@ -36,6 +40,18 @@ function createDraft(type: PartyType): PartyDraft {
   };
 }
 
+function withNormalizedContactType(draft: PartyDraft): PartyDraft {
+  const normalized = normalizeContactType(
+    draft.contactType ?? draft.customerType,
+    draft.taxId || draft.gstin || ""
+  );
+  return {
+    ...draft,
+    contactType: normalized,
+    customerType: draft.type === "Customer" ? normalized : draft.customerType
+  };
+}
+
 export default function PartyFormModal({
   open,
   mode,
@@ -43,24 +59,40 @@ export default function PartyFormModal({
   onClose,
   onSave
 }: PartyFormModalProps) {
+  const { profile: organizationProfile = {}, country: organizationCountry = "" } = useOrganization();
   const [form, setForm] = useState<PartyDraft>(() =>
     initialParty
-      ? { ...createDraft(initialParty.type || "Customer"), ...initialParty }
+      ? withNormalizedContactType({ ...createDraft(initialParty.type || "Customer"), ...initialParty })
       : createDraft("Customer")
   );
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
 
   useEffect(() => {
     if (!open) return;
     setError("");
+    setWarning("");
     setForm(
       initialParty
-        ? { ...createDraft(initialParty.type || "Customer"), ...initialParty }
+        ? withNormalizedContactType({ ...createDraft(initialParty.type || "Customer"), ...initialParty })
         : createDraft("Customer")
     );
   }, [open, initialParty]);
 
   const taxMeta = useMemo(() => taxIdMeta(form.country), [form.country]);
+  const orgContext = useMemo(
+    () => ({
+      ...organizationProfile,
+      country: organizationCountry || organizationProfile?.country || ""
+    }),
+    [organizationProfile, organizationCountry]
+  );
+  const taxValidationPreview = useMemo(() => validateContactTax(form, orgContext), [form, orgContext]);
+  const showTaxIdField = taxValidationPreview.showGSTINField;
+  const taxFieldLabel =
+    taxValidationPreview.isGSTMode && taxValidationPreview.isBusiness
+      ? "GSTIN"
+      : `Tax ID (${taxMeta.label})`;
 
   function updateField<K extends keyof PartyDraft>(key: K, value: PartyDraft[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -70,6 +102,7 @@ export default function PartyFormModal({
     setForm((prev) => ({
       ...prev,
       type: next,
+      contactType: normalizeContactType(prev.contactType ?? prev.customerType, prev.taxId),
       openingBalanceType: defaultOpeningBalanceType(next)
     }));
   }
@@ -108,11 +141,27 @@ export default function PartyFormModal({
       state: form.state?.trim() || "",
       address: form.address?.trim() || "",
       taxId: form.taxId?.trim() || "",
+      contactType: normalizeContactType(form.contactType ?? form.customerType, form.taxId),
+      customerType:
+        form.type === "Customer"
+          ? normalizeContactType(form.contactType ?? form.customerType, form.taxId)
+          : "Business",
       openingBalance: Math.abs(parseNumber(form.openingBalance)),
       creditLimit: Math.max(0, parseNumber(form.creditLimit)),
       creditLimitDays: Math.max(0, parseNumber(form.creditLimitDays)),
       creditLimitEnabled: !!form.creditLimitEnabled
     };
+    const taxValidation = validateContactTax(normalized, orgContext);
+    if (taxValidation.error) {
+      setError(taxValidation.error);
+      return;
+    }
+    setWarning(taxValidation.warning || "");
+    normalized.contactType = taxValidation.contactType;
+    normalized.customerType = taxValidation.contactType;
+    normalized.taxId = taxValidation.normalizedTaxId;
+    normalized.gstin = taxValidation.normalizedTaxId;
+
     if (normalized.creditLimitType === "Amount") {
       normalized.creditLimitDays = 0;
     } else {
@@ -128,7 +177,10 @@ export default function PartyFormModal({
       onClose={onClose}
       footer={
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {error ? <p className="text-xs font-semibold text-rose-600">{error}</p> : <span />}
+          <div className="space-y-1">
+            {error ? <p className="text-xs font-semibold text-rose-600">{error}</p> : null}
+            {!error && warning ? <p className="text-xs font-semibold text-amber-600">{warning}</p> : null}
+          </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -148,13 +200,39 @@ export default function PartyFormModal({
         <FormField label="Party Type">
           <select
             value={form.type}
-            onChange={(event) => updateType(event.target.value as PartyType)}
+            onChange={(event) => {
+              setError("");
+              setWarning("");
+              updateType(event.target.value as PartyType);
+            }}
             className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none"
           >
             <option value="Customer">Customer</option>
             <option value="Supplier">Supplier</option>
           </select>
         </FormField>
+
+        <FormField label="Contact Type">
+            <select
+              value={normalizeContactType(form.contactType ?? form.customerType, form.taxId)}
+              onChange={(event) => {
+                const nextType = event.target.value as PartyDraft["contactType"];
+                setError("");
+                setWarning("");
+                updateField("contactType", nextType);
+                if (form.type === "Customer") {
+                  updateField("customerType", nextType as PartyDraft["customerType"]);
+                }
+                if (nextType === "Individual") {
+                  updateField("taxId", "");
+                }
+              }}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none"
+            >
+              <option value="Individual">Individual</option>
+              <option value="Business">Business</option>
+            </select>
+          </FormField>
 
         <FormField label="Name">
           <input
@@ -217,14 +295,23 @@ export default function PartyFormModal({
           />
         </FormField>
 
-        <FormField label={`Tax ID (${taxMeta.label})`}>
-          <input
-            value={form.taxId}
-            onChange={(event) => updateField("taxId", event.target.value)}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-            placeholder={taxMeta.placeholder}
-          />
-        </FormField>
+        {showTaxIdField ? (
+          <FormField
+            label={taxFieldLabel}
+            hint={taxValidationPreview.isGSTMode ? "Recommended for Business contacts in India" : "Optional"}
+          >
+            <input
+              value={form.taxId}
+              onChange={(event) => {
+                setError("");
+                setWarning("");
+                updateField("taxId", event.target.value);
+              }}
+              className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
+              placeholder={taxValidationPreview.isGSTMode ? "15 character GSTIN" : taxMeta.placeholder}
+            />
+          </FormField>
+        ) : null}
 
         <FormField label="Opening Balance">
           <input

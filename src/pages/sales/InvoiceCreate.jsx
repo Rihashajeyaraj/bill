@@ -413,7 +413,7 @@ export default function InvoiceCreate() {
     const buyer = {
       name: party?.name || "",
       address: party?.address || "",
-      gstin: party?.gstin || "",
+      gstin: party?.gstin || party?.taxId || "",
       phone: party?.phone || "",
       state: customerState
     };
@@ -507,11 +507,6 @@ export default function InvoiceCreate() {
   ]);
 
   async function saveInvoice({ silent = false } = {}) {
-    if (isIndiaOrg && computed.tax?.warning) {
-      alert(computed.tax.warning);
-      return null;
-    }
-
     const seller = {
       name: company?.companyName || "",
       address: formatAddress(company?.address),
@@ -523,7 +518,7 @@ export default function InvoiceCreate() {
     const buyer = {
       name: party?.name || "",
       address: party?.address || "",
-      gstin: party?.gstin || "",
+      gstin: party?.gstin || party?.taxId || "",
       phone: party?.phone || "",
       state: party?.state || ""
     };

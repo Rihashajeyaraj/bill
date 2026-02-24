@@ -5,8 +5,10 @@ import {
   uid
 } from "../../services/storage";
 import { authGetOrganizationId, authGetUser } from "../../services/auth.service";
+import { companyGetProfile } from "../../services/company.service";
 import { listNotifications, pushNotification } from "../../services/activity.service";
 import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
+import { normalizeContactType, validateContactTax } from "../../services/customerTax";
 import type {
   CreditLimitType,
   LedgerEntry,
@@ -69,6 +71,9 @@ function normalizeCreditLimitType(value: unknown): CreditLimitType {
 function normalizeParty(raw: any): PartyRecord {
   const typeValue = String(raw?.type || "").toLowerCase();
   const type: PartyType = typeValue === "supplier" ? "Supplier" : "Customer";
+  const taxId = String(raw?.taxId || raw?.gstin || raw?.vatNo || raw?.trn || "").trim();
+  const contactType = normalizeContactType(raw?.contactType ?? raw?.customerType ?? raw?.customer_type, taxId);
+  const customerType = type === "Customer" ? contactType : "Business";
   const legacyBalance = raw?.openingBalance ?? raw?.balance ?? 0;
   const openingBalance = Math.abs(parseNumber(legacyBalance));
   const openingBalanceType =
@@ -92,15 +97,17 @@ function normalizeParty(raw: any): PartyRecord {
   return {
     id: raw?.id || uid("pty_"),
     type,
+    contactType,
+    customerType,
     name: raw?.name || "",
     phone: raw?.phone || "",
     email: raw?.email || "",
     country: raw?.country || "",
     state: raw?.state || "",
     address: raw?.address || "",
-    taxId: raw?.taxId || raw?.gstin || raw?.vatNo || raw?.trn || "",
+    taxId,
     taxIdType: raw?.taxIdType || "",
-    gstin: raw?.gstin || raw?.taxId || "",
+    gstin: raw?.gstin || taxId || "",
     vatNo: raw?.vatNo || "",
     trn: raw?.trn || "",
     openingBalance,
@@ -134,6 +141,15 @@ function normalizeSupabaseError(error: any, fallback: string) {
     return `${fallback}. Supabase RLS denied access. Verify organization membership and policies.`;
   }
   return error?.message || fallback;
+}
+
+function organizationTaxContext() {
+  const profile = companyGetProfile() || {};
+  return {
+    ...profile,
+    country: profile?.country || "",
+    settings: profile?.settings || {}
+  };
 }
 
 function mapRemoteParty(row: any): PartyRecord {
@@ -269,7 +285,16 @@ export function upsertParty(draft: PartyDraft, actor?: string): PartyRecord {
   const now = nowIso();
   const actorName = actor || SYSTEM_ACTOR;
 
-  const incoming = normalizeParty(draft);
+  let incoming = normalizeParty(draft);
+  const taxValidation = validateContactTax(incoming, organizationTaxContext());
+  if (taxValidation.error) throw new Error(taxValidation.error);
+  incoming = {
+    ...incoming,
+    contactType: taxValidation.contactType,
+    customerType: taxValidation.contactType,
+    taxId: taxValidation.normalizedTaxId,
+    gstin: taxValidation.normalizedTaxId || incoming.gstin || ""
+  };
   const idx = list.findIndex((party: any) => party.id === incoming.id);
   if (idx >= 0) {
     const previous = normalizeParty(list[idx]);
@@ -346,7 +371,17 @@ export async function syncPartiesFromRemote(): Promise<PartyRecord[]> {
     throw new Error(normalizeSupabaseError(error, "Failed to load parties"));
   }
 
-  const mapped = ensureArray<any>(data).map(mapRemoteParty);
+  const localById = new Map(listParties().map((party) => [party.id, party]));
+  const mapped = ensureArray<any>(data).map((row) => {
+    const remote = mapRemoteParty(row);
+    const local = localById.get(remote.id);
+    if (!local) return remote;
+    return normalizeParty({
+      ...remote,
+      contactType: local.contactType || remote.contactType,
+      customerType: local.customerType || remote.customerType
+    });
+  });
   lsSetOrganizationScoped(LS_KEYS.parties, mapped);
   triggerCreditLimitNotifications(mapped);
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
@@ -362,7 +397,16 @@ export async function upsertPartyRemote(draft: PartyDraft, actor?: string): Prom
     return upsertParty(draft, actor);
   }
 
-  const incoming = normalizeParty(draft);
+  let incoming = normalizeParty(draft);
+  const taxValidation = validateContactTax(incoming, organizationTaxContext());
+  if (taxValidation.error) throw new Error(taxValidation.error);
+  incoming = {
+    ...incoming,
+    contactType: taxValidation.contactType,
+    customerType: taxValidation.contactType,
+    taxId: taxValidation.normalizedTaxId,
+    gstin: taxValidation.normalizedTaxId || incoming.gstin || ""
+  };
   const payload = toRemotePayload(incoming);
   const actorUserId = authGetUser()?.id || null;
   let remoteRow: any = null;

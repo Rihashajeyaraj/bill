@@ -1,4 +1,5 @@
 export type PartyType = "Customer" | "Supplier";
+export type CustomerType = "Individual" | "Business";
 
 export type OpeningBalanceType = "Receivable" | "Payable";
 export type CreditLimitType = "Amount" | "Days";
@@ -19,6 +20,8 @@ export interface PartyAudit {
 export interface PartyRecord {
   id: string;
   type: PartyType;
+  contactType?: CustomerType;
+  customerType?: CustomerType;
   name: string;
   phone?: string;
   email?: string;
