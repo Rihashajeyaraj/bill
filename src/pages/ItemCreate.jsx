@@ -119,6 +119,14 @@ function moneyLike(value) {
   return parseNumber(value).toFixed(2);
 }
 
+function decimalLike(value) {
+  return parseNumber(value).toFixed(2);
+}
+
+function wholeLike(value) {
+  return Math.max(0, Math.trunc(parseNumber(value)));
+}
+
 export default function ItemCreate() {
   const nav = useNavigate();
   const toast = useToast();
@@ -296,9 +304,9 @@ export default function ItemCreate() {
       taxInclusive: !!form.taxInclusive,
       status: form.status === "Inactive" ? "Inactive" : "Active",
       trackInventory: !!showInventoryInputs,
-      openingStock: showInventoryInputs ? parseNumber(form.openingQty) : 0,
+      openingStock: showInventoryInputs ? wholeLike(form.openingQty) : 0,
       openingStockValue: showInventoryInputs ? parseNumber(form.openingStockValue) : 0,
-      lowStockAlert: showInventoryInputs ? parseNumber(form.lowStockQty) : 0,
+      lowStockAlert: showInventoryInputs ? wholeLike(form.lowStockQty) : 0,
       category: String(form.category || "").trim(),
       itemCode: String(form.itemCode || "").trim(),
       sku: String(form.sku || "").trim() || String(form.itemCode || "").trim(),
@@ -323,10 +331,10 @@ export default function ItemCreate() {
         discountValue: parseNumber(form.discountValue),
         discountType: form.discountType,
         trackStock: !!showInventoryInputs,
-        openingStock: showInventoryInputs ? parseNumber(form.openingQty) : 0,
-        openingQty: showInventoryInputs ? parseNumber(form.openingQty) : 0,
+        openingStock: showInventoryInputs ? wholeLike(form.openingQty) : 0,
+        openingQty: showInventoryInputs ? wholeLike(form.openingQty) : 0,
         openingStockValue: showInventoryInputs ? parseNumber(form.openingStockValue) : 0,
-        lowStockQty: showInventoryInputs ? parseNumber(form.lowStockQty) : 0,
+        lowStockQty: showInventoryInputs ? wholeLike(form.lowStockQty) : 0,
         warehouse: String(form.warehouse || "").trim(),
         imageUrl: String(form.imageUrl || "").trim(),
         gstPercent: showIndiaCompliance ? numericTaxRate : 0,
@@ -502,10 +510,11 @@ export default function ItemCreate() {
                 <input
                   type="number"
                   min={0}
-                  value={form.salePrice}
+                  step="0.01"
+                  value={decimalLike(form.salePrice)}
                   onChange={(event) => updateField("salePrice", parseNumber(event.target.value))}
                   className={inputClassName}
-                  placeholder="0"
+                  placeholder="0.00"
                 />
                 {errors.salePrice ? <p className={errorClassName}>{errors.salePrice}</p> : null}
               </FormField>
@@ -514,10 +523,11 @@ export default function ItemCreate() {
                 <input
                   type="number"
                   min={0}
-                  value={form.purchasePrice}
+                  step="0.01"
+                  value={decimalLike(form.purchasePrice)}
                   onChange={(event) => updateField("purchasePrice", parseNumber(event.target.value))}
                   className={inputClassName}
-                  placeholder="0"
+                  placeholder="0.00"
                 />
                 {errors.purchasePrice ? <p className={errorClassName}>{errors.purchasePrice}</p> : null}
               </FormField>
@@ -650,8 +660,9 @@ export default function ItemCreate() {
                       <input
                         type="number"
                         min={0}
-                        value={form.openingQty}
-                        onChange={(event) => updateField("openingQty", parseNumber(event.target.value))}
+                        step="1"
+                        value={wholeLike(form.openingQty)}
+                        onChange={(event) => updateField("openingQty", wholeLike(event.target.value))}
                         className={inputClassName}
                         placeholder="0"
                       />
@@ -662,10 +673,11 @@ export default function ItemCreate() {
                       <input
                         type="number"
                         min={0}
-                        value={form.openingStockValue}
+                        step="0.01"
+                        value={decimalLike(form.openingStockValue)}
                         onChange={(event) => updateField("openingStockValue", parseNumber(event.target.value))}
                         className={inputClassName}
-                        placeholder="0"
+                        placeholder="0.00"
                       />
                       {errors.openingStockValue ? <p className={errorClassName}>{errors.openingStockValue}</p> : null}
                     </FormField>
@@ -674,8 +686,9 @@ export default function ItemCreate() {
                       <input
                         type="number"
                         min={0}
-                        value={form.lowStockQty}
-                        onChange={(event) => updateField("lowStockQty", parseNumber(event.target.value))}
+                        step="1"
+                        value={wholeLike(form.lowStockQty)}
+                        onChange={(event) => updateField("lowStockQty", wholeLike(event.target.value))}
                         className={inputClassName}
                         placeholder="0"
                       />
@@ -729,10 +742,11 @@ export default function ItemCreate() {
                     <input
                       type="number"
                       min={0}
-                      value={level.price}
+                      step="0.01"
+                      value={decimalLike(level.price)}
                       onChange={(event) => updatePriceLevel(level.id, { price: parseNumber(event.target.value) })}
                       className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
-                      placeholder="0"
+                      placeholder="0.00"
                     />
                     <button
                       type="button"
@@ -785,10 +799,11 @@ export default function ItemCreate() {
                 <input
                   type="number"
                   min={0}
-                  value={form.discountValue}
+                  step="0.01"
+                  value={decimalLike(form.discountValue)}
                   onChange={(event) => updateField("discountValue", parseNumber(event.target.value))}
                   className={inputClassName}
-                  placeholder="0"
+                  placeholder="0.00"
                 />
               </FormField>
 

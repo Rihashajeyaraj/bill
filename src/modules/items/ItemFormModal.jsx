@@ -8,6 +8,14 @@ import { buildTaxLabel, parseNumber, taxContext } from "./utils";
 
 const UNITS = ["pcs", "kg", "box", "litre", "mtr", "set", "hr"];
 
+function decimalLike(value) {
+  return parseNumber(value).toFixed(2);
+}
+
+function wholeLike(value) {
+  return Math.max(0, Math.trunc(parseNumber(value)));
+}
+
 function defaultItem(type) {
   return {
     type,
@@ -154,9 +162,9 @@ export default function ItemFormModal({
       salesRate: parseNumber(form.salesRate),
       purchaseRate: parseNumber(form.purchaseRate),
       taxRate: parseNumber(form.taxRate),
-      openingStock: parseNumber(form.openingStock),
+      openingStock: wholeLike(form.openingStock),
       openingStockValue: parseNumber(form.openingStockValue),
-      lowStockAlert: parseNumber(form.lowStockAlert),
+      lowStockAlert: wholeLike(form.lowStockAlert),
       priceLevels: form.priceLevels.map((level) => ({
         ...level,
         label: level.label.trim(),
@@ -290,9 +298,11 @@ export default function ItemFormModal({
               <input
                 type="number"
                 min={0}
-                value={form.salesRate}
+                step="0.01"
+                value={decimalLike(form.salesRate)}
                 onChange={(event) => updateField("salesRate", parseNumber(event.target.value))}
                 className={inputClassName}
+                placeholder="0.00"
               />
             </FormField>
 
@@ -300,9 +310,11 @@ export default function ItemFormModal({
               <input
                 type="number"
                 min={0}
-                value={form.purchaseRate}
+                step="0.01"
+                value={decimalLike(form.purchaseRate)}
                 onChange={(event) => updateField("purchaseRate", parseNumber(event.target.value))}
                 className={inputClassName}
+                placeholder="0.00"
               />
             </FormField>
 
@@ -357,10 +369,12 @@ export default function ItemFormModal({
                 <input
                   type="number"
                   min={0}
-                  value={form.openingStock}
-                  onChange={(event) => updateField("openingStock", parseNumber(event.target.value))}
+                  step="1"
+                  value={wholeLike(form.openingStock)}
+                  onChange={(event) => updateField("openingStock", wholeLike(event.target.value))}
                   className={inputClassName}
                   disabled={!form.trackInventory}
+                  placeholder="0"
                 />
               </FormField>
 
@@ -368,10 +382,12 @@ export default function ItemFormModal({
                 <input
                   type="number"
                   min={0}
-                  value={form.openingStockValue}
+                  step="0.01"
+                  value={decimalLike(form.openingStockValue)}
                   onChange={(event) => updateField("openingStockValue", parseNumber(event.target.value))}
                   className={inputClassName}
                   disabled={!form.trackInventory}
+                  placeholder="0.00"
                 />
               </FormField>
 
@@ -379,10 +395,12 @@ export default function ItemFormModal({
                 <input
                   type="number"
                   min={0}
-                  value={form.lowStockAlert}
-                  onChange={(event) => updateField("lowStockAlert", parseNumber(event.target.value))}
+                  step="1"
+                  value={wholeLike(form.lowStockAlert)}
+                  onChange={(event) => updateField("lowStockAlert", wholeLike(event.target.value))}
                   className={inputClassName}
                   disabled={!form.trackInventory}
+                  placeholder="0"
                 />
               </FormField>
             </div>
@@ -421,10 +439,11 @@ export default function ItemFormModal({
                   <input
                     type="number"
                     min={0}
-                    value={level.price}
+                    step="0.01"
+                    value={decimalLike(level.price)}
                     onChange={(event) => updatePriceLevel(level.id, { price: parseNumber(event.target.value) })}
                     className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
-                    placeholder="0"
+                    placeholder="0.00"
                   />
                   <button
                     type="button"
