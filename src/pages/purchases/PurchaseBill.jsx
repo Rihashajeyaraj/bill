@@ -13,7 +13,9 @@ import {
 } from "../../services/purchases.service";
 import { useOrganization } from "../../context/OrganizationContext";
 import { calculateTaxes } from "../../services/tax";
-import { paymentsCreate } from "../../services/payments.service";
+import { authGetUser } from "../../services/auth.service";
+import { syncPaymentOutRemote } from "../../services/payments.service";
+import { outstandingBySupplier, savePaymentOut } from "../../modules/paymentOut/store";
 
 const TAX_RATES = [0, 5, 12, 18, 28];
 const DEFAULT_UNITS = ["pcs", "kg", "box", "ltr", "set", "hr"];
@@ -92,7 +94,7 @@ function createLine(items) {
 
 export default function PurchaseBill() {
   const navigate = useNavigate();
-  const { country = "", profile: company = {} } = useOrganization();
+  const { country = "", currency = "", profile: company = {} } = useOrganization();
   const isIndiaOrg = country === "India";
   const toast = useToast();
   const [suppliers, setSuppliers] = useState(() =>
@@ -114,9 +116,15 @@ export default function PurchaseBill() {
   const [lines, setLines] = useState(() => [createLine([])]);
   const [roundOffEnabled, setRoundOffEnabled] = useState(false);
   const [roundOffValue, setRoundOffValue] = useState("0");
+  const [markAsPaid, setMarkAsPaid] = useState(false);
   const [paymentType, setPaymentType] = useState("Cash");
-  const [paymentStatus, setPaymentStatus] = useState("NONE");
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [paidAmount, setPaidAmount] = useState("");
+  const [referenceNo, setReferenceNo] = useState("");
+  const [transactionId, setTransactionId] = useState("");
+  const [chequeNo, setChequeNo] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [paymentNotes, setPaymentNotes] = useState("");
   const purchasableItems = useMemo(
     () =>
       items.filter(
@@ -155,7 +163,7 @@ export default function PurchaseBill() {
           return hasSelectedItem ? prev : [createLine(nextPurchasableItems)];
         });
       } catch (error) {
-        toast.error("Failed to load suppliers/items/bills", error?.message || "Using local cached data.");
+        toast.error("Failed to load suppliers/items", error?.message || "Using local cached data.");
         if (!mounted) return;
         const cachedSuppliers = listParties().filter((entry) => entry.type === "Supplier");
         const cachedItems = listItems();
@@ -204,6 +212,37 @@ export default function PurchaseBill() {
   useEffect(() => {
     setPaymentDate(billDate);
   }, [billDate]);
+
+  useEffect(() => {
+    if (!markAsPaid) {
+      setPaidAmount("");
+      setReferenceNo("");
+      setTransactionId("");
+      setChequeNo("");
+      setBankName("");
+      setPaymentNotes("");
+      return;
+    }
+    if (paymentType === "Cash") {
+      setTransactionId("");
+      setChequeNo("");
+      setBankName("");
+      return;
+    }
+    if (paymentType === "Bank Transfer") {
+      setChequeNo("");
+      return;
+    }
+    if (paymentType === "Cheque") {
+      setBankName("");
+      setTransactionId("");
+      return;
+    }
+    if (paymentType === "Card" || paymentType === "Online") {
+      setBankName("");
+      setChequeNo("");
+    }
+  }, [markAsPaid, paymentType]);
 
   const unitOptions = useMemo(() => {
     const itemUnits = items
@@ -408,15 +447,18 @@ export default function PurchaseBill() {
   }, [lines, roundOffEnabled, roundOffValue, country, company?.address?.state, company?.tax?.gstin, party?.state, party?.gstin, party?.taxId]);
 
   const paymentAmount = useMemo(() => {
-    const total = round2(computed.finalTotal);
-    if (paymentStatus === "FULL") return total;
-    if (paymentStatus === "HALF") return round2(total / 2);
-    return 0;
-  }, [computed.finalTotal, paymentStatus]);
+    if (!markAsPaid) return 0;
+    const parsedAmount = Number(paidAmount || 0);
+    return round2(Math.max(0, parsedAmount));
+  }, [paidAmount, markAsPaid]);
 
   const pendingAmount = useMemo(
     () => round2(Math.max(0, Number(computed.finalTotal || 0) - Number(paymentAmount || 0))),
     [computed.finalTotal, paymentAmount]
+  );
+  const advanceAmount = useMemo(
+    () => round2(Math.max(0, Number(paymentAmount || 0) - Number(computed.finalTotal || 0))),
+    [paymentAmount, computed.finalTotal]
   );
 
   async function resolveLinesWithItems(detailedLines) {
@@ -520,8 +562,28 @@ export default function PurchaseBill() {
       toast.warning("Supplier required", "Select a supplier before saving.");
       return;
     }
-    if (paymentAmount > 0 && !paymentDate) {
+    if (markAsPaid && !paymentDate) {
       toast.warning("Payment date required", "Select payment date for paid amount.");
+      return;
+    }
+    if (markAsPaid && paymentAmount <= 0) {
+      toast.warning("Paid amount required", "Enter how much you paid.");
+      return;
+    }
+    if (markAsPaid && paymentType === "Bank Transfer" && !String(bankName || "").trim()) {
+      toast.warning("Bank name required", "Enter bank name for bank transfer.");
+      return;
+    }
+    if (
+      markAsPaid &&
+      (paymentType === "Bank Transfer" || paymentType === "Card" || paymentType === "Online") &&
+      !String(transactionId || "").trim()
+    ) {
+      toast.warning("Transaction ID required", "Enter transaction ID.");
+      return;
+    }
+    if (markAsPaid && paymentType === "Cheque" && !String(chequeNo || "").trim()) {
+      toast.warning("Cheque number required", "Enter cheque number.");
       return;
     }
     setSaving(true);
@@ -552,6 +614,7 @@ export default function PurchaseBill() {
       }
 
       const effectiveBillNumber = autoBillNumber;
+      const effectivePaymentType = markAsPaid ? paymentType : "Unpaid";
       const createdBillId = await purchasesCreate({
         country,
         partyId,
@@ -559,7 +622,7 @@ export default function PurchaseBill() {
         phone,
         billNumber: effectiveBillNumber,
         billDate,
-        paymentType,
+        paymentType: effectivePaymentType,
         partyAddress: supplierAddress,
         lines: validLines,
         totals: {
@@ -577,22 +640,54 @@ export default function PurchaseBill() {
       });
 
       if (paymentAmount > 0) {
-        paymentsCreate({
-          date: paymentDate || billDate,
-          paymentNo: `PAY-${Date.now()}`,
-          direction: "OUT",
-          partyId,
-          billId: createdBillId,
-          amount: paymentAmount,
-          mode: paymentType,
-          note: `Payment for purchase bill ${effectiveBillNumber}`
+        const payableBefore = outstandingBySupplier(country, partyId);
+        const applyAmount = Math.min(paymentAmount, Number(computed.finalTotal || 0));
+        const paymentOutRecord = savePaymentOut({
+          country,
+          paymentDate: paymentDate || billDate,
+          supplierId: partyId,
+          supplierName: party?.name || "",
+          currency: currency || "",
+          paymentMode: paymentType,
+          referenceNo: referenceNo || "",
+          chequeNo: paymentType === "Cheque" ? chequeNo : "",
+          bankName: paymentType === "Bank Transfer" ? bankName : "",
+          transactionId:
+            paymentType === "Bank Transfer" || paymentType === "Card" || paymentType === "Online"
+              ? transactionId
+              : "",
+          paymentReference: referenceNo || "",
+          internalNotes: paymentNotes || `Payment from purchase bill ${effectiveBillNumber}`,
+          attachment: null,
+          desiredStatus: "Applied",
+          amountPaid: paymentAmount,
+          allocations: [
+            {
+              billId: createdBillId,
+              billNo: effectiveBillNumber,
+              billDate,
+              billAmount: Number(computed.finalTotal || 0),
+              balanceDue: Number(computed.finalTotal || 0),
+              applyAmount
+            }
+          ],
+          supplierOutstandingBefore: payableBefore,
+          actor: authGetUser()?.name || authGetUser()?.email || "System User"
         });
+        await syncPaymentOutRemote(paymentOutRecord);
       }
 
       toast.success("Purchase bill saved", `Bill ${effectiveBillNumber} saved successfully.`);
       setAutoBillNumber(generateBillNumber());
-      setPaymentStatus("NONE");
+      setMarkAsPaid(false);
+      setPaymentType("Cash");
       setPaymentDate(billDate);
+      setPaidAmount("");
+      setReferenceNo("");
+      setTransactionId("");
+      setChequeNo("");
+      setBankName("");
+      setPaymentNotes("");
     } catch (error) {
       toast.error("Failed to save purchase bill", error?.message || "Could not save bill.");
     } finally {
@@ -883,53 +978,139 @@ export default function PurchaseBill() {
         <div className="mt-5 grid grid-cols-1 xl:grid-cols-2 gap-4">
           <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
             <h3 className="text-sm font-semibold text-slate-900">Payment on Purchase</h3>
-            <p className="mt-1 text-xs text-slate-500">Record payment now: no payment, half, or full.</p>
+            <p className="mt-1 text-xs text-slate-500">Choose whether payment is done now.</p>
 
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {[
-                { value: "NONE", label: "No Payment" },
-                { value: "HALF", label: "Half Payment" },
-                { value: "FULL", label: "Full Payment" }
-              ].map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setPaymentStatus(option.value)}
-                  className={`rounded-xl border px-3 py-2 text-sm font-semibold ${
-                    paymentStatus === option.value
-                      ? "border-blue-600 bg-blue-600 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
+            <div className="mt-3 inline-flex rounded-xl border border-slate-200 bg-white p-1">
+              <button
+                type="button"
+                onClick={() => setMarkAsPaid(false)}
+                className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                  !markAsPaid ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                Not Paid
+              </button>
+              <button
+                type="button"
+                onClick={() => setMarkAsPaid(true)}
+                className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                  markAsPaid ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                Paid
+              </button>
             </div>
 
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-              <FormField label="Payment Type">
-                <select
-                  value={paymentType}
-                  onChange={(e) => setPaymentType(e.target.value)}
-                  disabled={paymentStatus === "NONE"}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
-                >
-                  <option>Cash</option>
-                  <option>Bank Transfer</option>
-                  <option>Card</option>
-                  <option>UPI</option>
-                </select>
-              </FormField>
-              <FormField label="Payment Date">
-                <input
-                  type="date"
-                  value={paymentDate}
-                  onChange={(e) => setPaymentDate(e.target.value)}
-                  disabled={paymentStatus === "NONE"}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
-                />
-              </FormField>
-            </div>
+            {markAsPaid ? (
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <FormField label="Amount Paid">
+                  <input
+                    type="number"
+                    min="0"
+                    value={paidAmount}
+                    onChange={(e) => setPaidAmount(e.target.value)}
+                    placeholder="Enter paid amount"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                  />
+                </FormField>
+                <FormField label="Payment Method">
+                  <select
+                    value={paymentType}
+                    onChange={(e) => setPaymentType(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                  >
+                    <option>Cash</option>
+                    <option>Bank Transfer</option>
+                    <option>Cheque</option>
+                    <option>Card</option>
+                    <option>Online</option>
+                  </select>
+                </FormField>
+                <FormField label="Payment Date">
+                  <input
+                    type="date"
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                  />
+                </FormField>
+                <FormField label="Reference No">
+                  <input
+                    value={referenceNo}
+                    onChange={(e) => setReferenceNo(e.target.value)}
+                    placeholder="Enter payment reference"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                  />
+                </FormField>
+
+                {paymentType === "Bank Transfer" ? (
+                  <>
+                    <FormField label="Bank Name">
+                      <input
+                        value={bankName}
+                        onChange={(e) => setBankName(e.target.value)}
+                        placeholder="Enter bank name"
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                      />
+                    </FormField>
+                    <FormField label="Transaction ID">
+                      <input
+                        value={transactionId}
+                        onChange={(e) => setTransactionId(e.target.value)}
+                        placeholder="Enter transaction ID"
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                      />
+                    </FormField>
+                  </>
+                ) : null}
+
+                {paymentType === "Cheque" ? (
+                  <FormField label="Cheque Number" className="md:col-span-2">
+                    <input
+                      value={chequeNo}
+                      onChange={(e) => setChequeNo(e.target.value)}
+                      placeholder="Enter cheque number"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                    />
+                  </FormField>
+                ) : null}
+
+                {paymentType === "Card" ? (
+                  <FormField label="Transaction ID" className="md:col-span-2">
+                    <input
+                      value={transactionId}
+                      onChange={(e) => setTransactionId(e.target.value)}
+                      placeholder="Enter card transaction ID"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                    />
+                  </FormField>
+                ) : null}
+
+                {paymentType === "Online" ? (
+                  <FormField label="Transaction ID" className="md:col-span-2">
+                    <input
+                      value={transactionId}
+                      onChange={(e) => setTransactionId(e.target.value)}
+                      placeholder="Enter online transaction ID"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                    />
+                  </FormField>
+                ) : null}
+
+                <FormField label="Notes" className="md:col-span-2">
+                  <input
+                    value={paymentNotes}
+                    onChange={(e) => setPaymentNotes(e.target.value)}
+                    placeholder="Optional internal note"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                  />
+                </FormField>
+              </div>
+            ) : (
+              <p className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                Payment will stay pending. You can record it later in Payment Out.
+              </p>
+            )}
           </div>
 
           <div className="rounded-2xl border border-slate-100 bg-white p-4">
@@ -999,6 +1180,12 @@ export default function PurchaseBill() {
                   <span className="text-slate-600">Balance Due</span>
                   <span className="font-semibold text-rose-700">{money(pendingAmount)}</span>
                 </div>
+                {advanceAmount > 0 ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">Advance</span>
+                    <span className="font-semibold text-emerald-700">{money(advanceAmount)}</span>
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
