@@ -152,6 +152,34 @@ function organizationTaxContext() {
   };
 }
 
+function validateCreditSetup(
+  party: PartyRecord,
+  taxValidation: ReturnType<typeof validateContactTax>
+) {
+  if (!party.creditLimitEnabled) return "";
+
+  const missing: string[] = [];
+  if (!String(party.phone || "").trim()) missing.push("phone");
+  if (!String(party.email || "").trim()) missing.push("email");
+  if (!String(party.country || "").trim()) missing.push("country");
+  if (!String(party.state || "").trim()) missing.push("state / region");
+  if (!String(party.address || "").trim()) missing.push("address");
+
+  if (taxValidation.isGSTMode && taxValidation.contactType === "Business" && !String(party.taxId || "").trim()) {
+    missing.push("GSTIN");
+  }
+
+  if (party.creditLimitType === "Days" && party.creditLimitDays <= 0) {
+    missing.push("credit days");
+  }
+  if (party.creditLimitType !== "Days" && party.creditLimit <= 0) {
+    missing.push("credit amount");
+  }
+
+  if (!missing.length) return "";
+  return `Enable credit only after filling: ${missing.join(", ")}.`;
+}
+
 function mapRemoteParty(row: any): PartyRecord {
   const typeRaw = String(row?.party_type || "customer").toLowerCase();
   const type: PartyType = typeRaw === "supplier" ? "Supplier" : "Customer";
@@ -198,6 +226,7 @@ function toRemotePayload(draft: PartyDraft) {
   const creditLimitDays = Math.max(0, parseNumber(normalized.creditLimitDays));
   const useAmount = normalized.creditLimitEnabled && normalized.creditLimitType === "Amount";
   const useDays = normalized.creditLimitEnabled && normalized.creditLimitType === "Days";
+  const creditLimitType = useDays ? "days" : "amount";
 
   return {
     party_type: normalized.type === "Supplier" ? "supplier" : "customer",
@@ -213,7 +242,8 @@ function toRemotePayload(draft: PartyDraft) {
     tax_id: normalized.taxId || normalized.gstin || null,
     opening_balance: signedOpeningBalance,
     credit_limit: useAmount ? creditLimit : null,
-    credit_limit_type: normalized.creditLimitEnabled ? normalized.creditLimitType.toLowerCase() : null,
+    // DB requires non-null credit_limit_type; keep a safe default when credit checks are disabled.
+    credit_limit_type: creditLimitType,
     credit_limit_days: useDays ? creditLimitDays : null,
     notes: normalized.notes || null,
     is_active: true
@@ -295,6 +325,8 @@ export function upsertParty(draft: PartyDraft, actor?: string): PartyRecord {
     taxId: taxValidation.normalizedTaxId,
     gstin: taxValidation.normalizedTaxId || incoming.gstin || ""
   };
+  const creditValidationError = validateCreditSetup(incoming, taxValidation);
+  if (creditValidationError) throw new Error(creditValidationError);
   const idx = list.findIndex((party: any) => party.id === incoming.id);
   if (idx >= 0) {
     const previous = normalizeParty(list[idx]);
@@ -407,6 +439,8 @@ export async function upsertPartyRemote(draft: PartyDraft, actor?: string): Prom
     taxId: taxValidation.normalizedTaxId,
     gstin: taxValidation.normalizedTaxId || incoming.gstin || ""
   };
+  const creditValidationError = validateCreditSetup(incoming, taxValidation);
+  if (creditValidationError) throw new Error(creditValidationError);
   const payload = toRemotePayload(incoming);
   const actorUserId = authGetUser()?.id || null;
   let remoteRow: any = null;
