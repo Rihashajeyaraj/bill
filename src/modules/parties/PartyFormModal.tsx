@@ -3,11 +3,16 @@ import { Plus, Trash2 } from "lucide-react";
 import Modal from "../../components/Modal";
 import FormField from "../../components/FormField";
 import GradientButton from "../../components/GradientButton";
-import { COUNTRIES } from "../../services/company.service";
 import type { PartyAttachment, PartyDraft, PartyType } from "./types";
 import { defaultOpeningBalanceType, parseNumber } from "./utils";
 import { useOrganization } from "../../context/OrganizationContext";
 import { normalizeContactType, validateContactTax } from "../../services/customerTax";
+import {
+  getCanonicalCountryName,
+  listAllCountries,
+  listStatesByCountry,
+  resolveCountryIsoCode
+} from "../../lib/geoData";
 
 interface PartyFormModalProps {
   open: boolean;
@@ -86,8 +91,10 @@ export default function PartyFormModal({
     }),
     [organizationProfile, organizationCountry]
   );
+  const allCountries = useMemo(() => listAllCountries(), []);
+  const stateOptions = useMemo(() => listStatesByCountry(form.country), [form.country]);
   const selectedContactType = normalizeContactType(form.contactType ?? form.customerType, form.taxId);
-  const isIndiaCountry = String(form.country || "").trim().toLowerCase() === "india";
+  const isIndiaCountry = resolveCountryIsoCode(form.country) === "IN";
   const showGSTINField = selectedContactType === "Business" && isIndiaCountry;
   const entityLabel = form.type === "Customer" ? "Customer" : "Supplier";
   const modalTitle = mode === "edit" ? `Edit ${entityLabel}` : `Create ${entityLabel}`;
@@ -144,12 +151,12 @@ export default function PartyFormModal({
       creditLimitDays: Math.max(0, parseNumber(form.creditLimitDays)),
       creditLimitEnabled: !!form.creditLimitEnabled
     };
-    const normalizedCountry = String(normalized.country || "").trim().toLowerCase();
+    const normalizedCountryCode = resolveCountryIsoCode(normalized.country);
     const normalizedContactType = normalizeContactType(
       normalized.contactType ?? normalized.customerType,
       normalized.taxId
     );
-    const shouldValidateGST = normalizedCountry === "india" && normalizedContactType === "Business";
+    const shouldValidateGST = normalizedCountryCode === "IN" && normalizedContactType === "Business";
     const validationOrgContext = shouldValidateGST ? { ...orgContext, country: "India" } : { ...orgContext, country: "" };
     const taxValidation = validateContactTax(normalized, validationOrgContext);
     if (taxValidation.error) {
@@ -255,33 +262,50 @@ export default function PartyFormModal({
           <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">Address And Tax</p>
           <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
             <FormField label="Country">
-              <select
+              <input
                 value={form.country}
                 onChange={(event) => {
                   const nextCountry = event.target.value;
                   updateField("country", nextCountry);
-                  if (String(nextCountry || "").trim().toLowerCase() !== "india") {
+                  if (resolveCountryIsoCode(nextCountry) !== "IN") {
                     updateField("taxId", "");
                   }
                 }}
+                onBlur={(event) => {
+                  const canonicalCountry = getCanonicalCountryName(event.target.value);
+                  if (canonicalCountry && canonicalCountry !== form.country) {
+                    updateField("country", canonicalCountry);
+                  }
+                }}
+                list="party-country-options"
                 className={inputClassName}
-              >
-                <option value="">Select country</option>
-                {COUNTRIES.map((country) => (
-                  <option key={country} value={country}>
-                    {country}
-                  </option>
+                placeholder="Type and search country"
+              />
+              <datalist id="party-country-options">
+                {allCountries.map((country) => (
+                  <option key={country.isoCode} value={country.name} />
                 ))}
-              </select>
+              </datalist>
             </FormField>
 
-            <FormField label="State / Region">
+            <FormField
+              label="State / Region"
+              hint={stateOptions.length ? `${stateOptions.length} options available` : "Type manually"}
+            >
               <input
                 value={form.state}
                 onChange={(event) => updateField("state", event.target.value)}
+                list={stateOptions.length ? "party-state-options" : undefined}
                 className={inputClassName}
-                placeholder="State, province, or region"
+                placeholder={stateOptions.length ? "Type and search state/region" : "State, province, or region"}
               />
+              {stateOptions.length ? (
+                <datalist id="party-state-options">
+                  {stateOptions.map((state) => (
+                    <option key={`${state.isoCode}_${state.name}`} value={state.name} />
+                  ))}
+                </datalist>
+              ) : null}
             </FormField>
 
             {showGSTINField ? (
