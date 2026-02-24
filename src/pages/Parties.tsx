@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { FileText, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { FileText, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import PageHeader from "../components/PageHeader";
@@ -29,6 +29,7 @@ export default function Parties() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState("create");
   const [activeParty, setActiveParty] = useState(null);
+  const [openActionId, setOpenActionId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -89,6 +90,20 @@ export default function Parties() {
       mounted = false;
     };
   }, [toast]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("[data-party-actions-root='true']")) return;
+      setOpenActionId(null);
+    }
+    window.addEventListener("pointerdown", handleClickOutside);
+    return () => window.removeEventListener("pointerdown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    setOpenActionId(null);
+  }, [tab, search, loading]);
 
   function openCreate() {
     setActiveParty({ type: tab });
@@ -230,9 +245,6 @@ export default function Parties() {
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-1">
                           <p className="font-semibold text-slate-900">{party.name}</p>
-                          <p className="text-xs text-slate-500">
-                            {party.email || party.country || "No email added"}
-                          </p>
                           {financials.creditExceeded ? (
                             <Badge tone="danger">
                               {financials.amountExceeded
@@ -258,40 +270,57 @@ export default function Parties() {
                           >
                             {meta.label}
                           </span>
-                          <p className="text-xs text-slate-500">
-                            Inv {formatMoney(financials.breakdown.invoices, currency)} | Pay{" "}
-                            {formatMoney(financials.breakdown.payments, currency)} | Cr{" "}
-                            {formatMoney(financials.breakdown.creditNotes, currency)} | Dn{" "}
-                            {formatMoney(financials.breakdown.debitNotes, currency)}
-                          </p>
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="relative inline-flex" data-party-actions-root="true">
                           <button
                             type="button"
-                            onClick={() => nav(`/app/parties/${party.id}/statement`)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                            onClick={() =>
+                              setOpenActionId((current) => (current === party.id ? null : party.id))
+                            }
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                            aria-label="Open actions"
                           >
-                            <FileText className="h-3.5 w-3.5" />
-                            Statement
+                            <MoreHorizontal className="h-4 w-4" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => openEdit(party)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(party)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete
-                          </button>
+                          {openActionId === party.id ? (
+                            <div className="absolute right-0 top-10 z-20 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenActionId(null);
+                                  nav(`/app/parties/${party.id}/statement`);
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                                Statement
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenActionId(null);
+                                  openEdit(party);
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenActionId(null);
+                                  void handleDelete(party);
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Delete
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
                       </td>
                     </tr>

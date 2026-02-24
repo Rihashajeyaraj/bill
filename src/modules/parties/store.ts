@@ -68,6 +68,81 @@ function normalizeCreditLimitType(value: unknown): CreditLimitType {
   return "Amount";
 }
 
+function digitsOnly(value: unknown) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function normalizePhoneForStorage(value: unknown) {
+  return digitsOnly(value).slice(0, 10);
+}
+
+function normalizePhoneForComparison(value: unknown) {
+  let digits = digitsOnly(value);
+  if (!digits) return "";
+  if (digits.length > 10) digits = digits.slice(-10);
+  digits = digits.replace(/^0+/, "");
+  return digits || "0";
+}
+
+function validatePhoneNumber(value: unknown) {
+  const digits = digitsOnly(value);
+  if (!digits) return { error: "Mobile number is required.", normalized: "" };
+  if (digits.length !== 10) {
+    return { error: "Mobile number must be exactly 10 digits.", normalized: digits };
+  }
+  return { error: "", normalized: digits };
+}
+
+function duplicateMessage(incomingName: string, existingName: string) {
+  return normalizeText(incomingName) === normalizeText(existingName)
+    ? "Already registered."
+    : "Mobile number already used.";
+}
+
+function findDuplicateByPhone(parties: PartyRecord[], incoming: PartyRecord) {
+  const incomingPhone = normalizePhoneForComparison(incoming.phone);
+  if (!incomingPhone) return null;
+  const incomingId = String(incoming.id || "");
+  const incomingType = String(incoming.type || "");
+
+  for (const party of parties) {
+    if (incomingId && String(party.id || "") === incomingId) continue;
+    if (String(party.type || "") !== incomingType) continue;
+    const currentPhone = normalizePhoneForComparison(party.phone);
+    if (!currentPhone) continue;
+    if (currentPhone === incomingPhone) return party;
+  }
+  return null;
+}
+
+async function findRemoteDuplicateByPhone(organizationId: string, incoming: PartyRecord) {
+  if (!supabase) return null;
+  const incomingPhone = normalizePhoneForComparison(incoming.phone);
+  if (!incomingPhone) return null;
+  const incomingType = incoming.type === "Supplier" ? "supplier" : "customer";
+
+  const { data, error } = await supabase
+    .from("parties")
+    .select("id,display_name,phone")
+    .eq("organization_id", organizationId)
+    .eq("party_type", incomingType)
+    .eq("is_active", true);
+
+  if (error) return null;
+  const incomingId = String(incoming.id || "");
+  const rows = ensureArray<any>(data);
+  for (const row of rows) {
+    if (incomingId && String(row?.id || "") === incomingId) continue;
+    const rowPhone = normalizePhoneForComparison(row?.phone);
+    if (rowPhone !== incomingPhone) continue;
+    return {
+      id: String(row?.id || ""),
+      name: String(row?.display_name || "")
+    };
+  }
+  return null;
+}
+
 function normalizeParty(raw: any): PartyRecord {
   const typeValue = String(raw?.type || "").toLowerCase();
   const type: PartyType = typeValue === "supplier" ? "Supplier" : "Customer";
@@ -100,7 +175,7 @@ function normalizeParty(raw: any): PartyRecord {
     contactType,
     customerType,
     name: raw?.name || "",
-    phone: raw?.phone || "",
+    phone: String(raw?.phone || "").trim(),
     email: raw?.email || "",
     country: raw?.country || "",
     state: raw?.state || "",
@@ -325,8 +400,15 @@ export function upsertParty(draft: PartyDraft, actor?: string): PartyRecord {
     taxId: taxValidation.normalizedTaxId,
     gstin: taxValidation.normalizedTaxId || incoming.gstin || ""
   };
+  const phoneValidation = validatePhoneNumber(incoming.phone);
+  if (phoneValidation.error) throw new Error(phoneValidation.error);
+  incoming.phone = normalizePhoneForStorage(phoneValidation.normalized);
   const creditValidationError = validateCreditSetup(incoming, taxValidation);
   if (creditValidationError) throw new Error(creditValidationError);
+  const duplicateLocal = findDuplicateByPhone(list.map(normalizeParty), incoming);
+  if (duplicateLocal) {
+    throw new Error(duplicateMessage(incoming.name, duplicateLocal.name));
+  }
   const idx = list.findIndex((party: any) => party.id === incoming.id);
   if (idx >= 0) {
     const previous = normalizeParty(list[idx]);
@@ -439,8 +521,19 @@ export async function upsertPartyRemote(draft: PartyDraft, actor?: string): Prom
     taxId: taxValidation.normalizedTaxId,
     gstin: taxValidation.normalizedTaxId || incoming.gstin || ""
   };
+  const phoneValidation = validatePhoneNumber(incoming.phone);
+  if (phoneValidation.error) throw new Error(phoneValidation.error);
+  incoming.phone = normalizePhoneForStorage(phoneValidation.normalized);
   const creditValidationError = validateCreditSetup(incoming, taxValidation);
   if (creditValidationError) throw new Error(creditValidationError);
+  const duplicateLocal = findDuplicateByPhone(listParties(), incoming);
+  if (duplicateLocal) {
+    throw new Error(duplicateMessage(incoming.name, duplicateLocal.name));
+  }
+  const duplicateRemote = await findRemoteDuplicateByPhone(organizationId, incoming);
+  if (duplicateRemote) {
+    throw new Error(duplicateMessage(incoming.name, duplicateRemote.name));
+  }
   const payload = toRemotePayload(incoming);
   const actorUserId = authGetUser()?.id || null;
   let remoteRow: any = null;

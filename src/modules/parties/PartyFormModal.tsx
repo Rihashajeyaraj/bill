@@ -77,6 +77,10 @@ function sanitizeDecimalInput(value: string) {
   return normalized.includes(".") ? `${integer}.${decimal}` : integer;
 }
 
+function sanitizePhoneInput(value: string) {
+  return String(value || "").replace(/\D/g, "");
+}
+
 export default function PartyFormModal({
   open,
   mode,
@@ -105,6 +109,8 @@ export default function PartyFormModal({
     const nextForm = initialParty
       ? withNormalizedContactType({ ...createDraft(initialParty.type || "Customer"), ...initialParty })
       : createDraft("Customer");
+    const normalizedPhone = sanitizePhoneInput(String(nextForm.phone || ""));
+    nextForm.phone = normalizedPhone.length > 10 ? normalizedPhone.slice(-10) : normalizedPhone;
     setOpeningBalanceInput(formatDecimalAmount(nextForm.openingBalance));
     setCountryMenuOpen(false);
     setStateMenuOpen(false);
@@ -205,10 +211,15 @@ export default function PartyFormModal({
       setError("Party name is required.");
       return;
     }
+    const normalizedPhone = sanitizePhoneInput(form.phone || "");
+    if (normalizedPhone.length !== 10) {
+      setError("Mobile number must be exactly 10 digits.");
+      return;
+    }
     const normalized: PartyDraft = {
       ...form,
       name: form.name.trim(),
-      phone: form.phone?.trim() || "",
+      phone: normalizedPhone,
       email: form.email?.trim() || "",
       country: form.country?.trim() || "",
       state: form.state?.trim() || "",
@@ -369,12 +380,18 @@ export default function PartyFormModal({
                   </select>
                 </FormField>
 
-                <FormField label="Phone">
+                <FormField label="Mobile Number" hint="10 digits only">
                   <input
                     value={form.phone}
-                    onChange={(event) => updateField("phone", event.target.value)}
+                    onChange={(event) => {
+                      const nextPhone = sanitizePhoneInput(event.target.value);
+                      if (nextPhone.length > 10) return;
+                      updateField("phone", nextPhone);
+                    }}
                     className={inputClassName}
-                    placeholder="+1 555 000 1234"
+                    placeholder="9876543210"
+                    inputMode="numeric"
+                    maxLength={10}
                   />
                 </FormField>
 
