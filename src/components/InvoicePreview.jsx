@@ -178,8 +178,18 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
     logoPos === "center" ? "flex flex-col items-center text-center" : "flex items-start justify-between";
   const invoiceAlign = logoPos === "right" ? "text-left" : "text-right";
   const companyAlign = logoPos === "right" ? "flex-row-reverse text-right" : "text-left";
-  const taxType = invoiceData.tax?.type || (invoiceData.country === "India" ? "GST" : "NONE");
-  const isIndiaGST = taxType === "GST";
+  const totalsTaxObject = invoiceData.totals?.tax && typeof invoiceData.totals.tax === "object" ? invoiceData.totals.tax : {};
+  const taxBreakup =
+    (invoiceData.taxBreakup && typeof invoiceData.taxBreakup === "object" ? invoiceData.taxBreakup : null) ||
+    (invoiceData.totals?.taxBreakup && typeof invoiceData.totals.taxBreakup === "object" ? invoiceData.totals.taxBreakup : null);
+  const rawTaxType = String(
+    invoiceData.taxMode ||
+      invoiceData.tax?.type ||
+      totalsTaxObject?.type ||
+      (invoiceData.country === "India" ? "GST" : "NORMAL")
+  ).toUpperCase();
+  const isIndiaGST = rawTaxType === "GST";
+  const taxType = rawTaxType;
   const formattedInvoiceDate = formatDayMonthYear(invoiceData.invoiceDate);
 
   const seller = invoiceData.seller || {
@@ -198,6 +208,22 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
     phone: invoiceData.customer?.phone || "",
     state: invoiceData.customer?.state || ""
   };
+
+  function getTotalTax() {
+    if (typeof invoiceData.totals?.tax === "number") return Number(invoiceData.totals.tax || 0);
+    if (invoiceData.totals?.tax && typeof invoiceData.totals.tax === "object") {
+      return Number(
+        invoiceData.totals.tax.totalTax ??
+          invoiceData.totals.tax.taxAmount ??
+          invoiceData.totals.tax.vat ??
+          0
+      );
+    }
+    if (taxBreakup && typeof taxBreakup === "object") {
+      return Number(taxBreakup.totalTax ?? taxBreakup.taxAmount ?? 0);
+    }
+    return Number(invoiceData.tax?.totalTax ?? invoiceData.tax?.taxAmount ?? 0);
+  }
 
   function buildGstLines() {
     const rateFallback = Number(invoiceData.taxRate || 0);
@@ -224,6 +250,8 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
 
   function getSameState() {
     if (typeof invoiceData.tax?.sameState === "boolean") return invoiceData.tax.sameState;
+    if (taxBreakup?.supplyType) return taxBreakup.supplyType === "INTRA";
+    if (invoiceData.tax?.supplyType) return invoiceData.tax.supplyType !== "INTER";
     const sellerState = (seller.state || "").trim().toLowerCase();
     const buyerState = (buyer.state || invoiceData.placeOfSupply || "").trim().toLowerCase();
     return sellerState && buyerState ? sellerState === buyerState : false;
@@ -231,13 +259,21 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
 
   if (isIndiaGST) {
     const gstLines = buildGstLines();
-    const totalTaxable = gstLines.reduce((sum, line) => sum + line.taxableValue, 0);
-    const totalTax = gstLines.reduce((sum, line) => sum + line.taxAmount, 0);
-    const grandTotal = totalTaxable + totalTax;
+    const totalTaxable = gstLines.reduce((sum, line) => sum + line.taxableValue, 0) || Number(invoiceData.totals?.subTotal || 0);
+    const lineTaxTotal = gstLines.reduce((sum, line) => sum + line.taxAmount, 0);
+    const totalTax = lineTaxTotal || getTotalTax();
+    const grandTotal = Number(invoiceData.totals?.total ?? invoiceData.totals?.grandTotal ?? totalTaxable + totalTax);
     const sameState = getSameState();
-    const cgst = sameState ? totalTax / 2 : 0;
-    const sgst = sameState ? totalTax / 2 : 0;
-    const igst = sameState ? 0 : totalTax;
+    const supplyType = invoiceData.tax?.supplyType || taxBreakup?.supplyType || (sameState ? "INTRA" : "INTER");
+    const cgst = Number(
+      invoiceData.tax?.cgst ?? totalsTaxObject?.cgst ?? taxBreakup?.cgst ?? (supplyType === "INTRA" ? totalTax / 2 : 0)
+    );
+    const sgst = Number(
+      invoiceData.tax?.sgst ?? totalsTaxObject?.sgst ?? taxBreakup?.sgst ?? (supplyType === "INTRA" ? totalTax - cgst : 0)
+    );
+    const igst = Number(
+      invoiceData.tax?.igst ?? totalsTaxObject?.igst ?? taxBreakup?.igst ?? (supplyType === "INTER" ? totalTax : 0)
+    );
     const amountWords = invoiceData.amountInWords || `Rupees ${money(grandTotal, "")} only`;
 
     return (
@@ -316,7 +352,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
                 Place of Supply: {invoiceData.placeOfSupply || buyer.state || "-"}
               </p>
               <p className={clsx("text-slate-500", variant.label)}>
-                Tax Rule: {sameState ? "CGST + SGST" : "IGST"}
+                Tax Rule: {supplyType === "INTER" ? "IGST" : "CGST + SGST"}
               </p>
             </div>
           </div>
@@ -369,7 +405,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
                 {money(totalTaxable, currencySymbol)}
               </span>
             </div>
-            {sameState ? (
+            {supplyType !== "INTER" ? (
               <>
                 <div className="flex items-center justify-between">
                   <span className={clsx("text-slate-500", variant.label)}>CGST</span>
@@ -411,11 +447,13 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
     );
   }
 
-  const taxRate = Number(invoiceData.taxRate || invoiceData.tax?.rate || 0);
+  const taxRate = Number(invoiceData.taxRate || invoiceData.tax?.rate || taxBreakup?.taxRate || 0);
   const taxLabel =
-    taxType === "VAT" ? `VAT (${taxRate}%)` : taxType === "SALES_TAX" ? `Sales Tax (${taxRate}%)` : "Tax";
-  const taxValue = Number(invoiceData.totals?.tax || 0);
-  const showTaxLine = taxType !== "NONE" && taxRate > 0;
+    invoiceData.tax?.taxLabel ||
+    taxBreakup?.taxLabel ||
+    (taxType === "VAT" ? "VAT" : taxType === "SALES_TAX" ? "Sales Tax" : "TAX");
+  const taxValue = Number(taxBreakup?.taxAmount ?? getTotalTax());
+  const showTaxLine = taxType !== "NONE" && taxValue > 0;
   const taxIdLabel = invoiceData.tax?.idLabel || "Tax ID";
   const taxIdValue = invoiceData.tax?.idValue || "";
 

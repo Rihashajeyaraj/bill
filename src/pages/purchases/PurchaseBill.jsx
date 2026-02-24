@@ -14,6 +14,7 @@ import {
   purchasesSyncFromRemote
 } from "../../services/purchases.service";
 import { useOrganization } from "../../context/OrganizationContext";
+import { calculateTaxes } from "../../services/tax";
 
 const TAX_RATES = [0, 5, 12, 18, 28];
 const PRICE_TAX_MODES = [
@@ -38,6 +39,10 @@ function normalizeItemName(value) {
 function money(n) {
   const v = Number(n || 0);
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function round2(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
 function formatDate(value) {
@@ -76,7 +81,8 @@ function createLine(items) {
 
 export default function PurchaseBill() {
   const navigate = useNavigate();
-  const { country = "" } = useOrganization();
+  const { country = "", profile: company = {} } = useOrganization();
+  const isIndiaOrg = country === "India";
   const toast = useToast();
   const [suppliers, setSuppliers] = useState(() =>
     listParties().filter((party) => party.type === "Supplier")
@@ -231,7 +237,7 @@ export default function PurchaseBill() {
   }
 
   const computed = useMemo(() => {
-    const detailed = lines.map((line) => {
+    const detailedBase = lines.map((line) => {
       const qty = Number(line.qty || 0);
       const rate = Number(line.rate || 0);
       const taxRate = Number(line.tax || 0);
@@ -239,21 +245,55 @@ export default function PurchaseBill() {
       if (line.priceTaxMode === "WITH_TAX") {
         const divisor = 1 + taxRate / 100;
         const subTotal = divisor > 0 ? base / divisor : base;
-        const lineTax = base - subTotal;
-        return { ...line, lineSubTotal: subTotal, lineTax, amount: base };
+        const lineTax = round2(base - subTotal);
+        return { ...line, lineSubTotal: round2(subTotal), lineTax, amount: round2(base) };
       }
-      const lineTax = (base * taxRate) / 100;
-      return { ...line, lineSubTotal: base, lineTax, amount: base + lineTax };
+      const lineTax = round2((base * taxRate) / 100);
+      return { ...line, lineSubTotal: round2(base), lineTax, amount: round2(base + lineTax) };
     });
 
-    const totalQty = detailed.reduce((sum, line) => sum + Number(line.qty || 0), 0);
-    const subTotal = detailed.reduce((sum, line) => sum + line.lineSubTotal, 0);
-    const taxTotal = detailed.reduce((sum, line) => sum + line.lineTax, 0);
-    const grandTotal = subTotal + taxTotal;
+    const totalQty = detailedBase.reduce((sum, line) => sum + Number(line.qty || 0), 0);
+    const subTotal = round2(detailedBase.reduce((sum, line) => sum + line.lineSubTotal, 0));
+    const lineTaxTotal = round2(detailedBase.reduce((sum, line) => sum + line.lineTax, 0));
+    const effectiveRate = subTotal > 0 ? (lineTaxTotal / subTotal) * 100 : 0;
+    const tax = calculateTaxes({
+      taxableAmount: subTotal,
+      taxRate: effectiveRate,
+      org: {
+        country,
+        state: company?.address?.state || "",
+        gstin: company?.tax?.gstin || ""
+      },
+      party: {
+        state: party?.state || "",
+        gstin: party?.gstin || party?.taxId || ""
+      }
+    });
+
+    const detailed = detailedBase.map((line) => {
+      let cgstAmount = 0;
+      let sgstAmount = 0;
+      let igstAmount = 0;
+      let vatAmount = 0;
+      if (tax.taxMode === "GST") {
+        if (tax.supplyType === "INTER") {
+          igstAmount = line.lineTax;
+        } else {
+          cgstAmount = round2(line.lineTax / 2);
+          sgstAmount = round2(line.lineTax - cgstAmount);
+        }
+      } else {
+        vatAmount = line.lineTax;
+      }
+      return { ...line, cgstAmount, sgstAmount, igstAmount, vatAmount };
+    });
+
+    const taxTotal = tax.totalTax;
+    const grandTotal = round2(subTotal + taxTotal);
     const roundOff = roundOffEnabled ? Number(roundOffValue || 0) : 0;
-    const finalTotal = grandTotal + roundOff;
-    return { detailed, totalQty, subTotal, taxTotal, grandTotal, roundOff, finalTotal };
-  }, [lines, roundOffEnabled, roundOffValue]);
+    const finalTotal = round2(grandTotal + roundOff);
+    return { detailed, totalQty, subTotal, tax, taxTotal, grandTotal, roundOff, finalTotal, effectiveRate };
+  }, [lines, roundOffEnabled, roundOffValue, country, company?.address?.state, company?.tax?.gstin, party?.state, party?.gstin, party?.taxId]);
 
   async function resolveLinesWithItems(detailedLines) {
     const nextLines = [];
@@ -356,6 +396,10 @@ export default function PurchaseBill() {
       toast.warning("Supplier required", "Select a supplier before saving.");
       return;
     }
+    if (isIndiaOrg && computed.tax?.warning) {
+      toast.warning("State required", computed.tax.warning);
+      return;
+    }
     setSaving(true);
     try {
       const resolvedLines = await resolveLinesWithItems(computed.detailed);
@@ -398,9 +442,14 @@ export default function PurchaseBill() {
           totalQty: computed.totalQty,
           subTotal: computed.subTotal,
           taxTotal: computed.taxTotal,
+          tax: computed.tax,
+          taxBreakup: computed.tax.taxBreakup,
+          taxRate: computed.effectiveRate,
           roundOff: computed.roundOff,
           grandTotal: computed.finalTotal
-        }
+        },
+        taxMode: computed.tax.taxMode,
+        supplyType: computed.tax.supplyType || null
       });
       toast.success("Purchase bill saved", `Bill ${effectiveBillNumber} saved successfully.`);
       setSavedBills(purchasesList());
@@ -671,9 +720,32 @@ export default function PurchaseBill() {
               <span className="font-semibold text-slate-900">{money(computed.subTotal)}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-slate-600">Tax Total</span>
+              <span className="text-slate-600">{computed.tax.taxMode === "GST" ? "GST Total" : "Tax Total"}</span>
               <span className="font-semibold text-slate-900">{money(computed.taxTotal)}</span>
             </div>
+            {computed.tax.taxMode === "GST" ? (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">Supply Type</span>
+                  <span className="font-semibold text-slate-900">{computed.tax.supplyType || "INTRA"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">IGST</span>
+                  <span className="font-semibold text-slate-900">{money(computed.tax.igst)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">CGST + SGST</span>
+                  <span className="font-semibold text-slate-900">
+                    {money(Number(computed.tax.cgst || 0) + Number(computed.tax.sgst || 0))}
+                  </span>
+                </div>
+              </>
+            ) : null}
+            {isIndiaOrg && computed.tax.warning ? (
+              <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                {computed.tax.warning}
+              </p>
+            ) : null}
             <div className="flex items-center justify-between gap-3">
               <label className="flex items-center gap-2 text-slate-600">
                 <input

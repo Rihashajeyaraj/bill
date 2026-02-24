@@ -12,7 +12,7 @@ import InvoicePreview from "../../components/InvoicePreview";
 
 import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesCreate, invoicesSyncFromRemote } from "../../services/invoices.service";
-import { computeIndiaGST, computeVAT } from "../../services/tax";
+import { calculateTaxes } from "../../services/tax";
 import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
@@ -23,6 +23,10 @@ import { getInvoiceTemplateConfig } from "../../lib/templateStore";
 function money(n) {
   const v = Number(n || 0);
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function round2(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
 function generateInvoiceNumber() {
@@ -120,7 +124,7 @@ export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { profile: company = {}, country = "", currency = "", currencySymbol = "" } = useOrganization();
   const [templateConfig, setTemplateConfig] = useState(() => getInvoiceTemplateConfig());
-  const isIndia = country === "India";
+  const isIndiaOrg = country === "India";
 
   const [customers, setCustomers] = useState(() =>
     listParties().filter((party) => party.type === "Customer")
@@ -142,12 +146,12 @@ export default function InvoiceCreate() {
   const [printQueued, setPrintQueued] = useState(false);
 
   const companyState = company?.address?.state || "";
-  const customerState = isIndia ? placeOfSupply || party?.state || "" : party?.state || "";
+  const customerState = isIndiaOrg ? placeOfSupply || party?.state || "" : party?.state || "";
   const companyVatRate = company?.tax?.vatRate;
-  const defaultRate = isIndia ? 18 : getVatRate(country, company);
+  const defaultRate = isIndiaOrg ? 18 : getVatRate(country, company);
   const [taxRate, setTaxRate] = useState(defaultRate);
   const [vatInput, setVatInput] = useState(
-    isIndia ? "" : `VAT ${Number.isFinite(defaultRate) ? defaultRate : 0}%`
+    isIndiaOrg ? "" : `TAX ${Number.isFinite(defaultRate) ? defaultRate : 0}%`
   );
 
   const creditStatus = useMemo(() => getPartyCreditStatus(partyId), [partyId]);
@@ -192,15 +196,15 @@ export default function InvoiceCreate() {
   }, []);
 
   useEffect(() => {
-    const rate = isIndia ? 18 : getVatRate(country, company);
+    const rate = isIndiaOrg ? 18 : getVatRate(country, company);
     setTaxRate(rate);
-    if (!isIndia) {
-      setVatInput(`VAT ${Number.isFinite(rate) ? rate : 0}%`);
+    if (!isIndiaOrg) {
+      setVatInput(`TAX ${Number.isFinite(rate) ? rate : 0}%`);
     }
-  }, [country, isIndia, companyVatRate]);
+  }, [country, isIndiaOrg, companyVatRate]);
 
   useEffect(() => {
-    if (!isIndia) return;
+    if (!isIndiaOrg) return;
     const candidate = party?.state || "";
     const normalizedCandidate = INDIA_STATES.find(
       (state) => state.toLowerCase() === candidate.trim().toLowerCase()
@@ -213,7 +217,7 @@ export default function InvoiceCreate() {
       (state) => state.toLowerCase() === companyState.trim().toLowerCase()
     );
     setPlaceOfSupply(normalizedCompany || "");
-  }, [party?.state, companyState, isIndia]);
+  }, [party?.state, companyState, isIndiaOrg]);
 
   useEffect(() => {
     if (!printQueued || !printInvoiceData) return;
@@ -293,52 +297,72 @@ export default function InvoiceCreate() {
   }
 
   const computed = useMemo(() => {
-    const enriched = lines.map((l) => {
+    const hasAnyLineTax = lines.some((line) => Number(line?.tax || 0) > 0);
+    const fallbackRate = hasAnyLineTax ? 0 : Number(taxRate || 0);
+
+    const enrichedBase = lines.map((l) => {
       const item = items.find((it) => it.id === l.itemId);
       const qty = Number(l.qty || 0);
       const rate = Number(l.rate || 0);
       const discount = Number(l.discount || 0);
-      const taxRatePerLine = Number(l.tax || 0);
+      const taxRatePerLine = Number(l.tax || fallbackRate || 0);
 
       const gross = qty * rate;
       const net = Math.max(0, gross - discount);
-      const lineTax = net > 0 && taxRatePerLine > 0 ? (net * taxRatePerLine) / 100 : 0;
+      const lineTax = net > 0 && taxRatePerLine > 0 ? round2((net * taxRatePerLine) / 100) : 0;
       return { ...l, itemName: item?.name || "XXX", hsn: item?.hsn || item?.sac || "XX", gross, net, lineTax };
     });
 
-    const subTotal = enriched.reduce((a, x) => a + x.net, 0);
-    const lineTaxTotal = enriched.reduce((a, x) => a + x.lineTax, 0);
-    const normalizedCompany = (companyState || "").trim().toLowerCase();
-    const normalizedCustomer = (customerState || "").trim().toLowerCase();
-    const sameState = normalizedCompany && normalizedCustomer && normalizedCompany === normalizedCustomer;
+    const subTotal = round2(enrichedBase.reduce((a, x) => a + x.net, 0));
+    const lineTaxTotal = round2(enrichedBase.reduce((a, x) => a + x.lineTax, 0));
+    const effectiveTaxRate =
+      subTotal > 0 ? (lineTaxTotal / subTotal) * 100 : Number(taxRate || 0);
 
-    let tax = { type: isIndia ? "GST" : "VAT", totalTax: 0 };
-    if (isIndia) {
-      if (lineTaxTotal > 0) {
-        const half = sameState ? lineTaxTotal / 2 : 0;
-        const igst = sameState ? 0 : lineTaxTotal;
-        tax = {
-          type: "GST",
-          sameState,
-          cgst: half,
-          sgst: half,
-          igst,
-          totalTax: lineTaxTotal,
-          mode: "line"
-        };
-      } else {
-        tax = computeIndiaGST({ taxRate, companyState, customerState, taxableAmount: subTotal });
+    const tax = calculateTaxes({
+      taxableAmount: subTotal,
+      taxRate: effectiveTaxRate,
+      org: {
+        country,
+        state: companyState,
+        gstin: company?.tax?.gstin || ""
+      },
+      party: {
+        state: customerState,
+        gstin: party?.gstin || party?.taxId || ""
       }
-    } else if (lineTaxTotal > 0) {
-      tax = { type: "Line Tax", totalTax: lineTaxTotal, mode: "manual" };
-    } else {
-      tax = computeVAT({ vatRate: taxRate, taxableAmount: subTotal });
-    }
+    });
 
-    const grandTotal = subTotal + (tax.totalTax || 0);
+    const enriched = enrichedBase.map((line) => {
+      let cgstAmount = 0;
+      let sgstAmount = 0;
+      let igstAmount = 0;
+      let vatAmount = 0;
 
-    return { enriched, subTotal, tax, grandTotal };
-  }, [lines, items, isIndia, companyState, customerState, taxRate]);
+      if (tax.taxMode === "GST") {
+        if (tax.supplyType === "INTER") {
+          igstAmount = line.lineTax;
+        } else {
+          cgstAmount = round2(line.lineTax / 2);
+          sgstAmount = round2(line.lineTax - cgstAmount);
+        }
+      } else {
+        vatAmount = line.lineTax;
+      }
+
+      return {
+        ...line,
+        cgstAmount,
+        sgstAmount,
+        igstAmount,
+        vatAmount,
+        lineTotal: round2(line.net + line.lineTax)
+      };
+    });
+
+    const grandTotal = round2(subTotal + (tax.totalTax || 0));
+
+    return { enriched, subTotal, tax, grandTotal, effectiveTaxRate };
+  }, [lines, items, country, companyState, customerState, taxRate, company?.tax?.gstin, party?.gstin, party?.taxId]);
 
   const creditLimitEnabled = !!creditStatus.party?.creditLimitEnabled;
   const creditLimitType = creditStatus.creditLimitType || "Amount";
@@ -377,10 +401,7 @@ export default function InvoiceCreate() {
   const invoicePreviewData = useMemo(() => {
     const subTotal = Number(computed.subTotal || 0);
     const totalTax = Number(computed.tax?.totalTax || 0);
-    const effectiveTaxRate =
-      computed.tax?.mode === "manual" && subTotal > 0
-        ? Number(((totalTax / subTotal) * 100).toFixed(2))
-        : Number(taxRate || 0);
+    const effectiveTaxRate = Number(computed.effectiveTaxRate || taxRate || 0);
     const seller = {
       name: company?.companyName || "",
       address: formatAddress(company?.address),
@@ -397,7 +418,7 @@ export default function InvoiceCreate() {
       state: customerState
     };
     return {
-      title: isIndia ? "Tax Invoice" : "Invoice",
+      title: isIndiaOrg ? "Tax Invoice" : "Invoice",
       country,
       companyName: company?.companyName || "",
       currencySymbol: resolveCurrencySymbol(currencySymbol, currency),
@@ -415,37 +436,53 @@ export default function InvoiceCreate() {
         gstin: buyer.gstin
       },
       taxRate: effectiveTaxRate,
-      tax: isIndia
+      taxBreakup: computed.tax?.taxBreakup || null,
+      tax: isIndiaOrg
         ? {
             type: "GST",
-            sameState: !!computed.tax?.sameState,
+            supplyType: computed.tax?.supplyType || "INTRA",
+            sameState: computed.tax?.supplyType !== "INTER",
             cgst: Number(computed.tax?.cgst || 0),
             sgst: Number(computed.tax?.sgst || 0),
             igst: Number(computed.tax?.igst || 0),
-            totalTax
+            totalTax,
+            warning: computed.tax?.warning || ""
           }
         : {
-            type: "VAT",
+            type: "NORMAL",
             rate: effectiveTaxRate,
-            vat: totalTax,
-            totalTax
+            taxLabel: computed.tax?.taxBreakup?.taxLabel || "TAX",
+            taxAmount: totalTax,
+            totalTax,
+            warning: ""
           },
-      items: computed.enriched.map((line) => ({
-        id: line.id,
-        name: line.itemName || "",
-        hsn: line.hsn || "",
-        qty: Number(line.qty || 0),
-        rate: Number(line.rate || 0),
-        discount: Number(line.discount || 0),
-        tax: Number(line.tax || 0),
-        taxRate: Number(line.tax || 0),
-        taxableValue: Number(line.net || 0),
-        net: Number(line.net || 0),
-        amount: Number(line.net || 0)
-      })),
+      items: computed.enriched.map((line) => {
+        const lineNet = Number(line.net || 0);
+        const lineTaxAmount = Number(line.lineTax || 0);
+        const resolvedLineRate = lineNet > 0 ? round2((lineTaxAmount / lineNet) * 100) : 0;
+        return {
+          id: line.id,
+          name: line.itemName || "",
+          hsn: line.hsn || "",
+          qty: Number(line.qty || 0),
+          rate: Number(line.rate || 0),
+          discount: Number(line.discount || 0),
+          tax: resolvedLineRate,
+          taxRate: resolvedLineRate,
+          taxableValue: lineNet,
+          net: lineNet,
+          amount: lineNet + lineTaxAmount,
+          lineTax: lineTaxAmount,
+          igstAmount: Number(line.igstAmount || 0),
+          cgstAmount: Number(line.cgstAmount || 0),
+          sgstAmount: Number(line.sgstAmount || 0),
+          vatAmount: Number(line.vatAmount || 0)
+        };
+      }),
       totals: {
         subTotal,
         tax: totalTax,
+        taxBreakup: computed.tax?.taxBreakup || null,
         total: Number(computed.grandTotal || 0),
         balance: Number(computed.grandTotal || 0)
       }
@@ -462,13 +499,19 @@ export default function InvoiceCreate() {
     customerState,
     invoiceDate,
     invoiceNo,
-    isIndia,
+    isIndiaOrg,
     party,
     placeOfSupply,
-    taxRate
+    taxRate,
+    computed.effectiveTaxRate
   ]);
 
   async function saveInvoice({ silent = false } = {}) {
+    if (isIndiaOrg && computed.tax?.warning) {
+      alert(computed.tax.warning);
+      return null;
+    }
+
     const seller = {
       name: company?.companyName || "",
       address: formatAddress(company?.address),
@@ -491,16 +534,36 @@ export default function InvoiceCreate() {
       partyName: party?.name || "",
       placeOfSupply: placeOfSupply || buyer.state,
       country,
-      taxRate,
+      taxRate: computed.effectiveTaxRate,
       companySnapshot: company,
       seller,
       buyer,
       lines: computed.enriched,
       totals: {
         subTotal: computed.subTotal,
-        tax: computed.tax,
+        tax: isIndiaOrg
+          ? {
+              type: "GST",
+              supplyType: computed.tax.supplyType,
+              sameState: computed.tax.supplyType !== "INTER",
+              cgst: computed.tax.cgst,
+              sgst: computed.tax.sgst,
+              igst: computed.tax.igst,
+              totalTax: computed.tax.totalTax
+            }
+          : {
+              type: "NORMAL",
+              rate: computed.tax.taxRate,
+              taxLabel: computed.tax.taxBreakup?.taxLabel || "TAX",
+              taxAmount: computed.tax.taxAmount,
+              totalTax: computed.tax.totalTax
+            },
+        taxBreakup: computed.tax.taxBreakup,
+        totalTax: computed.tax.totalTax,
         grandTotal: computed.grandTotal
-      }
+      },
+      taxMode: computed.tax.taxMode,
+      supplyType: computed.tax.supplyType || null
     };
     try {
       const savedInvoiceId = await invoicesCreate(payload);
@@ -563,10 +626,10 @@ export default function InvoiceCreate() {
               <p className="text-sm font-semibold text-slate-900">Invoice Form</p>
               <p className="text-xs text-slate-500">Country: {country || "—"}</p>
             </div>
-            {isIndia ? (
+            {isIndiaOrg ? (
               <Badge tone="warning">GST</Badge>
             ) : country ? (
-              <Badge tone="success">VAT</Badge>
+              <Badge tone="success">TAX</Badge>
             ) : (
               <Badge tone="neutral">TAX</Badge>
             )}
@@ -614,8 +677,8 @@ export default function InvoiceCreate() {
               </select>
             </FormField>
 
-            {isIndia ? (
-              <FormField label="Place of Supply (State)">
+            {isIndiaOrg ? (
+              <FormField label="Place of Supply (State) *">
                 <>
                   <input
                     list="india-states-invoice"
@@ -635,10 +698,10 @@ export default function InvoiceCreate() {
             ) : null}
 
             <FormField
-              label={isIndia ? "GST Rate" : "VAT Rate"}
-              hint={isIndia ? "Select GST %" : "Auto VAT % / Type custom"}
+              label={isIndiaOrg ? "GST Rate" : "Tax Rate"}
+              hint={isIndiaOrg ? "Select GST %" : "Auto tax % / Type custom"}
             >
-              {isIndia ? (
+              {isIndiaOrg ? (
                 <select
                   value={taxRate}
                   onChange={(e) => setTaxRate(Number(e.target.value))}
@@ -663,24 +726,24 @@ export default function InvoiceCreate() {
                     }}
                     onBlur={() => {
                       const parsed = parseRateInput(vatInput);
-                      setVatInput(`VAT ${parsed}%`);
+                      setVatInput(`TAX ${parsed}%`);
                     }}
                     className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                     style={{ "--tw-ring-color": UI.COLORS.ring }}
-                    placeholder="VAT 20%"
+                    placeholder="TAX 20%"
                   />
                   <datalist id="vat-presets">
                     {[getVatRate(country, company), 0]
                       .filter((rate, idx, arr) => arr.indexOf(rate) === idx)
                       .map((rate) => (
-                        <option key={`vat_${rate}`} value={`VAT ${rate}%`} />
+                        <option key={`vat_${rate}`} value={`TAX ${rate}%`} />
                       ))}
                   </datalist>
                 </>
               )}
             </FormField>
 
-            {isIndia ? (
+            {isIndiaOrg ? (
               <>
                 <FormField label="Company State (from Company Profile)">
                   <input
@@ -699,6 +762,12 @@ export default function InvoiceCreate() {
               </>
             ) : null}
           </div>
+
+          {isIndiaOrg && computed.tax?.warning ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              {computed.tax.warning}
+            </div>
+          ) : null}
 
           {party && creditLimitEnabled ? (
             <div
@@ -907,16 +976,29 @@ export default function InvoiceCreate() {
             <span className="text-slate-600">Sub Total</span>
             <span className="font-semibold text-slate-900">{money(computed.subTotal)}</span>
           </div>
-          <div className="mt-2 flex items-center justify-between text-sm">
-            <span className="text-slate-600">IGST</span>
-            <span className="font-semibold text-slate-900">{money(computed.tax.igst)}</span>
-          </div>
-          <div className="mt-2 flex items-center justify-between text-sm">
-            <span className="text-slate-600">CGST + SGST</span>
-            <span className="font-semibold text-slate-900">
-              {money((Number(computed.tax.cgst || 0) + Number(computed.tax.sgst || 0)))}
-            </span>
-          </div>
+          {computed.tax.taxMode === "GST" ? (
+            <>
+              <div className="mt-2 flex items-center justify-between text-sm">
+                <span className="text-slate-600">Supply Type</span>
+                <span className="font-semibold text-slate-900">{computed.tax.supplyType || "INTRA"}</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-sm">
+                <span className="text-slate-600">IGST</span>
+                <span className="font-semibold text-slate-900">{money(computed.tax.igst)}</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-sm">
+                <span className="text-slate-600">CGST + SGST</span>
+                <span className="font-semibold text-slate-900">
+                  {money((Number(computed.tax.cgst || 0) + Number(computed.tax.sgst || 0)))}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="mt-2 flex items-center justify-between text-sm">
+              <span className="text-slate-600">{computed.tax.taxBreakup?.taxLabel || "TAX"}</span>
+              <span className="font-semibold text-slate-900">{money(computed.tax.taxAmount)}</span>
+            </div>
+          )}
           <div className="mt-2 flex items-center justify-between text-base">
             <span className="font-semibold text-slate-900">Grand Total</span>
             <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span>

@@ -40,13 +40,16 @@ function deriveInvoiceStatus(grandTotal, balanceAmount) {
 
 function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
   const metadata = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  const taxBreakup = metadata?.taxBreakup && typeof metadata.taxBreakup === "object" ? metadata.taxBreakup : null;
   const tax = {
-    type: metadata?.taxType || "GST/VAT",
+    type: metadata?.taxType || metadata?.taxMode || "GST/VAT",
+    supplyType: metadata?.supplyType || taxBreakup?.supplyType || null,
     totalTax: parseNumber(row?.tax_total),
     cgst: parseNumber(row?.cgst_total),
     sgst: parseNumber(row?.sgst_total),
     igst: parseNumber(row?.igst_total),
-    vat: parseNumber(row?.vat_total)
+    vat: parseNumber(row?.vat_total),
+    taxAmount: parseNumber(row?.tax_total)
   };
 
   const lines = (Array.isArray(itemRows) ? itemRows : []).map((line) => ({
@@ -57,6 +60,11 @@ function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
     rate: parseNumber(line?.unit_price),
     discount: parseNumber(line?.discount_amount),
     tax: parseNumber(line?.tax_rate),
+    taxRate: parseNumber(line?.tax_rate),
+    cgstAmount: parseNumber(line?.cgst_amount),
+    sgstAmount: parseNumber(line?.sgst_amount),
+    igstAmount: parseNumber(line?.igst_amount),
+    vatAmount: parseNumber(line?.vat_amount),
     lineTax:
       parseNumber(line?.cgst_amount) +
       parseNumber(line?.sgst_amount) +
@@ -84,12 +92,15 @@ function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
     partyName: metadata?.partyName || metadata?.buyer?.name || "",
     placeOfSupply: row?.place_of_supply_state || metadata?.placeOfSupply || "",
     country: metadata?.country || "",
+    taxMode: metadata?.taxMode || "",
+    supplyType: metadata?.supplyType || taxBreakup?.supplyType || null,
     seller: metadata?.seller || {},
     buyer: metadata?.buyer || {},
     lines,
     totals: {
       subTotal: parseNumber(row?.subtotal),
       tax,
+      taxBreakup,
       grandTotal,
       balance: effectiveBalance
     },
@@ -144,6 +155,7 @@ function buildRemoteLines(invoiceId, lines) {
 function calculateInvoiceSummary(lines, totalsInput) {
   const totals = totalsInput && typeof totalsInput === "object" ? totalsInput : {};
   const taxInput = totals?.tax && typeof totals.tax === "object" ? totals.tax : {};
+  const taxBreakup = totals?.taxBreakup && typeof totals.taxBreakup === "object" ? totals.taxBreakup : {};
   const safeLines = Array.isArray(lines) ? lines : [];
 
   const lineSubTotal = safeLines.reduce((sum, line) => {
@@ -159,12 +171,24 @@ function calculateInvoiceSummary(lines, totalsInput) {
   const igstFromLines = safeLines.reduce((sum, line) => sum + parseNumber(line?.igstAmount), 0);
   const vatFromLines = safeLines.reduce((sum, line) => sum + parseNumber(line?.vatAmount), 0);
   const cessFromLines = safeLines.reduce((sum, line) => sum + parseNumber(line?.cessAmount), 0);
+  const numericTaxFromTotals =
+    typeof totals?.tax === "number" ? parseNumber(totals.tax) : parseNumber(totals?.totalTax);
 
-  const cgst = cgstFromLines || parseNumber(taxInput?.cgst);
-  const sgst = sgstFromLines || parseNumber(taxInput?.sgst);
-  const igst = igstFromLines || parseNumber(taxInput?.igst);
-  const vat = vatFromLines || parseNumber(taxInput?.vat);
-  const cess = cessFromLines || parseNumber(taxInput?.cess);
+  const cgst = cgstFromLines || parseNumber(taxInput?.cgst ?? taxBreakup?.cgst);
+  const sgst = sgstFromLines || parseNumber(taxInput?.sgst ?? taxBreakup?.sgst);
+  const igst = igstFromLines || parseNumber(taxInput?.igst ?? taxBreakup?.igst);
+  let vat = vatFromLines || parseNumber(taxInput?.vat ?? taxBreakup?.vat);
+  const cess = cessFromLines || parseNumber(taxInput?.cess ?? taxBreakup?.cess);
+  const normalTaxAmount =
+    parseNumber(taxInput?.taxAmount ?? taxBreakup?.taxAmount ?? taxInput?.totalTax ?? taxBreakup?.totalTax);
+
+  if (!cgst && !sgst && !igst && !vat && normalTaxAmount > 0) {
+    vat = normalTaxAmount;
+  }
+  if (!cgst && !sgst && !igst && !vat && numericTaxFromTotals > 0) {
+    vat = numericTaxFromTotals;
+  }
+
   const subTotal = lineSubTotal || parseNumber(totals?.subTotal);
   const roundOff = parseNumber(totals?.roundOff);
   const taxTotal = cgst + sgst + igst + vat + cess;
@@ -298,6 +322,12 @@ export async function invoicesCreate(invoice) {
   const lines = Array.isArray(invoice?.lines) ? invoice.lines : [];
   const totals = invoice?.totals || {};
   const tax = totals?.tax || {};
+  const taxBreakup =
+    totals?.taxBreakup && typeof totals.taxBreakup === "object"
+      ? totals.taxBreakup
+      : invoice?.taxBreakup && typeof invoice.taxBreakup === "object"
+        ? invoice.taxBreakup
+        : null;
   const summary = calculateInvoiceSummary(lines, totals);
   const subTotal = summary.subTotal;
   const grandTotal = summary.grandTotal;
@@ -336,7 +366,10 @@ export async function invoicesCreate(invoice) {
           buyer: invoice?.buyer || {},
           seller: invoice?.seller || {},
           placeOfSupply: invoice?.placeOfSupply || "",
-          taxType: tax?.type || "",
+          taxType: tax?.type || invoice?.taxMode || "",
+          taxMode: invoice?.taxMode || tax?.type || "",
+          supplyType: invoice?.supplyType || tax?.supplyType || taxBreakup?.supplyType || null,
+          taxBreakup,
           templateId: invoice?.templateId || ""
         },
         created_by: actorUserId
@@ -392,9 +425,12 @@ export async function invoicesCreate(invoice) {
         cess: summary.cess,
         totalTax: summary.taxTotal
       },
+      taxBreakup,
       grandTotal,
       balance: grandTotal
     },
+    taxMode: invoice?.taxMode || tax?.type || "",
+    supplyType: invoice?.supplyType || tax?.supplyType || taxBreakup?.supplyType || null,
     remainingBalance: grandTotal,
     created_at: now,
     updated_at: now

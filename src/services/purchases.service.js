@@ -93,6 +93,7 @@ export function purchasesList() {
 
 function mapRemotePurchaseBill(row, balanceAmount) {
   const metadata = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  const tax = metadata?.tax && typeof metadata.tax === "object" ? metadata.tax : {};
   const grandTotal = parseNumber(row?.grand_total);
   const effectiveBalance = Math.max(0, parseNumber(balanceAmount));
   const status =
@@ -115,10 +116,15 @@ function mapRemotePurchaseBill(row, balanceAmount) {
       totalQty: parseNumber(metadata?.totalQty),
       subTotal: parseNumber(row?.subtotal),
       taxTotal: parseNumber(row?.tax_total),
+      tax,
+      taxBreakup: metadata?.taxBreakup || null,
+      taxRate: parseNumber(metadata?.taxRate),
       roundOff: parseNumber(metadata?.roundOff),
       grandTotal,
       balance: effectiveBalance
     },
+    taxMode: metadata?.taxMode || "",
+    supplyType: metadata?.supplyType || null,
     remainingBalance: effectiveBalance,
     status,
     lines: []
@@ -216,6 +222,10 @@ export async function purchasesSyncFromRemote() {
       qty: parseNumber(line?.qty),
       rate: parseNumber(line?.unit_price),
       tax: parseNumber(line?.tax_rate),
+      cgstAmount: parseNumber(line?.cgst_amount),
+      sgstAmount: parseNumber(line?.sgst_amount),
+      igstAmount: parseNumber(line?.igst_amount),
+      vatAmount: parseNumber(line?.vat_amount),
       lineTax:
         parseNumber(line?.cgst_amount) +
         parseNumber(line?.sgst_amount) +
@@ -290,6 +300,11 @@ export async function purchasesCreate(bill) {
             partyAddress: bill?.partyAddress || "",
             phone: bill?.phone || "",
             paymentType: bill?.paymentType || "",
+            taxMode: bill?.taxMode || "",
+            supplyType: bill?.supplyType || null,
+            tax: bill?.totals?.tax || null,
+            taxBreakup: bill?.totals?.taxBreakup || null,
+            taxRate: parseNumber(bill?.totals?.taxRate),
             roundOff: parseNumber(totals?.roundOff),
             totalQty: parseNumber(totals?.totalQty)
           },
@@ -313,10 +328,10 @@ export async function purchasesCreate(bill) {
           qty: parseNumber(line?.qty),
           unit_price: parseNumber(line?.rate),
           tax_rate: parseNumber(line?.tax),
-          cgst_amount: 0,
-          sgst_amount: 0,
-          igst_amount: 0,
-          vat_amount: parseNumber(line?.lineTax),
+          cgst_amount: parseNumber(line?.cgstAmount),
+          sgst_amount: parseNumber(line?.sgstAmount),
+          igst_amount: parseNumber(line?.igstAmount),
+          vat_amount: parseNumber(line?.vatAmount ?? line?.lineTax),
           line_total: parseNumber(line?.amount)
         }));
         let linesInsert = await supabase.from("purchase_bill_items").insert(remoteLines);
@@ -342,10 +357,15 @@ export async function purchasesCreate(bill) {
       totalQty: parseNumber(totals?.totalQty),
       subTotal: parseNumber(totals?.subTotal),
       taxTotal: parseNumber(totals?.taxTotal),
+      tax: totals?.tax || null,
+      taxBreakup: totals?.taxBreakup || null,
+      taxRate: parseNumber(totals?.taxRate),
       roundOff: parseNumber(totals?.roundOff),
       grandTotal: parseNumber(totals?.grandTotal),
       balance: parseNumber(totals?.grandTotal)
     },
+    taxMode: bill?.taxMode || "",
+    supplyType: bill?.supplyType || null,
     remainingBalance: parseNumber(totals?.grandTotal),
     status: "issued",
     lines: lines.map((line) => ({
@@ -356,6 +376,10 @@ export async function purchasesCreate(bill) {
       tax: parseNumber(line?.tax),
       lineSubTotal: parseNumber(line?.lineSubTotal),
       lineTax: parseNumber(line?.lineTax),
+      cgstAmount: parseNumber(line?.cgstAmount),
+      sgstAmount: parseNumber(line?.sgstAmount),
+      igstAmount: parseNumber(line?.igstAmount),
+      vatAmount: parseNumber(line?.vatAmount),
       amount: parseNumber(line?.amount)
     }))
   };
