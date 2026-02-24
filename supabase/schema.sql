@@ -184,6 +184,8 @@ create table if not exists public.parties (
   tax_id text,
   opening_balance numeric(14,2) not null default 0,
   credit_limit numeric(14,2),
+  credit_limit_type text not null default 'amount' check (credit_limit_type in ('amount', 'days')),
+  credit_limit_days integer check (credit_limit_days is null or credit_limit_days >= 0),
   notes text,
   is_active boolean not null default true,
   created_by uuid references auth.users(id) on delete set null,
@@ -201,6 +203,7 @@ create table if not exists public.items (
   organization_id uuid not null references public.organizations(id) on delete cascade,
   item_type public.item_type not null,
   item_name text not null,
+  item_code text,
   sku text,
   hsn_sac text,
   unit text,
@@ -218,6 +221,10 @@ create table if not exists public.items (
 );
 create index if not exists idx_items_org_id on public.items(organization_id);
 create index if not exists idx_items_name on public.items(item_name);
+create index if not exists idx_items_item_code on public.items(item_code);
+create unique index if not exists idx_items_org_item_code_unique
+on public.items(organization_id, item_code)
+where item_code is not null;
 create trigger trg_items_updated_at
 before update on public.items
 for each row execute procedure public.set_updated_at();
@@ -355,6 +362,7 @@ create table if not exists public.purchase_bill_items (
   id uuid primary key default gen_random_uuid(),
   bill_id uuid not null references public.purchase_bills(id) on delete cascade,
   item_id uuid references public.items(id) on delete set null,
+  item_code text,
   description text not null,
   qty numeric(14,3) not null default 0,
   unit_price numeric(14,2) not null default 0,

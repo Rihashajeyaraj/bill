@@ -3,11 +3,15 @@ import { BarChart3, FileSpreadsheet, Plus, Search, Trash2 } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import Tabs from "../components/Tabs";
 import Badge from "../components/Badge";
+import Modal from "../components/Modal";
 import ItemFormModal from "../modules/items/ItemFormModal";
 import { useOrganization } from "../context/OrganizationContext";
 import {
   computeItemStock,
+  getItemTradeSummary,
   computeItemUsage,
+  getItemPurchaseHistoryRemote,
+  getItemTradeSummaryRemote,
   listItems,
   removeItemRemote,
   syncItemsFromRemote,
@@ -26,6 +30,16 @@ export default function Items() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState("create");
   const [activeItem, setActiveItem] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyItem, setHistoryItem] = useState(null);
+  const [historyRows, setHistoryRows] = useState([]);
+  const [historySummary, setHistorySummary] = useState({
+    totalSales: 0,
+    totalPurchase: 0,
+    salesQty: 0,
+    purchaseQty: 0
+  });
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -38,10 +52,18 @@ export default function Items() {
       if (tab && item.type !== tab) return false;
       if (statusFilter && item.status !== statusFilter) return false;
       if (!query) return true;
-      const haystack = `${item.name} ${item.sku || ""} ${item.barcode || ""}`.toLowerCase();
+      const haystack = `${item.name} ${item.itemCode || ""} ${item.sku || ""} ${item.barcode || ""}`.toLowerCase();
       return haystack.includes(query);
     });
   }, [items, tab, statusFilter, search]);
+
+  const tradeSummaryByItem = useMemo(() => {
+    const map = new Map();
+    filtered.forEach((item) => {
+      map.set(item.id, getItemTradeSummary(item.id));
+    });
+    return map;
+  }, [filtered]);
 
   const summary = useMemo(() => {
     const scoped = items.filter((item) => item.type === tab);
@@ -88,6 +110,36 @@ export default function Items() {
   function closeModal() {
     setModalOpen(false);
     setActiveItem(null);
+  }
+
+  async function openPurchaseHistory(item) {
+    setHistoryItem(item);
+    setHistoryRows([]);
+    setHistorySummary({
+      totalSales: 0,
+      totalPurchase: 0,
+      salesQty: 0,
+      purchaseQty: 0
+    });
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    try {
+      const [summary, rows] = await Promise.all([
+        getItemTradeSummaryRemote(item.id),
+        getItemPurchaseHistoryRemote(item.id)
+      ]);
+      setHistorySummary(summary || {
+        totalSales: 0,
+        totalPurchase: 0,
+        salesQty: 0,
+        purchaseQty: 0
+      });
+      setHistoryRows(Array.isArray(rows) ? rows : []);
+    } catch (error) {
+      toast.error("Failed to load purchase history", error?.message || "Could not load history.");
+    } finally {
+      setHistoryLoading(false);
+    }
   }
 
   async function handleSave(item) {
@@ -195,11 +247,14 @@ export default function Items() {
           <table className="w-full min-w-[1200px] text-left text-sm">
             <thead className="sticky top-0 bg-slate-50">
               <tr>
-                <th className="px-4 py-3 font-semibold text-slate-700">Item Name</th>
+                <th className="px-4 py-3 font-semibold text-slate-700">Product Name</th>
+                <th className="px-4 py-3 font-semibold text-slate-700">Item ID</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Type</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">HSN / SAC</th>
                 <th className="px-4 py-3 font-semibold text-slate-700 text-right">Sales Rate</th>
                 <th className="px-4 py-3 font-semibold text-slate-700 text-right">Purchase Rate</th>
+                <th className="px-4 py-3 font-semibold text-slate-700 text-right">Total Purchase</th>
+                <th className="px-4 py-3 font-semibold text-slate-700 text-right">Total Sales</th>
                 <th className="px-4 py-3 font-semibold text-slate-700 text-right">Tax %</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Stock</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Status</th>
@@ -209,7 +264,7 @@ export default function Items() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={12} className="px-4 py-10 text-center text-slate-500">
                     Loading items...
                   </td>
                 </tr>
@@ -218,11 +273,23 @@ export default function Items() {
                   const usage = computeItemUsage(item);
                   const stock = computeItemStock(item);
                   const canDelete = !usage.used;
+                  const tradeSummary = tradeSummaryByItem.get(item.id) || {
+                    totalPurchase: 0,
+                    totalSales: 0
+                  };
                   return (
                     <tr key={item.id} className="border-t border-slate-100 hover:bg-slate-50/70">
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-1">
-                          <p className="font-semibold text-slate-900">{item.name}</p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void openPurchaseHistory(item);
+                            }}
+                            className="w-fit text-left font-semibold text-slate-900 hover:text-blue-700 hover:underline"
+                          >
+                            {item.name}
+                          </button>
                           <p className="text-xs text-slate-500">
                             {item.category || "Uncategorized"} | SKU {item.sku || "-"}
                           </p>
@@ -234,6 +301,9 @@ export default function Items() {
                           ) : null}
                         </div>
                       </td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {item.itemCode || "-"}
+                      </td>
                       <td className="px-4 py-3 text-slate-700">{item.type}</td>
                       <td className="px-4 py-3 text-slate-700">
                         {item.type === "Service" ? item.sac || "-" : item.hsn || "-"}
@@ -243,6 +313,12 @@ export default function Items() {
                       </td>
                       <td className="px-4 py-3 text-right text-slate-700">
                         {formatMoney(item.purchaseRate, currency)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-700">
+                        {formatMoney(tradeSummary.totalPurchase, currency)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-700">
+                        {formatMoney(tradeSummary.totalSales, currency)}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-700">
                         {item.taxRate ? `${item.taxRate}%` : "-"}
@@ -292,7 +368,7 @@ export default function Items() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={12} className="px-4 py-10 text-center text-slate-500">
                     No items found
                   </td>
                 </tr>
@@ -312,6 +388,68 @@ export default function Items() {
           void handleSave(item);
         }}
       />
+
+      <Modal
+        open={historyOpen}
+        title={historyItem ? `Purchase History - ${historyItem.name}` : "Purchase History"}
+        onClose={() => setHistoryOpen(false)}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs text-slate-500">Total Purchase</p>
+              <p className="text-sm font-semibold text-slate-900">
+                {formatMoney(historySummary.totalPurchase, currency)}
+              </p>
+              <p className="text-[11px] text-slate-500">Qty {historySummary.purchaseQty}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs text-slate-500">Total Sales</p>
+              <p className="text-sm font-semibold text-slate-900">
+                {formatMoney(historySummary.totalSales, currency)}
+              </p>
+              <p className="text-[11px] text-slate-500">Qty {historySummary.salesQty}</p>
+            </div>
+          </div>
+
+          <div className="overflow-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[520px] text-left text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-3 py-2 font-semibold text-slate-700">Supplier</th>
+                  <th className="px-3 py-2 font-semibold text-slate-700 text-right">Quantity</th>
+                  <th className="px-3 py-2 font-semibold text-slate-700">Date</th>
+                  <th className="px-3 py-2 font-semibold text-slate-700">Bill No</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyLoading ? (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                      Loading history...
+                    </td>
+                  </tr>
+                ) : historyRows.length ? (
+                  historyRows.map((entry, index) => (
+                    <tr key={`${entry.billNo || "bill"}_${index}`} className="border-t border-slate-100">
+                      <td className="px-3 py-2 text-slate-700">{entry.supplier || "-"}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{entry.quantity}</td>
+                      <td className="px-3 py-2 text-slate-700">{entry.date || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700">{entry.billNo || "-"}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                      No purchase history found for this item.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

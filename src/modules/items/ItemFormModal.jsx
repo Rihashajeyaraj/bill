@@ -10,6 +10,7 @@ const UNITS = ["pcs", "kg", "box", "litre", "mtr", "set", "hr"];
 function defaultItem(type) {
   return {
     type,
+    itemCode: "",
     name: "",
     description: "",
     hsn: "",
@@ -138,6 +139,7 @@ export default function ItemFormModal({
     setError("");
     const next = {
       ...form,
+      itemCode: form.itemCode?.trim() || "",
       name: form.name.trim(),
       description: form.description?.trim() || "",
       hsn: form.hsn?.trim() || "",
@@ -215,6 +217,15 @@ export default function ItemFormModal({
             onChange={(event) => updateField("name", event.target.value)}
             className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
             placeholder="Premium marble, consulting, etc."
+          />
+        </FormField>
+
+        <FormField label="Item ID">
+          <input
+            value={form.itemCode}
+            onChange={(event) => updateField("itemCode", event.target.value)}
+            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
+            placeholder="ITEM-1001"
           />
         </FormField>
 

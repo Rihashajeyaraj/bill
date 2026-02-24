@@ -83,11 +83,18 @@ function clearLegacyOrganizationCache() {
   lsRemove(LS_KEYS.invoiceTemplateConfig);
   lsRemove(LS_KEYS.invoiceTemplateCompleted);
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("organization:updated", { detail: null }));
+    // Force consumers to reset immediately in the current tab without falling back to stale profile cache.
+    window.dispatchEvent(new CustomEvent("organization:updated", { detail: {} }));
   }
 }
 
 function clearAuthState() {
+  lsRemove(LS_KEYS.auth_token);
+  lsRemove(LS_KEYS.auth_user);
+  lsRemove(LS_KEYS.role);
+  lsRemove(LS_KEYS.organization_id);
+  lsRemove(LS_KEYS.companyProfileCompleted);
+  lsRemove(LS_KEYS.invoiceTemplateCompleted);
   ssRemove(LS_KEYS.auth_token);
   ssRemove(LS_KEYS.auth_user);
   ssRemove(LS_KEYS.role);
@@ -124,6 +131,11 @@ function setAuthState({
   ssSet(LS_KEYS.organization_id, organizationId || "");
   ssSet(LS_KEYS.companyProfileCompleted, !!companySetupCompleted);
   ssSet(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted);
+  lsSet(LS_KEYS.auth_user, safeUser);
+  lsSet(LS_KEYS.role, normalizeRoleLabel(role));
+  lsSet(LS_KEYS.organization_id, organizationId || "");
+  lsSet(LS_KEYS.companyProfileCompleted, !!companySetupCompleted);
+  lsSet(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted);
   lsSetUserScoped(LS_KEYS.organization_id, organizationId || "", safeUser.id);
   lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!companySetupCompleted, safeUser.id);
   lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted, safeUser.id);

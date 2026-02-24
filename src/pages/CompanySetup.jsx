@@ -6,7 +6,7 @@ import GradientButton from "../components/GradientButton";
 import FormField from "../components/FormField";
 import FileUpload from "../components/FileUpload";
 import CurrencyMultiInput from "../components/CurrencyMultiInput";
-import { authGetRole, authGetUser } from "../services/auth.service";
+import { authGetOrganizationId, authGetRole, authGetUser } from "../services/auth.service";
 import { isOwnerRole } from "../services/roles";
 import {
   COUNTRIES,
@@ -120,11 +120,13 @@ export default function CompanySetup() {
   const [searchParams] = useSearchParams();
   const user = authGetUser();
   const role = authGetRole();
+  const organizationId = authGetOrganizationId();
   const createMode = isOwnerRole(role) && searchParams.get("mode") === "create";
+  const freshOwnerSetup = isOwnerRole(role) && !createMode && !organizationId;
   const { profile: organizationProfile } = useOrganization();
-  const current = createMode ? null : organizationProfile || companyGetProfile();
+  const current = createMode || freshOwnerSetup ? null : organizationProfile || companyGetProfile();
 
-  const initialProfile = createMode ? {} : organizationProfile || companyGetProfile();
+  const initialProfile = createMode || freshOwnerSetup ? {} : organizationProfile || companyGetProfile();
   const [profile, setProfile] = useState(() => normalizeProfile(user, role, initialProfile));
   const [pendingCountry, setPendingCountry] = useState("");
   const [countryWarning, setCountryWarning] = useState(false);
@@ -149,7 +151,7 @@ export default function CompanySetup() {
   }, [profile.country]);
 
   useEffect(() => {
-    if (createMode) return;
+    if (createMode || freshOwnerSetup) return;
     const nextProfileSource = organizationProfile || companyGetProfile();
     if (!nextProfileSource) return;
 
@@ -157,7 +159,7 @@ export default function CompanySetup() {
       if (!profileIsMostlyEmpty(prev)) return prev;
       return normalizeProfile(user, role, nextProfileSource);
     });
-  }, [createMode, organizationProfile, user?.id, role]);
+  }, [createMode, freshOwnerSetup, organizationProfile, user?.id, role]);
 
   useEffect(() => {
     if (createMode) {

@@ -49,7 +49,7 @@ export default function ThemeModal({
 
   const selectedTheme =
     themes.find((theme) => theme.id === selectedId) || themes.find((theme) => theme.id === initialThemeId) || fallbackTheme;
-  const activeTheme = themes.find((theme) => theme.id === initialThemeId) || fallbackTheme;
+  const activeTheme = selectedTheme || themes.find((theme) => theme.id === initialThemeId) || fallbackTheme;
 
   function handleApply() {
     if (!selectedTheme) return;

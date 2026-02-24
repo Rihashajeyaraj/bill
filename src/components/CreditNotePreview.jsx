@@ -2,6 +2,26 @@ import React from "react";
 import clsx from "clsx";
 
 const VARIANTS = {
+  india_triplicate: {
+    padding: "p-5",
+    title: "text-2xl",
+    label: "text-[11px] uppercase tracking-wide",
+    value: "text-sm",
+    tableHead: "text-[11px] uppercase tracking-wide",
+    total: "text-lg",
+    header: "border border-slate-300 p-3",
+    divider: "border-t border-slate-300"
+  },
+  india_blue_gst: {
+    padding: "p-7",
+    title: "text-2xl",
+    label: "text-xs uppercase tracking-widest",
+    value: "text-sm",
+    tableHead: "text-xs uppercase tracking-widest",
+    total: "text-lg",
+    header: "rounded-2xl border border-sky-200 bg-sky-50/40 p-4",
+    divider: "border-t-2 border-sky-200"
+  },
   india_gst_sample: {
     padding: "p-6",
     title: "text-2xl",

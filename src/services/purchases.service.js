@@ -1,6 +1,7 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import { triggerCreditLimitNotifications } from "../modules/parties/store";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -18,6 +19,56 @@ function normalizeSupabaseError(error, fallback) {
     return `${fallback}. Supabase RLS denied access. Verify organization membership and policies.`;
   }
   return error?.message || fallback;
+}
+
+function normalizeAddressParts(parts) {
+  return parts
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function getLocalSupplierAddress(supplierId) {
+  if (!supplierId) return "";
+  const parties = lsGetOrganizationScoped(LS_KEYS.parties, []);
+  const matched = (Array.isArray(parties) ? parties : []).find((party) => party?.id === supplierId);
+  if (!matched) return "";
+  return normalizeAddressParts([
+    matched?.address,
+    matched?.city,
+    matched?.state,
+    matched?.postalCode
+  ]);
+}
+
+export async function fetchSupplierAddress(supplierId) {
+  if (!supplierId) return "";
+  const fallbackAddress = getLocalSupplierAddress(supplierId);
+  if (!isSupabaseConfigured || !supabase || !looksLikeUuid(supplierId)) {
+    return fallbackAddress;
+  }
+
+  const organizationId = authGetOrganizationId();
+  if (!organizationId) return fallbackAddress;
+
+  const { data, error } = await supabase
+    .from("parties")
+    .select("billing_address_line1,billing_address_line2,city,state_name,postal_code")
+    .eq("organization_id", organizationId)
+    .eq("id", supplierId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(normalizeSupabaseError(error, "Failed to fetch supplier address"));
+  }
+
+  return normalizeAddressParts([
+    data?.billing_address_line1,
+    data?.billing_address_line2,
+    data?.city,
+    data?.state_name,
+    data?.postal_code
+  ]) || fallbackAddress;
 }
 
 function deriveBillStatus(grandTotal, balanceAmount) {
@@ -53,9 +104,11 @@ function mapRemotePurchaseBill(row, balanceAmount) {
     country: metadata?.country || "",
     partyId: row?.supplier_id || "",
     partyName: metadata?.partyName || "",
+    partyAddress: metadata?.partyAddress || "",
     phone: metadata?.phone || "",
     billNumber: row?.bill_no || "",
     billDate: row?.bill_date || "",
+    dueDate: row?.due_date || row?.bill_date || "",
     paymentType: metadata?.paymentType || "",
     created_at: row?.created_at || new Date().toISOString(),
     totals: {
@@ -80,7 +133,7 @@ export async function purchasesSyncFromRemote() {
 
   const { data, error } = await supabase
     .from("purchase_bills")
-    .select("id,supplier_id,bill_no,bill_date,subtotal,tax_total,grand_total,status,metadata,created_at")
+    .select("id,supplier_id,bill_no,bill_date,due_date,subtotal,tax_total,grand_total,status,metadata,created_at")
     .eq("organization_id", organizationId)
     .order("bill_date", { ascending: false })
     .order("created_at", { ascending: false });
@@ -90,6 +143,30 @@ export async function purchasesSyncFromRemote() {
   }
 
   const bills = Array.isArray(data) ? data : [];
+  const supplierIds = Array.from(new Set(bills.map((entry) => entry?.supplier_id).filter(Boolean)));
+  let supplierAddressMap = new Map();
+  if (supplierIds.length) {
+    const { data: supplierRows, error: supplierError } = await supabase
+      .from("parties")
+      .select("id,billing_address_line1,billing_address_line2,city,state_name,postal_code")
+      .eq("organization_id", organizationId)
+      .in("id", supplierIds);
+    if (supplierError) {
+      throw new Error(normalizeSupabaseError(supplierError, "Failed to load supplier addresses"));
+    }
+    supplierAddressMap = new Map(
+      (Array.isArray(supplierRows) ? supplierRows : []).map((row) => [
+        row?.id,
+        normalizeAddressParts([
+          row?.billing_address_line1,
+          row?.billing_address_line2,
+          row?.city,
+          row?.state_name,
+          row?.postal_code
+        ])
+      ])
+    );
+  }
   const billIds = bills.map((entry) => entry.id).filter(Boolean);
   let lineRows = [];
   let paymentRows = [];
@@ -134,6 +211,7 @@ export async function purchasesSyncFromRemote() {
     list.push({
       id: line?.id || uid("pur_l_"),
       itemId: line?.item_id || "",
+      itemCode: line?.item_code || "",
       itemName: line?.description || "",
       qty: parseNumber(line?.qty),
       rate: parseNumber(line?.unit_price),
@@ -166,14 +244,19 @@ export async function purchasesSyncFromRemote() {
     debitMap.set(billId, current + Math.max(0, parseNumber(row?.grand_total)));
   });
 
-  const mapped = bills.map((entry) => ({
-    ...mapRemotePurchaseBill(
+  const mapped = bills.map((entry) => {
+    const bill = mapRemotePurchaseBill(
       entry,
       parseNumber(entry?.grand_total) + (debitMap.get(entry.id) || 0) - (paymentMap.get(entry.id) || 0)
-    ),
-    lines: lineMap.get(entry.id) || []
-  }));
+    );
+    return {
+      ...bill,
+      partyAddress: bill.partyAddress || supplierAddressMap.get(entry?.supplier_id) || "",
+      lines: lineMap.get(entry.id) || []
+    };
+  });
   setAll(mapped);
+  triggerCreditLimitNotifications();
   return mapped;
 }
 
@@ -195,6 +278,7 @@ export async function purchasesCreate(bill) {
           organization_id: organizationId,
           bill_no: bill?.billNumber || `BILL-${Date.now()}`,
           bill_date: bill?.billDate || now.slice(0, 10),
+          due_date: bill?.dueDate || bill?.billDate || now.slice(0, 10),
           supplier_id: supplierId,
           subtotal: parseNumber(totals?.subTotal),
           tax_total: parseNumber(totals?.taxTotal),
@@ -203,6 +287,7 @@ export async function purchasesCreate(bill) {
           metadata: {
             country: bill?.country || "",
             partyName: bill?.partyName || "",
+            partyAddress: bill?.partyAddress || "",
             phone: bill?.phone || "",
             paymentType: bill?.paymentType || "",
             roundOff: parseNumber(totals?.roundOff),
@@ -223,6 +308,7 @@ export async function purchasesCreate(bill) {
         const remoteLines = lines.map((line, index) => ({
           bill_id: id,
           item_id: looksLikeUuid(line?.itemId) ? line.itemId : null,
+          item_code: line?.itemCode || null,
           description: line?.itemName || `Line ${index + 1}`,
           qty: parseNumber(line?.qty),
           unit_price: parseNumber(line?.rate),
@@ -233,7 +319,12 @@ export async function purchasesCreate(bill) {
           vat_amount: parseNumber(line?.lineTax),
           line_total: parseNumber(line?.amount)
         }));
-        const { error: linesError } = await supabase.from("purchase_bill_items").insert(remoteLines);
+        let linesInsert = await supabase.from("purchase_bill_items").insert(remoteLines);
+        if (linesInsert.error?.code === "42703") {
+          const legacyLines = remoteLines.map(({ item_code, ...line }) => line);
+          linesInsert = await supabase.from("purchase_bill_items").insert(legacyLines);
+        }
+        const linesError = linesInsert.error;
         if (linesError) {
           throw new Error(normalizeSupabaseError(linesError, "Failed to save purchase bill items"));
         }
@@ -245,6 +336,7 @@ export async function purchasesCreate(bill) {
     ...bill,
     id,
     country: bill?.country || "",
+    partyAddress: bill?.partyAddress || "",
     created_at: now,
     totals: {
       totalQty: parseNumber(totals?.totalQty),
@@ -259,6 +351,7 @@ export async function purchasesCreate(bill) {
     lines: lines.map((line) => ({
       ...line,
       qty: parseNumber(line?.qty),
+      itemCode: line?.itemCode || "",
       rate: parseNumber(line?.rate),
       tax: parseNumber(line?.tax),
       lineSubTotal: parseNumber(line?.lineSubTotal),
@@ -268,5 +361,6 @@ export async function purchasesCreate(bill) {
   };
 
   setAll([next, ...getAll()]);
+  triggerCreditLimitNotifications();
   return id;
 }

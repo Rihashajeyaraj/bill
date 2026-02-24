@@ -1,15 +1,21 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { THEME_PRESETS, findThemePresetById } from "../components/theme/themePresets";
 import { LS_KEYS } from "../services/storage";
+import {
+  applyFontToDocument,
+  applyThemeToDocument,
+  buildThemeConfig,
+  readStoredFontFamily,
+  readStoredThemeId,
+  resolveThemePreset,
+  themeModeFromPreset
+} from "../theme/runtimeTheme";
+import { APP_FONT_OPTIONS, resolveAppFont } from "../theme/fontPresets";
 
 const ThemeContext = createContext(null);
 
-const SUPPORTED_THEME_IDS = ["task-ink", "focus-mint", "forest-balance", "moon-breath"];
+const SUPPORTED_THEME_IDS = THEME_PRESETS.map((preset) => preset.id);
 const DEFAULT_THEME_ID = "focus-mint";
-const LEGACY_MODE_TO_THEME = {
-  dark: "task-ink",
-  light: "focus-mint"
-};
 
 function isSupportedTheme(themeId) {
   return SUPPORTED_THEME_IDS.includes(themeId);
@@ -21,38 +27,42 @@ function normalizeThemeId(themeId) {
 }
 
 function getThemeMode(themeId) {
-  return themeId === "task-ink" || themeId === "moon-breath" ? "dark" : "light";
+  return themeModeFromPreset(resolveThemePreset(themeId));
 }
 
 function readInitialThemeId() {
   if (typeof window === "undefined") return DEFAULT_THEME_ID;
-
-  const storedThemeId = normalizeThemeId(localStorage.getItem(LS_KEYS.theme_preset));
-  if (storedThemeId) return storedThemeId;
-
-  const legacyMode = localStorage.getItem(LS_KEYS.theme_mode);
-  if (legacyMode && LEGACY_MODE_TO_THEME[legacyMode]) {
-    return LEGACY_MODE_TO_THEME[legacyMode];
-  }
-
-  return DEFAULT_THEME_ID;
+  const stored = normalizeThemeId(readStoredThemeId());
+  return stored || DEFAULT_THEME_ID;
 }
 
 export function ThemeProvider({ children }) {
   const [theme, setThemeState] = useState(readInitialThemeId);
+  const [fontFamily, setFontFamilyState] = useState(readStoredFontFamily);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mode = getThemeMode(theme);
     localStorage.setItem(LS_KEYS.theme_preset, theme);
     localStorage.setItem(LS_KEYS.theme_mode, mode);
-    document.documentElement.setAttribute("data-theme", theme);
+    applyThemeToDocument(theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(LS_KEYS.app_font_family, fontFamily);
+    applyFontToDocument(fontFamily);
+  }, [fontFamily]);
 
   const setTheme = useCallback((themeId) => {
     const nextTheme = normalizeThemeId(themeId);
     if (!nextTheme) return;
     setThemeState(nextTheme);
+  }, []);
+
+  const setFont = useCallback((fontName) => {
+    const nextFont = resolveAppFont(fontName);
+    setFontFamilyState(nextFont);
   }, []);
 
   const toggleTheme = useCallback(() => {
@@ -65,19 +75,24 @@ export function ThemeProvider({ children }) {
       currentTheme: theme,
       themeMode: getThemeMode(theme),
       isDark: getThemeMode(theme) === "dark",
+      themeConfig: buildThemeConfig(theme),
       themes: THEME_PRESETS.filter((preset) => SUPPORTED_THEME_IDS.includes(preset.id)),
+      fontFamily,
+      font: fontFamily,
+      setFont,
+      fontOptions: APP_FONT_OPTIONS,
       setTheme,
       toggleTheme,
       themePresetId: theme,
       themePreset: findThemePresetById(theme),
       setThemePreset: setTheme
     }),
-    [theme, setTheme, toggleTheme]
+    [theme, setTheme, toggleTheme, fontFamily, setFont]
   );
 
   return (
     <ThemeContext.Provider value={value}>
-      <div data-theme={theme} className="theme-root">
+      <div className="theme-root">
         {children}
       </div>
     </ThemeContext.Provider>

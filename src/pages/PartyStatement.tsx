@@ -112,12 +112,19 @@ export default function PartyStatement() {
             <p>{party.address || "No address added"}</p>
             <p>{party.taxId ? `Tax ID: ${party.taxId}` : "No tax ID"}</p>
             {party.creditLimitEnabled ? (
-              <p>
-                Credit Limit:{" "}
-                <span className="font-semibold text-slate-900">
-                  {formatMoney(party.creditLimit, currency)}
-                </span>
-              </p>
+              party.creditLimitType === "Days" ? (
+                <p>
+                  Allowed Overdue Days:{" "}
+                  <span className="font-semibold text-slate-900">{party.creditLimitDays}</span>
+                </p>
+              ) : (
+                <p>
+                  Credit Limit:{" "}
+                  <span className="font-semibold text-slate-900">
+                    {formatMoney(party.creditLimit, currency)}
+                  </span>
+                </p>
+              )
             ) : (
               <p>Credit limit not enabled</p>
             )}

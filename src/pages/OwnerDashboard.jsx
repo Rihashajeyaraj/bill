@@ -4,6 +4,7 @@ import {
   ArrowUpCircle,
   AlertTriangle,
   Wallet,
+  Users,
   Plus,
   Minus,
   RotateCw
@@ -13,6 +14,7 @@ import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.servi
 import { purchasesList, purchasesSyncFromRemote } from "../services/purchases.service";
 import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
 import { mapOpenBillsByCountry } from "../modules/paymentOut/store";
+import { fetchPartiesCount } from "../modules/parties/store";
 import { useOrganization } from "../context/OrganizationContext";
 import {
   ResponsiveContainer,
@@ -30,6 +32,15 @@ import { beginPageLoading, endPageLoading } from "../state/pageLoadingStore";
 function money(n) {
   const v = Number(n || 0);
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function compactMoney(n) {
+  const v = Number(n || 0);
+  if (!Number.isFinite(v)) return "0";
+  return new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(v);
 }
 
 function buildMonthLabels() {
@@ -51,26 +62,30 @@ export default function Dashboard() {
   const [invoices, setInvoices] = useState(() => invoicesList());
   const [purchases, setPurchases] = useState(() => purchasesList());
   const [payments, setPayments] = useState(() => paymentsList());
+  const [partyCounts, setPartyCounts] = useState({ total: 0, customers: 0, suppliers: 0 });
   const [donutTab, setDonutTab] = useState("income");
 
   useEffect(() => {
     let mounted = true;
     async function syncDashboardData() {
       try {
-        const [syncedInvoices, syncedPurchases, syncedPayments] = await Promise.all([
+        const [syncedInvoices, syncedPurchases, syncedPayments, counts] = await Promise.all([
           invoicesSyncFromRemote(),
           purchasesSyncFromRemote(),
-          paymentsSyncFromRemote()
+          paymentsSyncFromRemote(),
+          fetchPartiesCount()
         ]);
         if (!mounted) return;
         setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
         setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList());
         setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList());
+        setPartyCounts(counts || { total: 0, customers: 0, suppliers: 0 });
       } catch {
         if (!mounted) return;
         setInvoices(invoicesList());
         setPurchases(purchasesList());
         setPayments(paymentsList());
+        setPartyCounts({ total: 0, customers: 0, suppliers: 0 });
       }
     }
     syncDashboardData();
@@ -182,7 +197,7 @@ export default function Dashboard() {
   const donutColors = ["#ff6b6b", "#f6c453", "#4caf50", "#8e8e93", "#3b82f6"];
 
   return (
-    <div className="max-w-6xl">
+    <div className="dashboard-theme max-w-6xl">
       <div className="rounded-2xl bg-slate-100 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-lg font-semibold text-slate-700">Dashboard</h1>
         <div className="flex flex-wrap items-center gap-2">
@@ -207,7 +222,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
         <Card className="p-3 flex items-center justify-between">
           <div>
             <p className="text-xs text-slate-500">Receivable</p>
@@ -247,10 +262,23 @@ export default function Dashboard() {
             <AlertTriangle className="h-4 w-4 text-amber-500" />
           </div>
         </Card>
+
+        <Card className="p-3 flex items-center justify-between">
+          <div>
+            <p className="text-xs text-slate-500">Parties</p>
+            <p className="text-sm font-semibold text-slate-900">{partyCounts.total}</p>
+            <p className="text-[11px] text-slate-500">
+              C {partyCounts.customers} | S {partyCounts.suppliers}
+            </p>
+          </div>
+          <div className="h-9 w-9 rounded-full bg-indigo-100 flex items-center justify-center">
+            <Users className="h-4 w-4 text-indigo-600" />
+          </div>
+        </Card>
       </div>
 
       <div className="mt-4 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
-        <Card className="p-4">
+        <Card className="p-4 min-w-0">
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-slate-700">Income vs Expense</p>
             <div className="flex items-center gap-2">
@@ -265,18 +293,37 @@ export default function Dashboard() {
               </button>
             </div>
           </div>
-          <div className="mt-3 h-[240px]">
+          <div className="mt-3 h-[clamp(240px,40vw,320px)] w-full rounded-xl border border-slate-200 bg-slate-50 pl-2 pr-1 pt-3 pb-2 sm:pl-3 sm:pr-2 sm:pt-4 sm:pb-3">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chart}>
-                <XAxis dataKey="month" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} />
-                <Tooltip />
-                <Bar dataKey="income" fill="#4caf50" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="expense" fill="#6b7280" radius={[6, 6, 0, 0]} />
+              <BarChart
+                data={chart}
+                margin={{ top: 8, right: 8, left: 6, bottom: 10 }}
+                barCategoryGap="22%"
+                barGap={6}
+              >
+                <XAxis
+                  dataKey="month"
+                  tickLine={false}
+                  axisLine={false}
+                  interval={0}
+                  tickMargin={10}
+                  padding={{ left: 10, right: 10 }}
+                />
+                <YAxis
+                  tickLine={false}
+                  axisLine={false}
+                  width={72}
+                  tickMargin={8}
+                  domain={[0, "auto"]}
+                  tickFormatter={compactMoney}
+                />
+                <Tooltip formatter={(value) => money(value)} />
+                <Bar dataKey="income" fill="#4caf50" radius={[6, 6, 0, 0]} maxBarSize={22} />
+                <Bar dataKey="expense" fill="#6b7280" radius={[6, 6, 0, 0]} maxBarSize={22} />
               </BarChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-2 flex items-center gap-4 text-xs text-slate-500">
+          <div className="mt-3 flex items-center justify-center gap-4 text-xs text-slate-500 sm:justify-start">
             <span className="inline-flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
               Income

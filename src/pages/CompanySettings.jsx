@@ -42,6 +42,7 @@ import { authGetRole, authGetUser } from "../services/auth.service";
 import { isOwnerRole, normalizeRoleLabel } from "../services/roles";
 import { uid } from "../services/storage";
 import { UI } from "../theme/tokens";
+import { APP_FONT_OPTIONS } from "../theme/fontPresets";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 import {
   DEFAULT_TEMPLATE_CONFIG,
@@ -123,8 +124,6 @@ const TIMEZONES = [
 const DATE_FORMATS = ["DD MMM YYYY", "DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"];
 const NUMBER_FORMATS = ["1,23,456.78", "123,456.78", "123.456,78"];
 const MAX_CURRENCIES = 3;
-const TEMPLATE_FONT_OPTIONS = ["Inter", "Roboto", "Poppins"];
-
 const COUNTRY_META = {
   India: { currency: "INR", code: "IN", gstDefault: 18 },
   "Sri Lanka": { currency: "LKR", code: "LK", vatDefault: 18 },
@@ -548,7 +547,7 @@ function validateProfile(profile) {
 
 export default function CompanySettings() {
   const navigate = useNavigate();
-  const { setTheme, themePresetId } = useTheme();
+  const { setTheme, themePresetId, setFont, fontFamily } = useTheme();
   const { profile: organizationProfile } = useOrganization();
   const currentProfile = organizationProfile || companyGetProfile();
   const currentUser = authGetUser();
@@ -571,6 +570,30 @@ export default function CompanySettings() {
   const [codeError, setCodeError] = useState("");
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   useGlobalLoadingBridge(loadingSection, "company-settings");
+
+  useEffect(() => {
+    if (!fontFamily) return;
+    setSettings((prev) => {
+      if (prev?.invoiceTemplate?.fontFamily === fontFamily) return prev;
+      return {
+        ...prev,
+        invoiceTemplate: {
+          ...prev.invoiceTemplate,
+          fontFamily
+        }
+      };
+    });
+    setSavedSettings((prev) => {
+      if (prev?.invoiceTemplate?.fontFamily === fontFamily) return prev;
+      return {
+        ...prev,
+        invoiceTemplate: {
+          ...prev.invoiceTemplate,
+          fontFamily
+        }
+      };
+    });
+  }, [fontFamily]);
 
   const dirtyMap = useMemo(() => {
     return SECTION_ITEMS.reduce((acc, section) => {
@@ -1714,12 +1737,14 @@ export default function CompanySettings() {
                     <FormField label="Font">
                       <select
                         value={settings.invoiceTemplate.fontFamily}
-                        onChange={(event) =>
-                          updateSection("invoiceTemplate", { fontFamily: event.target.value })
-                        }
+                        onChange={(event) => {
+                          const nextFont = event.target.value;
+                          updateSection("invoiceTemplate", { fontFamily: nextFont });
+                          setFont(nextFont);
+                        }}
                         className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
                       >
-                        {TEMPLATE_FONT_OPTIONS.map((font) => (
+                        {APP_FONT_OPTIONS.map((font) => (
                           <option key={font} value={font}>
                             {font}
                           </option>

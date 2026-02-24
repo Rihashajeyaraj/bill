@@ -173,9 +173,9 @@ export default function Parties() {
           ) : null}
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
-          <p className="text-xs font-semibold text-slate-500">Credit Limit Risk</p>
+          <p className="text-xs font-semibold text-slate-500">Credit / Overdue Risk</p>
           <p className="mt-2 text-2xl font-bold text-rose-600">{summary.creditRisk}</p>
-          <p className="mt-1 text-xs text-slate-500">Parties exceeding limit</p>
+          <p className="mt-1 text-xs text-slate-500">Parties exceeding configured rules</p>
         </div>
       </div>
 
@@ -226,7 +226,11 @@ export default function Parties() {
                             {party.email || party.country || "No email added"}
                           </p>
                           {financials.creditExceeded ? (
-                            <Badge tone="danger">Credit limit exceeded</Badge>
+                            <Badge tone="danger">
+                              {financials.amountExceeded
+                                ? "Amount limit exceeded"
+                                : "Overdue days exceeded"}
+                            </Badge>
                           ) : null}
                         </div>
                       </td>

@@ -6,8 +6,13 @@ import Card from "../../components/Card";
 import FormField from "../../components/FormField";
 import { useToast } from "../../context/ToastContext";
 import { listParties, syncPartiesFromRemote } from "../../modules/parties/store";
-import { listItems, syncItemsFromRemote } from "../../modules/items/store";
-import { purchasesCreate, purchasesList, purchasesSyncFromRemote } from "../../services/purchases.service";
+import { listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
+import {
+  fetchSupplierAddress,
+  purchasesCreate,
+  purchasesList,
+  purchasesSyncFromRemote
+} from "../../services/purchases.service";
 import { useOrganization } from "../../context/OrganizationContext";
 
 const TAX_RATES = [0, 5, 12, 18, 28];
@@ -24,6 +29,10 @@ function normalizeUnit(unit) {
   const value = String(unit || "").trim();
   if (!value) return "pcs";
   return BLOCKED_UNITS.includes(value.toLowerCase()) ? "pcs" : value;
+}
+
+function normalizeItemName(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function money(n) {
@@ -55,6 +64,7 @@ function createLine(items) {
   return {
     id: `line_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
     itemId: item?.id || "",
+    itemCode: item?.itemCode || "",
     itemName: item?.name || "",
     qty: 1,
     unit: normalizeUnit(item?.unit),
@@ -78,6 +88,7 @@ export default function PurchaseBill() {
   const party = useMemo(() => suppliers.find((x) => x.id === partyId) || null, [suppliers, partyId]);
 
   const [phone, setPhone] = useState(party?.phone || "");
+  const [supplierAddress, setSupplierAddress] = useState("");
   const [billNumber, setBillNumber] = useState("");
   const [autoBillNumber] = useState(() => generateBillNumber());
   const [billDate, setBillDate] = useState(new Date().toISOString().slice(0, 10));
@@ -147,8 +158,28 @@ export default function PurchaseBill() {
   }, [toast]);
 
   useEffect(() => {
-    setPhone(party?.phone || "");
-  }, [party?.phone]);
+    let mounted = true;
+    async function hydrateSupplierDetails() {
+      setPhone(party?.phone || "");
+      if (!partyId) {
+        setSupplierAddress("");
+        return;
+      }
+
+      const fallbackAddress = party?.address || "";
+      setSupplierAddress(fallbackAddress);
+      try {
+        const resolvedAddress = await fetchSupplierAddress(partyId);
+        if (mounted) setSupplierAddress(resolvedAddress || fallbackAddress);
+      } catch {
+        if (mounted) setSupplierAddress(fallbackAddress);
+      }
+    }
+    hydrateSupplierDetails();
+    return () => {
+      mounted = false;
+    };
+  }, [party?.phone, party?.address, partyId]);
 
   const unitOptions = useMemo(() => {
     const itemUnits = items
@@ -174,7 +205,7 @@ export default function PurchaseBill() {
     );
     updateLine(id, (line) => {
       if (!match) {
-        return { ...line, itemName: inputValue, itemId: "" };
+        return { ...line, itemName: inputValue, itemId: "", itemCode: "" };
       }
       const purchaseRate = Number(
         match?.purchaseRate ?? match?.metadata?.purchasePrice ?? match?.price ?? 0
@@ -183,6 +214,7 @@ export default function PurchaseBill() {
         ...line,
         itemName: match.name,
         itemId: match.id,
+        itemCode: match.itemCode || "",
         unit: normalizeUnit(match.unit || line.unit),
         rate: purchaseRate,
         tax: match.taxRate ?? line.tax
@@ -223,19 +255,135 @@ export default function PurchaseBill() {
     return { detailed, totalQty, subTotal, taxTotal, grandTotal, roundOff, finalTotal };
   }, [lines, roundOffEnabled, roundOffValue]);
 
+  async function resolveLinesWithItems(detailedLines) {
+    const nextLines = [];
+    const itemsById = new Map(items.map((item) => [String(item.id || ""), item]));
+    const itemsByName = new Map(
+      items
+        .filter((item) => item?.name)
+        .map((item) => [normalizeItemName(item.name), item])
+    );
+    const ensureItemCode = async (item) => {
+      if (!item || item.itemCode) return item;
+      const savedId = await upsertItemRemote(
+        {
+          ...item,
+          id: item.id,
+          itemCode: item.itemCode || ""
+        },
+        country
+      );
+      const refreshed =
+        listItems().find((entry) => String(entry.id) === String(savedId || item.id)) || item;
+      itemsById.set(String(refreshed.id || ""), refreshed);
+      if (refreshed.name) {
+        itemsByName.set(normalizeItemName(refreshed.name), refreshed);
+      }
+      return refreshed;
+    };
+
+    for (const line of detailedLines) {
+      if (line.itemId) {
+        const matched = await ensureItemCode(itemsById.get(String(line.itemId || "")));
+        nextLines.push({
+          ...line,
+          itemName: line.itemName || matched?.name || "",
+          itemCode: line.itemCode || matched?.itemCode || ""
+        });
+        continue;
+      }
+
+      const typedName = String(line.itemName || "").trim();
+      if (!typedName) {
+        nextLines.push({ ...line, itemId: "", itemCode: "" });
+        continue;
+      }
+
+      const normalizedName = normalizeItemName(typedName);
+      const existing = await ensureItemCode(itemsByName.get(normalizedName));
+      if (existing) {
+        nextLines.push({
+          ...line,
+          itemId: existing.id,
+          itemCode: existing.itemCode || "",
+          itemName: existing.name,
+          unit: normalizeUnit(existing.unit || line.unit)
+        });
+        continue;
+      }
+
+      const createdId = await upsertItemRemote(
+        {
+          name: typedName,
+          type: "Product",
+          unit: normalizeUnit(line.unit),
+          salesRate: Number(line.rate || 0),
+          purchaseRate: Number(line.rate || 0),
+          taxRate: Number(line.tax || 0),
+          taxInclusive: line.priceTaxMode === "WITH_TAX",
+          status: "Active",
+          trackInventory: true,
+          openingStock: 0,
+          lowStockAlert: 0
+        },
+        country
+      );
+
+      const refreshedItems = listItems();
+      const created =
+        refreshedItems.find((item) => String(item.id) === String(createdId)) ||
+        refreshedItems.find((item) => normalizeItemName(item.name) === normalizedName);
+
+      if (created) {
+        itemsById.set(String(created.id), created);
+        itemsByName.set(normalizedName, created);
+      }
+
+      nextLines.push({
+        ...line,
+        itemId: created?.id || createdId || "",
+        itemCode: created?.itemCode || "",
+        itemName: created?.name || typedName,
+        unit: normalizeUnit(created?.unit || line.unit)
+      });
+    }
+
+    return nextLines;
+  }
+
   async function save() {
     if (!partyId) {
       toast.warning("Supplier required", "Select a supplier before saving.");
       return;
     }
-    const validLines = computed.detailed.filter((line) => line.itemId);
-    if (!validLines.length) {
-      toast.warning("Items required", "Add at least one line item before saving.");
-      return;
-    }
-    const effectiveBillNumber = billNumber || autoBillNumber;
     setSaving(true);
     try {
+      const resolvedLines = await resolveLinesWithItems(computed.detailed);
+      const resolvedById = new Map(resolvedLines.map((line) => [line.id, line]));
+      setLines((prev) =>
+        prev.map((line) => {
+          const resolved = resolvedById.get(line.id);
+          if (!resolved) return line;
+          return {
+            ...line,
+            itemId: resolved.itemId || "",
+            itemCode: resolved.itemCode || "",
+            itemName: resolved.itemName || "",
+            unit: normalizeUnit(resolved.unit),
+            rate: Number(resolved.rate || 0),
+            tax: Number(resolved.tax || 0)
+          };
+        })
+      );
+      setItems(listItems());
+
+      const validLines = resolvedLines.filter((line) => line.itemId);
+      if (!validLines.length) {
+        toast.warning("Items required", "Add at least one line item before saving.");
+        return;
+      }
+
+      const effectiveBillNumber = billNumber || autoBillNumber;
       await purchasesCreate({
         country,
         partyId,
@@ -244,6 +392,7 @@ export default function PurchaseBill() {
         billNumber: effectiveBillNumber,
         billDate,
         paymentType,
+        partyAddress: supplierAddress,
         lines: validLines,
         totals: {
           totalQty: computed.totalQty,
@@ -300,6 +449,16 @@ export default function PurchaseBill() {
                 placeholder="Enter phone number"
               />
             </FormField>
+
+            <FormField label="Supplier Address">
+              <textarea
+                value={supplierAddress}
+                onChange={(e) => setSupplierAddress(e.target.value)}
+                rows={2}
+                className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                placeholder="Supplier address"
+              />
+            </FormField>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
@@ -350,11 +509,12 @@ export default function PurchaseBill() {
         </div>
 
         <div className="mt-4 overflow-x-auto">
-          <table className="min-w-[900px] w-full text-left text-sm">
+          <table className="min-w-[1000px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-3 py-3 font-semibold">#</th>
                 <th className="px-3 py-3 font-semibold">Item</th>
+                <th className="px-3 py-3 font-semibold">Item ID</th>
                 <th className="px-3 py-3 font-semibold">Qty</th>
                 <th className="px-3 py-3 font-semibold">Unit</th>
                 <th className="px-3 py-3 font-semibold">Price/Unit</th>
@@ -366,7 +526,7 @@ export default function PurchaseBill() {
             <tbody>
               {loading ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={9}>
                     Loading items...
                   </td>
                 </tr>
@@ -378,9 +538,12 @@ export default function PurchaseBill() {
                       list={ITEM_DATALIST_ID}
                       value={line.itemName || ""}
                       onChange={(e) => handleItemInput(line.id, e.target.value)}
-                      className="w-56 rounded-xl border border-slate-100 bg-white px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-48 rounded-xl border border-slate-100 bg-white px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
                       placeholder="Select or type item"
                     />
+                  </td>
+                  <td className="px-3 py-3 font-mono text-xs text-slate-700">
+                    {line.itemCode || "-"}
                   </td>
                   <td className="px-3 py-3">
                     <input
@@ -606,12 +769,13 @@ export default function PurchaseBill() {
         </div>
 
         <div className="mt-4 overflow-x-auto">
-          <table className="min-w-[760px] w-full text-left text-sm">
+          <table className="min-w-[860px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-3 py-3 font-semibold">Bill No</th>
                 <th className="px-3 py-3 font-semibold">Date</th>
                 <th className="px-3 py-3 font-semibold">Supplier</th>
+                <th className="px-3 py-3 font-semibold">Item IDs</th>
                 <th className="px-3 py-3 font-semibold">Phone</th>
                 <th className="px-3 py-3 font-semibold text-right">Qty</th>
                 <th className="px-3 py-3 font-semibold text-right">Total</th>
@@ -623,7 +787,7 @@ export default function PurchaseBill() {
             <tbody>
               {savedBills.length === 0 ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={9}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
                     No purchase bills yet.
                   </td>
                 </tr>
@@ -633,6 +797,20 @@ export default function PurchaseBill() {
                     <td className="px-3 py-3 font-semibold text-slate-900">{bill.billNumber || "-"}</td>
                     <td className="px-3 py-3 text-slate-600">{formatDate(bill.billDate)}</td>
                     <td className="px-3 py-3 text-slate-700">{bill.partyName || "-"}</td>
+                    <td className="px-3 py-3 font-mono text-xs text-slate-700">
+                      {(() => {
+                        const codes = Array.from(
+                          new Set(
+                            (Array.isArray(bill?.lines) ? bill.lines : [])
+                              .map((line) => String(line?.itemCode || "").trim())
+                              .filter(Boolean)
+                          )
+                        );
+                        if (!codes.length) return "-";
+                        if (codes.length <= 2) return codes.join(", ");
+                        return `${codes.slice(0, 2).join(", ")} +${codes.length - 2}`;
+                      })()}
+                    </td>
                     <td className="px-3 py-3 text-slate-600">{bill.phone || "-"}</td>
                     <td className="px-3 py-3 text-right text-slate-700">{money(bill?.totals?.totalQty)}</td>
                     <td className="px-3 py-3 text-right font-semibold text-slate-900">

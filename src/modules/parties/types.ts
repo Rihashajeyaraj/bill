@@ -1,6 +1,7 @@
 export type PartyType = "Customer" | "Supplier";
 
 export type OpeningBalanceType = "Receivable" | "Payable";
+export type CreditLimitType = "Amount" | "Days";
 
 export interface PartyAttachment {
   name: string;
@@ -32,8 +33,9 @@ export interface PartyRecord {
   openingBalance: number;
   openingBalanceType: OpeningBalanceType;
   creditLimit: number;
+  creditLimitDays: number;
+  creditLimitType: CreditLimitType;
   creditLimitEnabled: boolean;
-  autoBlock: boolean;
   notes?: string;
   attachments: PartyAttachment[];
   audit: PartyAudit;
@@ -73,8 +75,13 @@ export interface PartyFinancials {
   outstanding: number;
   breakdown: OutstandingBreakdown;
   creditLimit: number;
+  creditLimitDays: number;
+  creditLimitType: CreditLimitType;
   creditLimitEnabled: boolean;
-  autoBlock: boolean;
+  maxOverdueDays: number;
+  amountExceeded: boolean;
+  overdueExceeded: boolean;
   creditExceeded: boolean;
   creditOverBy: number;
+  overdueByDays: number;
 }

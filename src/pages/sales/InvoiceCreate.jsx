@@ -340,14 +340,24 @@ export default function InvoiceCreate() {
     return { enriched, subTotal, tax, grandTotal };
   }, [lines, items, isIndia, companyState, customerState, taxRate]);
 
-  const creditLimitEnabled =
-    !!creditStatus.party?.creditLimitEnabled && creditStatus.creditLimit > 0;
-  const projectedOutstanding = creditLimitEnabled
-    ? creditStatus.outstanding + computed.grandTotal
-    : creditStatus.outstanding;
-  const creditWarning = creditLimitEnabled && projectedOutstanding > creditStatus.creditLimit;
-  const creditOverBy = creditWarning ? projectedOutstanding - creditStatus.creditLimit : 0;
-  const creditBlocked = creditWarning && !!creditStatus.party?.autoBlock;
+  const creditLimitEnabled = !!creditStatus.party?.creditLimitEnabled;
+  const creditLimitType = creditStatus.creditLimitType || "Amount";
+  const projectedOutstanding =
+    creditLimitEnabled && creditLimitType === "Amount"
+      ? creditStatus.outstanding + computed.grandTotal
+      : creditStatus.outstanding;
+  const projectedAmountExceeded =
+    creditLimitEnabled &&
+    creditLimitType === "Amount" &&
+    creditStatus.creditLimit > 0 &&
+    projectedOutstanding > creditStatus.creditLimit;
+  const projectedOverBy = projectedAmountExceeded
+    ? projectedOutstanding - creditStatus.creditLimit
+    : 0;
+  const overdueWarning =
+    creditLimitEnabled &&
+    creditLimitType === "Days" &&
+    !!creditStatus.overdueExceeded;
 
   const filteredItems = useMemo(() => {
     const query = itemSearch.trim().toLowerCase();
@@ -459,10 +469,6 @@ export default function InvoiceCreate() {
   ]);
 
   async function saveInvoice({ silent = false } = {}) {
-    if (creditBlocked) {
-      alert("Credit limit exceeded. Invoice creation is blocked for this party.");
-      return null;
-    }
     const seller = {
       name: company?.companyName || "",
       address: formatAddress(company?.address),
@@ -541,7 +547,7 @@ export default function InvoiceCreate() {
                 <Printer className="h-4 w-4" />
                 Save & Print
               </button>
-              <GradientButton onClick={saveInvoice} disabled={creditBlocked} className="disabled:cursor-not-allowed disabled:opacity-60">
+              <GradientButton onClick={saveInvoice} className="disabled:cursor-not-allowed disabled:opacity-60">
                 <Save className="h-4 w-4" />
                 Save
               </GradientButton>
@@ -697,22 +703,36 @@ export default function InvoiceCreate() {
           {party && creditLimitEnabled ? (
             <div
               className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${
-                creditWarning ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                projectedAmountExceeded || overdueWarning
+                  ? "border-rose-200 bg-rose-50 text-rose-700"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-700"
               }`}
             >
-              <p className="font-semibold">Credit Limit</p>
-              <p className="text-xs">
-                Limit: {formatMoney(creditStatus.creditLimit, currency)} | Outstanding:{" "}
-                {formatMoney(projectedOutstanding, currency)}
-              </p>
-              {creditWarning ? (
-                <p className="mt-1 text-xs">
-                  Limit exceeded by {formatMoney(creditOverBy, currency)}.{" "}
-                  {creditBlocked ? "Invoice creation is blocked." : "Invoice creation allowed."}
+              <p className="font-semibold">Credit Monitoring</p>
+              {creditLimitType === "Days" ? (
+                <p className="text-xs">
+                  Allowed overdue days: {creditStatus.creditLimitDays} | Current overdue:{" "}
+                  {creditStatus.maxOverdueDays || 0}
                 </p>
               ) : (
-                <p className="mt-1 text-xs">Within approved credit limit.</p>
+                <p className="text-xs">
+                  Limit: {formatMoney(creditStatus.creditLimit, currency)} | Projected outstanding:{" "}
+                  {formatMoney(projectedOutstanding, currency)}
+                </p>
               )}
+              {projectedAmountExceeded ? (
+                <p className="mt-1 text-xs">
+                  Amount limit exceeded by {formatMoney(projectedOverBy, currency)}.
+                </p>
+              ) : null}
+              {overdueWarning ? (
+                <p className="mt-1 text-xs">
+                  Overdue days exceeded by {creditStatus.overdueByDays || 0} day(s).
+                </p>
+              ) : null}
+              {!projectedAmountExceeded && !overdueWarning ? (
+                <p className="mt-1 text-xs">Within configured limits.</p>
+              ) : null}
             </div>
           ) : null}
 
@@ -888,8 +908,14 @@ export default function InvoiceCreate() {
             <span className="font-semibold text-slate-900">{money(computed.subTotal)}</span>
           </div>
           <div className="mt-2 flex items-center justify-between text-sm">
-            <span className="text-slate-600">{computed.tax.type}</span>
-            <span className="font-semibold text-slate-900">{money(computed.tax.totalTax)}</span>
+            <span className="text-slate-600">IGST</span>
+            <span className="font-semibold text-slate-900">{money(computed.tax.igst)}</span>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-sm">
+            <span className="text-slate-600">CGST + SGST</span>
+            <span className="font-semibold text-slate-900">
+              {money((Number(computed.tax.cgst || 0) + Number(computed.tax.sgst || 0)))}
+            </span>
           </div>
           <div className="mt-2 flex items-center justify-between text-base">
             <span className="font-semibold text-slate-900">Grand Total</span>
@@ -897,7 +923,7 @@ export default function InvoiceCreate() {
           </div>
 
           <div className="mt-4">
-            <GradientButton className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60" onClick={saveInvoice} disabled={creditBlocked}>
+            <GradientButton className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60" onClick={saveInvoice}>
               <Save className="h-4 w-4" />
               Save Invoice
             </GradientButton>

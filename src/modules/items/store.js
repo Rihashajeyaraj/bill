@@ -11,6 +11,9 @@ import { buildTaxLabel, normalizeItemType, normalizeText, parseNumber } from "./
 const CREDIT_NOTES_PREMIUM_KEY = "creditNotesPremiumV1";
 const DEBIT_NOTES_PREMIUM_KEY = "debitNotesPremiumV1";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ITEM_CODE_PREFIX = "ITM-";
+const ITEM_CODE_MIN_DIGITS = 4;
+const ITEM_CODE_SEQUENCE_PATTERN = /^ITM-(\d+)$/i;
 
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
@@ -33,6 +36,70 @@ function parseTaxRate(label) {
   return Number(match[1]) || 0;
 }
 
+function extractRawItemCode(item) {
+  return item?.itemCode || item?.item_code || item?.metadata?.itemCode || "";
+}
+
+function normalizeItemCodeValue(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function parseItemCodeSequence(value) {
+  const normalized = normalizeItemCodeValue(value);
+  const match = normalized.match(ITEM_CODE_SEQUENCE_PATTERN);
+  if (!match) return 0;
+  const sequence = Number(match[1]);
+  if (!Number.isFinite(sequence) || sequence <= 0) return 0;
+  return Math.floor(sequence);
+}
+
+function formatItemCodeSequence(sequence) {
+  const safeSequence = Math.max(1, Number(sequence) || 1);
+  const width = Math.max(ITEM_CODE_MIN_DIGITS, String(safeSequence).length);
+  return `${ITEM_CODE_PREFIX}${String(safeSequence).padStart(width, "0")}`;
+}
+
+function listTakenItemCodes(list, itemIdToIgnore) {
+  const taken = new Set();
+  ensureArray(list).forEach((item) => {
+    if (itemIdToIgnore && item?.id === itemIdToIgnore) return;
+    const code = normalizeItemCodeValue(extractRawItemCode(item));
+    if (code) taken.add(code);
+  });
+  return taken;
+}
+
+function getMaxItemCodeSequence(list, itemIdToIgnore) {
+  return ensureArray(list).reduce((max, item) => {
+    if (itemIdToIgnore && item?.id === itemIdToIgnore) return max;
+    const sequence = parseItemCodeSequence(extractRawItemCode(item));
+    return sequence > max ? sequence : max;
+  }, 0);
+}
+
+function generateUniqueItemCode(list, itemIdToIgnore) {
+  const taken = listTakenItemCodes(list, itemIdToIgnore);
+  let nextSequence = getMaxItemCodeSequence(list, itemIdToIgnore) + 1;
+  let candidate = formatItemCodeSequence(nextSequence);
+  while (taken.has(candidate)) {
+    nextSequence += 1;
+    candidate = formatItemCodeSequence(nextSequence);
+  }
+  return candidate;
+}
+
+function resolveItemCodeForUpsert({ draftItemCode, id, list }) {
+  const existing = ensureArray(list).find((entry) => entry?.id === id);
+  const requestedCode = normalizeItemCodeValue(draftItemCode);
+  const existingCode = normalizeItemCodeValue(extractRawItemCode(existing));
+  const preferredCode = requestedCode || existingCode;
+  if (preferredCode) {
+    const taken = listTakenItemCodes(list, id);
+    if (!taken.has(preferredCode)) return preferredCode;
+  }
+  return generateUniqueItemCode(list, id);
+}
+
 function normalizeItem(raw) {
   const type = normalizeItemType(raw?.type);
   const metadata = raw?.metadata || {};
@@ -50,6 +117,7 @@ function normalizeItem(raw) {
 
   return {
     id: raw?.id || uid("itm_"),
+    itemCode: normalizeItemCodeValue(raw?.itemCode || raw?.item_code || metadata?.itemCode || ""),
     type,
     name: raw?.name || raw?.itemName || "",
     description: raw?.description || metadata?.description || "",
@@ -81,6 +149,7 @@ function mapRemoteItem(row) {
 
   return normalizeItem({
     id: row?.id,
+    itemCode: row?.item_code || "",
     type,
     name: row?.item_name || "",
     hsn: type === "Product" ? row?.hsn_sac || "" : "",
@@ -120,6 +189,7 @@ function toRemotePayload(draft) {
   return {
     item_type: incoming.type === "Service" ? "service" : "product",
     item_name: incoming.name || "",
+    item_code: incoming.itemCode || null,
     sku: incoming.sku || null,
     hsn_sac: hsnSac || null,
     unit: incoming.unit || "pcs",
@@ -138,6 +208,10 @@ function listRawItems() {
   return ensureArray(lsGetOrganizationScoped(LS_KEYS.items, []));
 }
 
+export function getNextItemCode() {
+  return generateUniqueItemCode(listRawItems(), null);
+}
+
 export function listItems() {
   return listRawItems()
     .map(normalizeItem)
@@ -148,10 +222,16 @@ export function upsertItem(draft, country) {
   const list = listRawItems();
   const now = new Date().toISOString();
   const id = draft.id || uid("itm_");
+  const itemCode = resolveItemCodeForUpsert({
+    draftItemCode: draft?.itemCode,
+    id,
+    list
+  });
   const taxLabel = buildTaxLabel(country, parseNumber(draft.taxRate));
 
   const payload = {
     id,
+    itemCode,
     name: draft.name,
     type: draft.type,
     description: draft.description,
@@ -166,7 +246,8 @@ export function upsertItem(draft, country) {
     metadata: {
       description: draft.description || "",
       category: draft.category || "",
-      sku: draft.sku || "",
+      itemCode,
+      sku: draft.sku || itemCode,
       barcode: draft.barcode || "",
       purchasePrice: parseNumber(draft.purchaseRate),
       taxInclusive: !!draft.taxInclusive,
@@ -231,13 +312,29 @@ export async function upsertItemRemote(draft, country) {
     return upsertItem(draft, country);
   }
 
-  const incoming = normalizeItem(draft);
+  const list = listRawItems();
+  const id = draft?.id || uid("itm_");
+  const itemCode = resolveItemCodeForUpsert({
+    draftItemCode: draft?.itemCode,
+    id,
+    list
+  });
+  const incoming = normalizeItem({
+    ...draft,
+    id,
+    itemCode,
+    metadata: {
+      ...(draft?.metadata || {}),
+      itemCode,
+      sku: draft?.sku || draft?.metadata?.sku || itemCode
+    }
+  });
   const payload = toRemotePayload(incoming);
   const actorUserId = authGetUser()?.id || null;
   let remoteRow = null;
 
   if (incoming.id && looksLikeUuid(incoming.id)) {
-    const { data, error } = await supabase
+    let attempt = await supabase
       .from("items")
       .update(payload)
       .eq("organization_id", organizationId)
@@ -245,14 +342,25 @@ export async function upsertItemRemote(draft, country) {
       .select("*")
       .maybeSingle();
 
-    if (error) {
-      throw new Error(normalizeSupabaseError(error, "Failed to update item"));
+    if (attempt.error?.code === "42703") {
+      const { item_code, ...legacyPayload } = payload;
+      attempt = await supabase
+        .from("items")
+        .update(legacyPayload)
+        .eq("organization_id", organizationId)
+        .eq("id", incoming.id)
+        .select("*")
+        .maybeSingle();
     }
-    remoteRow = data || null;
+
+    if (attempt.error) {
+      throw new Error(normalizeSupabaseError(attempt.error, "Failed to update item"));
+    }
+    remoteRow = attempt.data || null;
   }
 
   if (!remoteRow) {
-    const { data, error } = await supabase
+    let attempt = await supabase
       .from("items")
       .insert({
         organization_id: organizationId,
@@ -262,10 +370,23 @@ export async function upsertItemRemote(draft, country) {
       .select("*")
       .single();
 
-    if (error) {
-      throw new Error(normalizeSupabaseError(error, "Failed to create item"));
+    if (attempt.error?.code === "42703") {
+      const { item_code, ...legacyPayload } = payload;
+      attempt = await supabase
+        .from("items")
+        .insert({
+          organization_id: organizationId,
+          created_by: actorUserId,
+          ...legacyPayload
+        })
+        .select("*")
+        .single();
     }
-    remoteRow = data;
+
+    if (attempt.error) {
+      throw new Error(normalizeSupabaseError(attempt.error, "Failed to create item"));
+    }
+    remoteRow = attempt.data;
   }
 
   const saved = mapRemoteItem(remoteRow);
@@ -315,6 +436,168 @@ function collectFromLines(records, item, onMatch) {
       if (matchesLine(item, line)) onMatch(line, record);
     });
   });
+}
+
+function collectItemTotalsLocal(item) {
+  const invoices = ensureArray(lsGetOrganizationScoped(LS_KEYS.invoices, []));
+  const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
+
+  let totalSales = 0;
+  let totalPurchase = 0;
+  let salesQty = 0;
+  let purchaseQty = 0;
+
+  collectFromLines(invoices, item, (line) => {
+    const qty = parseNumber(line?.qty ?? line?.quantity);
+    const amount = parseNumber(line?.amount ?? line?.lineTotal ?? line?.line_total ?? line?.net);
+    salesQty += qty;
+    totalSales += amount;
+  });
+
+  collectFromLines(purchases, item, (line) => {
+    const qty = parseNumber(line?.qty ?? line?.quantity);
+    const amount = parseNumber(line?.amount ?? line?.lineTotal ?? line?.line_total ?? line?.lineSubTotal);
+    purchaseQty += qty;
+    totalPurchase += amount;
+  });
+
+  return {
+    itemId: item.id,
+    totalSales,
+    totalPurchase,
+    salesQty,
+    purchaseQty
+  };
+}
+
+export function getItemTradeSummary(itemId) {
+  const item = listItems().find((entry) => entry.id === itemId);
+  if (!item) {
+    return {
+      itemId,
+      totalSales: 0,
+      totalPurchase: 0,
+      salesQty: 0,
+      purchaseQty: 0
+    };
+  }
+  return collectItemTotalsLocal(item);
+}
+
+export async function getItemTradeSummaryRemote(itemId) {
+  const local = getItemTradeSummary(itemId);
+  if (!isSupabaseConfigured || !supabase || !looksLikeUuid(itemId)) return local;
+
+  const organizationId = authGetOrganizationId();
+  if (!organizationId) return local;
+
+  const [{ data: salesRows, error: salesError }, { data: purchaseRows, error: purchaseError }] = await Promise.all([
+    supabase
+      .from("invoice_items")
+      .select("qty,line_total,invoice_id")
+      .eq("item_id", itemId),
+    supabase
+      .from("purchase_bill_items")
+      .select("qty,line_total,bill_id")
+      .eq("item_id", itemId)
+  ]);
+
+  if (salesError) {
+    throw new Error(normalizeSupabaseError(salesError, "Failed to load item sales summary"));
+  }
+  if (purchaseError) {
+    throw new Error(normalizeSupabaseError(purchaseError, "Failed to load item purchase summary"));
+  }
+
+  const sales = ensureArray(salesRows);
+  const purchases = ensureArray(purchaseRows);
+
+  return {
+    itemId,
+    totalSales: sales.reduce((sum, row) => sum + parseNumber(row?.line_total), 0),
+    totalPurchase: purchases.reduce((sum, row) => sum + parseNumber(row?.line_total), 0),
+    salesQty: sales.reduce((sum, row) => sum + parseNumber(row?.qty), 0),
+    purchaseQty: purchases.reduce((sum, row) => sum + parseNumber(row?.qty), 0)
+  };
+}
+
+function getItemPurchaseHistoryLocal(item) {
+  const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
+  const history = [];
+  collectFromLines(purchases, item, (line, bill) => {
+    history.push({
+      supplier: bill?.partyName || "-",
+      quantity: parseNumber(line?.qty ?? line?.quantity),
+      date: bill?.billDate || bill?.created_at || "",
+      billNo: bill?.billNumber || bill?.bill_no || ""
+    });
+  });
+  return history.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+}
+
+export async function getItemPurchaseHistoryRemote(itemId) {
+  const item = listItems().find((entry) => entry.id === itemId);
+  if (!item) return [];
+
+  const local = getItemPurchaseHistoryLocal(item);
+  if (!isSupabaseConfigured || !supabase || !looksLikeUuid(itemId)) return local;
+
+  const organizationId = authGetOrganizationId();
+  if (!organizationId) return local;
+
+  const { data: lineRows, error: linesError } = await supabase
+    .from("purchase_bill_items")
+    .select("bill_id,qty")
+    .eq("item_id", itemId);
+
+  if (linesError) {
+    throw new Error(normalizeSupabaseError(linesError, "Failed to load item purchase history"));
+  }
+
+  const lines = ensureArray(lineRows);
+  if (!lines.length) return [];
+
+  const billIds = Array.from(new Set(lines.map((line) => line?.bill_id).filter(Boolean)));
+  const { data: billRows, error: billError } = await supabase
+    .from("purchase_bills")
+    .select("id,bill_no,bill_date,supplier_id,metadata")
+    .eq("organization_id", organizationId)
+    .in("id", billIds);
+  if (billError) {
+    throw new Error(normalizeSupabaseError(billError, "Failed to resolve purchase history bills"));
+  }
+
+  const bills = ensureArray(billRows);
+  const supplierIds = Array.from(new Set(bills.map((bill) => bill?.supplier_id).filter(Boolean)));
+  let suppliersById = new Map();
+  if (supplierIds.length) {
+    const { data: supplierRows, error: supplierError } = await supabase
+      .from("parties")
+      .select("id,display_name")
+      .eq("organization_id", organizationId)
+      .in("id", supplierIds);
+    if (supplierError) {
+      throw new Error(normalizeSupabaseError(supplierError, "Failed to resolve suppliers"));
+    }
+    suppliersById = new Map(ensureArray(supplierRows).map((row) => [row.id, row.display_name || "-"]));
+  }
+
+  const billById = new Map(bills.map((bill) => [bill.id, bill]));
+  const history = lines.map((line) => {
+    const bill = billById.get(line?.bill_id) || {};
+    const supplierName =
+      suppliersById.get(bill?.supplier_id) ||
+      bill?.metadata?.partyName ||
+      "-";
+    return {
+      supplier: supplierName,
+      quantity: parseNumber(line?.qty),
+      date: bill?.bill_date || "",
+      billNo: bill?.bill_no || ""
+    };
+  });
+
+  return history.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
 }
 
 export function computeItemUsage(item) {

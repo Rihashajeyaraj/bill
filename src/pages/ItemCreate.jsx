@@ -9,7 +9,7 @@ import GradientButton from "../components/GradientButton";
 import Modal from "../components/Modal";
 import TaxDropdown from "../components/TaxDropdown";
 import UnitPickerModal from "../components/UnitPickerModal";
-import { upsertItemRemote } from "../modules/items/store";
+import { getNextItemCode, upsertItemRemote } from "../modules/items/store";
 import { useOrganization } from "../context/OrganizationContext";
 import { UI } from "../theme/tokens";
 
@@ -108,8 +108,7 @@ export default function ItemCreate() {
   }
 
   function handleAssignCode() {
-    const stamp = Math.floor(1000 + Math.random() * 9000);
-    updateItem({ itemCode: `ITM-${stamp}` });
+    updateItem({ itemCode: getNextItemCode() });
   }
 
   function handleLogoFile(e) {
@@ -140,6 +139,7 @@ export default function ItemCreate() {
           lowStockAlert: Number(item.lowStockQty || 0),
           status: "Active",
           category: item.category,
+          itemCode: item.itemCode,
           sku: item.itemCode,
           metadata: {
             category: item.category,

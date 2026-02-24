@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowDownCircle, ArrowUpCircle, FileClock, ReceiptIndianRupee } from "lucide-react";
+import { ArrowDownCircle, ArrowUpCircle, FileClock, ReceiptIndianRupee, Users } from "lucide-react";
 import Card from "../components/Card";
 import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
 import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
+import { fetchPartiesCount } from "../modules/parties/store";
 import { useOrganization } from "../context/OrganizationContext";
 
 function money(n) {
@@ -14,22 +15,26 @@ export default function AccounterDashboard() {
   const { currency = "INR" } = useOrganization();
   const [invoices, setInvoices] = useState(() => invoicesList());
   const [payments, setPayments] = useState(() => paymentsList());
+  const [partyCounts, setPartyCounts] = useState({ total: 0, customers: 0, suppliers: 0 });
 
   useEffect(() => {
     let mounted = true;
     async function syncDashboardData() {
       try {
-        const [syncedInvoices, syncedPayments] = await Promise.all([
+        const [syncedInvoices, syncedPayments, counts] = await Promise.all([
           invoicesSyncFromRemote(),
-          paymentsSyncFromRemote()
+          paymentsSyncFromRemote(),
+          fetchPartiesCount()
         ]);
         if (!mounted) return;
         setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
         setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList());
+        setPartyCounts(counts || { total: 0, customers: 0, suppliers: 0 });
       } catch {
         if (!mounted) return;
         setInvoices(invoicesList());
         setPayments(paymentsList());
+        setPartyCounts({ total: 0, customers: 0, suppliers: 0 });
       }
     }
     syncDashboardData();
@@ -68,7 +73,7 @@ export default function AccounterDashboard() {
   }, [invoices, payments]);
 
   return (
-    <div className="max-w-6xl space-y-4">
+    <div className="dashboard-theme max-w-6xl space-y-4">
       <div className="rounded-2xl bg-slate-100 px-4 py-3">
         <h1 className="text-lg font-semibold text-slate-800">Accounter Dashboard</h1>
         <p className="mt-1 text-sm text-slate-600">
@@ -76,7 +81,7 @@ export default function AccounterDashboard() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
         <Card className="p-4">
           <p className="text-xs text-slate-500">Total Invoiced</p>
           <p className="mt-2 text-lg font-semibold text-slate-900">{currency} {money(stats.totalInvoices)}</p>
@@ -102,6 +107,15 @@ export default function AccounterDashboard() {
             <p className="mt-2 text-lg font-semibold text-rose-600">{currency} {money(stats.outgoing)}</p>
           </div>
           <ArrowUpCircle className="h-6 w-6 text-rose-600" />
+        </Card>
+
+        <Card className="p-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs text-slate-500">Parties</p>
+            <p className="mt-2 text-lg font-semibold text-slate-900">{partyCounts.total}</p>
+            <p className="text-xs text-slate-500">C {partyCounts.customers} | S {partyCounts.suppliers}</p>
+          </div>
+          <Users className="h-6 w-6 text-indigo-600" />
         </Card>
       </div>
 

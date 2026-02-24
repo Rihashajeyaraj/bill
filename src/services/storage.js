@@ -6,6 +6,7 @@ export const LS_KEYS = {
   organization_id: "organization_id",
   theme_mode: "theme_mode",
   theme_preset: "theme_preset",
+  app_font_family: "app_font_family",
   company_profile: "company_profile",
   companyProfileCompleted: "companyProfileCompleted",
   invoiceTemplateConfig: "invoiceTemplateConfig",
@@ -18,6 +19,8 @@ export const LS_KEYS = {
   payments: "payments",
   expenses: "expenses"
 };
+
+const failedOrgMigrationKeys = new Set();
 
 export function ssGet(key, fallback = null) {
   try {
@@ -54,7 +57,27 @@ function getCurrentAuthScopeId() {
 }
 
 function getCurrentOrganizationScopeId() {
-  const organizationId = ssGet(LS_KEYS.organization_id, "") || lsGet(LS_KEYS.organization_id, "");
+  const sessionOrganizationId = ssGet(LS_KEYS.organization_id, "");
+  const sessionScope = normalizeScopeValue(sessionOrganizationId);
+  if (sessionScope) return sessionScope;
+
+  // If user-scoped organization id exists (even empty), prefer it over legacy global key.
+  if (typeof window !== "undefined") {
+    const userScopedKey = toUserScopedKey(LS_KEYS.organization_id);
+    if (userScopedKey && userScopedKey !== LS_KEYS.organization_id) {
+      const raw = window.localStorage.getItem(userScopedKey);
+      if (raw !== null) {
+        try {
+          const parsed = JSON.parse(raw);
+          return normalizeScopeValue(parsed);
+        } catch {
+          return "";
+        }
+      }
+    }
+  }
+
+  const organizationId = lsGet(LS_KEYS.organization_id, "");
   return normalizeScopeValue(organizationId);
 }
 
@@ -106,13 +129,22 @@ export function lsGetOrganizationScoped(baseKey, fallback = null, organizationId
     const legacyKeys = [toUserScopedKey(baseKey), baseKey].filter(
       (key, index, list) => key !== scopedKey && list.indexOf(key) === index
     );
+    const migrationBlocked = failedOrgMigrationKeys.has(scopedKey);
     for (const legacyKey of legacyKeys) {
       if (!legacyKey) continue;
       const legacyRaw = localStorage.getItem(legacyKey);
       if (legacyRaw === null) continue;
       const legacyValue = lsGet(legacyKey, fallback);
-      lsSet(scopedKey, legacyValue);
-      lsRemove(legacyKey);
+      if (!migrationBlocked) {
+        try {
+          lsSet(scopedKey, legacyValue);
+          lsRemove(legacyKey);
+        } catch {
+          // Quota/full-storage should not break read paths.
+          // Keep using legacy key and skip migration attempts for this key in this session.
+          failedOrgMigrationKeys.add(scopedKey);
+        }
+      }
       return legacyValue;
     }
     return fallback;

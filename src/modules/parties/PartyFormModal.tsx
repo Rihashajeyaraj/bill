@@ -28,8 +28,9 @@ function createDraft(type: PartyType): PartyDraft {
     openingBalance: 0,
     openingBalanceType: defaultOpeningBalanceType(type),
     creditLimit: 0,
+    creditLimitDays: 0,
+    creditLimitType: "Amount",
     creditLimitEnabled: false,
-    autoBlock: true,
     notes: "",
     attachments: []
   };
@@ -109,8 +110,14 @@ export default function PartyFormModal({
       taxId: form.taxId?.trim() || "",
       openingBalance: Math.abs(parseNumber(form.openingBalance)),
       creditLimit: Math.max(0, parseNumber(form.creditLimit)),
+      creditLimitDays: Math.max(0, parseNumber(form.creditLimitDays)),
       creditLimitEnabled: !!form.creditLimitEnabled
     };
+    if (normalized.creditLimitType === "Amount") {
+      normalized.creditLimitDays = 0;
+    } else {
+      normalized.creditLimit = 0;
+    }
     onSave(normalized);
   }
 
@@ -229,40 +236,48 @@ export default function PartyFormModal({
           />
         </FormField>
 
-        <FormField label="Credit Limit" hint="Party-wise limit">
-          <input
-            type="number"
-            min={0}
-            value={form.creditLimit}
-            onChange={(event) => updateField("creditLimit", parseNumber(event.target.value))}
-            className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none"
-          />
-          <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+        <FormField label="Credit Monitoring" hint="Amount or overdue days">
+          <label className="flex items-center gap-2 text-xs text-slate-600">
             <input
               type="checkbox"
               checked={form.creditLimitEnabled}
               onChange={(event) => updateField("creditLimitEnabled", event.target.checked)}
               className="h-4 w-4 rounded border-slate-300"
             />
-            Enable credit limit monitoring
+            Enable limit checks
           </label>
-        </FormField>
 
-        <FormField label="Auto Block" hint="Invoice guard">
-          <label className="flex items-center gap-2 text-sm text-slate-600">
+          <select
+            value={form.creditLimitType}
+            onChange={(event) => updateField("creditLimitType", event.target.value as PartyDraft["creditLimitType"])}
+            disabled={!form.creditLimitEnabled}
+            className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none disabled:bg-slate-50"
+          >
+            <option value="Amount">By Amount</option>
+            <option value="Days">By Overdue Days</option>
+          </select>
+
+          {form.creditLimitType === "Days" ? (
             <input
-              type="checkbox"
-              checked={form.autoBlock}
-              onChange={(event) => updateField("autoBlock", event.target.checked)}
-              className="h-4 w-4 rounded border-slate-300"
+              type="number"
+              min={0}
+              value={form.creditLimitDays}
+              onChange={(event) => updateField("creditLimitDays", parseNumber(event.target.value))}
+              disabled={!form.creditLimitEnabled}
+              className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none disabled:bg-slate-50"
+              placeholder="Allowed overdue days"
             />
-            Auto-block invoice creation when limit is exceeded
-          </label>
-          {form.type === "Supplier" ? (
-            <p className="mt-2 text-xs text-slate-500">
-              Credit limits typically apply to customers. Supplier blocking is advisory only.
-            </p>
-          ) : null}
+          ) : (
+            <input
+              type="number"
+              min={0}
+              value={form.creditLimit}
+              onChange={(event) => updateField("creditLimit", parseNumber(event.target.value))}
+              disabled={!form.creditLimitEnabled}
+              className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none disabled:bg-slate-50"
+              placeholder="Credit amount limit"
+            />
+          )}
         </FormField>
 
         <FormField label="Notes" className="md:col-span-2">

@@ -78,7 +78,11 @@ export function OrganizationProvider({ children }) {
     };
 
     const onProfileChanged = (event) => {
-      setOrganization(buildOrganizationState(event?.detail || null));
+      if (event?.detail && typeof event.detail === "object") {
+        setOrganization(buildOrganizationState(event.detail));
+        return;
+      }
+      refreshOrganization();
     };
 
     window.addEventListener("storage", onStorage);

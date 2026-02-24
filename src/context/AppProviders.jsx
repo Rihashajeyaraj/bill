@@ -21,6 +21,15 @@ function SessionAndShellLayer({ children }) {
 
   const authenticated = !!authGetToken();
 
+  function isEditableTarget(target) {
+    if (!target || typeof target !== "object" || !("tagName" in target)) return false;
+    const tagName = String(target.tagName || "").toLowerCase();
+    if (tagName === "input" || tagName === "textarea" || tagName === "select") return true;
+    if (target.isContentEditable) return true;
+    if (typeof target.closest === "function" && target.closest("[contenteditable='true']")) return true;
+    return false;
+  }
+
   useSessionTimeout({
     enabled: authenticated,
     timeoutMs: 30 * 60 * 1000,
@@ -37,6 +46,8 @@ function SessionAndShellLayer({ children }) {
 
   useEffect(() => {
     const onKeyDown = (event) => {
+      if (isEditableTarget(event.target)) return;
+
       if (event.altKey && event.key.toLowerCase() === "d") {
         event.preventDefault();
         toggleTheme();
@@ -44,6 +55,7 @@ function SessionAndShellLayer({ children }) {
 
       if (event.key.toLowerCase() === "g" && !event.altKey && !event.ctrlKey && !event.metaKey) {
         const listener = (nextEvent) => {
+          if (isEditableTarget(nextEvent.target)) return;
           const key = nextEvent.key.toLowerCase();
           if (key === "d") navigateTo("/dashboard");
           if (key === "r") navigateTo("/app/reports");

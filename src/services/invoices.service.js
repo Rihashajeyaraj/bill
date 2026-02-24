@@ -1,6 +1,7 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import { triggerCreditLimitNotifications } from "../modules/parties/store";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -140,6 +141,60 @@ function buildRemoteLines(invoiceId, lines) {
   });
 }
 
+function calculateInvoiceSummary(lines, totalsInput) {
+  const totals = totalsInput && typeof totalsInput === "object" ? totalsInput : {};
+  const taxInput = totals?.tax && typeof totals.tax === "object" ? totals.tax : {};
+  const safeLines = Array.isArray(lines) ? lines : [];
+
+  const lineSubTotal = safeLines.reduce((sum, line) => {
+    const qty = parseNumber(line?.qty ?? line?.quantity);
+    const rate = parseNumber(line?.rate ?? line?.unitPrice);
+    const discount = parseNumber(line?.discountAmount ?? line?.discount);
+    const taxable = parseNumber(line?.taxableAmount ?? line?.net ?? qty * rate - discount);
+    return sum + Math.max(0, taxable);
+  }, 0);
+
+  const cgstFromLines = safeLines.reduce((sum, line) => sum + parseNumber(line?.cgstAmount), 0);
+  const sgstFromLines = safeLines.reduce((sum, line) => sum + parseNumber(line?.sgstAmount), 0);
+  const igstFromLines = safeLines.reduce((sum, line) => sum + parseNumber(line?.igstAmount), 0);
+  const vatFromLines = safeLines.reduce((sum, line) => sum + parseNumber(line?.vatAmount), 0);
+  const cessFromLines = safeLines.reduce((sum, line) => sum + parseNumber(line?.cessAmount), 0);
+
+  const cgst = cgstFromLines || parseNumber(taxInput?.cgst);
+  const sgst = sgstFromLines || parseNumber(taxInput?.sgst);
+  const igst = igstFromLines || parseNumber(taxInput?.igst);
+  const vat = vatFromLines || parseNumber(taxInput?.vat);
+  const cess = cessFromLines || parseNumber(taxInput?.cess);
+  const subTotal = lineSubTotal || parseNumber(totals?.subTotal);
+  const roundOff = parseNumber(totals?.roundOff);
+  const taxTotal = cgst + sgst + igst + vat + cess;
+  const computedGrand = subTotal + taxTotal + roundOff;
+  const providedGrand = parseNumber(totals?.grandTotal);
+
+  return {
+    subTotal,
+    cgst,
+    sgst,
+    igst,
+    vat,
+    cess,
+    roundOff,
+    taxTotal,
+    grandTotal: providedGrand > 0 ? providedGrand : computedGrand
+  };
+}
+
+export function invoiceCalculateSummary(lines, totalsInput = {}) {
+  const summary = calculateInvoiceSummary(lines, totalsInput);
+  return {
+    subTotal: summary.subTotal,
+    igst: summary.igst,
+    cgst: summary.cgst,
+    sgst: summary.sgst,
+    grandTotal: summary.grandTotal
+  };
+}
+
 export function invoicesList() {
   return getAll();
 }
@@ -233,6 +288,7 @@ export async function invoicesSyncFromRemote() {
   );
 
   setAll(mapped);
+  triggerCreditLimitNotifications();
   return mapped;
 }
 
@@ -242,8 +298,9 @@ export async function invoicesCreate(invoice) {
   const lines = Array.isArray(invoice?.lines) ? invoice.lines : [];
   const totals = invoice?.totals || {};
   const tax = totals?.tax || {};
-  const subTotal = parseNumber(totals?.subTotal);
-  const grandTotal = parseNumber(totals?.grandTotal);
+  const summary = calculateInvoiceSummary(lines, totals);
+  const subTotal = summary.subTotal;
+  const grandTotal = summary.grandTotal;
 
   let id = uid("inv_");
 
@@ -264,13 +321,13 @@ export async function invoicesCreate(invoice) {
         subtotal: subTotal,
         discount_total: parseNumber(totals?.discountTotal),
         taxable_total: parseNumber(totals?.taxableTotal ?? subTotal),
-        cgst_total: parseNumber(tax?.cgst),
-        sgst_total: parseNumber(tax?.sgst),
-        igst_total: parseNumber(tax?.igst),
-        cess_total: parseNumber(tax?.cess),
-        vat_total: parseNumber(tax?.vat),
-        tax_total: parseNumber(tax?.totalTax ?? tax),
-        round_off: parseNumber(totals?.roundOff),
+        cgst_total: summary.cgst,
+        sgst_total: summary.sgst,
+        igst_total: summary.igst,
+        cess_total: summary.cess,
+        vat_total: summary.vat,
+        tax_total: summary.taxTotal,
+        round_off: summary.roundOff,
         grand_total: grandTotal,
         status: deriveInvoiceStatus(grandTotal, grandTotal),
         metadata: {
@@ -326,6 +383,15 @@ export async function invoicesCreate(invoice) {
     totals: {
       ...totals,
       subTotal,
+      tax: {
+        ...(typeof tax === "object" ? tax : {}),
+        cgst: summary.cgst,
+        sgst: summary.sgst,
+        igst: summary.igst,
+        vat: summary.vat,
+        cess: summary.cess,
+        totalTax: summary.taxTotal
+      },
       grandTotal,
       balance: grandTotal
     },
@@ -335,5 +401,6 @@ export async function invoicesCreate(invoice) {
   };
 
   setAll([next, ...getAll().filter((entry) => entry.id !== id && entry.invoiceNo !== invoiceNo)]);
+  triggerCreditLimitNotifications();
   return id;
 }

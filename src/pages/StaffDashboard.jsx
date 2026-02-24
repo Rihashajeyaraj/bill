@@ -60,7 +60,7 @@ export default function StaffDashboard() {
   }, [invoices, items, parties]);
 
   return (
-    <div className="max-w-6xl space-y-4">
+    <div className="dashboard-theme max-w-6xl space-y-4">
       <div className="rounded-2xl bg-slate-100 px-4 py-3">
         <h1 className="text-lg font-semibold text-slate-800">Staff Dashboard</h1>
         <p className="mt-1 text-sm text-slate-600">
