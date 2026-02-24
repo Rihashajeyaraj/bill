@@ -34,7 +34,6 @@ import {
   COUNTRIES,
   companyGetProfile,
   companySaveProfileRemote,
-  companyUpdateProfile,
   organizationGenerateCode,
   organizationListActiveCodes
 } from "../services/company.service";
@@ -568,6 +567,7 @@ export default function CompanySettings() {
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeMessage, setCodeMessage] = useState("");
   const [codeError, setCodeError] = useState("");
+  const [profileLogoFile, setProfileLogoFile] = useState(null);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   useGlobalLoadingBridge(loadingSection, "company-settings");
 
@@ -761,6 +761,8 @@ export default function CompanySettings() {
 
   async function handleSave(section) {
     if (section === "profile") {
+      const logoError = String(errors?.profile?.logo || "").trim();
+      if (logoError) return;
       const profileErrors = validateProfile(settings.profile);
       if (Object.keys(profileErrors).length) {
         setErrors((prev) => ({ ...prev, profile: profileErrors }));
@@ -779,11 +781,35 @@ export default function CompanySettings() {
 
     setSavedSettings((prev) => ({ ...prev, [section]: nextSettings[section] }));
     const nextProfile = mapSettingsToProfile(nextSettings);
-    companyUpdateProfile(nextProfile);
 
     try {
-      await companySaveProfileRemote(nextProfile);
-      setSectionMessage((prev) => ({ ...prev, [section]: "Changes saved successfully." }));
+      const result = await companySaveProfileRemote(
+        nextProfile,
+        section === "profile" && profileLogoFile ? { logoFile: profileLogoFile } : {}
+      );
+
+      if (section === "profile") {
+        setProfileLogoFile(null);
+        if (result?.logoUrl) {
+          setSettings((prev) => ({
+            ...prev,
+            profile: { ...prev.profile, logoBase64: result.logoUrl }
+          }));
+          setSavedSettings((prev) => ({
+            ...prev,
+            profile: { ...prev.profile, logoBase64: result.logoUrl }
+          }));
+        }
+      }
+
+      const warningText =
+        Array.isArray(result?.warnings) && result.warnings.length
+          ? ` ${result.warnings.join(" ")}`
+          : "";
+      setSectionMessage((prev) => ({
+        ...prev,
+        [section]: `Changes saved successfully.${warningText}`.trim()
+      }));
       window.setTimeout(() => {
         setSectionMessage((prev) => ({ ...prev, [section]: "" }));
       }, 2400);
@@ -798,6 +824,9 @@ export default function CompanySettings() {
   function handleCancel(section) {
     setSettings((prev) => ({ ...prev, [section]: savedSettings[section] }));
     setErrors((prev) => ({ ...prev, [section]: {} }));
+    if (section === "profile") {
+      setProfileLogoFile(null);
+    }
   }
 
   function updatePermission(role, key, value) {
@@ -980,8 +1009,30 @@ export default function CompanySettings() {
                     <FormField label="Logo Upload">
                       <FileUpload
                         value={settings.profile.logoBase64}
-                        onChange={(value) => updateSection("profile", { logoBase64: value })}
+                        onChange={(value, file) => {
+                          updateSection("profile", { logoBase64: value });
+                          setProfileLogoFile(file || null);
+                          setErrors((prev) => ({
+                            ...prev,
+                            profile: {
+                              ...(prev.profile || {}),
+                              logo: ""
+                            }
+                          }));
+                        }}
+                        onError={(message) =>
+                          setErrors((prev) => ({
+                            ...prev,
+                            profile: {
+                              ...(prev.profile || {}),
+                              logo: message || ""
+                            }
+                          }))
+                        }
                       />
+                      {sectionErrors.logo ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.logo}</p>
+                      ) : null}
                     </FormField>
 
                     <FormField label="Business Type">
@@ -1126,9 +1177,13 @@ export default function CompanySettings() {
                           <img
                             src={settings.profile.logoBase64}
                             alt="logo"
-                            className="h-full w-full object-cover"
+                            className="h-full w-full object-contain bg-white p-1"
                           />
-                        ) : null}
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center rounded-2xl bg-slate-100 text-xs font-semibold text-slate-600">
+                            {(settings.profile.companyName || "C").slice(0, 1).toUpperCase()}
+                          </div>
+                        )}
                       </div>
                       <div>
                         <p className="text-sm font-semibold text-slate-900">

@@ -35,6 +35,14 @@ const COUNTRY_CODE_TO_NAME = {
   IE: "Ireland"
 };
 
+const COMPANY_LOGO_BUCKET_CANDIDATES = ["company-assets", "company-logos", "organization-assets"];
+const LOGO_MIME_TO_EXTENSION = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/svg+xml": "svg"
+};
+
 function getCountryCode(countryName) {
   return COUNTRY_NAME_TO_CODE[countryName] || "IN";
 }
@@ -68,6 +76,115 @@ function deriveTaxRegime(country) {
   if (["Sri Lanka", "UAE", "United Kingdom", "Ireland"].includes(country)) return "vat";
   if (country === "USA") return "sales_tax";
   return "none";
+}
+
+function normalizeLogoMime(mime = "") {
+  return String(mime || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+}
+
+function isSupportedLogoMime(mime = "") {
+  return !!LOGO_MIME_TO_EXTENSION[normalizeLogoMime(mime)];
+}
+
+function isDataUrl(value = "") {
+  return /^data:/i.test(String(value || "").trim());
+}
+
+function getDataUrlMime(dataUrl = "") {
+  const match = String(dataUrl || "").match(/^data:([^;,]+)[;,]/i);
+  return normalizeLogoMime(match?.[1] || "");
+}
+
+function appendVersionQuery(url = "", version = Date.now()) {
+  const safe = String(url || "").trim();
+  if (!safe) return "";
+  const clean = safe.replace(/([?&])v=\d+(&?)/g, (full, prefix, tail) => (tail ? prefix : ""));
+  const normalized = clean.endsWith("?") || clean.endsWith("&") ? clean.slice(0, -1) : clean;
+  const separator = normalized.includes("?") ? "&" : "?";
+  return `${normalized}${separator}v=${Number(version) || Date.now()}`;
+}
+
+async function prepareLogoUploadPayload({ logoValue = "", logoFile = null }) {
+  if (logoFile && typeof logoFile === "object") {
+    const mime = normalizeLogoMime(logoFile.type || "");
+    if (!isSupportedLogoMime(mime)) {
+      return { error: "Only PNG, JPG, JPEG or SVG logos are supported." };
+    }
+    return {
+      blob: logoFile,
+      mime,
+      extension: LOGO_MIME_TO_EXTENSION[mime] || "png"
+    };
+  }
+
+  if (!isDataUrl(logoValue)) return { skip: true };
+
+  const mime = getDataUrlMime(logoValue);
+  if (!isSupportedLogoMime(mime)) {
+    return { error: "Only PNG, JPG, JPEG or SVG logos are supported." };
+  }
+
+  try {
+    const response = await fetch(String(logoValue));
+    const blob = await response.blob();
+    return {
+      blob,
+      mime,
+      extension: LOGO_MIME_TO_EXTENSION[mime] || "png"
+    };
+  } catch {
+    return { error: "Unable to process selected logo image." };
+  }
+}
+
+async function uploadCompanyLogoToStorage({
+  logoValue = "",
+  logoFile = null,
+  organizationId = "",
+  userId = ""
+}) {
+  if (!isSupabaseConfigured || !supabase) {
+    return { logoValue };
+  }
+
+  const payload = await prepareLogoUploadPayload({ logoValue, logoFile });
+  if (payload.skip) return { logoValue };
+  if (payload.error) return { logoValue, warning: payload.error };
+
+  const scopedId = String(organizationId || userId || "org").trim();
+  const filePath = `organizations/${scopedId}/logo`;
+  const version = Date.now();
+
+  let lastError = "";
+  for (const bucket of COMPANY_LOGO_BUCKET_CANDIDATES) {
+    const { error: uploadError } = await supabase.storage
+      .from(bucket)
+      .upload(filePath, payload.blob, {
+        upsert: true,
+        contentType: payload.mime,
+        cacheControl: "3600"
+      });
+
+    if (uploadError) {
+      lastError = uploadError.message || "Upload failed";
+      continue;
+    }
+
+    const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
+    const publicUrl = data?.publicUrl || "";
+    if (publicUrl) return { logoValue: appendVersionQuery(publicUrl, version) };
+    return { logoValue: appendVersionQuery(logoValue, version) };
+  }
+
+  return {
+    logoValue,
+    warning:
+      (lastError ? `${lastError}. ` : "") +
+      "Failed to upload logo to storage. Run supabase/create_company_assets_bucket.sql and try again."
+  };
 }
 
 function mapOrganizationToProfile(organization, taxProfile = null) {
@@ -281,7 +398,7 @@ export function companySaveProfile(profile) {
     countryCode: normalizedCountry.countryCode
   };
   const savedProfile = persistProfileLocal(normalizedProfile, { completedStatus: true });
-  emitOrganizationUpdated(savedProfile);
+  emitOrganizationUpdated(normalizedProfile);
   return savedProfile;
 }
 
@@ -295,7 +412,7 @@ export function companyUpdateProfile(partial) {
     countryCode: normalizedCountry.countryCode
   };
   const savedProfile = persistProfileLocal(next, { completedStatus: companyIsCompleted() });
-  emitOrganizationUpdated(savedProfile);
+  emitOrganizationUpdated(next);
   return savedProfile;
 }
 
@@ -364,12 +481,13 @@ export async function companyLoadMyOrganization(selectedOrganizationId = "") {
       organization?.settings?.invoiceTemplate?.templateId
     )
   );
-  emitOrganizationUpdated(savedProfile);
-  return savedProfile;
+  emitOrganizationUpdated(profile);
+  return profile;
 }
 
 export async function companySaveProfileRemote(profile, options = {}) {
   const forceCreate = !!options?.forceCreate;
+  const logoFile = options?.logoFile || null;
   const previous = forceCreate ? {} : companyGetProfile() || {};
   const countryData = normalizeProfileCountry({
     country: profile?.country || previous?.country || "",
@@ -387,9 +505,9 @@ export async function companySaveProfileRemote(profile, options = {}) {
     currency: profile?.currencies?.[0] || profile?.currency || previous?.currency || "INR",
     updated_at: new Date().toISOString()
   };
-  companySaveProfile(mergedProfile);
 
   if (!isSupabaseConfigured || !supabase) {
+    companySaveProfile(mergedProfile);
     const localOrganizationId = forceCreate
       ? `org_${Date.now().toString(16)}`
       : authGetOrganizationId() || "";
@@ -402,7 +520,7 @@ export async function companySaveProfileRemote(profile, options = {}) {
       lsSet(LS_KEYS.invoiceTemplateCompleted, false);
       ssSet(LS_KEYS.invoiceTemplateCompleted, false);
     }
-    return { profile: mergedProfile, organizationId: localOrganizationId };
+    return { profile: mergedProfile, organizationId: localOrganizationId, logoUrl: mergedProfile.logoBase64 };
   }
 
   const userId = await getCurrentUserId();
@@ -411,9 +529,24 @@ export async function companySaveProfileRemote(profile, options = {}) {
   }
 
   const existingOrgId = forceCreate ? "" : authGetOrganizationId();
-  const payload = mapProfileToOrganizationPayload(mergedProfile, userId, existingOrgId);
+  const targetOrganizationId = existingOrgId || crypto.randomUUID();
+  const warnings = [];
 
-  let organizationId = existingOrgId;
+  const uploadedLogo = await uploadCompanyLogoToStorage({
+    logoValue: mergedProfile.logoBase64,
+    logoFile,
+    organizationId: targetOrganizationId,
+    userId
+  });
+  if (uploadedLogo.warning) {
+    warnings.push(uploadedLogo.warning);
+  }
+  mergedProfile.logoBase64 = uploadedLogo.logoValue || mergedProfile.logoBase64 || "";
+
+  companySaveProfile(mergedProfile);
+  const payload = mapProfileToOrganizationPayload(mergedProfile, userId, targetOrganizationId);
+
+  let organizationId = targetOrganizationId;
 
   if (existingOrgId) {
     const { error } = await supabase.from("organizations").update(payload).eq("id", existingOrgId);
@@ -437,7 +570,7 @@ export async function companySaveProfileRemote(profile, options = {}) {
     if (error) {
       throw new Error(error?.message || "Failed to create organization");
     }
-    organizationId = generatedOrgId;
+    organizationId = generatedOrgId || targetOrganizationId;
   }
 
   const ownerMode = isOwnerRole(authGetRole()) || toDbRole(authGetRole()) === "owner";
@@ -478,7 +611,12 @@ export async function companySaveProfileRemote(profile, options = {}) {
     ssSet(LS_KEYS.invoiceTemplateCompleted, false);
   }
 
-  return { profile: companyGetProfile(), organizationId };
+  return {
+    profile: mergedProfile,
+    organizationId,
+    logoUrl: mergedProfile.logoBase64 || "",
+    warnings
+  };
 }
 
 function generateInviteCodeToken() {

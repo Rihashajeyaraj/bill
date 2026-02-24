@@ -50,6 +50,8 @@ function routeMatches(pathname, to) {
 export default function Sidebar({ collapsed, onToggle }) {
   const location = useLocation();
   const width = collapsed ? "w-[84px]" : "w-[260px]";
+  const headerPadding = collapsed ? "px-2" : "px-4";
+  const toggleSize = collapsed ? "h-7 w-7 rounded-xl" : "h-9 w-9 rounded-2xl";
   const { profile: company = {} } = useOrganization();
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
@@ -123,35 +125,27 @@ export default function Sidebar({ collapsed, onToggle }) {
       className={clsx("app-sidebar fixed left-0 top-0 z-50 h-screen", width)}
     >
       <div className="h-full flex flex-col">
-        <div className="px-4 py-4 flex items-center justify-between">
-          <div className="min-w-0">
+        <div className={clsx("app-sidebar-header flex items-center justify-between", headerPadding)}>
+          <div className="app-sidebar-brand min-w-0">
+            <div className="app-sidebar-logo shrink-0">
+              {company?.logoBase64 ? (
+                <img src={company.logoBase64} alt="Company logo" className="app-sidebar-logo-img" />
+              ) : (
+                <div className="app-sidebar-placeholder flex h-full w-full items-center justify-center text-xs font-semibold text-white">
+                  {companyName.slice(0, 1).toUpperCase()}
+                </div>
+              )}
+            </div>
             {!collapsed ? (
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="h-10 w-10 rounded-2xl border border-white/20 bg-white/70 flex items-center justify-center overflow-hidden shrink-0">
-                  {company?.logoBase64 ? (
-                    <img src={company.logoBase64} alt="Company logo" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="h-full w-full" style={{ background: "var(--app-gradient)" }} />
-                  )}
-                </div>
-                <div className="min-w-0">
-                  <p className="app-sidebar-title text-sm font-semibold truncate">{companyName}</p>
-                  <p className="app-sidebar-subtitle text-xs">Billing Suite</p>
-                </div>
+              <div className="app-sidebar-brand-copy min-w-0">
+                <p className="app-sidebar-title text-sm font-semibold truncate">{companyName}</p>
+                <p className="app-sidebar-subtitle text-xs leading-5">Billing Suite</p>
               </div>
-            ) : (
-              <div className="h-9 w-9 rounded-2xl border border-white/20 bg-white/70 flex items-center justify-center overflow-hidden">
-                {company?.logoBase64 ? (
-                  <img src={company.logoBase64} alt="Company logo" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="h-full w-full" style={{ background: "var(--app-gradient)" }} />
-                )}
-              </div>
-            )}
+            ) : null}
           </div>
           <button
             onClick={onToggle}
-            className="app-sidebar-toggle h-9 w-9 rounded-2xl flex items-center justify-center"
+            className={clsx("app-sidebar-toggle flex items-center justify-center shrink-0", toggleSize)}
           >
             {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </button>

@@ -2,11 +2,14 @@ import React, { useState } from "react";
 import { ChevronDown, LogOut, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { authGetRole, authGetUser, authLogout } from "../services/auth.service";
+import { useOrganization } from "../context/OrganizationContext";
 
 export default function Topbar() {
   const nav = useNavigate();
   const user = authGetUser();
   const role = authGetRole();
+  const { profile: company = {} } = useOrganization();
+  const companyName = String(company?.companyName || "").trim();
 
   const [menu, setMenu] = useState(false);
 
@@ -35,7 +38,15 @@ export default function Topbar() {
             className="app-topbar-user-btn rounded-2xl px-3 py-2 shadow-soft flex items-center gap-2"
           >
             <div className="app-topbar-user-avatar h-8 w-8 rounded-2xl flex items-center justify-center text-xs font-bold">
-              {(user?.name || "U").slice(0, 1).toUpperCase()}
+              {company?.logoBase64 ? (
+                <img
+                  src={company.logoBase64}
+                  alt="Company logo"
+                  className="h-full w-full rounded-2xl object-contain bg-white p-1"
+                />
+              ) : (
+                (companyName || user?.name || "U").slice(0, 1).toUpperCase()
+              )}
             </div>
             <div className="hidden sm:block text-left">
               <p className="app-topbar-title text-sm font-semibold leading-4">{user?.name || "User"}</p>
