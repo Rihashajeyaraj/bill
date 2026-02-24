@@ -78,7 +78,7 @@ function createDraft(type = "PRODUCT") {
     type: normalizedType,
     itemName: "",
     category: "",
-    unit: "",
+    unit: "pcs",
     status: "Active",
     description: "",
     salePrice: 0,
@@ -453,24 +453,25 @@ export default function ItemCreate() {
                 <p className="mt-1 text-xs text-slate-500">Auto-generated. Cannot be edited.</p>
               </FormField>
 
-              <FormField label="Unit of Measure">
-                <div className="relative">
-                  <select
-                    value={form.unit}
-                    onChange={(event) => updateField("unit", event.target.value)}
-                    className={`${inputClassName} appearance-none pr-10`}
-                  >
-                    <option value="">Select unit</option>
-                    {UNITS.map((unit) => (
-                      <option key={unit} value={unit}>
-                        {unit}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                </div>
-                {errors.unit ? <p className={errorClassName}>{errors.unit}</p> : null}
-              </FormField>
+              {form.type === "PRODUCT" ? (
+                <FormField label="Unit of Measure">
+                  <div className="relative">
+                    <select
+                      value={form.unit}
+                      onChange={(event) => updateField("unit", event.target.value)}
+                      className={`${inputClassName} appearance-none pr-10`}
+                    >
+                      {UNITS.map((unit) => (
+                        <option key={unit} value={unit}>
+                          {unit}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  </div>
+                  {errors.unit ? <p className={errorClassName}>{errors.unit}</p> : null}
+                </FormField>
+              ) : null}
 
               <FormField label="Status">
                 <select

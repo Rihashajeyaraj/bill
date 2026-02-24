@@ -70,8 +70,10 @@ export default function ItemFormModal({
     if (mode !== "edit" && !String(next.itemCode || "").trim()) {
       next.itemCode = getNextItemCode(next.type);
     }
-    if (!String(next.sku || "").trim()) {
-      next.sku = next.itemCode || "";
+    const normalizedSku = String(next.sku || next.itemCode || "").trim();
+    next.sku = normalizedSku;
+    if (!String(next.unit || "").trim()) {
+      next.unit = "pcs";
     }
     setForm(next);
   }, [open, initialItem, mode]);
@@ -143,6 +145,7 @@ export default function ItemFormModal({
     const next = {
       ...form,
       itemCode: form.itemCode?.trim() || "",
+      sku: form.sku?.trim() || form.itemCode?.trim() || "",
       name: form.name.trim(),
       description: form.description?.trim() || "",
       hsn: form.hsn?.trim() || "",
@@ -225,20 +228,21 @@ export default function ItemFormModal({
               />
             </FormField>
 
-            <FormField label="Unit of Measure">
-              <input
-                list="item-units"
-                value={form.unit}
-                onChange={(event) => updateField("unit", event.target.value)}
-                className={inputClassName}
-                placeholder="pcs, kg, hr"
-              />
-              <datalist id="item-units">
-                {UNITS.map((unit) => (
-                  <option key={unit} value={unit} />
-                ))}
-              </datalist>
-            </FormField>
+            {form.type === "Product" ? (
+              <FormField label="Unit of Measure">
+                <select
+                  value={form.unit}
+                  onChange={(event) => updateField("unit", event.target.value)}
+                  className={inputClassName}
+                >
+                  {UNITS.map((unit) => (
+                    <option key={unit} value={unit}>
+                      {unit}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+            ) : null}
 
             <FormField label="Category">
               <input
@@ -252,10 +256,11 @@ export default function ItemFormModal({
             <FormField label="SKU">
               <input
                 value={form.sku}
-                onChange={(event) => updateField("sku", event.target.value)}
-                className={inputClassName}
-                placeholder="SKU-001"
+                className={`${inputClassName} bg-slate-50 text-slate-700`}
+                placeholder="Auto-generated"
+                readOnly
               />
+              <p className="mt-1 text-xs text-slate-500">Auto-generated. Cannot be edited.</p>
             </FormField>
 
             <FormField label="Barcode" className="md:col-span-2">
