@@ -16,6 +16,25 @@ function wholeLike(value) {
   return Math.max(0, Math.trunc(parseNumber(value)));
 }
 
+function normalizeWholeInput(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return 0;
+  return Number(digits.replace(/^0+(?=\d)/, ""));
+}
+
+function sanitizeDecimalInput(value) {
+  const cleaned = String(value || "").replace(/[^0-9.]/g, "");
+  if (!cleaned) return "";
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot === -1) return cleaned;
+  const integer = cleaned.slice(0, firstDot + 1);
+  const decimal = cleaned
+    .slice(firstDot + 1)
+    .replace(/\./g, "")
+    .slice(0, 2);
+  return `${integer}${decimal}`;
+}
+
 function defaultItem(type) {
   return {
     type,
@@ -28,7 +47,7 @@ function defaultItem(type) {
     salesRate: 0,
     purchaseRate: 0,
     taxRate: 0,
-    taxInclusive: false,
+    taxInclusive: true,
     status: "Active",
     trackInventory: type === "Product",
     openingStock: 0,
@@ -150,6 +169,10 @@ export default function ItemFormModal({
       return;
     }
     setError("");
+    const normalizedOpeningStock = form.trackInventory ? wholeLike(form.openingStock) : 0;
+    const normalizedOpeningStockValue = form.trackInventory
+      ? parseNumber(normalizedOpeningStock * parseNumber(form.purchaseRate))
+      : 0;
     const next = {
       ...form,
       itemCode: form.itemCode?.trim() || "",
@@ -162,8 +185,8 @@ export default function ItemFormModal({
       salesRate: parseNumber(form.salesRate),
       purchaseRate: parseNumber(form.purchaseRate),
       taxRate: parseNumber(form.taxRate),
-      openingStock: wholeLike(form.openingStock),
-      openingStockValue: parseNumber(form.openingStockValue),
+      openingStock: normalizedOpeningStock,
+      openingStockValue: normalizedOpeningStockValue,
       lowStockAlert: wholeLike(form.lowStockAlert),
       priceLevels: form.priceLevels.map((level) => ({
         ...level,
@@ -296,11 +319,12 @@ export default function ItemFormModal({
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <FormField label="Sales Rate">
               <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={decimalLike(form.salesRate)}
-                onChange={(event) => updateField("salesRate", parseNumber(event.target.value))}
+                type="text"
+                inputMode="decimal"
+                value={String(form.salesRate ?? "")}
+                onFocus={(event) => event.target.select()}
+                onChange={(event) => updateField("salesRate", sanitizeDecimalInput(event.target.value))}
+                onBlur={() => updateField("salesRate", decimalLike(form.salesRate || 0))}
                 className={inputClassName}
                 placeholder="0.00"
               />
@@ -308,11 +332,12 @@ export default function ItemFormModal({
 
             <FormField label="Purchase Rate">
               <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={decimalLike(form.purchaseRate)}
-                onChange={(event) => updateField("purchaseRate", parseNumber(event.target.value))}
+                type="text"
+                inputMode="decimal"
+                value={String(form.purchaseRate ?? "")}
+                onFocus={(event) => event.target.select()}
+                onChange={(event) => updateField("purchaseRate", sanitizeDecimalInput(event.target.value))}
+                onBlur={() => updateField("purchaseRate", decimalLike(form.purchaseRate || 0))}
                 className={inputClassName}
                 placeholder="0.00"
               />
@@ -367,37 +392,22 @@ export default function ItemFormModal({
 
               <FormField label="Opening Stock">
                 <input
-                  type="number"
-                  min={0}
-                  step="1"
+                  type="text"
+                  inputMode="numeric"
                   value={wholeLike(form.openingStock)}
-                  onChange={(event) => updateField("openingStock", wholeLike(event.target.value))}
+                  onChange={(event) => updateField("openingStock", normalizeWholeInput(event.target.value))}
                   className={inputClassName}
                   disabled={!form.trackInventory}
                   placeholder="0"
                 />
               </FormField>
 
-              <FormField label="Opening Stock Value">
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={decimalLike(form.openingStockValue)}
-                  onChange={(event) => updateField("openingStockValue", parseNumber(event.target.value))}
-                  className={inputClassName}
-                  disabled={!form.trackInventory}
-                  placeholder="0.00"
-                />
-              </FormField>
-
               <FormField label="Low Stock Alert">
                 <input
-                  type="number"
-                  min={0}
-                  step="1"
+                  type="text"
+                  inputMode="numeric"
                   value={wholeLike(form.lowStockAlert)}
-                  onChange={(event) => updateField("lowStockAlert", wholeLike(event.target.value))}
+                  onChange={(event) => updateField("lowStockAlert", normalizeWholeInput(event.target.value))}
                   className={inputClassName}
                   disabled={!form.trackInventory}
                   placeholder="0"
@@ -437,11 +447,12 @@ export default function ItemFormModal({
                     placeholder="Wholesale"
                   />
                   <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={decimalLike(level.price)}
-                    onChange={(event) => updatePriceLevel(level.id, { price: parseNumber(event.target.value) })}
+                    type="text"
+                    inputMode="decimal"
+                    value={String(level.price ?? "")}
+                    onFocus={(event) => event.target.select()}
+                    onChange={(event) => updatePriceLevel(level.id, { price: sanitizeDecimalInput(event.target.value) })}
+                    onBlur={() => updatePriceLevel(level.id, { price: decimalLike(level.price || 0) })}
                     className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
                     placeholder="0.00"
                   />

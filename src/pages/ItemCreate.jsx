@@ -84,7 +84,7 @@ function createDraft(type = "PRODUCT") {
     salePrice: 0,
     purchasePrice: 0,
     taxRate: 0,
-    taxInclusive: false,
+    taxInclusive: true,
     hsnOrSac: "",
     trackInventory: defaultTrackInventoryForType(normalizedType),
     openingQty: 0,
@@ -125,6 +125,25 @@ function decimalLike(value) {
 
 function wholeLike(value) {
   return Math.max(0, Math.trunc(parseNumber(value)));
+}
+
+function normalizeWholeInput(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return 0;
+  return Number(digits.replace(/^0+(?=\d)/, ""));
+}
+
+function sanitizeDecimalInput(value) {
+  const cleaned = String(value || "").replace(/[^0-9.]/g, "");
+  if (!cleaned) return "";
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot === -1) return cleaned;
+  const integer = cleaned.slice(0, firstDot + 1);
+  const decimal = cleaned
+    .slice(firstDot + 1)
+    .replace(/\./g, "")
+    .slice(0, 2);
+  return `${integer}${decimal}`;
 }
 
 export default function ItemCreate() {
@@ -259,9 +278,6 @@ export default function ItemCreate() {
     if (parseNumber(form.purchasePrice) < 0) nextErrors.purchasePrice = "Purchase rate cannot be negative.";
     if (parseNumber(form.taxRate) < 0) nextErrors.taxRate = `${taxRateLabel} cannot be negative.`;
     if (showInventoryInputs && parseNumber(form.openingQty) < 0) nextErrors.openingQty = "Opening stock cannot be negative.";
-    if (showInventoryInputs && parseNumber(form.openingStockValue) < 0) {
-      nextErrors.openingStockValue = "Opening stock value cannot be negative.";
-    }
     if (showInventoryInputs && parseNumber(form.lowStockQty) < 0) nextErrors.lowStockQty = "Low stock alert cannot be negative.";
 
     setErrors(nextErrors);
@@ -277,6 +293,9 @@ export default function ItemCreate() {
 
     const numericTaxRate = parseNumber(form.taxRate);
     const trimmedCode = String(form.hsnOrSac || "").trim();
+    const normalizedOpeningQty = showInventoryInputs ? wholeLike(form.openingQty) : 0;
+    const normalizedPurchaseRate = parseNumber(form.purchasePrice);
+    const computedOpeningStockValue = showInventoryInputs ? parseNumber(normalizedOpeningQty * normalizedPurchaseRate) : 0;
     const normalizedPriceLevels = form.priceLevels
       .map((row) => ({
         ...row,
@@ -304,8 +323,8 @@ export default function ItemCreate() {
       taxInclusive: !!form.taxInclusive,
       status: form.status === "Inactive" ? "Inactive" : "Active",
       trackInventory: !!showInventoryInputs,
-      openingStock: showInventoryInputs ? wholeLike(form.openingQty) : 0,
-      openingStockValue: showInventoryInputs ? parseNumber(form.openingStockValue) : 0,
+      openingStock: normalizedOpeningQty,
+      openingStockValue: computedOpeningStockValue,
       lowStockAlert: showInventoryInputs ? wholeLike(form.lowStockQty) : 0,
       category: String(form.category || "").trim(),
       itemCode: String(form.itemCode || "").trim(),
@@ -331,9 +350,9 @@ export default function ItemCreate() {
         discountValue: parseNumber(form.discountValue),
         discountType: form.discountType,
         trackStock: !!showInventoryInputs,
-        openingStock: showInventoryInputs ? wholeLike(form.openingQty) : 0,
-        openingQty: showInventoryInputs ? wholeLike(form.openingQty) : 0,
-        openingStockValue: showInventoryInputs ? parseNumber(form.openingStockValue) : 0,
+        openingStock: normalizedOpeningQty,
+        openingQty: normalizedOpeningQty,
+        openingStockValue: computedOpeningStockValue,
         lowStockQty: showInventoryInputs ? wholeLike(form.lowStockQty) : 0,
         warehouse: String(form.warehouse || "").trim(),
         imageUrl: String(form.imageUrl || "").trim(),
@@ -508,11 +527,12 @@ export default function ItemCreate() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <FormField label="Sales Rate">
                 <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={decimalLike(form.salePrice)}
-                  onChange={(event) => updateField("salePrice", parseNumber(event.target.value))}
+                  type="text"
+                  inputMode="decimal"
+                  value={String(form.salePrice ?? "")}
+                  onFocus={(event) => event.target.select()}
+                  onChange={(event) => updateField("salePrice", sanitizeDecimalInput(event.target.value))}
+                  onBlur={() => updateField("salePrice", decimalLike(form.salePrice || 0))}
                   className={inputClassName}
                   placeholder="0.00"
                 />
@@ -521,11 +541,12 @@ export default function ItemCreate() {
 
               <FormField label="Purchase Rate">
                 <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={decimalLike(form.purchasePrice)}
-                  onChange={(event) => updateField("purchasePrice", parseNumber(event.target.value))}
+                  type="text"
+                  inputMode="decimal"
+                  value={String(form.purchasePrice ?? "")}
+                  onFocus={(event) => event.target.select()}
+                  onChange={(event) => updateField("purchasePrice", sanitizeDecimalInput(event.target.value))}
+                  onBlur={() => updateField("purchasePrice", decimalLike(form.purchasePrice || 0))}
                   className={inputClassName}
                   placeholder="0.00"
                 />
@@ -658,37 +679,22 @@ export default function ItemCreate() {
                   <>
                     <FormField label="Opening Stock">
                       <input
-                        type="number"
-                        min={0}
-                        step="1"
+                        type="text"
+                        inputMode="numeric"
                         value={wholeLike(form.openingQty)}
-                        onChange={(event) => updateField("openingQty", wholeLike(event.target.value))}
+                        onChange={(event) => updateField("openingQty", normalizeWholeInput(event.target.value))}
                         className={inputClassName}
                         placeholder="0"
                       />
                       {errors.openingQty ? <p className={errorClassName}>{errors.openingQty}</p> : null}
                     </FormField>
 
-                    <FormField label="Opening Stock Value (optional)">
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={decimalLike(form.openingStockValue)}
-                        onChange={(event) => updateField("openingStockValue", parseNumber(event.target.value))}
-                        className={inputClassName}
-                        placeholder="0.00"
-                      />
-                      {errors.openingStockValue ? <p className={errorClassName}>{errors.openingStockValue}</p> : null}
-                    </FormField>
-
                     <FormField label="Low Stock Alert">
                       <input
-                        type="number"
-                        min={0}
-                        step="1"
+                        type="text"
+                        inputMode="numeric"
                         value={wholeLike(form.lowStockQty)}
-                        onChange={(event) => updateField("lowStockQty", wholeLike(event.target.value))}
+                        onChange={(event) => updateField("lowStockQty", normalizeWholeInput(event.target.value))}
                         className={inputClassName}
                         placeholder="0"
                       />
@@ -740,11 +746,12 @@ export default function ItemCreate() {
                       placeholder="Wholesale / Dealer"
                     />
                     <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={decimalLike(level.price)}
-                      onChange={(event) => updatePriceLevel(level.id, { price: parseNumber(event.target.value) })}
+                      type="text"
+                      inputMode="decimal"
+                      value={String(level.price ?? "")}
+                      onFocus={(event) => event.target.select()}
+                      onChange={(event) => updatePriceLevel(level.id, { price: sanitizeDecimalInput(event.target.value) })}
+                      onBlur={() => updatePriceLevel(level.id, { price: decimalLike(level.price || 0) })}
                       className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
                       placeholder="0.00"
                     />
@@ -797,11 +804,12 @@ export default function ItemCreate() {
 
               <FormField label="Discount Value">
                 <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={decimalLike(form.discountValue)}
-                  onChange={(event) => updateField("discountValue", parseNumber(event.target.value))}
+                  type="text"
+                  inputMode="decimal"
+                  value={String(form.discountValue ?? "")}
+                  onFocus={(event) => event.target.select()}
+                  onChange={(event) => updateField("discountValue", sanitizeDecimalInput(event.target.value))}
+                  onBlur={() => updateField("discountValue", decimalLike(form.discountValue || 0))}
                   className={inputClassName}
                   placeholder="0.00"
                 />

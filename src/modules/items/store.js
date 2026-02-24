@@ -32,6 +32,49 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
+function normalizeItemName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function findDuplicateItemByName(list, incomingName, incomingId) {
+  const normalizedIncomingName = normalizeItemName(incomingName);
+  if (!normalizedIncomingName) return null;
+  const normalizedIncomingId = String(incomingId || "");
+
+  for (const item of ensureArray(list)) {
+    if (normalizedIncomingId && String(item?.id || "") === normalizedIncomingId) continue;
+    const existingName = normalizeItemName(item?.name || item?.itemName || item?.item_name || "");
+    if (!existingName) continue;
+    if (existingName === normalizedIncomingName) return item;
+  }
+  return null;
+}
+
+async function findRemoteDuplicateItemByName(organizationId, incomingName, incomingId) {
+  if (!supabase) return null;
+  const normalizedIncomingName = normalizeItemName(incomingName);
+  if (!normalizedIncomingName) return null;
+  const normalizedIncomingId = String(incomingId || "");
+
+  const { data, error } = await supabase
+    .from("items")
+    .select("id,item_name")
+    .eq("organization_id", organizationId)
+    .eq("is_active", true);
+
+  if (error) return null;
+  for (const row of ensureArray(data)) {
+    if (normalizedIncomingId && String(row?.id || "") === normalizedIncomingId) continue;
+    const existingName = normalizeItemName(row?.item_name || "");
+    if (!existingName) continue;
+    if (existingName === normalizedIncomingName) return row;
+  }
+  return null;
+}
+
 function parseTaxRate(label) {
   const match = String(label || "").match(/@([0-9.]+)%/);
   if (!match) return 0;
@@ -243,6 +286,8 @@ export function upsertItem(draft, country) {
   const list = listRawItems();
   const now = new Date().toISOString();
   const id = draft.id || uid("itm_");
+  const itemName = String(draft?.name || draft?.itemName || "").trim();
+  if (!itemName) throw new Error("Item name is required.");
   const itemType = normalizeItemType(draft?.type);
   const itemCode = resolveItemCodeForUpsert({
     draftItemCode: draft?.itemCode,
@@ -250,12 +295,14 @@ export function upsertItem(draft, country) {
     list,
     type: itemType
   });
+  const duplicateByName = findDuplicateItemByName(list, itemName, id);
+  if (duplicateByName) throw new Error("Item name already exists.");
   const taxLabel = buildTaxLabel(country, parseNumber(draft.taxRate));
 
   const payload = {
     id,
     itemCode,
-    name: draft.name,
+    name: itemName,
     type: draft.type,
     description: draft.description,
     hsn: draft.type === "Product" ? draft.hsn : "",
@@ -359,6 +406,12 @@ export async function upsertItemRemote(draft, country) {
       sku: draft?.sku || draft?.metadata?.sku || itemCode
     }
   });
+  incoming.name = String(incoming.name || "").trim();
+  if (!incoming.name) throw new Error("Item name is required.");
+  const duplicateLocalByName = findDuplicateItemByName(list, incoming.name, incoming.id);
+  if (duplicateLocalByName) throw new Error("Item name already exists.");
+  const duplicateRemoteByName = await findRemoteDuplicateItemByName(organizationId, incoming.name, incoming.id);
+  if (duplicateRemoteByName) throw new Error("Item name already exists.");
   const payload = toRemotePayload(incoming);
   const actorUserId = authGetUser()?.id || null;
   let remoteRow = null;
