@@ -57,6 +57,24 @@ function withNormalizedContactType(draft: PartyDraft): PartyDraft {
   };
 }
 
+function formatDecimalAmount(value: unknown) {
+  return parseNumber(value).toFixed(2);
+}
+
+function sanitizeDecimalInput(value: string) {
+  const cleaned = String(value || "").replace(/[^0-9.]/g, "");
+  if (!cleaned) return "";
+
+  const firstDot = cleaned.indexOf(".");
+  const normalized =
+    firstDot === -1 ? cleaned : `${cleaned.slice(0, firstDot + 1)}${cleaned.slice(firstDot + 1).replace(/\./g, "")}`;
+  const [rawInteger = "", rawDecimal = ""] = normalized.split(".");
+  const integer = (rawInteger || "0").replace(/^0+(?=\d)/, "") || "0";
+  const decimal = rawDecimal.slice(0, 2);
+
+  return normalized.includes(".") ? `${integer}.${decimal}` : integer;
+}
+
 export default function PartyFormModal({
   open,
   mode,
@@ -72,6 +90,7 @@ export default function PartyFormModal({
   );
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
+  const [openingBalanceInput, setOpeningBalanceInput] = useState(() => formatDecimalAmount(0));
   const [countryMenuOpen, setCountryMenuOpen] = useState(false);
   const [stateMenuOpen, setStateMenuOpen] = useState(false);
 
@@ -79,13 +98,13 @@ export default function PartyFormModal({
     if (!open) return;
     setError("");
     setWarning("");
+    const nextForm = initialParty
+      ? withNormalizedContactType({ ...createDraft(initialParty.type || "Customer"), ...initialParty })
+      : createDraft("Customer");
+    setOpeningBalanceInput(formatDecimalAmount(nextForm.openingBalance));
     setCountryMenuOpen(false);
     setStateMenuOpen(false);
-    setForm(
-      initialParty
-        ? withNormalizedContactType({ ...createDraft(initialParty.type || "Customer"), ...initialParty })
-        : createDraft("Customer")
-    );
+    setForm(nextForm);
   }, [open, initialParty]);
 
   const orgContext = useMemo(
@@ -423,11 +442,22 @@ export default function PartyFormModal({
           <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
             <FormField label="Opening Balance">
               <input
-                type="number"
-                min={0}
-                value={form.openingBalance}
-                onChange={(event) => updateField("openingBalance", parseNumber(event.target.value))}
+                type="text"
+                inputMode="decimal"
+                value={openingBalanceInput}
+                onFocus={(event) => event.target.select()}
+                onChange={(event) => {
+                  const sanitized = sanitizeDecimalInput(event.target.value);
+                  setOpeningBalanceInput(sanitized);
+                  updateField("openingBalance", parseNumber(sanitized || 0));
+                }}
+                onBlur={() => {
+                  const formatted = formatDecimalAmount(openingBalanceInput || 0);
+                  setOpeningBalanceInput(formatted);
+                  updateField("openingBalance", parseNumber(formatted));
+                }}
                 className={inputClassName}
+                placeholder="0.00"
               />
             </FormField>
 
