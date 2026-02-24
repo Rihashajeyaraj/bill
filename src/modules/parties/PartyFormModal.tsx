@@ -97,6 +97,7 @@ export default function PartyFormModal({
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [openingBalanceInput, setOpeningBalanceInput] = useState(() => formatDecimalAmount(0));
+  const [creditLimitInput, setCreditLimitInput] = useState(() => formatDecimalAmount(0));
   const [countryMenuOpen, setCountryMenuOpen] = useState(false);
   const [stateMenuOpen, setStateMenuOpen] = useState(false);
   const [createStep, setCreateStep] = useState<CreateFlowStep>("quick");
@@ -112,6 +113,7 @@ export default function PartyFormModal({
     const normalizedPhone = sanitizePhoneInput(String(nextForm.phone || ""));
     nextForm.phone = normalizedPhone.length > 10 ? normalizedPhone.slice(-10) : normalizedPhone;
     setOpeningBalanceInput(formatDecimalAmount(nextForm.openingBalance));
+    setCreditLimitInput(formatDecimalAmount(nextForm.creditLimit));
     setCountryMenuOpen(false);
     setStateMenuOpen(false);
     setCreateStep(mode === "create" ? "quick" : "details");
@@ -124,6 +126,11 @@ export default function PartyFormModal({
     if (!scrollContainer) return;
     scrollContainer.scrollTop = 0;
   }, [createStep, open, mode]);
+
+  useEffect(() => {
+    if (form.creditLimitType !== "Amount") return;
+    setCreditLimitInput(formatDecimalAmount(form.creditLimit));
+  }, [form.creditLimitType]);
 
   const orgContext = useMemo(
     () => ({
@@ -232,7 +239,7 @@ export default function PartyFormModal({
           : "Business",
       openingBalance: Math.abs(parseNumber(form.openingBalance)),
       creditLimit: Math.max(0, parseNumber(form.creditLimit)),
-      creditLimitDays: Math.max(0, parseNumber(form.creditLimitDays)),
+      creditLimitDays: Math.max(0, Math.trunc(parseNumber(form.creditLimitDays))),
       creditLimitEnabled: !!form.creditLimitEnabled
     };
     if (normalized.creditLimitEnabled) {
@@ -567,9 +574,17 @@ export default function PartyFormModal({
 
                   <select
                     value={form.creditLimitType}
-                    onChange={(event) =>
-                      updateField("creditLimitType", event.target.value as PartyDraft["creditLimitType"])
-                    }
+                    onChange={(event) => {
+                      const nextType = event.target.value as PartyDraft["creditLimitType"];
+                      setForm((prev) => ({
+                        ...prev,
+                        creditLimitType: nextType,
+                        creditLimitDays:
+                          nextType === "Days"
+                            ? Math.max(0, Math.trunc(parseNumber(prev.creditLimitDays)))
+                            : prev.creditLimitDays
+                      }));
+                    }}
                     disabled={!form.creditLimitEnabled}
                     className={`mt-2 ${mutedInputClassName}`}
                   >
@@ -579,23 +594,39 @@ export default function PartyFormModal({
 
                   {form.creditLimitType === "Days" ? (
                     <input
+                      key="credit-days-input"
                       type="number"
                       min={0}
-                      value={form.creditLimitDays}
-                      onChange={(event) => updateField("creditLimitDays", parseNumber(event.target.value))}
+                      step={1}
+                      inputMode="numeric"
+                      value={Math.max(0, Math.trunc(parseNumber(form.creditLimitDays)))}
+                      onChange={(event) =>
+                        updateField("creditLimitDays", Math.max(0, Math.trunc(parseNumber(event.target.value))))
+                      }
                       disabled={!form.creditLimitEnabled}
                       className={`mt-2 ${mutedInputClassName}`}
                       placeholder="Allowed overdue days"
                     />
                   ) : (
                     <input
-                      type="number"
-                      min={0}
-                      value={form.creditLimit}
-                      onChange={(event) => updateField("creditLimit", parseNumber(event.target.value))}
+                      key="credit-amount-input"
+                      type="text"
+                      inputMode="decimal"
+                      value={creditLimitInput}
+                      onFocus={(event) => event.target.select()}
+                      onChange={(event) => {
+                        const sanitized = sanitizeDecimalInput(event.target.value);
+                        setCreditLimitInput(sanitized);
+                        updateField("creditLimit", parseNumber(sanitized || 0));
+                      }}
+                      onBlur={() => {
+                        const formatted = formatDecimalAmount(creditLimitInput || 0);
+                        setCreditLimitInput(formatted);
+                        updateField("creditLimit", parseNumber(formatted));
+                      }}
                       disabled={!form.creditLimitEnabled}
                       className={`mt-2 ${mutedInputClassName}`}
-                      placeholder="Credit amount limit"
+                      placeholder="0.00"
                     />
                   )}
                 </FormField>

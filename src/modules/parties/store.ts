@@ -155,7 +155,7 @@ function normalizeParty(raw: any): PartyRecord {
     raw?.openingBalanceType || inferOpeningBalanceType(type, parseNumber(raw?.balance ?? null));
   const creditLimitType = normalizeCreditLimitType(raw?.creditLimitType ?? raw?.credit_limit_type);
   const creditLimit = Math.max(0, parseNumber(raw?.creditLimit ?? raw?.credit_limit));
-  const creditLimitDays = Math.max(0, parseNumber(raw?.creditLimitDays ?? raw?.credit_limit_days));
+  const creditLimitDays = Math.max(0, Math.trunc(parseNumber(raw?.creditLimitDays ?? raw?.credit_limit_days)));
   const creditLimitEnabled =
     typeof raw?.creditLimitEnabled === "boolean"
       ? raw.creditLimitEnabled
@@ -298,7 +298,7 @@ function toRemotePayload(draft: PartyDraft) {
   const normalized = normalizeParty(draft);
   const signedOpeningBalance = openingBalanceSigned(normalized);
   const creditLimit = Math.max(0, parseNumber(normalized.creditLimit));
-  const creditLimitDays = Math.max(0, parseNumber(normalized.creditLimitDays));
+  const creditLimitDays = Math.max(0, Math.trunc(parseNumber(normalized.creditLimitDays)));
   const useAmount = normalized.creditLimitEnabled && normalized.creditLimitType === "Amount";
   const useDays = normalized.creditLimitEnabled && normalized.creditLimitType === "Days";
   const creditLimitType = useDays ? "days" : "amount";
@@ -428,7 +428,7 @@ export function upsertParty(draft: PartyDraft, actor?: string): PartyRecord {
       taxId: incoming.taxId || incoming.gstin || "",
       openingBalance: Math.abs(parseNumber(incoming.openingBalance)),
       creditLimit: Math.max(0, parseNumber(incoming.creditLimit)),
-      creditLimitDays: Math.max(0, parseNumber(incoming.creditLimitDays)),
+      creditLimitDays: Math.max(0, Math.trunc(parseNumber(incoming.creditLimitDays))),
       creditLimitType: incoming.creditLimitType
     };
     list[idx] = next;
@@ -454,7 +454,7 @@ export function upsertParty(draft: PartyDraft, actor?: string): PartyRecord {
     taxId: incoming.taxId || incoming.gstin || "",
     openingBalance: Math.abs(parseNumber(incoming.openingBalance)),
     creditLimit: Math.max(0, parseNumber(incoming.creditLimit)),
-    creditLimitDays: Math.max(0, parseNumber(incoming.creditLimitDays)),
+    creditLimitDays: Math.max(0, Math.trunc(parseNumber(incoming.creditLimitDays))),
     creditLimitType: incoming.creditLimitType
   };
   lsSetOrganizationScoped(LS_KEYS.parties, [next, ...list]);
