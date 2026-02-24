@@ -72,11 +72,15 @@ export default function PartyFormModal({
   );
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
+  const [countryMenuOpen, setCountryMenuOpen] = useState(false);
+  const [stateMenuOpen, setStateMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setError("");
     setWarning("");
+    setCountryMenuOpen(false);
+    setStateMenuOpen(false);
     setForm(
       initialParty
         ? withNormalizedContactType({ ...createDraft(initialParty.type || "Customer"), ...initialParty })
@@ -93,6 +97,20 @@ export default function PartyFormModal({
   );
   const allCountries = useMemo(() => listAllCountries(), []);
   const stateOptions = useMemo(() => listStatesByCountry(form.country), [form.country]);
+  const countryQuery = String(form.country || "")
+    .trim()
+    .toLowerCase();
+  const stateQuery = String(form.state || "")
+    .trim()
+    .toLowerCase();
+  const countryMatches = useMemo(() => {
+    if (!countryQuery) return [];
+    return allCountries.filter((country) => country.name.toLowerCase().includes(countryQuery)).slice(0, 8);
+  }, [allCountries, countryQuery]);
+  const stateMatches = useMemo(() => {
+    if (!stateQuery) return [];
+    return stateOptions.filter((state) => state.name.toLowerCase().includes(stateQuery)).slice(0, 8);
+  }, [stateOptions, stateQuery]);
   const selectedContactType = normalizeContactType(form.contactType ?? form.customerType, form.taxId);
   const isIndiaCountry = resolveCountryIsoCode(form.country) === "IN";
   const showGSTINField = selectedContactType === "Business" && isIndiaCountry;
@@ -102,6 +120,8 @@ export default function PartyFormModal({
   const inputClassName =
     "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100";
   const mutedInputClassName = `${inputClassName} disabled:bg-slate-50 disabled:text-slate-500`;
+  const suggestionMenuClassName =
+    "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
 
   function updateField<K extends keyof PartyDraft>(key: K, value: PartyDraft[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -125,6 +145,26 @@ export default function PartyFormModal({
       ...prev,
       attachments: (prev.attachments || []).filter((file) => file.name !== name)
     }));
+  }
+
+  function applyCountry(nextCountry: string) {
+    const canonicalCountry = getCanonicalCountryName(nextCountry);
+    const previousCountryCode = resolveCountryIsoCode(form.country);
+    const nextCountryCode = resolveCountryIsoCode(canonicalCountry);
+
+    updateField("country", canonicalCountry);
+    if (previousCountryCode !== nextCountryCode) {
+      updateField("state", "");
+    }
+    if (nextCountryCode !== "IN") {
+      updateField("taxId", "");
+    }
+    setCountryMenuOpen(false);
+  }
+
+  function applyState(nextState: string) {
+    updateField("state", nextState);
+    setStateMenuOpen(false);
   }
 
   function handleSave() {
@@ -262,50 +302,93 @@ export default function PartyFormModal({
           <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">Address And Tax</p>
           <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
             <FormField label="Country">
-              <input
-                value={form.country}
-                onChange={(event) => {
-                  const nextCountry = event.target.value;
-                  updateField("country", nextCountry);
-                  if (resolveCountryIsoCode(nextCountry) !== "IN") {
-                    updateField("taxId", "");
-                  }
-                }}
-                onBlur={(event) => {
-                  const canonicalCountry = getCanonicalCountryName(event.target.value);
-                  if (canonicalCountry && canonicalCountry !== form.country) {
-                    updateField("country", canonicalCountry);
-                  }
-                }}
-                list="party-country-options"
-                className={inputClassName}
-                placeholder="Type and search country"
-              />
-              <datalist id="party-country-options">
-                {allCountries.map((country) => (
-                  <option key={country.isoCode} value={country.name} />
-                ))}
-              </datalist>
+              <div className="relative">
+                <input
+                  value={form.country}
+                  onChange={(event) => {
+                    updateField("country", event.target.value);
+                    setCountryMenuOpen(true);
+                  }}
+                  onFocus={() => setCountryMenuOpen(true)}
+                  onBlur={(event) => {
+                    applyCountry(event.target.value);
+                    setTimeout(() => setCountryMenuOpen(false), 80);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setCountryMenuOpen(false);
+                  }}
+                  className={inputClassName}
+                  placeholder="Type country name"
+                />
+                {countryMenuOpen && countryQuery ? (
+                  <div className={suggestionMenuClassName}>
+                    {countryMatches.length ? (
+                      countryMatches.map((country) => (
+                        <button
+                          key={country.isoCode}
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            applyCountry(country.name);
+                          }}
+                          className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                        >
+                          {country.name}
+                        </button>
+                      ))
+                    ) : (
+                      <p className="px-3 py-2 text-xs text-slate-500">No matching countries</p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
             </FormField>
 
             <FormField
               label="State / Region"
               hint={stateOptions.length ? `${stateOptions.length} options available` : "Type manually"}
             >
-              <input
-                value={form.state}
-                onChange={(event) => updateField("state", event.target.value)}
-                list={stateOptions.length ? "party-state-options" : undefined}
-                className={inputClassName}
-                placeholder={stateOptions.length ? "Type and search state/region" : "State, province, or region"}
-              />
-              {stateOptions.length ? (
-                <datalist id="party-state-options">
-                  {stateOptions.map((state) => (
-                    <option key={`${state.isoCode}_${state.name}`} value={state.name} />
-                  ))}
-                </datalist>
-              ) : null}
+              <div className="relative">
+                <input
+                  value={form.state}
+                  onChange={(event) => {
+                    updateField("state", event.target.value);
+                    if (stateOptions.length) setStateMenuOpen(true);
+                  }}
+                  onFocus={() => {
+                    if (stateOptions.length) setStateMenuOpen(true);
+                  }}
+                  onBlur={() => {
+                    setTimeout(() => setStateMenuOpen(false), 80);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setStateMenuOpen(false);
+                  }}
+                  className={inputClassName}
+                  placeholder={stateOptions.length ? "Type state / region" : "State, province, or region"}
+                />
+                {stateMenuOpen && stateQuery && stateOptions.length ? (
+                  <div className={suggestionMenuClassName}>
+                    {stateMatches.length ? (
+                      stateMatches.map((state) => (
+                        <button
+                          key={`${state.isoCode}_${state.name}`}
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            applyState(state.name);
+                          }}
+                          className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                        >
+                          {state.name}
+                        </button>
+                      ))
+                    ) : (
+                      <p className="px-3 py-2 text-xs text-slate-500">No matching states/regions</p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
             </FormField>
 
             {showGSTINField ? (
