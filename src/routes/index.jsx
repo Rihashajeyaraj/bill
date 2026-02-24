@@ -18,6 +18,7 @@ import CreditNote from "../pages/sales/CreditNotePremium";
 import PaymentIn from "../pages/sales/PaymentInPremium";
 
 import PurchaseBill from "../pages/purchases/PurchaseBill";
+import PurchaseHistory from "../pages/purchases/PurchaseHistory";
 import DebitNote from "../pages/purchases/DebitNotePremium";
 import PaymentOutPremium from "../pages/purchases/PaymentOutPremium";
 import Expense from "../pages/purchases/Expense";
@@ -77,6 +78,7 @@ export const routes = [
               { path: "/app/sales/payment-in", element: <PaymentIn /> },
 
               { path: "/app/purchase/bill", element: <PurchaseBill /> },
+              { path: "/app/purchase/history", element: <PurchaseHistory /> },
               { path: "/app/purchase/debit-note", element: <DebitNote /> },
               { path: "/app/purchases/payment-out", element: <PaymentOutPremium /> },
               { path: "/app/purchase/payment-out", element: <Navigate to="/app/purchases/payment-out" replace /> },

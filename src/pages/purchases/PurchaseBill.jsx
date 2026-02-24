@@ -9,18 +9,13 @@ import { listParties, syncPartiesFromRemote } from "../../modules/parties/store"
 import { listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
 import {
   fetchSupplierAddress,
-  purchasesCreate,
-  purchasesList,
-  purchasesSyncFromRemote
+  purchasesCreate
 } from "../../services/purchases.service";
 import { useOrganization } from "../../context/OrganizationContext";
 import { calculateTaxes } from "../../services/tax";
+import { paymentsCreate } from "../../services/payments.service";
 
 const TAX_RATES = [0, 5, 12, 18, 28];
-const PRICE_TAX_MODES = [
-  { value: "WITHOUT_TAX", label: "Without Tax" },
-  { value: "WITH_TAX", label: "With Tax" }
-];
 const DEFAULT_UNITS = ["pcs", "kg", "box", "ltr", "set", "hr"];
 const BLOCKED_UNITS = ["job"];
 const ITEM_DATALIST_ID = "purchase-item-options";
@@ -51,13 +46,6 @@ function money(n) {
 
 function round2(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
-}
-
-function formatDate(value) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleDateString();
 }
 
 function extractCity(address) {
@@ -121,14 +109,14 @@ export default function PurchaseBill() {
   const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
   const [supplierSearchError, setSupplierSearchError] = useState("");
   const [supplierAddress, setSupplierAddress] = useState("");
-  const [billNumber, setBillNumber] = useState("");
-  const [autoBillNumber] = useState(() => generateBillNumber());
+  const [autoBillNumber, setAutoBillNumber] = useState(() => generateBillNumber());
   const [billDate, setBillDate] = useState(new Date().toISOString().slice(0, 10));
   const [lines, setLines] = useState(() => [createLine([])]);
   const [roundOffEnabled, setRoundOffEnabled] = useState(false);
   const [roundOffValue, setRoundOffValue] = useState("0");
   const [paymentType, setPaymentType] = useState("Cash");
-  const [savedBills, setSavedBills] = useState(() => purchasesList());
+  const [paymentStatus, setPaymentStatus] = useState("NONE");
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
   const purchasableItems = useMemo(
     () =>
       items.filter(
@@ -145,10 +133,9 @@ export default function PurchaseBill() {
     async function loadLookups() {
       setLoading(true);
       try {
-        const [, , nextBills] = await Promise.all([
+        await Promise.all([
           syncPartiesFromRemote(),
-          syncItemsFromRemote(),
-          purchasesSyncFromRemote()
+          syncItemsFromRemote()
         ]);
         if (!mounted) return;
         const nextSuppliers = listParties().filter((entry) => entry.type === "Supplier");
@@ -161,7 +148,6 @@ export default function PurchaseBill() {
         );
         setSuppliers(nextSuppliers);
         setItems(nextItems);
-        setSavedBills(Array.isArray(nextBills) ? nextBills : purchasesList());
         setPartyId((prev) => prev || "");
         setLines((prev) => {
           if (!prev.length) return [createLine(nextPurchasableItems)];
@@ -175,7 +161,6 @@ export default function PurchaseBill() {
         const cachedItems = listItems();
         setSuppliers(cachedSuppliers);
         setItems(cachedItems);
-        setSavedBills(purchasesList());
         setPartyId((prev) => prev || "");
       } finally {
         if (mounted) setLoading(false);
@@ -215,6 +200,10 @@ export default function PurchaseBill() {
     if (!party?.phone) return;
     setSupplierSearchPhone(String(party.phone).replace(/\D/g, "").slice(-10));
   }, [party?.phone]);
+
+  useEffect(() => {
+    setPaymentDate(billDate);
+  }, [billDate]);
 
   const unitOptions = useMemo(() => {
     const itemUnits = items
@@ -385,11 +374,11 @@ export default function PurchaseBill() {
       org: {
         country,
         state: company?.address?.state || "",
-        gstin: company?.tax?.gstin || ""
+        gstin: ""
       },
       party: {
         state: party?.state || "",
-        gstin: party?.gstin || party?.taxId || ""
+        gstin: ""
       }
     });
 
@@ -417,6 +406,18 @@ export default function PurchaseBill() {
     const finalTotal = round2(grandTotal + roundOff);
     return { detailed, totalQty, subTotal, tax, taxTotal, grandTotal, roundOff, finalTotal, effectiveRate };
   }, [lines, roundOffEnabled, roundOffValue, country, company?.address?.state, company?.tax?.gstin, party?.state, party?.gstin, party?.taxId]);
+
+  const paymentAmount = useMemo(() => {
+    const total = round2(computed.finalTotal);
+    if (paymentStatus === "FULL") return total;
+    if (paymentStatus === "HALF") return round2(total / 2);
+    return 0;
+  }, [computed.finalTotal, paymentStatus]);
+
+  const pendingAmount = useMemo(
+    () => round2(Math.max(0, Number(computed.finalTotal || 0) - Number(paymentAmount || 0))),
+    [computed.finalTotal, paymentAmount]
+  );
 
   async function resolveLinesWithItems(detailedLines) {
     const nextLines = [];
@@ -519,6 +520,10 @@ export default function PurchaseBill() {
       toast.warning("Supplier required", "Select a supplier before saving.");
       return;
     }
+    if (paymentAmount > 0 && !paymentDate) {
+      toast.warning("Payment date required", "Select payment date for paid amount.");
+      return;
+    }
     setSaving(true);
     try {
       const resolvedLines = await resolveLinesWithItems(computed.detailed);
@@ -546,8 +551,8 @@ export default function PurchaseBill() {
         return;
       }
 
-      const effectiveBillNumber = billNumber || autoBillNumber;
-      await purchasesCreate({
+      const effectiveBillNumber = autoBillNumber;
+      const createdBillId = await purchasesCreate({
         country,
         partyId,
         partyName: party?.name || "",
@@ -570,14 +575,24 @@ export default function PurchaseBill() {
         taxMode: computed.tax.taxMode,
         supplyType: computed.tax.supplyType || null
       });
-      toast.success("Purchase bill saved", `Bill ${effectiveBillNumber} saved successfully.`);
-      setSavedBills(purchasesList());
-      try {
-        const syncedBills = await purchasesSyncFromRemote();
-        setSavedBills(Array.isArray(syncedBills) ? syncedBills : purchasesList());
-      } catch {
-        // Keep local list as fallback.
+
+      if (paymentAmount > 0) {
+        paymentsCreate({
+          date: paymentDate || billDate,
+          paymentNo: `PAY-${Date.now()}`,
+          direction: "OUT",
+          partyId,
+          billId: createdBillId,
+          amount: paymentAmount,
+          mode: paymentType,
+          note: `Payment for purchase bill ${effectiveBillNumber}`
+        });
       }
+
+      toast.success("Purchase bill saved", `Bill ${effectiveBillNumber} saved successfully.`);
+      setAutoBillNumber(generateBillNumber());
+      setPaymentStatus("NONE");
+      setPaymentDate(billDate);
     } catch (error) {
       toast.error("Failed to save purchase bill", error?.message || "Could not save bill.");
     } finally {
@@ -588,6 +603,15 @@ export default function PurchaseBill() {
   return (
     <div className="max-w-6xl space-y-6">
       <PageHeader title="Purchase Bill" subtitle="Search supplier by mobile and create the bill." />
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => navigate("/app/purchase/history")}
+          className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          Purchase History
+        </button>
+      </div>
 
       <Card className="p-5">
         <h2 className="text-base font-semibold text-slate-900">1. Find Supplier</h2>
@@ -689,73 +713,56 @@ export default function PurchaseBill() {
       {partyId ? (
         <>
           <Card className="p-5">
-            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
-              <div>
-                <h2 className="text-base font-semibold text-slate-900">2. Supplier Details</h2>
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                  <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
-                    <p className="text-xs text-slate-500">Name</p>
-                    <p className="font-semibold text-slate-900">{party?.name || "-"}</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
-                    <p className="text-xs text-slate-500">Mobile</p>
-                    <p className="font-semibold text-slate-900">{phone || "-"}</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
-                    <p className="text-xs text-slate-500">Country</p>
-                    <p className="font-semibold text-slate-900">{party?.country || "-"}</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
-                    <p className="text-xs text-slate-500">City</p>
-                    <p className="font-semibold text-slate-900">
-                      {party?.city || extractCity(supplierAddress || party?.address) || party?.state || "-"}
-                    </p>
-                  </div>
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">2. Supplier Details</h2>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs text-slate-500">Name</p>
+                  <p className="font-semibold text-slate-900">{party?.name || "-"}</p>
                 </div>
-                <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-sm">
-                  <p className="text-xs text-slate-500">Address</p>
-                  <p className="font-semibold text-slate-900">{supplierAddress || "-"}</p>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs text-slate-500">Mobile</p>
+                  <p className="font-semibold text-slate-900">{phone || "-"}</p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs text-slate-500">Country</p>
+                  <p className="font-semibold text-slate-900">{party?.country || "-"}</p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs text-slate-500">City</p>
+                  <p className="font-semibold text-slate-900">
+                    {party?.city || extractCity(supplierAddress || party?.address) || party?.state || "-"}
+                  </p>
                 </div>
               </div>
-
-              <div>
-                <h2 className="text-base font-semibold text-slate-900">3. Bill Details</h2>
-                <div className="mt-4 space-y-4">
-                  <FormField label="Bill ID">
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={billNumber}
-                        onChange={(e) => setBillNumber(e.target.value)}
-                        className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
-                        placeholder={autoBillNumber}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setBillNumber(autoBillNumber)}
-                        className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                      >
-                        Auto
-                      </button>
-                    </div>
-                  </FormField>
-
-                  <FormField label="Bill Date">
-                    <input
-                      type="date"
-                      value={billDate}
-                      onChange={(e) => setBillDate(e.target.value)}
-                      className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
-                    />
-                  </FormField>
-                </div>
+              <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-sm">
+                <p className="text-xs text-slate-500">Address</p>
+                <p className="font-semibold text-slate-900">{supplierAddress || "-"}</p>
               </div>
             </div>
           </Card>
 
           <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">4. Items</h2>
+            <p className="text-xs text-slate-500">Bill ID</p>
+            <p className="mt-1 rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-800">
+              {autoBillNumber}
+            </p>
+          </div>
+          <FormField label="Bill Date">
+            <input
+              type="date"
+              value={billDate}
+              onChange={(e) => setBillDate(e.target.value)}
+              className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+            />
+          </FormField>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">3. Items</h2>
             <p className="text-xs text-slate-500">Add item rows, quantity, rate, tax and amount.</p>
           </div>
           <button
@@ -768,16 +775,15 @@ export default function PurchaseBill() {
           </button>
         </div>
 
-        <div className="mt-4 overflow-x-auto">
-          <table className="min-w-[1000px] w-full text-left text-sm">
+        <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">
+          <table className="min-w-[820px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-3 py-3 font-semibold">#</th>
                 <th className="px-3 py-3 font-semibold">Item</th>
-                <th className="px-3 py-3 font-semibold">Item ID</th>
                 <th className="px-3 py-3 font-semibold">Qty</th>
                 <th className="px-3 py-3 font-semibold">Unit</th>
-                <th className="px-3 py-3 font-semibold">Price/Unit</th>
+                <th className="px-3 py-3 font-semibold">Rate</th>
                 <th className="px-3 py-3 font-semibold">Tax %</th>
                 <th className="px-3 py-3 font-semibold text-right">Amount</th>
                 <th className="px-3 py-3 font-semibold text-right"></th>
@@ -786,7 +792,7 @@ export default function PurchaseBill() {
             <tbody>
               {loading ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={9}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
                     Loading items...
                   </td>
                 </tr>
@@ -798,12 +804,10 @@ export default function PurchaseBill() {
                       list={ITEM_DATALIST_ID}
                       value={line.itemName || ""}
                       onChange={(e) => handleItemInput(line.id, e.target.value)}
-                      className="w-48 rounded-xl border border-slate-100 bg-white px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full min-w-[220px] rounded-xl border border-slate-100 bg-white px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
                       placeholder="Select or type item"
                     />
-                  </td>
-                  <td className="px-3 py-3 font-mono text-xs text-slate-700">
-                    {line.itemCode || "-"}
+                    <p className="mt-1 text-[11px] text-slate-500">{line.itemCode ? `Code: ${line.itemCode}` : "No code"}</p>
                   </td>
                   <td className="px-3 py-3">
                     <input
@@ -825,26 +829,13 @@ export default function PurchaseBill() {
                     />
                   </td>
                   <td className="px-3 py-3">
-                    <div className="flex flex-col gap-2">
-                      <input
-                        type="number"
-                        min="0"
-                        value={line.rate}
-                        onChange={(e) => updateLine(line.id, { rate: e.target.value })}
-                        className="w-28 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
-                      />
-                      <select
-                        value={line.priceTaxMode}
-                        onChange={(e) => updateLine(line.id, { priceTaxMode: e.target.value })}
-                        className="w-28 rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-100"
-                      >
-                        {PRICE_TAX_MODES.map((mode) => (
-                          <option key={mode.value} value={mode.value}>
-                            {mode.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      value={line.rate}
+                      onChange={(e) => updateLine(line.id, { rate: e.target.value })}
+                      className="w-28 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                    />
                   </td>
                   <td className="px-3 py-3">
                     <select
@@ -889,95 +880,130 @@ export default function PurchaseBill() {
             ))}
           </datalist>
         </div>
-      </Card>
+        <div className="mt-5 grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            <h3 className="text-sm font-semibold text-slate-900">Payment on Purchase</h3>
+            <p className="mt-1 text-xs text-slate-500">Record payment now: no payment, half, or full.</p>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="p-5 lg:col-span-2">
-          <h2 className="text-base font-semibold text-slate-900">5. Payment</h2>
-          <p className="text-xs text-slate-500 mt-1">Choose payment mode for this purchase bill.</p>
-
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Payment Type">
-              <select
-                value={paymentType}
-                onChange={(e) => setPaymentType(e.target.value)}
-                className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
-              >
-                <option>Cash</option>
-                <option>Bank Transfer</option>
-                <option>Card</option>
-                <option>UPI</option>
-              </select>
-            </FormField>
-          </div>
-
-        </Card>
-
-        <Card className="p-5">
-          <h2 className="text-sm font-semibold text-slate-900">Summary</h2>
-          <p className="text-xs text-slate-500 mt-1">Auto-calculated totals.</p>
-
-          <div className="mt-4 space-y-3 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-slate-600">Total Quantity</span>
-              <span className="font-semibold text-slate-900">{money(computed.totalQty)}</span>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {[
+                { value: "NONE", label: "No Payment" },
+                { value: "HALF", label: "Half Payment" },
+                { value: "FULL", label: "Full Payment" }
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setPaymentStatus(option.value)}
+                  className={`rounded-xl border px-3 py-2 text-sm font-semibold ${
+                    paymentStatus === option.value
+                      ? "border-blue-600 bg-blue-600 text-white"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-slate-600">Subtotal</span>
-              <span className="font-semibold text-slate-900">{money(computed.subTotal)}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-slate-600">{computed.tax.taxMode === "GST" ? "GST Total" : "Tax Total"}</span>
-              <span className="font-semibold text-slate-900">{money(computed.taxTotal)}</span>
-            </div>
-            {computed.tax.taxMode === "GST" ? (
-              <>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-600">Supply Type</span>
-                  <span className="font-semibold text-slate-900">{computed.tax.supplyType || "INTRA"}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-600">IGST</span>
-                  <span className="font-semibold text-slate-900">{money(computed.tax.igst)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-600">CGST + SGST</span>
-                  <span className="font-semibold text-slate-900">
-                    {money(Number(computed.tax.cgst || 0) + Number(computed.tax.sgst || 0))}
-                  </span>
-                </div>
-              </>
-            ) : null}
-            {isIndiaOrg && computed.tax.warning ? (
-              <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                {computed.tax.warning}
-              </p>
-            ) : null}
-            <div className="flex items-center justify-between gap-3">
-              <label className="flex items-center gap-2 text-slate-600">
+
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+              <FormField label="Payment Type">
+                <select
+                  value={paymentType}
+                  onChange={(e) => setPaymentType(e.target.value)}
+                  disabled={paymentStatus === "NONE"}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
+                >
+                  <option>Cash</option>
+                  <option>Bank Transfer</option>
+                  <option>Card</option>
+                  <option>UPI</option>
+                </select>
+              </FormField>
+              <FormField label="Payment Date">
                 <input
-                  type="checkbox"
-                  checked={roundOffEnabled}
-                  onChange={(e) => setRoundOffEnabled(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300"
+                  type="date"
+                  value={paymentDate}
+                  onChange={(e) => setPaymentDate(e.target.value)}
+                  disabled={paymentStatus === "NONE"}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
                 />
-                Round Off
-              </label>
-              <input
-                type="number"
-                value={roundOffValue}
-                onChange={(e) => setRoundOffValue(e.target.value)}
-                disabled={!roundOffEnabled}
-                className="w-24 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none disabled:bg-slate-50"
-              />
-            </div>
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-base">
-              <span className="font-semibold text-slate-900">Final Total</span>
-              <span className="font-semibold text-slate-900">{money(computed.finalTotal)}</span>
+              </FormField>
             </div>
           </div>
-        </Card>
-      </div>
+
+          <div className="rounded-2xl border border-slate-100 bg-white p-4">
+            <h3 className="text-sm font-semibold text-slate-900">Summary</h3>
+            <p className="mt-1 text-xs text-slate-500">Auto-calculated totals and payable balance.</p>
+
+            <div className="mt-4 space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">Total Quantity</span>
+                <span className="font-semibold text-slate-900">{money(computed.totalQty)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">Subtotal</span>
+                <span className="font-semibold text-slate-900">{money(computed.subTotal)}</span>
+              </div>
+              {computed.tax.taxMode === "GST" ? (
+                computed.tax.supplyType === "INTER" ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">GST Total</span>
+                    <span className="font-semibold text-slate-900">{money(computed.taxTotal)}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">CGST + SGST</span>
+                    <span className="font-semibold text-slate-900">{money(computed.taxTotal)}</span>
+                  </div>
+                )
+              ) : (
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">Tax Total</span>
+                  <span className="font-semibold text-slate-900">{money(computed.taxTotal)}</span>
+                </div>
+              )}
+              {isIndiaOrg && computed.tax.warning ? (
+                <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  {computed.tax.warning}
+                </p>
+              ) : null}
+              <div className="flex items-center justify-between gap-3">
+                <label className="flex items-center gap-2 text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={roundOffEnabled}
+                    onChange={(e) => setRoundOffEnabled(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  Round Off
+                </label>
+                <input
+                  type="number"
+                  value={roundOffValue}
+                  onChange={(e) => setRoundOffValue(e.target.value)}
+                  disabled={!roundOffEnabled}
+                  className="w-24 rounded-xl border border-slate-200 px-2 py-1.5 text-sm outline-none disabled:bg-slate-100"
+                />
+              </div>
+              <div className="pt-3 border-t border-slate-100 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">Final Total</span>
+                  <span className="font-semibold text-slate-900">{money(computed.finalTotal)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">Paid Now</span>
+                  <span className="font-semibold text-emerald-700">{money(paymentAmount)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">Balance Due</span>
+                  <span className="font-semibold text-rose-700">{money(pendingAmount)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
 
       <div className="flex justify-end">
         <button
@@ -1000,97 +1026,6 @@ export default function PurchaseBill() {
           </p>
         </Card>
       )}
-
-      <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">Saved Purchase Bills</h2>
-            <p className="text-xs text-slate-500">All purchase bills are listed here in one table.</p>
-          </div>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {savedBills.length} bills
-          </span>
-        </div>
-
-        <div className="mt-4 overflow-x-auto">
-          <table className="min-w-[860px] w-full text-left text-sm">
-            <thead className="bg-slate-50 text-slate-600">
-              <tr>
-                <th className="px-3 py-3 font-semibold">Bill No</th>
-                <th className="px-3 py-3 font-semibold">Date</th>
-                <th className="px-3 py-3 font-semibold">Supplier</th>
-                <th className="px-3 py-3 font-semibold">Item IDs</th>
-                <th className="px-3 py-3 font-semibold">Phone</th>
-                <th className="px-3 py-3 font-semibold text-right">Qty</th>
-                <th className="px-3 py-3 font-semibold text-right">Total</th>
-                <th className="px-3 py-3 font-semibold">Payment</th>
-                <th className="px-3 py-3 font-semibold">Created</th>
-                <th className="px-3 py-3 font-semibold">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {savedBills.length === 0 ? (
-                <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
-                    No purchase bills yet.
-                  </td>
-                </tr>
-              ) : (
-                savedBills.map((bill) => (
-                  <tr key={bill.id} className="border-t border-slate-100 hover:bg-slate-50/60">
-                    <td className="px-3 py-3 font-semibold text-slate-900">{bill.billNumber || "-"}</td>
-                    <td className="px-3 py-3 text-slate-600">{formatDate(bill.billDate)}</td>
-                    <td className="px-3 py-3 text-slate-700">{bill.partyName || "-"}</td>
-                    <td className="px-3 py-3 font-mono text-xs text-slate-700">
-                      {(() => {
-                        const codes = Array.from(
-                          new Set(
-                            (Array.isArray(bill?.lines) ? bill.lines : [])
-                              .map((line) => String(line?.itemCode || "").trim())
-                              .filter(Boolean)
-                          )
-                        );
-                        if (!codes.length) return "-";
-                        if (codes.length <= 2) return codes.join(", ");
-                        return `${codes.slice(0, 2).join(", ")} +${codes.length - 2}`;
-                      })()}
-                    </td>
-                    <td className="px-3 py-3 text-slate-600">{bill.phone || "-"}</td>
-                    <td className="px-3 py-3 text-right text-slate-700">{money(bill?.totals?.totalQty)}</td>
-                    <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                      {money(bill?.totals?.grandTotal)}
-                    </td>
-                    <td className="px-3 py-3 text-slate-600">{bill.paymentType || "-"}</td>
-                    <td className="px-3 py-3 text-slate-600">{formatDate(bill.created_at)}</td>
-                    <td className="px-3 py-3">
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            navigate(`/app/purchases/payment-out?billId=${encodeURIComponent(bill.id)}`)
-                          }
-                          className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                        >
-                          Record Payment
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            navigate(`/app/purchase/debit-note?billId=${encodeURIComponent(bill.id)}`)
-                          }
-                          className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                        >
-                          Create Debit Note
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
     </div>
   );
 }
