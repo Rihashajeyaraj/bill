@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ChevronDown, Plus, Save, Share2, Trash2, Upload } from "lucide-react";
+import { Plus, Save, Search, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
@@ -36,6 +36,14 @@ function normalizeItemName(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizePhoneForLookup(value) {
+  let digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length > 10) digits = digits.slice(-10);
+  digits = digits.replace(/^0+/, "");
+  return digits || "0";
+}
+
 function money(n) {
   const v = Number(n || 0);
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -50,6 +58,14 @@ function formatDate(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return String(value);
   return parsed.toLocaleDateString();
+}
+
+function extractCity(address) {
+  const firstSegment = String(address || "")
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter(Boolean)[0];
+  return firstSegment || "";
 }
 
 function generateBillNumber() {
@@ -94,6 +110,8 @@ export default function PurchaseBill() {
   const party = useMemo(() => suppliers.find((x) => x.id === partyId) || null, [suppliers, partyId]);
 
   const [phone, setPhone] = useState(party?.phone || "");
+  const [supplierSearchPhone, setSupplierSearchPhone] = useState("");
+  const [supplierSearchError, setSupplierSearchError] = useState("");
   const [supplierAddress, setSupplierAddress] = useState("");
   const [billNumber, setBillNumber] = useState("");
   const [autoBillNumber] = useState(() => generateBillNumber());
@@ -102,8 +120,6 @@ export default function PurchaseBill() {
   const [roundOffEnabled, setRoundOffEnabled] = useState(false);
   const [roundOffValue, setRoundOffValue] = useState("0");
   const [paymentType, setPaymentType] = useState("Cash");
-  const [shareOpen, setShareOpen] = useState(false);
-  const [billFileName, setBillFileName] = useState("");
   const [savedBills, setSavedBills] = useState(() => purchasesList());
   const purchasableItems = useMemo(
     () =>
@@ -138,7 +154,7 @@ export default function PurchaseBill() {
         setSuppliers(nextSuppliers);
         setItems(nextItems);
         setSavedBills(Array.isArray(nextBills) ? nextBills : purchasesList());
-        setPartyId((prev) => prev || nextSuppliers[0]?.id || "");
+        setPartyId((prev) => prev || "");
         setLines((prev) => {
           if (!prev.length) return [createLine(nextPurchasableItems)];
           const hasSelectedItem = prev.some((line) => !!line.itemId || !!line.itemName);
@@ -152,7 +168,7 @@ export default function PurchaseBill() {
         setSuppliers(cachedSuppliers);
         setItems(cachedItems);
         setSavedBills(purchasesList());
-        setPartyId((prev) => prev || cachedSuppliers[0]?.id || "");
+        setPartyId((prev) => prev || "");
       } finally {
         if (mounted) setLoading(false);
       }
@@ -186,6 +202,11 @@ export default function PurchaseBill() {
       mounted = false;
     };
   }, [party?.phone, party?.address, partyId]);
+
+  useEffect(() => {
+    if (!party?.phone) return;
+    setSupplierSearchPhone(String(party.phone).replace(/\D/g, "").slice(-10));
+  }, [party?.phone]);
 
   const unitOptions = useMemo(() => {
     const itemUnits = items
@@ -234,6 +255,50 @@ export default function PurchaseBill() {
 
   function removeLine(id) {
     setLines((prev) => prev.filter((line) => line.id !== id));
+  }
+
+  function applySupplierSelection(nextSupplier) {
+    if (!nextSupplier) return;
+    setSupplierSearchError("");
+    setPartyId(nextSupplier.id);
+    setPhone(nextSupplier.phone || "");
+    setSupplierAddress(nextSupplier.address || "");
+    setSupplierSearchPhone(String(nextSupplier.phone || "").replace(/\D/g, "").slice(-10));
+  }
+
+  function handleSupplierPhoneChange(value) {
+    const digits = String(value || "").replace(/\D/g, "").slice(0, 10);
+    setSupplierSearchPhone(digits);
+    setSupplierSearchError("");
+    if (partyId && normalizePhoneForLookup(digits) !== normalizePhoneForLookup(phone)) {
+      setPartyId("");
+      setPhone("");
+      setSupplierAddress("");
+    }
+  }
+
+  function handleSupplierSearch() {
+    const normalizedQuery = normalizePhoneForLookup(supplierSearchPhone);
+    if (!normalizedQuery || normalizedQuery.length < 6) {
+      setSupplierSearchError("Enter a valid supplier mobile number.");
+      return;
+    }
+    const matchedSupplier = suppliers.find(
+      (supplier) => normalizePhoneForLookup(supplier?.phone) === normalizedQuery
+    );
+    if (!matchedSupplier) {
+      setSupplierSearchError("No supplier found for this mobile number.");
+      return;
+    }
+    applySupplierSelection(matchedSupplier);
+  }
+
+  function resetSupplier() {
+    setPartyId("");
+    setPhone("");
+    setSupplierAddress("");
+    setSupplierSearchError("");
+    setSupplierSearchPhone("");
   }
 
   const computed = useMemo(() => {
@@ -464,84 +529,154 @@ export default function PurchaseBill() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <PageHeader title="Purchase" subtitle="Create a purchase invoice for suppliers" />
+      <PageHeader title="Purchase Bill" subtitle="Search supplier by mobile and create the bill." />
 
       <Card className="p-5">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Party *">
-              <select
-                required
-                value={partyId}
-                onChange={(e) => setPartyId(e.target.value)}
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">1. Find Supplier</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Enter supplier mobile number and click search.
+            </p>
+            <div className="mt-4 flex flex-wrap items-end gap-3">
+              <FormField label="Supplier Mobile Number" className="flex-1 min-w-[220px]">
+                <input
+                  value={supplierSearchPhone}
+                  onChange={(event) => handleSupplierPhoneChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleSupplierSearch();
+                    }
+                  }}
+                  inputMode="numeric"
+                  maxLength={10}
+                  placeholder="Enter 10-digit mobile number"
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                />
+              </FormField>
+              <button
+                type="button"
+                onClick={handleSupplierSearch}
                 disabled={loading}
-                className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                className="inline-flex h-[42px] items-center gap-2 rounded-2xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Search className="h-4 w-4" />
+                Search
+              </button>
+              {partyId ? (
+                <button
+                  type="button"
+                  onClick={resetSupplier}
+                  className="inline-flex h-[42px] items-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Change Supplier
+                </button>
+              ) : null}
+            </div>
+            {supplierSearchError ? (
+              <p className="mt-2 text-xs font-medium text-rose-600">{supplierSearchError}</p>
+            ) : null}
+          </div>
+
+          <div>
+            <FormField label="Or Select Supplier" hint="Fallback option">
+              <select
+                value={partyId}
+                onChange={(event) => {
+                  const selected = suppliers.find((supplier) => supplier.id === event.target.value);
+                  if (!selected) {
+                    resetSupplier();
+                    return;
+                  }
+                  applySupplierSelection(selected);
+                }}
+                disabled={loading}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
               >
                 <option value="">Select supplier</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
+                {suppliers.map((supplier) => (
+                  <option key={supplier.id} value={supplier.id}>
+                    {supplier.name}
                   </option>
                 ))}
               </select>
-            </FormField>
-
-            <FormField label="Phone Number">
-              <input
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
-                placeholder="Enter phone number"
-              />
-            </FormField>
-
-            <FormField label="Supplier Address">
-              <textarea
-                value={supplierAddress}
-                onChange={(e) => setSupplierAddress(e.target.value)}
-                rows={2}
-                className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
-                placeholder="Supplier address"
-              />
-            </FormField>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
-            <FormField label="Bill Number">
-              <div className="flex items-center gap-2">
-                <input
-                  value={billNumber}
-                  onChange={(e) => setBillNumber(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
-                  placeholder={autoBillNumber}
-                />
-                <button
-                  type="button"
-                  onClick={() => setBillNumber(autoBillNumber)}
-                  className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50"
-                >
-                  Auto
-                </button>
-              </div>
-            </FormField>
-
-            <FormField label="Bill Date">
-              <input
-                type="date"
-                value={billDate}
-                onChange={(e) => setBillDate(e.target.value)}
-                className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
-              />
             </FormField>
           </div>
         </div>
       </Card>
 
-      <Card className="p-5">
+      {partyId ? (
+        <>
+          <Card className="p-5">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">2. Supplier Details</h2>
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                    <p className="text-xs text-slate-500">Name</p>
+                    <p className="font-semibold text-slate-900">{party?.name || "-"}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                    <p className="text-xs text-slate-500">Mobile</p>
+                    <p className="font-semibold text-slate-900">{phone || "-"}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                    <p className="text-xs text-slate-500">Country</p>
+                    <p className="font-semibold text-slate-900">{party?.country || "-"}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                    <p className="text-xs text-slate-500">City</p>
+                    <p className="font-semibold text-slate-900">
+                      {party?.city || extractCity(supplierAddress || party?.address) || party?.state || "-"}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-sm">
+                  <p className="text-xs text-slate-500">Address</p>
+                  <p className="font-semibold text-slate-900">{supplierAddress || "-"}</p>
+                </div>
+              </div>
+
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">3. Bill Details</h2>
+                <div className="mt-4 space-y-4">
+                  <FormField label="Bill ID">
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={billNumber}
+                        onChange={(e) => setBillNumber(e.target.value)}
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                        placeholder={autoBillNumber}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setBillNumber(autoBillNumber)}
+                        className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                      >
+                        Auto
+                      </button>
+                    </div>
+                  </FormField>
+
+                  <FormField label="Bill Date">
+                    <input
+                      type="date"
+                      value={billDate}
+                      onChange={(e) => setBillDate(e.target.value)}
+                      className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                    />
+                  </FormField>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold text-slate-900">Items</h2>
-            <p className="text-xs text-slate-500">Add items, quantity, taxes, and prices.</p>
+            <h2 className="text-base font-semibold text-slate-900">4. Items</h2>
+            <p className="text-xs text-slate-500">Add item rows, quantity, rate, tax and amount.</p>
           </div>
           <button
             type="button"
@@ -678,8 +813,8 @@ export default function PurchaseBill() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="p-5 lg:col-span-2">
-          <h2 className="text-sm font-semibold text-slate-900">Payment</h2>
-          <p className="text-xs text-slate-500 mt-1">Choose payment mode for this bill.</p>
+          <h2 className="text-base font-semibold text-slate-900">5. Payment</h2>
+          <p className="text-xs text-slate-500 mt-1">Choose payment mode for this purchase bill.</p>
 
           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormField label="Payment Type">
@@ -696,10 +831,6 @@ export default function PurchaseBill() {
             </FormField>
           </div>
 
-          <button type="button" className="mt-2 text-sm font-semibold text-blue-600 flex items-center gap-2">
-            <Plus className="h-4 w-4" />
-            Add payment type
-          </button>
         </Card>
 
         <Card className="p-5">
@@ -768,62 +899,27 @@ export default function PurchaseBill() {
         </Card>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="cursor-pointer">
-            <input
-              type="file"
-              className="hidden"
-              onChange={(e) => setBillFileName(e.target.files?.[0]?.name || "")}
-            />
-            <span className="inline-flex items-center gap-2 rounded-2xl border border-slate-100 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <Upload className="h-4 w-4" />
-              Upload Bill
-            </span>
-          </label>
-          {billFileName ? <span className="text-xs text-slate-500">{billFileName}</span> : null}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShareOpen((prev) => !prev)}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-100 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <Share2 className="h-4 w-4" />
-              Share
-              <ChevronDown className="h-4 w-4 text-slate-400" />
-            </button>
-            {shareOpen ? (
-              <div className="absolute right-0 mt-2 w-40 rounded-2xl border border-slate-100 bg-white shadow-soft p-2 text-sm">
-                {["Email", "WhatsApp", "Copy Link"].map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => setShareOpen(false)}
-                    className="w-full rounded-xl px-2 py-2 text-left text-slate-600 hover:bg-slate-50"
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              void save();
-            }}
-            disabled={saving || loading}
-            className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
-          >
-            <Save className="h-4 w-4" />
-            {saving ? "Saving..." : "Save"}
-          </button>
-        </div>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => {
+            void save();
+          }}
+          disabled={saving || loading}
+          className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <Save className="h-4 w-4" />
+          {saving ? "Saving..." : "Save Purchase Bill"}
+        </button>
       </div>
+        </>
+      ) : (
+        <Card className="p-6">
+          <p className="text-sm text-slate-600">
+            Search supplier by mobile number to load supplier details, then bill ID, bill date, and item entry will appear.
+          </p>
+        </Card>
+      )}
 
       <Card className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
