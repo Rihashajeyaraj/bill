@@ -1,10 +1,15 @@
-import { authGetOrganizationId } from "./auth.service";
+import { authGetOrganizationId, authGetToken } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 
 const CREDIT_NOTIFICATION_EVENT = "credit-notifications-updated";
 const SYSTEM_ACTOR = "System";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REMOTE_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+
+let remoteSyncDisabledUntil = 0;
+let remoteSyncDisableReason = "";
+let remoteSyncInFlight = false;
 
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
@@ -17,9 +22,15 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
+function parseErrorStatus(error) {
+  const status = Number(error?.status || error?.response?.status || 0);
+  return Number.isFinite(status) ? status : 0;
+}
+
 function toSupabaseFailure(error, fallback) {
   const wrapped = new Error(normalizeSupabaseError(error, fallback));
   wrapped.code = error?.code || "";
+  wrapped.status = parseErrorStatus(error);
   return wrapped;
 }
 
@@ -30,6 +41,33 @@ function parseNumber(value) {
 
 function looksLikeUuid(value) {
   return UUID_PATTERN.test(String(value || ""));
+}
+
+function isRemoteSyncCoolingDown() {
+  return Date.now() < remoteSyncDisabledUntil;
+}
+
+function pauseRemoteSync(reason, cooldownMs = REMOTE_SYNC_COOLDOWN_MS) {
+  const safeReason = String(reason || "unknown");
+  const nextUntil = Date.now() + Math.max(1000, Number(cooldownMs) || REMOTE_SYNC_COOLDOWN_MS);
+  if (nextUntil <= remoteSyncDisabledUntil && safeReason === remoteSyncDisableReason) return;
+  remoteSyncDisabledUntil = nextUntil;
+  remoteSyncDisableReason = safeReason;
+  console.warn("[CreditMonitoring] Remote sync paused", {
+    reason: safeReason,
+    retryAt: new Date(nextUntil).toISOString()
+  });
+}
+
+function shouldPauseRemoteSync(error) {
+  const code = String(error?.code || "").toUpperCase();
+  const status = parseErrorStatus(error);
+  const message = String(error?.message || "").toLowerCase();
+  if (status === 401 || status === 403) return "unauthorized";
+  if (code === "PGRST301" || code === "PGRST302") return "invalid_session";
+  if (code === "42501") return "rls_denied";
+  if (message.includes("jwt") && message.includes("expired")) return "expired_session";
+  return "";
 }
 
 function toIso(value) {
@@ -411,16 +449,22 @@ function setLocalList(list, options = {}) {
 }
 
 function hasRemoteConnection() {
-  return !!(isSupabaseConfigured && supabase && looksLikeUuid(authGetOrganizationId()));
+  if (isRemoteSyncCoolingDown()) return false;
+  const organizationId = authGetOrganizationId();
+  const token = authGetToken();
+  return !!(isSupabaseConfigured && supabase && looksLikeUuid(organizationId) && token);
 }
 
 async function ensureOwnerMembershipIfPossible(organizationId) {
-  if (!supabase || !looksLikeUuid(organizationId)) return false;
+  if (!supabase || !looksLikeUuid(organizationId) || !authGetToken()) return false;
   const { error } = await supabase.rpc("ensure_owner_membership", {
     p_organization_id: organizationId
   });
   if (!error) return true;
   if (error?.code === "PGRST202") return false;
+  if (parseErrorStatus(error) >= 400) {
+    pauseRemoteSync(`ensure_owner_membership_${parseErrorStatus(error)}`);
+  }
   return false;
 }
 
@@ -751,6 +795,17 @@ function mergeCandidateContext(records, candidates) {
   });
 }
 
+function applyLocalStateFallback(states) {
+  states.forEach((state) => {
+    if (state.exceeded) {
+      ensureLocalNotification(state);
+      return;
+    }
+    resolveLocalNotification(state);
+  });
+  return localList();
+}
+
 export const CREDIT_NOTIFICATION_EVENT_NAME = CREDIT_NOTIFICATION_EVENT;
 
 export function listCreditNotificationsCached() {
@@ -866,6 +921,10 @@ export async function syncCreditMonitoringNotifications(evaluations, options = {
   }
 
   if (hasRemoteConnection()) {
+    if (remoteSyncInFlight) {
+      return applyLocalStateFallback(uniqueStates);
+    }
+    remoteSyncInFlight = true;
     try {
       localOnlyStates.forEach((state) => {
         if (state.exceeded) {
@@ -893,16 +952,15 @@ export async function syncCreditMonitoringNotifications(evaluations, options = {
       setLocalList(combined, { emit: true });
       return combined;
     } catch (error) {
+      const pauseReason = shouldPauseRemoteSync(error);
+      if (pauseReason) {
+        pauseRemoteSync(pauseReason);
+      }
       console.warn("Credit notification remote sync failed, using local fallback", error);
+    } finally {
+      remoteSyncInFlight = false;
     }
   }
 
-  uniqueStates.forEach((state) => {
-    if (state.exceeded) {
-      ensureLocalNotification(state);
-      return;
-    }
-    resolveLocalNotification(state);
-  });
-  return localList();
+  return applyLocalStateFallback(uniqueStates);
 }

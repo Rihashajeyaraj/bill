@@ -3,6 +3,8 @@ import {
   lsGet,
   lsGetUserScoped,
   lsRemove,
+  lsRemoveOrganizationScoped,
+  lsRemoveUserScoped,
   lsSet,
   lsSetUserScoped,
   ssGet,
@@ -51,8 +53,45 @@ const DEMO_USERS = [
   }
 ];
 
+const ORGANIZATION_SCOPED_KEYS_TO_CLEAR = [
+  LS_KEYS.company_profile,
+  LS_KEYS.companyProfileCompleted,
+  LS_KEYS.invoiceTemplateConfig,
+  LS_KEYS.invoiceTemplateCompleted,
+  LS_KEYS.parties,
+  LS_KEYS.items,
+  LS_KEYS.invoices,
+  LS_KEYS.creditNotes,
+  LS_KEYS.purchases,
+  LS_KEYS.payments,
+  LS_KEYS.expenses,
+  LS_KEYS.app_notifications,
+  LS_KEYS.credit_notifications,
+  LS_KEYS.activity_logs
+];
+
 function normalizeEmail(value) {
   return (value || "").trim().toLowerCase();
+}
+
+function isOrganizationSoftDeleted(organization) {
+  const settings = organization?.settings;
+  if (!settings || typeof settings !== "object") return false;
+  return !!settings.is_deleted;
+}
+
+function filterActiveMemberships(memberships) {
+  return (Array.isArray(memberships) ? memberships : []).filter(
+    (entry) => entry?.organization_id && !isOrganizationSoftDeleted(entry?.organization)
+  );
+}
+
+function clearOrganizationScopedCache(organizationId) {
+  const safeOrganizationId = String(organizationId || "").trim();
+  if (!safeOrganizationId) return;
+  ORGANIZATION_SCOPED_KEYS_TO_CLEAR.forEach((key) => {
+    lsRemoveOrganizationScoped(key, safeOrganizationId);
+  });
 }
 
 function getStoredUsers() {
@@ -168,7 +207,8 @@ function mapMembershipSummary(entry) {
     companyName: organization?.company_name || "Untitled Company",
     countryCode: String(organization?.country_code || "IN").toUpperCase(),
     companySetupCompleted: !!organization?.is_setup_completed,
-    invoiceTemplateCompleted: resolveInvoiceTemplateCompleted(organization)
+    invoiceTemplateCompleted: resolveInvoiceTemplateCompleted(organization),
+    deleted: isOrganizationSoftDeleted(organization)
   };
 }
 
@@ -371,7 +411,7 @@ export async function authListOrganizations() {
     data: { user }
   } = await supabase.auth.getUser();
   if (!user?.id) return [];
-  const memberships = await fetchAllMemberships(user.id);
+  const memberships = filterActiveMemberships(await fetchAllMemberships(user.id));
   return memberships.map(mapMembershipSummary);
 }
 
@@ -410,7 +450,7 @@ export async function authSelectOrganization(organizationId) {
   const sessionUser = session?.user || currentUser;
   if (!sessionUser?.id) throw new Error("Login required.");
 
-  const memberships = await fetchAllMemberships(sessionUser.id);
+  const memberships = filterActiveMemberships(await fetchAllMemberships(sessionUser.id));
   const selected = memberships.find(
     (entry) => String(entry?.organization_id || "") === safeOrganizationId
   );
@@ -466,7 +506,7 @@ export async function authBootstrapSession() {
   const fallbackRole = normalizeRoleLabel(
     session.user.user_metadata?.default_role || ROLE_LABELS.owner
   );
-  const memberships = await fetchAllMemberships(session.user.id);
+  const memberships = filterActiveMemberships(await fetchAllMemberships(session.user.id));
   const storedOrganizationId =
     ssGet(LS_KEYS.organization_id, "") || lsGetUserScoped(LS_KEYS.organization_id, "", session.user.id);
   const selectedMembership =
@@ -505,7 +545,7 @@ export async function authLogin({ email, password }) {
 
   await upsertProfileRow(user);
   const fallbackRole = normalizeRoleLabel(user.user_metadata?.default_role || ROLE_LABELS.owner);
-  const memberships = await fetchAllMemberships(user.id);
+  const memberships = filterActiveMemberships(await fetchAllMemberships(user.id));
   const isOwner = isOwnerRole(fallbackRole);
 
   let selectedMembership = null;
@@ -659,6 +699,89 @@ export async function authRegister({ name, email, password, role, registerCode }
     organizationId: authGetOrganizationId(),
     next: companySetupCompleted ? "dashboard" : "organization_setup"
   };
+}
+
+export async function authDeleteOrganization(organizationId) {
+  const safeOrganizationId = String(organizationId || "").trim();
+  if (!safeOrganizationId) throw new Error("Organization selection is required.");
+
+  const currentOrganizationId = String(authGetOrganizationId() || "").trim();
+  const currentUserId = String(authGetUser()?.id || "").trim();
+
+  const clearSelectionIfNeeded = () => {
+    if (currentOrganizationId !== safeOrganizationId) return;
+    ssSet(LS_KEYS.organization_id, "");
+    lsSet(LS_KEYS.organization_id, "");
+    if (currentUserId) {
+      lsSetUserScoped(LS_KEYS.organization_id, "", currentUserId);
+      lsSetUserScoped(LS_KEYS.companyProfileCompleted, false, currentUserId);
+      lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, false, currentUserId);
+      lsRemoveUserScoped(LS_KEYS.company_profile, currentUserId);
+    }
+    lsSet(LS_KEYS.companyProfileCompleted, false);
+    ssSet(LS_KEYS.companyProfileCompleted, false);
+    lsSet(LS_KEYS.invoiceTemplateCompleted, false);
+    ssSet(LS_KEYS.invoiceTemplateCompleted, false);
+    clearLegacyOrganizationCache();
+  };
+
+  if (!isSupabaseConfigured || !supabase) {
+    clearOrganizationScopedCache(safeOrganizationId);
+    clearSelectionIfNeeded();
+    return { deleted: true, mode: "local" };
+  }
+
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+  if (!user?.id) throw new Error("Login required.");
+
+  const { data: organization, error: orgError } = await supabase
+    .from("organizations")
+    .select("id,owner_user_id,settings")
+    .eq("id", safeOrganizationId)
+    .maybeSingle();
+
+  if (orgError) {
+    throw new Error(orgError?.message || "Failed to load company details.");
+  }
+  if (!organization?.id) {
+    throw new Error("Company not found.");
+  }
+  if (String(organization.owner_user_id || "") !== String(user.id || "")) {
+    throw new Error("Only owner can delete this company.");
+  }
+
+  const { error: hardDeleteError } = await supabase
+    .from("organizations")
+    .delete()
+    .eq("id", safeOrganizationId)
+    .eq("owner_user_id", user.id);
+
+  let mode = "hard";
+  if (hardDeleteError) {
+    const nextSettings = {
+      ...(organization?.settings && typeof organization.settings === "object" ? organization.settings : {}),
+      is_deleted: true,
+      deleted_at: new Date().toISOString(),
+      deleted_by: user.id
+    };
+    const { error: softDeleteError } = await supabase
+      .from("organizations")
+      .update({ settings: nextSettings, updated_at: new Date().toISOString() })
+      .eq("id", safeOrganizationId)
+      .eq("owner_user_id", user.id);
+    if (softDeleteError) {
+      throw new Error(
+        softDeleteError?.message || hardDeleteError?.message || "Failed to delete company."
+      );
+    }
+    mode = "soft";
+  }
+
+  clearOrganizationScopedCache(safeOrganizationId);
+  clearSelectionIfNeeded();
+  return { deleted: true, mode };
 }
 
 export async function authLogout() {

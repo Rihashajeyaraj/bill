@@ -9,6 +9,7 @@ import ItemFormModal from "../modules/items/ItemFormModal";
 import { useOrganization } from "../context/OrganizationContext";
 import {
   computeItemStock,
+  getItemSalesHistoryRemote,
   getItemTradeSummary,
   computeItemUsage,
   getItemPurchaseHistoryRemote,
@@ -36,7 +37,11 @@ export default function Items() {
   const [actionMenu, setActionMenu] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyItem, setHistoryItem] = useState(null);
-  const [historyRows, setHistoryRows] = useState([]);
+  const [historyMode, setHistoryMode] = useState("purchase");
+  const [historyRowsByMode, setHistoryRowsByMode] = useState({
+    purchase: [],
+    sales: []
+  });
   const [historySummary, setHistorySummary] = useState({
     totalSales: 0,
     totalPurchase: 0,
@@ -143,9 +148,40 @@ export default function Items() {
     setViewOpen(true);
   }
 
-  async function openPurchaseHistory(item) {
+  async function loadHistoryRowsByMode(itemId, mode) {
+    if (mode === "sales") {
+      return getItemSalesHistoryRemote(itemId);
+    }
+    return getItemPurchaseHistoryRemote(itemId);
+  }
+
+  async function switchHistoryMode(mode) {
+    if (!historyItem?.id || mode === historyMode) return;
+    setHistoryMode(mode);
+    setHistoryLoading(true);
+    try {
+      const rows = await loadHistoryRowsByMode(historyItem.id, mode);
+      setHistoryRowsByMode((prev) => ({
+        ...prev,
+        [mode]: Array.isArray(rows) ? rows : []
+      }));
+    } catch (error) {
+      toast.error(
+        `Failed to load ${mode === "sales" ? "sales" : "purchase"} history`,
+        error?.message || "Could not load history."
+      );
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function openItemHistory(item) {
     setHistoryItem(item);
-    setHistoryRows([]);
+    setHistoryMode("purchase");
+    setHistoryRowsByMode({
+      purchase: [],
+      sales: []
+    });
     setHistorySummary({
       totalSales: 0,
       totalPurchase: 0,
@@ -155,9 +191,9 @@ export default function Items() {
     setHistoryOpen(true);
     setHistoryLoading(true);
     try {
-      const [summary, rows] = await Promise.all([
+      const [summary, purchaseRows] = await Promise.all([
         getItemTradeSummaryRemote(item.id),
-        getItemPurchaseHistoryRemote(item.id)
+        loadHistoryRowsByMode(item.id, "purchase")
       ]);
       setHistorySummary(summary || {
         totalSales: 0,
@@ -165,9 +201,12 @@ export default function Items() {
         salesQty: 0,
         purchaseQty: 0
       });
-      setHistoryRows(Array.isArray(rows) ? rows : []);
+      setHistoryRowsByMode({
+        purchase: Array.isArray(purchaseRows) ? purchaseRows : [],
+        sales: []
+      });
     } catch (error) {
-      toast.error("Failed to load purchase history", error?.message || "Could not load history.");
+      toast.error("Failed to load item history", error?.message || "Could not load history.");
     } finally {
       setHistoryLoading(false);
     }
@@ -303,7 +342,15 @@ export default function Items() {
                     <tr key={item.id} className="border-t border-slate-100 hover:bg-slate-50/70">
                       <td className="relative px-4 py-3">
                         <div className="flex flex-col gap-1">
-                          <p className="font-semibold text-slate-900">{item.name}</p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void openItemHistory(item);
+                            }}
+                            className="w-fit text-left font-semibold text-blue-700 hover:text-blue-900 hover:underline"
+                          >
+                            {item.name}
+                          </button>
                           <p className="text-xs text-slate-500">
                             {item.category || "Uncategorized"} | SKU {item.sku || "-"}
                           </p>
@@ -438,7 +485,7 @@ export default function Items() {
                 onClick={() => {
                   const selectedItem = actionMenu.item;
                   setActionMenu(null);
-                  void openPurchaseHistory(selectedItem);
+                  void openItemHistory(selectedItem);
                 }}
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
@@ -517,57 +564,90 @@ export default function Items() {
 
       <Modal
         open={historyOpen}
-        title={historyItem ? `Purchase History - ${historyItem.name}` : "Purchase History"}
+        title={historyItem ? `Item History - ${historyItem.name}` : "Item History"}
         onClose={() => setHistoryOpen(false)}
       >
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <button
+              type="button"
+              onClick={() => {
+                void switchHistoryMode("purchase");
+              }}
+              className={`rounded-xl border px-3 py-2 text-left transition ${
+                historyMode === "purchase"
+                  ? "border-blue-300 bg-blue-50"
+                  : "border-slate-200 bg-slate-50 hover:border-slate-300"
+              }`}
+            >
               <p className="text-xs text-slate-500">Total Purchase</p>
               <p className="text-sm font-semibold text-slate-900">
                 {formatMoney(historySummary.totalPurchase, currency)}
               </p>
               <p className="text-[11px] text-slate-500">Qty {historySummary.purchaseQty}</p>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void switchHistoryMode("sales");
+              }}
+              className={`rounded-xl border px-3 py-2 text-left transition ${
+                historyMode === "sales"
+                  ? "border-blue-300 bg-blue-50"
+                  : "border-slate-200 bg-slate-50 hover:border-slate-300"
+              }`}
+            >
               <p className="text-xs text-slate-500">Total Sales</p>
               <p className="text-sm font-semibold text-slate-900">
                 {formatMoney(historySummary.totalSales, currency)}
               </p>
               <p className="text-[11px] text-slate-500">Qty {historySummary.salesQty}</p>
-            </div>
+            </button>
           </div>
 
           <div className="overflow-auto rounded-xl border border-slate-200">
             <table className="w-full min-w-[520px] text-left text-sm">
               <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-3 py-2 font-semibold text-slate-700">Supplier</th>
+                  <th className="px-3 py-2 font-semibold text-slate-700">
+                    {historyMode === "sales" ? "Customer" : "Supplier"}
+                  </th>
                   <th className="px-3 py-2 font-semibold text-slate-700 text-right">Quantity</th>
                   <th className="px-3 py-2 font-semibold text-slate-700">Date</th>
                   <th className="px-3 py-2 font-semibold text-slate-700">Bill No</th>
+                  <th className="px-3 py-2 font-semibold text-slate-700 text-right">
+                    {historyMode === "sales" ? "Sales Amount" : "Purchase Amount"}
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {historyLoading ? (
                   <tr>
-                    <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                    <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
                       Loading history...
                     </td>
                   </tr>
-                ) : historyRows.length ? (
-                  historyRows.map((entry, index) => (
+                ) : (historyRowsByMode[historyMode] || []).length ? (
+                  (historyRowsByMode[historyMode] || []).map((entry, index) => (
                     <tr key={`${entry.billNo || "bill"}_${index}`} className="border-t border-slate-100">
-                      <td className="px-3 py-2 text-slate-700">{entry.supplier || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700">
+                        {historyMode === "sales" ? entry.customer || "-" : entry.supplier || "-"}
+                      </td>
                       <td className="px-3 py-2 text-right text-slate-700">{entry.quantity}</td>
                       <td className="px-3 py-2 text-slate-700">{entry.date || "-"}</td>
                       <td className="px-3 py-2 text-slate-700">{entry.billNo || "-"}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">
+                        {formatMoney(
+                          historyMode === "sales" ? entry.salesAmount : entry.purchaseAmount,
+                          currency
+                        )}
+                      </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
-                      No purchase history found for this item.
+                    <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                      No {historyMode} history found for this item.
                     </td>
                   </tr>
                 )}
