@@ -577,37 +577,141 @@ export async function getItemTradeSummaryRemote(itemId) {
   const local = getItemTradeSummary(itemId);
   if (!isSupabaseConfigured || !supabase || !looksLikeUuid(itemId)) return local;
 
-  const organizationId = authGetOrganizationId();
-  if (!organizationId) return local;
-
-  const [{ data: salesRows, error: salesError }, { data: purchaseRows, error: purchaseError }] = await Promise.all([
-    supabase
-      .from("invoice_items")
-      .select("qty,line_total,invoice_id")
-      .eq("item_id", itemId),
-    supabase
-      .from("purchase_bill_items")
-      .select("qty,line_total,bill_id")
-      .eq("item_id", itemId)
+  const [salesHistory, purchaseHistory] = await Promise.all([
+    getItemSalesHistoryRemote(itemId),
+    getItemPurchaseHistoryRemote(itemId)
   ]);
-
-  if (salesError) {
-    throw new Error(normalizeSupabaseError(salesError, "Failed to load item sales summary"));
-  }
-  if (purchaseError) {
-    throw new Error(normalizeSupabaseError(purchaseError, "Failed to load item purchase summary"));
-  }
-
-  const sales = ensureArray(salesRows);
-  const purchases = ensureArray(purchaseRows);
 
   return {
     itemId,
-    totalSales: sales.reduce((sum, row) => sum + parseNumber(row?.line_total), 0),
-    totalPurchase: purchases.reduce((sum, row) => sum + parseNumber(row?.line_total), 0),
-    salesQty: sales.reduce((sum, row) => sum + parseNumber(row?.qty), 0),
-    purchaseQty: purchases.reduce((sum, row) => sum + parseNumber(row?.qty), 0)
+    totalSales: salesHistory.reduce((sum, row) => sum + parseNumber(row?.salesAmount), 0),
+    totalPurchase: purchaseHistory.reduce((sum, row) => sum + parseNumber(row?.purchaseAmount), 0),
+    salesQty: salesHistory.reduce((sum, row) => sum + parseNumber(row?.quantity), 0),
+    purchaseQty: purchaseHistory.reduce((sum, row) => sum + parseNumber(row?.quantity), 0)
   };
+}
+
+const HISTORY_TABLE_CACHE = {
+  purchaseLines: "",
+  salesLines: "",
+  purchaseHeaders: "",
+  salesHeaders: ""
+};
+
+function isMissingRelationError(error) {
+  const code = String(error?.code || "").toUpperCase();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "42P01" ||
+    code === "PGRST205" ||
+    message.includes("relation") && message.includes("does not exist") ||
+    message.includes("could not find table")
+  );
+}
+
+function readFirstDefined(source, keys, fallback = "") {
+  for (const key of keys) {
+    const value = source?.[key];
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      return value;
+    }
+  }
+  return fallback;
+}
+
+function sortHistoryRows(rows) {
+  return ensureArray(rows).sort((a, b) => new Date(b?.date || 0).getTime() - new Date(a?.date || 0).getTime());
+}
+
+function toHistoryDate(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length >= 10 && text[4] === "-" && text[7] === "-") return text.slice(0, 10);
+  return text;
+}
+
+async function queryItemLinesByTable(itemId, mode) {
+  const candidates =
+    mode === "sales"
+      ? ["sales_items", "invoice_items"]
+      : ["purchase_items", "purchase_bill_items"];
+  const cacheKey = mode === "sales" ? "salesLines" : "purchaseLines";
+  const preferred = HISTORY_TABLE_CACHE[cacheKey];
+  const orderedCandidates = preferred
+    ? [preferred, ...candidates.filter((candidate) => candidate !== preferred)]
+    : candidates;
+
+  for (const table of orderedCandidates) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq("item_id", itemId);
+    if (!error) {
+      HISTORY_TABLE_CACHE[cacheKey] = table;
+      return ensureArray(data);
+    }
+    if (isMissingRelationError(error)) continue;
+    const label = mode === "sales" ? "sales" : "purchase";
+    throw new Error(normalizeSupabaseError(error, `Failed to load item ${label} history`));
+  }
+  return [];
+}
+
+async function queryHeadersByTable(headerIds, mode) {
+  if (!headerIds.length) return { headersById: new Map(), partiesById: new Map() };
+
+  const candidates =
+    mode === "sales"
+      ? ["sales", "invoices"]
+      : ["purchases", "purchase_bills"];
+  const cacheKey = mode === "sales" ? "salesHeaders" : "purchaseHeaders";
+  const preferred = HISTORY_TABLE_CACHE[cacheKey];
+  const orderedCandidates = preferred
+    ? [preferred, ...candidates.filter((candidate) => candidate !== preferred)]
+    : candidates;
+
+  let headers = [];
+  for (const table of orderedCandidates) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .in("id", headerIds);
+    if (!error) {
+      HISTORY_TABLE_CACHE[cacheKey] = table;
+      headers = ensureArray(data);
+      break;
+    }
+    if (isMissingRelationError(error)) continue;
+    const label = mode === "sales" ? "sales" : "purchase";
+    throw new Error(normalizeSupabaseError(error, `Failed to resolve item ${label} history rows`));
+  }
+
+  const headersById = new Map(headers.map((entry) => [entry?.id, entry]));
+  const partyIds = Array.from(
+    new Set(
+      headers
+        .map((entry) =>
+          readFirstDefined(entry, ["party_id", "customer_id", "supplier_id"], "")
+        )
+        .filter(Boolean)
+    )
+  );
+
+  let partiesById = new Map();
+  if (partyIds.length) {
+    const { data: partyRows, error: partyError } = await supabase
+      .from("parties")
+      .select("id,display_name,legal_name")
+      .in("id", partyIds);
+    if (partyError) {
+      throw new Error(normalizeSupabaseError(partyError, "Failed to resolve parties for item history"));
+    }
+    partiesById = new Map(
+      ensureArray(partyRows).map((row) => [row?.id, row?.display_name || row?.legal_name || "-"])
+    );
+  }
+
+  return { headersById, partiesById };
 }
 
 function getItemPurchaseHistoryLocal(item) {
@@ -618,10 +722,28 @@ function getItemPurchaseHistoryLocal(item) {
       supplier: bill?.partyName || "-",
       quantity: parseNumber(line?.qty ?? line?.quantity),
       date: bill?.billDate || bill?.created_at || "",
-      billNo: bill?.billNumber || bill?.bill_no || ""
+      billNo: bill?.billNumber || bill?.bill_no || "",
+      purchaseAmount: parseNumber(
+        line?.amount ?? line?.lineTotal ?? line?.line_total ?? line?.lineSubTotal
+      )
     });
   });
-  return history.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+  return sortHistoryRows(history);
+}
+
+function getItemSalesHistoryLocal(item) {
+  const invoices = ensureArray(lsGetOrganizationScoped(LS_KEYS.invoices, []));
+  const history = [];
+  collectFromLines(invoices, item, (line, invoice) => {
+    history.push({
+      customer: invoice?.partyName || invoice?.buyer?.name || "-",
+      quantity: parseNumber(line?.qty ?? line?.quantity),
+      date: invoice?.invoiceDate || invoice?.created_at || "",
+      billNo: invoice?.invoiceNo || invoice?.bill_no || "",
+      salesAmount: parseNumber(line?.amount ?? line?.lineTotal ?? line?.line_total ?? line?.net)
+    });
+  });
+  return sortHistoryRows(history);
 }
 
 export async function getItemPurchaseHistoryRemote(itemId) {
@@ -631,62 +753,117 @@ export async function getItemPurchaseHistoryRemote(itemId) {
   const local = getItemPurchaseHistoryLocal(item);
   if (!isSupabaseConfigured || !supabase || !looksLikeUuid(itemId)) return local;
 
-  const organizationId = authGetOrganizationId();
-  if (!organizationId) return local;
-
-  const { data: lineRows, error: linesError } = await supabase
-    .from("purchase_bill_items")
-    .select("bill_id,qty")
-    .eq("item_id", itemId);
-
-  if (linesError) {
-    throw new Error(normalizeSupabaseError(linesError, "Failed to load item purchase history"));
-  }
-
-  const lines = ensureArray(lineRows);
+  const lines = await queryItemLinesByTable(itemId, "purchase");
   if (!lines.length) return [];
 
-  const billIds = Array.from(new Set(lines.map((line) => line?.bill_id).filter(Boolean)));
-  const { data: billRows, error: billError } = await supabase
-    .from("purchase_bills")
-    .select("id,bill_no,bill_date,supplier_id,metadata")
-    .eq("organization_id", organizationId)
-    .in("id", billIds);
-  if (billError) {
-    throw new Error(normalizeSupabaseError(billError, "Failed to resolve purchase history bills"));
-  }
-
-  const bills = ensureArray(billRows);
-  const supplierIds = Array.from(new Set(bills.map((bill) => bill?.supplier_id).filter(Boolean)));
-  let suppliersById = new Map();
-  if (supplierIds.length) {
-    const { data: supplierRows, error: supplierError } = await supabase
-      .from("parties")
-      .select("id,display_name")
-      .eq("organization_id", organizationId)
-      .in("id", supplierIds);
-    if (supplierError) {
-      throw new Error(normalizeSupabaseError(supplierError, "Failed to resolve suppliers"));
-    }
-    suppliersById = new Map(ensureArray(supplierRows).map((row) => [row.id, row.display_name || "-"]));
-  }
-
-  const billById = new Map(bills.map((bill) => [bill.id, bill]));
+  const billIds = Array.from(
+    new Set(
+      lines
+        .map((line) =>
+          readFirstDefined(line, ["bill_id", "purchase_id", "purchase_bill_id", "billId"], "")
+        )
+        .filter(Boolean)
+    )
+  );
+  const { headersById, partiesById } = await queryHeadersByTable(billIds, "purchase");
   const history = lines.map((line) => {
-    const bill = billById.get(line?.bill_id) || {};
+    const billId = readFirstDefined(
+      line,
+      ["bill_id", "purchase_id", "purchase_bill_id", "billId"],
+      ""
+    );
+    const bill = headersById.get(billId) || {};
+    const supplierId = readFirstDefined(bill, ["supplier_id", "party_id", "supplierId"], "");
     const supplierName =
-      suppliersById.get(bill?.supplier_id) ||
-      bill?.metadata?.partyName ||
-      "-";
+      partiesById.get(supplierId) ||
+      readFirstDefined(line, ["supplier_name", "supplierName", "party_name", "partyName"], "") ||
+      readFirstDefined(bill?.metadata, ["partyName", "supplierName"], "-");
+
+    const billNo =
+      readFirstDefined(line, ["bill_no", "billNo", "purchase_no", "purchaseNo"], "") ||
+      readFirstDefined(bill, ["bill_no", "billNo", "purchase_no", "purchaseNo"], "");
+    const lineAmount = parseNumber(
+      readFirstDefined(line, ["purchase_amount", "line_total", "amount", "lineAmount"], 0)
+    );
+
     return {
       supplier: supplierName,
-      quantity: parseNumber(line?.qty),
-      date: bill?.bill_date || "",
-      billNo: bill?.bill_no || ""
+      quantity: parseNumber(readFirstDefined(line, ["qty", "quantity"], 0)),
+      date: toHistoryDate(
+        readFirstDefined(
+          line,
+          ["bill_date", "purchase_date", "date", "created_at"],
+          readFirstDefined(bill, ["bill_date", "purchase_date", "date", "created_at"], "")
+        )
+      ),
+      billNo,
+      purchaseAmount: lineAmount
     };
   });
 
-  return history.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+  return sortHistoryRows(history);
+}
+
+export async function getItemSalesHistoryRemote(itemId) {
+  const item = listItems().find((entry) => entry.id === itemId);
+  if (!item) return [];
+
+  const local = getItemSalesHistoryLocal(item);
+  if (!isSupabaseConfigured || !supabase || !looksLikeUuid(itemId)) return local;
+
+  const lines = await queryItemLinesByTable(itemId, "sales");
+  if (!lines.length) return [];
+
+  const billIds = Array.from(
+    new Set(
+      lines
+        .map((line) =>
+          readFirstDefined(line, ["sale_id", "invoice_id", "sales_id", "bill_id", "invoiceId"], "")
+        )
+        .filter(Boolean)
+    )
+  );
+  const { headersById, partiesById } = await queryHeadersByTable(billIds, "sales");
+  const history = lines.map((line) => {
+    const billId = readFirstDefined(
+      line,
+      ["sale_id", "invoice_id", "sales_id", "bill_id", "invoiceId"],
+      ""
+    );
+    const bill = headersById.get(billId) || {};
+    const customerId = readFirstDefined(
+      bill,
+      ["customer_id", "party_id", "buyer_id", "customerId"],
+      ""
+    );
+    const customerName =
+      partiesById.get(customerId) ||
+      readFirstDefined(line, ["customer_name", "customerName", "party_name", "partyName"], "") ||
+      readFirstDefined(bill?.metadata, ["partyName", "buyerName"], "-");
+
+    const billNo =
+      readFirstDefined(line, ["bill_no", "billNo", "invoice_no", "invoiceNo"], "") ||
+      readFirstDefined(bill, ["bill_no", "billNo", "invoice_no", "invoiceNo"], "");
+    const lineAmount = parseNumber(
+      readFirstDefined(line, ["sales_amount", "line_total", "amount", "lineAmount"], 0)
+    );
+
+    return {
+      customer: customerName,
+      quantity: parseNumber(readFirstDefined(line, ["qty", "quantity"], 0)),
+      date: toHistoryDate(
+        readFirstDefined(
+          line,
+          ["invoice_date", "sales_date", "bill_date", "date", "created_at"],
+          readFirstDefined(bill, ["invoice_date", "sales_date", "bill_date", "date", "created_at"], "")
+        )
+      ),
+      billNo,
+      salesAmount: lineAmount
+    };
+  });
+
+  return sortHistoryRows(history);
 }
 
 export function computeItemUsage(item) {

@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Building2, Plus } from "lucide-react";
+import { AlertTriangle, ArrowRight, Building2, Plus, Trash2 } from "lucide-react";
 import Card from "../components/Card";
 import PageHeader from "../components/PageHeader";
 import GradientButton from "../components/GradientButton";
+import Modal from "../components/Modal";
 import {
   authGetRole,
+  authDeleteOrganization,
   authListOrganizations,
   authSelectOrganization
 } from "../services/auth.service";
@@ -25,6 +27,8 @@ export default function OrganizationSelect() {
   const [organizations, setOrganizations] = useState([]);
   const [error, setError] = useState("");
   const [selectingId, setSelectingId] = useState("");
+  const [deletingId, setDeletingId] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
     if (!isOwnerRole(role)) {
@@ -66,6 +70,32 @@ export default function OrganizationSelect() {
       setError(selectError?.message || "Unable to open selected organization.");
     } finally {
       setSelectingId("");
+    }
+  }
+
+  function openDeleteModal(organization) {
+    setDeleteTarget(organization || null);
+  }
+
+  function closeDeleteModal() {
+    if (deletingId) return;
+    setDeleteTarget(null);
+  }
+
+  async function handleDeleteOrganization() {
+    const targetId = String(deleteTarget?.organizationId || "").trim();
+    if (!targetId) return;
+    setDeletingId(targetId);
+    setError("");
+    try {
+      await authDeleteOrganization(targetId);
+      const latest = await authListOrganizations();
+      setOrganizations(Array.isArray(latest) ? latest : []);
+      setDeleteTarget(null);
+    } catch (deleteError) {
+      setError(deleteError?.message || "Unable to delete selected organization.");
+    } finally {
+      setDeletingId("");
     }
   }
 
@@ -123,20 +153,74 @@ export default function OrganizationSelect() {
                     {organization.countryCode} | Role: {organization.role}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleSelectOrganization(organization.organizationId)}
-                  disabled={selectingId === organization.organizationId}
-                  className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white disabled:opacity-60"
-                >
-                  {selectingId === organization.organizationId ? "Opening..." : "Open"}
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openDeleteModal(organization)}
+                    disabled={selectingId === organization.organizationId || deletingId === organization.organizationId}
+                    className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {deletingId === organization.organizationId ? "Deleting..." : "Delete Company"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectOrganization(organization.organizationId)}
+                    disabled={selectingId === organization.organizationId || deletingId === organization.organizationId}
+                    className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white disabled:opacity-60"
+                  >
+                    {selectingId === organization.organizationId ? "Opening..." : "Open"}
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
             </Card>
           ))}
         </div>
       ) : null}
+
+      <Modal
+        open={!!deleteTarget}
+        title="Delete Company"
+        onClose={closeDeleteModal}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeDeleteModal}
+              disabled={!!deletingId}
+              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleDeleteOrganization();
+              }}
+              disabled={!!deletingId}
+              className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {deletingId ? "Deleting..." : "Delete Company"}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3 text-sm text-slate-700">
+          <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>This action will remove this company from your list. This cannot be undone.</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <p className="text-xs text-slate-500">Company</p>
+            <p className="text-sm font-semibold text-slate-900">{deleteTarget?.companyName || "-"}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {deleteTarget?.countryCode || "-"} | Role: {deleteTarget?.role || "-"}
+            </p>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
