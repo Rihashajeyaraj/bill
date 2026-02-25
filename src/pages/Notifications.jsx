@@ -19,6 +19,20 @@ function formatValue(value, alertType) {
   });
 }
 
+function formatAmount(value) {
+  return Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function formatDate(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleDateString();
+}
+
 function matchesFilter(entry, filterId) {
   if (filterId === "customers") return entry.partyType === "customer";
   if (filterId === "suppliers") return entry.partyType === "supplier";
@@ -29,6 +43,10 @@ function matchesFilter(entry, filterId) {
 
 function alertLabel(entry) {
   return entry.alertType === "days" ? "Overdue Days" : "Amount";
+}
+
+function documentLabel(entry) {
+  return String(entry?.documentType || "").toLowerCase() === "bill" ? "Bill" : "Invoice";
 }
 
 export default function Notifications() {
@@ -89,6 +107,7 @@ export default function Notifications() {
                 <th className="px-4 py-3 font-semibold text-slate-700">Party Name</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Type</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Alert Type</th>
+                <th className="px-4 py-3 font-semibold text-slate-700">Details</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Limit Value</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Current Value</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Status</th>
@@ -110,6 +129,25 @@ export default function Notifications() {
                       <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">
                         {alertLabel(entry)} Exceeded
                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-700">
+                      {entry.documentNo ? (
+                        <p className="font-semibold text-slate-900">
+                          {documentLabel(entry)}: {entry.documentNo}
+                        </p>
+                      ) : null}
+                      {entry.createdBy ? <p>Created by: {entry.createdBy}</p> : null}
+                      {Number(entry.pendingAmount || 0) > 0 ? (
+                        <p>Pending: {formatAmount(entry.pendingAmount)}</p>
+                      ) : null}
+                      {entry.alertType === "amount" ? (
+                        <p>Over by: {formatAmount(entry.exceededBy || 0)}</p>
+                      ) : (
+                        <>
+                          <p>Over by days: {Math.trunc(Number(entry.overdueByDays || 0))}</p>
+                          <p>Last due date: {formatDate(entry.lastDueDate || entry.dueDate)}</p>
+                        </>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-slate-700">
                       {formatValue(entry.limitValue, entry.alertType)}
@@ -152,7 +190,7 @@ export default function Notifications() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-sm text-slate-500">
+                  <td colSpan={9} className="px-4 py-12 text-center text-sm text-slate-500">
                     No notifications found for this filter.
                   </td>
                 </tr>

@@ -811,39 +811,144 @@ function supplierTotals(party: PartyRecord) {
   };
 }
 
-function computeMaxOverdueDays(party: PartyRecord) {
+function resolveDocumentDate(record: any, partyType: PartyType) {
+  const candidates =
+    partyType === "Supplier"
+      ? [record?.billDate, record?.bill_date, record?.date, record?.created_at]
+      : [record?.invoiceDate, record?.invoice_date, record?.date, record?.created_at];
+  for (const candidate of candidates) {
+    const normalized = toIsoDate(candidate);
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+function resolveDocumentNo(record: any, partyType: PartyType) {
+  const value =
+    partyType === "Supplier"
+      ? record?.billNumber || record?.invoiceNo || record?.billNo || record?.id
+      : record?.invoiceNo || record?.billNumber || record?.id;
+  return String(value || "").trim();
+}
+
+function resolveCreatedBy(record: any) {
+  const value =
+    record?.createdBy ||
+    record?.createdByName ||
+    record?.audit?.createdBy ||
+    record?.metadata?.createdByName ||
+    record?.created_by;
+  return String(value || "").trim() || SYSTEM_ACTOR;
+}
+
+function toEpoch(dateValue: string) {
+  if (!dateValue) return 0;
+  const parsed = new Date(`${dateValue}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return 0;
+  return parsed.getTime();
+}
+
+function collectOpenDocuments(party: PartyRecord) {
   const records = (party.type === "Supplier" ? listPurchases() : listInvoices()).filter((record) =>
     matchesParty(party, record)
   );
-  if (!records.length) return 0;
+  if (!records.length) return [];
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const todayEpoch = today.getTime();
 
-  let maxOverdueDays = 0;
-  records.forEach((record) => {
-    const status = String(record?.status || record?.paymentStatus || "").toLowerCase();
-    if (status === "paid" || status === "cancelled" || status === "draft") return;
+  return records
+    .map((record) => {
+      const status = String(record?.status || record?.paymentStatus || "").toLowerCase();
+      if (status === "paid" || status === "cancelled" || status === "draft") return null;
 
-    const fallbackAmount =
-      party.type === "Supplier" ? extractPurchaseAmount(record) : extractInvoiceAmount(record);
-    const outstandingAmount = extractOutstandingAmount(record, fallbackAmount);
-    if (outstandingAmount <= 0) return;
+      const fallbackAmount =
+        party.type === "Supplier" ? extractPurchaseAmount(record) : extractInvoiceAmount(record);
+      const outstandingAmount = extractOutstandingAmount(record, fallbackAmount);
+      if (outstandingAmount <= 0) return null;
 
-    const dueDateIso = resolveDueDate(record, party.type);
-    if (!dueDateIso) return;
+      const dueDateIso = resolveDueDate(record, party.type);
+      const dueDateEpoch = toEpoch(dueDateIso);
+      const overdueDays =
+        dueDateEpoch > 0 && dueDateEpoch < todayEpoch
+          ? Math.floor((todayEpoch - dueDateEpoch) / (24 * 60 * 60 * 1000))
+          : 0;
 
-    const dueDate = new Date(`${dueDateIso}T00:00:00`);
-    if (Number.isNaN(dueDate.getTime()) || dueDate >= today) return;
+      return {
+        documentId: String(record?.id || ""),
+        documentNo: resolveDocumentNo(record, party.type),
+        documentType: party.type === "Supplier" ? "bill" : "invoice",
+        documentDate: resolveDocumentDate(record, party.type),
+        dueDate: dueDateIso,
+        pendingAmount: Math.max(0, parseNumber(outstandingAmount)),
+        totalAmount: Math.max(0, parseNumber(fallbackAmount)),
+        createdBy: resolveCreatedBy(record),
+        overdueDays: Math.max(0, overdueDays)
+      };
+    })
+    .filter(Boolean);
+}
 
-    const diffDays = Math.floor((today.getTime() - dueDate.getTime()) / (24 * 60 * 60 * 1000));
-    if (diffDays > maxOverdueDays) maxOverdueDays = diffDays;
-  });
+function pickLatestOpenDocument(documents: any[]) {
+  if (!documents.length) return null;
+  return [...documents].sort((a, b) => {
+    const aDate = toEpoch(a?.documentDate || a?.dueDate || "");
+    const bDate = toEpoch(b?.documentDate || b?.dueDate || "");
+    if (bDate !== aDate) return bDate - aDate;
+    return parseNumber(b?.pendingAmount) - parseNumber(a?.pendingAmount);
+  })[0];
+}
 
-  return Math.max(0, maxOverdueDays);
+function pickMostOverdueDocument(documents: any[]) {
+  const overdueOnly = documents.filter((entry) => parseNumber(entry?.overdueDays) > 0);
+  if (!overdueOnly.length) return null;
+  return overdueOnly.sort((a, b) => {
+    const overdueDiff = parseNumber(b?.overdueDays) - parseNumber(a?.overdueDays);
+    if (overdueDiff !== 0) return overdueDiff;
+    const aDue = toEpoch(a?.dueDate || "");
+    const bDue = toEpoch(b?.dueDate || "");
+    if (aDue !== bDue) return aDue - bDue;
+    return parseNumber(b?.pendingAmount) - parseNumber(a?.pendingAmount);
+  })[0];
+}
+
+function computeMaxOverdueDays(party: PartyRecord) {
+  return collectOpenDocuments(party).reduce(
+    (maxDays, document) => Math.max(maxDays, parseNumber(document?.overdueDays)),
+    0
+  );
+}
+
+function buildAlertDetails(base: any, extra?: Record<string, unknown>) {
+  if (!base) return null;
+  return {
+    documentId: base.documentId,
+    documentNo: base.documentNo,
+    documentType: base.documentType,
+    documentDate: base.documentDate,
+    dueDate: base.dueDate,
+    pendingAmount: base.pendingAmount,
+    totalAmount: base.totalAmount,
+    createdBy: base.createdBy,
+    overdueDays: base.overdueDays,
+    ...(extra || {})
+  };
 }
 
 function buildNotificationEvaluation(party: PartyRecord, financials: PartyFinancials) {
+  const openDocuments = collectOpenDocuments(party);
+  const latestDocument = pickLatestOpenDocument(openDocuments);
+  const mostOverdueDocument = pickMostOverdueDocument(openDocuments);
+  const amountExceededBy =
+    financials.amountExceeded && financials.creditLimit > 0
+      ? Math.max(0, financials.outstanding - financials.creditLimit)
+      : 0;
+  const overdueByDays =
+    financials.overdueExceeded && financials.creditLimitDays > 0
+      ? Math.max(0, financials.maxOverdueDays - financials.creditLimitDays)
+      : 0;
+
   return {
     partyId: party.id,
     partyName: party.name,
@@ -852,12 +957,19 @@ function buildNotificationEvaluation(party: PartyRecord, financials: PartyFinanc
     amount: {
       exceeded: financials.amountExceeded === true,
       limitValue: financials.creditLimit,
-      currentValue: financials.outstanding
+      currentValue: financials.outstanding,
+      details: buildAlertDetails(latestDocument, {
+        exceededBy: amountExceededBy
+      })
     },
     days: {
       exceeded: financials.overdueExceeded === true,
       limitValue: financials.creditLimitDays,
-      currentValue: financials.maxOverdueDays
+      currentValue: financials.maxOverdueDays,
+      details: buildAlertDetails(mostOverdueDocument, {
+        overdueByDays,
+        lastDueDate: mostOverdueDocument?.dueDate || ""
+      })
     }
   };
 }
@@ -905,7 +1017,7 @@ export function computePartyFinancials(party: PartyRecord): PartyFinancials {
     creditLimitEnabled &&
     creditLimitType === "Days" &&
     creditLimitDays > 0 &&
-    maxOverdueDays > creditLimitDays;
+    maxOverdueDays >= creditLimitDays;
   const creditExceeded = amountExceeded || overdueExceeded;
   const creditOverBy = amountExceeded ? outstanding - creditLimit : 0;
   const overdueByDays = overdueExceeded ? maxOverdueDays - creditLimitDays : 0;

@@ -126,6 +126,9 @@ function mapRemotePurchaseBill(row, balanceAmount) {
     taxMode: metadata?.taxMode || "",
     supplyType: metadata?.supplyType || null,
     remainingBalance: effectiveBalance,
+    createdByUserId: row?.created_by || null,
+    createdByName: String(metadata?.createdByName || "").trim(),
+    createdBy: String(metadata?.createdByName || row?.created_by || "").trim(),
     status,
     lines: []
   };
@@ -272,6 +275,9 @@ export async function purchasesSyncFromRemote() {
 
 export async function purchasesCreate(bill) {
   const now = new Date().toISOString();
+  const actor = authGetUser();
+  const actorUserId = actor?.id || null;
+  const actorName = String(actor?.name || actor?.email || "").trim();
   let id = uid("pur_");
   const lines = Array.isArray(bill?.lines) ? bill.lines : [];
   const totals = bill?.totals || {};
@@ -280,7 +286,6 @@ export async function purchasesCreate(bill) {
     const organizationId = authGetOrganizationId();
     if (organizationId) {
       const supplierId = looksLikeUuid(bill?.partyId) ? bill.partyId : null;
-      const actorUserId = authGetUser()?.id || null;
 
       const { data: billRow, error: billError } = await supabase
         .from("purchase_bills")
@@ -297,6 +302,7 @@ export async function purchasesCreate(bill) {
           metadata: {
             country: bill?.country || "",
             partyName: bill?.partyName || "",
+            createdByName: actorName,
             partyAddress: bill?.partyAddress || "",
             phone: bill?.phone || "",
             paymentType: bill?.paymentType || "",
@@ -367,6 +373,9 @@ export async function purchasesCreate(bill) {
     taxMode: bill?.taxMode || "",
     supplyType: bill?.supplyType || null,
     remainingBalance: parseNumber(totals?.grandTotal),
+    createdByUserId: actorUserId,
+    createdByName: actorName,
+    createdBy: actorName || String(actorUserId || "").trim(),
     status: "issued",
     lines: lines.map((line) => ({
       ...line,

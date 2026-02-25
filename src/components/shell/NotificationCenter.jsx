@@ -2,31 +2,44 @@ import React from "react";
 import { Bell, BellRing, CheckCheck, Clock3, X } from "lucide-react";
 import { useAppShell } from "../../context/AppShellContext";
 
-function formatValue(entry) {
-  if (entry?.alertType === "days") return `${Math.trunc(Number(entry?.currentValue || 0))}`;
-  return Number(entry?.currentValue || 0).toLocaleString(undefined, {
+function formatAmount(value) {
+  return Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
 }
 
+function formatValue(entry) {
+  if (entry?.alertType === "days") return `${Math.trunc(Number(entry?.currentValue || 0))}`;
+  return formatAmount(entry?.currentValue || 0);
+}
+
 function formatLimit(entry) {
   if (entry?.alertType === "days") return `${Math.trunc(Number(entry?.limitValue || 0))}`;
-  return Number(entry?.limitValue || 0).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  });
+  return formatAmount(entry?.limitValue || 0);
 }
 
 function alertLabel(entry) {
   return entry?.alertType === "days" ? "Overdue Days" : "Amount Limit";
 }
 
+function documentLabel(entry) {
+  if (String(entry?.documentType || "").toLowerCase() === "bill") return "Bill";
+  return "Invoice";
+}
+
+function formatDate(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleDateString();
+}
+
 function alertDescription(entry) {
   if (entry?.alertType === "days") {
-    return `${formatValue(entry)} days exceeded the allowed ${formatLimit(entry)} days.`;
+    return `${formatValue(entry)} days crossed ${formatLimit(entry)} allowed days.`;
   }
-  return `${formatValue(entry)} exceeded the limit ${formatLimit(entry)}.`;
+  return `${formatValue(entry)} crossed limit ${formatLimit(entry)} by ${formatAmount(entry?.exceededBy || 0)}.`;
 }
 
 export default function NotificationCenter() {
@@ -109,6 +122,20 @@ export default function NotificationCenter() {
                       </div>
                       <p className="mt-1 text-xs font-semibold text-rose-700">{alertLabel(entry)}</p>
                       <p className="mt-1 text-xs text-slate-700">{alertDescription(entry)}</p>
+                      <div className="mt-1 space-y-0.5 text-[11px] text-slate-600">
+                        {entry.documentNo ? (
+                          <p>
+                            {documentLabel(entry)}: {entry.documentNo}
+                          </p>
+                        ) : null}
+                        {entry.createdBy ? <p>Created by: {entry.createdBy}</p> : null}
+                        {Number(entry.pendingAmount || 0) > 0 ? (
+                          <p>Pending: {formatAmount(entry.pendingAmount)}</p>
+                        ) : null}
+                        {entry.alertType === "days" ? (
+                          <p>Last due date: {formatDate(entry.lastDueDate || entry.dueDate)}</p>
+                        ) : null}
+                      </div>
                       <p className="mt-1 text-[11px] text-slate-500">
                         {new Date(entry.createdAt).toLocaleString()}
                       </p>

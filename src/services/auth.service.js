@@ -453,13 +453,11 @@ export async function authBootstrapSession() {
     } = await supabase.auth.getSession();
     session = fetchedSession;
   } catch {
-    if (hasLocalAuthState()) return true;
     clearAuthState();
     return false;
   }
 
   if (!session?.user) {
-    if (hasLocalAuthState()) return true;
     clearAuthState();
     return false;
   }

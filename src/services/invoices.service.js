@@ -105,6 +105,9 @@ function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
       balance: effectiveBalance
     },
     remainingBalance: effectiveBalance,
+    createdByUserId: row?.created_by || null,
+    createdByName: String(metadata?.createdByName || "").trim(),
+    createdBy: String(metadata?.createdByName || row?.created_by || "").trim(),
     status,
     created_at: row?.created_at || new Date().toISOString(),
     updated_at: row?.updated_at || row?.created_at || new Date().toISOString()
@@ -318,6 +321,9 @@ export async function invoicesSyncFromRemote() {
 
 export async function invoicesCreate(invoice) {
   const now = new Date().toISOString();
+  const actor = authGetUser();
+  const actorUserId = actor?.id || null;
+  const actorName = String(actor?.name || actor?.email || "").trim();
   const invoiceNo = invoice?.invoiceNo || `INV-${Date.now()}`;
   const lines = Array.isArray(invoice?.lines) ? invoice.lines : [];
   const totals = invoice?.totals || {};
@@ -337,7 +343,6 @@ export async function invoicesCreate(invoice) {
   if (isSupabaseConfigured && supabase) {
     const organizationId = authGetOrganizationId();
     if (organizationId) {
-      const actorUserId = authGetUser()?.id || null;
       const remotePayload = {
         organization_id: organizationId,
         invoice_no: invoiceNo,
@@ -363,6 +368,7 @@ export async function invoicesCreate(invoice) {
         metadata: {
           country: invoice?.country || "",
           partyName: invoice?.partyName || "",
+          createdByName: actorName,
           buyer: invoice?.buyer || {},
           seller: invoice?.seller || {},
           placeOfSupply: invoice?.placeOfSupply || "",
@@ -432,6 +438,9 @@ export async function invoicesCreate(invoice) {
     taxMode: invoice?.taxMode || tax?.type || "",
     supplyType: invoice?.supplyType || tax?.supplyType || taxBreakup?.supplyType || null,
     remainingBalance: grandTotal,
+    createdByUserId: actorUserId,
+    createdByName: actorName,
+    createdBy: actorName || String(actorUserId || "").trim(),
     created_at: now,
     updated_at: now
   };
