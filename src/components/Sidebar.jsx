@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
+  Bell,
   Users,
   Boxes,
   ReceiptIndianRupee,
@@ -81,6 +82,7 @@ export default function Sidebar({ collapsed, onToggle }) {
   const items = useMemo(() => {
     const baseItems = [
       { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
+      { to: "/app/notifications", icon: Bell, label: "Notifications" },
       { to: "/app/parties", icon: Users, label: "Parties" },
       { to: "/app/items", icon: Boxes, label: "Items" },
       { to: "/app/sales/invoice", icon: ReceiptIndianRupee, label: "Invoices" },

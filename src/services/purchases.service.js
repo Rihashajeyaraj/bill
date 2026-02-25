@@ -266,7 +266,7 @@ export async function purchasesSyncFromRemote() {
     };
   });
   setAll(mapped);
-  triggerCreditLimitNotifications();
+  await triggerCreditLimitNotifications();
   return mapped;
 }
 
@@ -385,6 +385,6 @@ export async function purchasesCreate(bill) {
   };
 
   setAll([next, ...getAll()]);
-  triggerCreditLimitNotifications();
+  await triggerCreditLimitNotifications();
   return id;
 }

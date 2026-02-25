@@ -6,9 +6,9 @@ import {
 } from "../../services/storage";
 import { authGetOrganizationId, authGetUser } from "../../services/auth.service";
 import { companyGetProfile } from "../../services/company.service";
-import { listNotifications, pushNotification } from "../../services/activity.service";
 import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
 import { normalizeContactType, validateContactTax } from "../../services/customerTax";
+import { syncCreditMonitoringNotifications } from "../../services/creditNotifications.service";
 import type {
   CreditLimitType,
   LedgerEntry,
@@ -24,7 +24,7 @@ const CREDIT_NOTES_PREMIUM_KEY = "creditNotesPremiumV1";
 const PAYMENT_IN_PREMIUM_KEY = "paymentInPremiumV1";
 const DEBIT_NOTES_PREMIUM_KEY = "debitNotesPremiumV1";
 const PAYMENT_OUT_PREMIUM_KEY = "paymentOutPremiumV1";
-const ALERT_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+const DAILY_CREDIT_CHECK_KEY = "creditMonitoringDailyCheckDateV1";
 
 const SYSTEM_ACTOR = "System";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -497,7 +497,7 @@ export async function syncPartiesFromRemote(): Promise<PartyRecord[]> {
     });
   });
   lsSetOrganizationScoped(LS_KEYS.parties, mapped);
-  triggerCreditLimitNotifications(mapped);
+  await triggerCreditLimitNotifications(mapped);
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -595,7 +595,7 @@ export async function upsertPartyRemote(draft: PartyDraft, actor?: string): Prom
   const saved = mapRemoteParty(remoteRow);
   const nextList = basePartyList().filter((party: any) => party.id !== saved.id && party.id !== incoming.id);
   lsSetOrganizationScoped(LS_KEYS.parties, [saved, ...nextList]);
-  triggerCreditLimitNotifications([saved]);
+  await triggerCreditLimitNotifications([saved]);
   return saved;
 }
 
@@ -843,65 +843,46 @@ function computeMaxOverdueDays(party: PartyRecord) {
   return Math.max(0, maxOverdueDays);
 }
 
-function hasRecentAlert(alertKey: string) {
-  const cutoff = Date.now() - ALERT_COOLDOWN_MS;
-  return listNotifications().some((entry) => {
-    if (entry?.meta?.alertKey !== alertKey) return false;
-    const createdAt = new Date(entry?.createdAt || 0).getTime();
-    return createdAt >= cutoff;
-  });
-}
-
-function notifyPartyLimitExceeded(party: PartyRecord, financials: PartyFinancials) {
-  if (financials.amountExceeded !== true) return;
-  const alertKey = `party-credit-amount-${party.id}`;
-  if (hasRecentAlert(alertKey)) return;
-
-  pushNotification({
-    title: `${party.type} credit amount exceeded`,
-    description: `${party.name} outstanding ${financials.outstanding.toLocaleString(undefined, {
-      maximumFractionDigits: 2
-    })} exceeds limit ${financials.creditLimit.toLocaleString(undefined, {
-      maximumFractionDigits: 2
-    })}.`,
-    tone: "warning",
-    link: `/app/parties/${party.id}/statement`,
-    meta: {
-      alertKey,
-      partyId: party.id,
-      type: "credit-amount"
+function buildNotificationEvaluation(party: PartyRecord, financials: PartyFinancials) {
+  return {
+    partyId: party.id,
+    partyName: party.name,
+    partyType: party.type === "Supplier" ? "supplier" : "customer",
+    monitoringEnabled: !!party.creditLimitEnabled,
+    amount: {
+      exceeded: financials.amountExceeded === true,
+      limitValue: financials.creditLimit,
+      currentValue: financials.outstanding
+    },
+    days: {
+      exceeded: financials.overdueExceeded === true,
+      limitValue: financials.creditLimitDays,
+      currentValue: financials.maxOverdueDays
     }
-  });
+  };
 }
 
-function notifyPartyOverdueExceeded(party: PartyRecord, financials: PartyFinancials) {
-  if (financials.overdueExceeded !== true) return;
-  const alertKey = `party-credit-days-${party.id}`;
-  if (hasRecentAlert(alertKey)) return;
+export async function triggerCreditLimitNotifications(parties?: PartyRecord[]) {
+  const source = (Array.isArray(parties) && parties.length ? parties : listParties()).map(normalizeParty);
+  const evaluations = source.map((party) => buildNotificationEvaluation(party, computePartyFinancials(party)));
+  if (!evaluations.length) return;
 
-  pushNotification({
-    title: `${party.type} overdue days exceeded`,
-    description: `${party.name} is overdue by ${financials.maxOverdueDays} days (allowed ${financials.creditLimitDays} days).`,
-    tone: "warning",
-    link: `/app/parties/${party.id}/statement`,
-    meta: {
-      alertKey,
-      partyId: party.id,
-      type: "credit-days"
-    }
-  });
+  try {
+    await syncCreditMonitoringNotifications(evaluations, { source: "triggerCreditLimitNotifications" });
+  } catch (error) {
+    // Notification sync should not block invoice/payment/party flows.
+    console.warn("Credit notification sync failed", error);
+  }
 }
 
-export function triggerCreditLimitNotifications(parties?: PartyRecord[]) {
-  const source = (Array.isArray(parties) && parties.length ? parties : listParties())
-    .map(normalizeParty)
-    .filter((party) => party.creditLimitEnabled);
+export async function maybeRunDailyCreditMonitoringCheck() {
+  const today = new Date().toISOString().slice(0, 10);
+  const lastChecked = String(lsGetOrganizationScoped(DAILY_CREDIT_CHECK_KEY, "") || "");
+  if (lastChecked === today) return false;
 
-  source.forEach((party) => {
-    const financials = computePartyFinancials(party);
-    notifyPartyLimitExceeded(party, financials);
-    notifyPartyOverdueExceeded(party, financials);
-  });
+  await triggerCreditLimitNotifications();
+  lsSetOrganizationScoped(DAILY_CREDIT_CHECK_KEY, today);
+  return true;
 }
 
 export function computePartyFinancials(party: PartyRecord): PartyFinancials {

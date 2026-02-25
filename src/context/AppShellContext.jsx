@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { APP_NAV_ITEMS } from "../config/navigation";
 import { authGetRole } from "../services/auth.service";
@@ -7,12 +7,16 @@ import { isOwnerRole } from "../services/roles";
 import {
   ensureActivitySeed,
   listActivities,
-  listNotifications,
-  logActivity,
-  markAllNotificationsRead,
-  markNotificationRead,
-  pushNotification
+  logActivity
 } from "../services/activity.service";
+import {
+  CREDIT_NOTIFICATION_EVENT_NAME,
+  listCreditNotificationsCached,
+  markAllCreditNotificationsRead,
+  markCreditNotificationRead,
+  syncCreditNotificationsFromRemote
+} from "../services/creditNotifications.service";
+import { maybeRunDailyCreditMonitoringCheck } from "../modules/parties/store";
 
 const AppShellContext = createContext(null);
 
@@ -29,20 +33,39 @@ export function AppShellProvider({ children }) {
   const setupComplete = companyIsCompleted();
   const showCompanySetup = isOwnerRole(role) && !setupComplete;
 
-  function refreshFeeds() {
-    setNotifications(listNotifications());
+  const refreshFeeds = useCallback(async () => {
+    setNotifications(listCreditNotificationsCached());
     setActivities(listActivities(90));
-  }
+    try {
+      const synced = await syncCreditNotificationsFromRemote();
+      setNotifications(synced);
+    } catch {
+      // Continue with local notification cache.
+    }
+  }, []);
 
   useEffect(() => {
     ensureActivitySeed();
-    refreshFeeds();
-  }, []);
+    void maybeRunDailyCreditMonitoringCheck();
+    void refreshFeeds();
+  }, [refreshFeeds]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => refreshFeeds(), 60000);
+    const timer = window.setInterval(() => {
+      void maybeRunDailyCreditMonitoringCheck();
+      void refreshFeeds();
+    }, 60000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [refreshFeeds]);
+
+  useEffect(() => {
+    const onNotificationsUpdated = () => {
+      void refreshFeeds();
+    };
+
+    window.addEventListener(CREDIT_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
+    return () => window.removeEventListener(CREDIT_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
+  }, [refreshFeeds]);
 
   useEffect(() => {
     if (!location?.pathname) return;
@@ -51,8 +74,8 @@ export function AppShellProvider({ children }) {
     logActivity("Visited page", {
       path: location.pathname
     });
-    refreshFeeds();
-  }, [location.pathname]);
+    void refreshFeeds();
+  }, [location.pathname, refreshFeeds]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -88,22 +111,25 @@ export function AppShellProvider({ children }) {
     }
     setCommandOpen(false);
     setNotificationOpen(false);
-    refreshFeeds();
+    void refreshFeeds();
   }
 
-  function createNotification(payload) {
-    pushNotification(payload);
-    refreshFeeds();
+  async function readNotification(id) {
+    try {
+      await markCreditNotificationRead(id);
+    } catch {
+      // Continue using local cache if remote mark-read fails.
+    }
+    void refreshFeeds();
   }
 
-  function readNotification(id) {
-    markNotificationRead(id);
-    refreshFeeds();
-  }
-
-  function clearNotificationBadge() {
-    markAllNotificationsRead();
-    refreshFeeds();
+  async function clearNotificationBadge() {
+    try {
+      await markAllCreditNotificationsRead();
+    } catch {
+      // Continue using local cache if remote mark-read fails.
+    }
+    void refreshFeeds();
   }
 
   const commandItems = useMemo(
@@ -119,7 +145,7 @@ export function AppShellProvider({ children }) {
   );
 
   const unreadCount = useMemo(
-    () => notifications.filter((entry) => !entry.read).length,
+    () => notifications.filter((entry) => !entry.isRead).length,
     [notifications]
   );
 
@@ -136,7 +162,6 @@ export function AppShellProvider({ children }) {
       activities,
       unreadCount,
       navigateTo,
-      createNotification,
       readNotification,
       clearNotificationBadge,
       refreshFeeds
@@ -148,7 +173,8 @@ export function AppShellProvider({ children }) {
       commandItems,
       notifications,
       activities,
-      unreadCount
+      unreadCount,
+      refreshFeeds
     ]
   );
 

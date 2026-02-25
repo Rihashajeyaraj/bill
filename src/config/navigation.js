@@ -7,6 +7,7 @@ import {
   Building2,
   FileText,
   LayoutDashboard,
+  Bell,
   ReceiptIndianRupee,
   Settings,
   Users,
@@ -15,6 +16,7 @@ import {
 
 export const APP_NAV_ITEMS = [
   { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard", shortcut: "G D", section: "Overview" },
+  { to: "/app/notifications", icon: Bell, label: "Notifications", shortcut: "G N", section: "Overview" },
   { to: "/app/company-setup", icon: Building2, label: "Company Setup", shortcut: "G C", section: "Setup" },
 
   { to: "/app/parties", icon: Users, label: "Parties", shortcut: "G P", section: "Masters" },
@@ -38,5 +40,6 @@ export const APP_SHORTCUTS = [
   { label: "Open notifications", keys: "Alt + N" },
   { label: "Toggle theme", keys: "Alt + D" },
   { label: "Go to Dashboard", keys: "G then D" },
+  { label: "Go to Notifications", keys: "G then N" },
   { label: "Go to Reports", keys: "G then R" }
 ];

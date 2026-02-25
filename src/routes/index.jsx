@@ -25,6 +25,7 @@ import PaymentOutPremium from "../pages/purchases/PaymentOutPremium";
 import Expense from "../pages/purchases/Expense";
 
 import Reports from "../pages/Reports";
+import Notifications from "../pages/Notifications";
 import CompanySettings from "../pages/CompanySettings";
 import NotFound from "../pages/NotFound";
 
@@ -88,6 +89,7 @@ export const routes = [
 
               { path: "/app/cash-bank", element: <Navigate to="/dashboard" replace /> },
               { path: "/app/reports", element: <Reports /> },
+              { path: "/app/notifications", element: <Notifications /> },
               { path: "/app/company-settings", element: <CompanySettings /> },
               { path: "/app/backup", element: <Navigate to="/dashboard" replace /> },
               { path: "/app/help", element: <Navigate to="/dashboard" replace /> },

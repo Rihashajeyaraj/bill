@@ -1,6 +1,7 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import { triggerCreditLimitNotifications } from "../modules/parties/store";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -118,6 +119,12 @@ export function paymentsCreate(payment) {
     }
   }
 
+  console.log("[CreditMonitoring] Triggering notification check from paymentsCreate", {
+    paymentId: id,
+    direction: String(payment?.direction || "").toUpperCase(),
+    partyId: payment?.partyId || null
+  });
+  void triggerCreditLimitNotifications();
   return id;
 }
 
@@ -141,7 +148,15 @@ export async function syncPaymentInRemote(record) {
     throw new Error(normalizeSupabaseError(deleteError, "Failed to refresh payment-in rows"));
   }
 
-  if (!shouldPost) return;
+  if (!shouldPost) {
+    console.log("[CreditMonitoring] Triggering notification check from syncPaymentInRemote (non-posted)", {
+      paymentId: record?.id || null,
+      status: record?.status || null,
+      partyId: record?.customerId || null
+    });
+    await triggerCreditLimitNotifications();
+    return;
+  }
 
   const rows = [];
   const partyId = looksLikeUuid(record?.customerId) ? record.customerId : null;
@@ -219,7 +234,13 @@ export async function syncPaymentInRemote(record) {
       throw new Error(normalizeSupabaseError(insertError, "Failed to save payment-in rows"));
     }
   }
-
+  console.log("[CreditMonitoring] Triggering notification check from syncPaymentInRemote", {
+    paymentId: record?.id || null,
+    status: record?.status || null,
+    partyId: record?.customerId || null,
+    postedRows: rows.length
+  });
+  await triggerCreditLimitNotifications();
 }
 
 export async function syncPaymentOutRemote(record) {
@@ -242,7 +263,15 @@ export async function syncPaymentOutRemote(record) {
     throw new Error(normalizeSupabaseError(deleteError, "Failed to refresh payment-out rows"));
   }
 
-  if (!shouldPost) return;
+  if (!shouldPost) {
+    console.log("[CreditMonitoring] Triggering notification check from syncPaymentOutRemote (non-posted)", {
+      paymentId: record?.id || null,
+      status: record?.status || null,
+      partyId: record?.supplierId || null
+    });
+    await triggerCreditLimitNotifications();
+    return;
+  }
 
   const rows = [];
   const partyId = looksLikeUuid(record?.supplierId) ? record.supplierId : null;
@@ -317,5 +346,11 @@ export async function syncPaymentOutRemote(record) {
       throw new Error(normalizeSupabaseError(insertError, "Failed to save payment-out rows"));
     }
   }
-
+  console.log("[CreditMonitoring] Triggering notification check from syncPaymentOutRemote", {
+    paymentId: record?.id || null,
+    status: record?.status || null,
+    partyId: record?.supplierId || null,
+    postedRows: rows.length
+  });
+  await triggerCreditLimitNotifications();
 }

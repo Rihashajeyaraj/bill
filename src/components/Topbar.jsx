@@ -1,14 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, LogOut } from "lucide-react";
+import { Bell, ChevronDown, LogOut } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { authGetRole, authGetUser, authLogout } from "../services/auth.service";
 import { useOrganization } from "../context/OrganizationContext";
+import { useAppShell } from "../context/AppShellContext";
 
 export default function Topbar() {
   const nav = useNavigate();
   const user = authGetUser();
   const role = authGetRole();
   const { profile: company = {} } = useOrganization();
+  const { unreadCount } = useAppShell();
   const companyName = String(company?.companyName || "").trim();
 
   const [menu, setMenu] = useState(false);
@@ -91,44 +93,60 @@ export default function Topbar() {
           </div>
         </div>
 
-        <div className="relative" ref={menuRef}>
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setMenu((v) => !v)}
-            className="app-topbar-user-btn rounded-2xl px-3 py-2 shadow-soft flex items-center gap-2"
+            type="button"
+            onClick={() => nav("/app/notifications")}
+            className="relative rounded-2xl border border-slate-200 bg-white px-3 py-2 text-slate-700 shadow-soft hover:bg-slate-50"
+            aria-label="Open notifications"
           >
-            <div className="app-topbar-user-avatar h-8 w-8 rounded-2xl flex items-center justify-center text-xs font-bold">
-              {company?.logoBase64 ? (
-                <img
-                  src={company.logoBase64}
-                  alt="Company logo"
-                  className="h-full w-full rounded-2xl object-contain bg-white p-1"
-                />
-              ) : (
-                (companyName || user?.name || "U").slice(0, 1).toUpperCase()
-              )}
-            </div>
-            <div className="hidden sm:block text-left">
-              <p className="app-topbar-title text-sm font-semibold leading-4">{user?.name || "User"}</p>
-              <p className="app-topbar-subtitle text-xs leading-4">{role}</p>
-            </div>
-            <ChevronDown className="app-topbar-subtitle h-4 w-4" />
+            <Bell className="h-4 w-4" />
+            {unreadCount > 0 ? (
+              <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            ) : null}
           </button>
 
-          {menu ? (
-            <div className="app-topbar-menu absolute right-0 mt-2 w-56 rounded-2xl shadow-soft overflow-hidden">
-              <div className="app-topbar-menu-heading px-4 py-3">
-                <p className="app-topbar-title text-sm font-semibold">{user?.email}</p>
-                <p className="app-topbar-subtitle text-xs">Role: {role}</p>
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setMenu((v) => !v)}
+              className="app-topbar-user-btn rounded-2xl px-3 py-2 shadow-soft flex items-center gap-2"
+            >
+              <div className="app-topbar-user-avatar h-8 w-8 rounded-2xl flex items-center justify-center text-xs font-bold">
+                {company?.logoBase64 ? (
+                  <img
+                    src={company.logoBase64}
+                    alt="Company logo"
+                    className="h-full w-full rounded-2xl object-contain bg-white p-1"
+                  />
+                ) : (
+                  (companyName || user?.name || "U").slice(0, 1).toUpperCase()
+                )}
               </div>
-              <button
-                onClick={logout}
-                className="app-topbar-menu-btn w-full px-4 py-3 text-left text-sm font-semibold flex items-center gap-2"
-              >
-                <LogOut className="h-4 w-4" />
-                Logout
-              </button>
-            </div>
-          ) : null}
+              <div className="hidden sm:block text-left">
+                <p className="app-topbar-title text-sm font-semibold leading-4">{user?.name || "User"}</p>
+                <p className="app-topbar-subtitle text-xs leading-4">{role}</p>
+              </div>
+              <ChevronDown className="app-topbar-subtitle h-4 w-4" />
+            </button>
+
+            {menu ? (
+              <div className="app-topbar-menu absolute right-0 mt-2 w-56 rounded-2xl shadow-soft overflow-hidden">
+                <div className="app-topbar-menu-heading px-4 py-3">
+                  <p className="app-topbar-title text-sm font-semibold">{user?.email}</p>
+                  <p className="app-topbar-subtitle text-xs">Role: {role}</p>
+                </div>
+                <button
+                  onClick={logout}
+                  className="app-topbar-menu-btn w-full px-4 py-3 text-left text-sm font-semibold flex items-center gap-2"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Logout
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </header>

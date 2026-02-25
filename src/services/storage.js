@@ -17,7 +17,11 @@ export const LS_KEYS = {
   creditNotes: "creditNotes",
   purchases: "purchases",
   payments: "payments",
-  expenses: "expenses"
+  expenses: "expenses",
+  app_notifications: "app_notifications",
+  credit_notifications: "credit_notifications",
+  activity_logs: "activity_logs",
+  auto_backup_reminder: "auto_backup_reminder"
 };
 
 const failedOrgMigrationKeys = new Set();

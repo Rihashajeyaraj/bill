@@ -2,11 +2,31 @@ import React from "react";
 import { Bell, BellRing, CheckCheck, Clock3, X } from "lucide-react";
 import { useAppShell } from "../../context/AppShellContext";
 
-function toneClass(tone) {
-  if (tone === "success") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (tone === "warning") return "border-amber-200 bg-amber-50 text-amber-700";
-  if (tone === "error") return "border-rose-200 bg-rose-50 text-rose-700";
-  return "border-blue-200 bg-blue-50 text-blue-700";
+function formatValue(entry) {
+  if (entry?.alertType === "days") return `${Math.trunc(Number(entry?.currentValue || 0))}`;
+  return Number(entry?.currentValue || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function formatLimit(entry) {
+  if (entry?.alertType === "days") return `${Math.trunc(Number(entry?.limitValue || 0))}`;
+  return Number(entry?.limitValue || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function alertLabel(entry) {
+  return entry?.alertType === "days" ? "Overdue Days" : "Amount Limit";
+}
+
+function alertDescription(entry) {
+  if (entry?.alertType === "days") {
+    return `${formatValue(entry)} days exceeded the allowed ${formatLimit(entry)} days.`;
+  }
+  return `${formatValue(entry)} exceeded the limit ${formatLimit(entry)}.`;
 }
 
 export default function NotificationCenter() {
@@ -30,7 +50,7 @@ export default function NotificationCenter() {
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
             <div>
               <p className="text-sm font-semibold text-slate-900">Notifications</p>
-              <p className="text-xs text-slate-500">Alerts, reminders, and activity feed</p>
+              <p className="text-xs text-slate-500">Credit monitoring alerts and activity feed</p>
             </div>
             <button
               type="button"
@@ -44,7 +64,9 @@ export default function NotificationCenter() {
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5">
             <button
               type="button"
-              onClick={clearNotificationBadge}
+              onClick={() => {
+                void clearNotificationBadge();
+              }}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
             >
               <CheckCheck className="h-3.5 w-3.5" />
@@ -62,21 +84,34 @@ export default function NotificationCenter() {
                       key={entry.id}
                       type="button"
                       onClick={() => {
-                        readNotification(entry.id);
-                        if (entry.link) {
-                          navigateTo(entry.link, { log: false });
+                        void readNotification(entry.id);
+                        if (entry.partyId) {
+                          navigateTo(`/app/parties/${entry.partyId}/statement`, { log: false });
+                          return;
                         }
+                        navigateTo("/app/notifications", { log: false });
                       }}
-                      className={`w-full rounded-2xl border px-3 py-2 text-left ${toneClass(entry.tone)} ${
-                        entry.read ? "opacity-70" : ""
-                      }`}
+                      className={`w-full rounded-2xl border px-3 py-2 text-left ${
+                        entry.isRead
+                          ? "border-rose-200 bg-rose-50/40"
+                          : "border-rose-200 bg-rose-50"
+                      } ${entry.isRead ? "opacity-75" : ""}`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-semibold">{entry.title}</p>
-                        {entry.read ? <Bell className="h-3.5 w-3.5" /> : <BellRing className="h-3.5 w-3.5" />}
+                        <p className="text-sm font-semibold text-slate-900">
+                          {entry.partyName || "Party"} ({entry.partyType === "supplier" ? "Supplier" : "Customer"})
+                        </p>
+                        {entry.isRead ? (
+                          <Bell className="h-3.5 w-3.5 text-slate-500" />
+                        ) : (
+                          <BellRing className="h-3.5 w-3.5 text-rose-600" />
+                        )}
                       </div>
-                      {entry.description ? <p className="mt-1 text-xs">{entry.description}</p> : null}
-                      <p className="mt-1 text-[11px] opacity-80">{new Date(entry.createdAt).toLocaleString()}</p>
+                      <p className="mt-1 text-xs font-semibold text-rose-700">{alertLabel(entry)}</p>
+                      <p className="mt-1 text-xs text-slate-700">{alertDescription(entry)}</p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {new Date(entry.createdAt).toLocaleString()}
+                      </p>
                     </button>
                   ))
                 ) : (
@@ -94,7 +129,9 @@ export default function NotificationCenter() {
                   activities.map((entry) => (
                     <div key={entry.id} className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
                       <p className="text-sm font-semibold text-slate-800">{entry.action}</p>
-                      <p className="mt-1 text-[11px] text-slate-500">{new Date(entry.createdAt).toLocaleString()}</p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {new Date(entry.createdAt).toLocaleString()}
+                      </p>
                     </div>
                   ))
                 ) : (

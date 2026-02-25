@@ -58,6 +58,7 @@ function SessionAndShellLayer({ children }) {
           if (isEditableTarget(nextEvent.target)) return;
           const key = nextEvent.key.toLowerCase();
           if (key === "d") navigateTo("/dashboard");
+          if (key === "n") navigateTo("/app/notifications");
           if (key === "r") navigateTo("/app/reports");
           if (key === "p") navigateTo("/app/parties");
           if (key === "i") navigateTo("/app/items");

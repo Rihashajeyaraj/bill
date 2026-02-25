@@ -312,7 +312,7 @@ export async function invoicesSyncFromRemote() {
   );
 
   setAll(mapped);
-  triggerCreditLimitNotifications();
+  await triggerCreditLimitNotifications();
   return mapped;
 }
 
@@ -437,6 +437,11 @@ export async function invoicesCreate(invoice) {
   };
 
   setAll([next, ...getAll().filter((entry) => entry.id !== id && entry.invoiceNo !== invoiceNo)]);
-  triggerCreditLimitNotifications();
+  console.log("[CreditMonitoring] Triggering notification check from invoicesCreate", {
+    invoiceId: id,
+    invoiceNo,
+    partyId: next?.partyId || null
+  });
+  await triggerCreditLimitNotifications();
   return id;
 }
