@@ -1,41 +1,31 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { ImagePlus, Search, Settings, X } from "lucide-react";
-import clsx from "clsx";
 
+import React, { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import clsx from "clsx";
+import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import Card from "../components/Card";
 import FormField from "../components/FormField";
 import GradientButton from "../components/GradientButton";
 import Modal from "../components/Modal";
-import TaxDropdown from "../components/TaxDropdown";
-import UnitPickerModal from "../components/UnitPickerModal";
+import FormSection from "../components/FormSection";
 import { getNextItemCode, upsertItemRemote } from "../modules/items/store";
+import { buildTaxLabel, parseNumber } from "../modules/items/utils";
+import {
+  defaultTrackInventoryForType,
+  inferTypeFromCategory,
+  normalizeItemTypeValue,
+  shouldShowIndiaComplianceFields,
+  shouldShowInventoryFields,
+  shouldShowInventorySection,
+  taxHintForCountry,
+  taxRateLabelForCountry
+} from "../modules/items/formRules";
 import { useOrganization } from "../context/OrganizationContext";
-import { UI } from "../theme/tokens";
-
-const DEFAULT_ITEM = {
-  type: "PRODUCT",
-  itemName: "",
-  hsn: "",
-  unit: "pcs",
-  imageUrl: "",
-  category: "",
-  itemCode: "",
-  salePrice: "",
-  salePriceTaxMode: "WITHOUT_TAX",
-  purchasePrice: "",
-  purchasePriceTaxMode: "WITHOUT_TAX",
-  discountValue: "",
-  discountType: "PERCENT",
-  taxLabel: "None",
-  trackStock: false,
-  openingQty: "",
-  lowStockQty: "",
-  warehouse: ""
-};
+import { useToast } from "../context/ToastContext";
 
 const CATEGORY_KEY = "itemCategories";
 const DEFAULT_CATEGORIES = ["General", "Granite", "Services", "Hardware"];
+const UNITS = ["pcs", "kg", "box", "litre", "mtr", "set", "hr"];
 const PRICE_TAX_MODES = [
   { value: "WITH_TAX", label: "With Tax" },
   { value: "WITHOUT_TAX", label: "Without Tax" }
@@ -44,504 +34,864 @@ const DISCOUNT_TYPES = [
   { value: "PERCENT", label: "Percentage" },
   { value: "AMOUNT", label: "Amount" }
 ];
-
-const COUNTRY_MAP = {
+const COUNTRY_CODE_MAP = {
   IN: "India",
   LK: "Sri Lanka",
-  UK: "United Kingdom",
   GB: "United Kingdom",
-  IE: "Ireland"
+  IE: "Ireland",
+  AE: "UAE",
+  US: "USA"
 };
 
-function normalizeCountry(value) {
-  if (!value) return "";
-  const trimmed = String(value).trim();
-  if (trimmed.length === 2) return COUNTRY_MAP[trimmed.toUpperCase()] || trimmed;
-  return trimmed;
+function normalizeCompanyCountry(rawCountry, rawCountryCode) {
+  const direct = String(rawCountry || "").trim();
+  if (direct) return direct;
+  const code = String(rawCountryCode || "")
+    .trim()
+    .toUpperCase();
+  return COUNTRY_CODE_MAP[code] || "India";
 }
 
-function parseTaxRate(label) {
-  const match = String(label || "").match(/@([0-9.]+)%/);
-  if (!match) return 0;
-  return Number(match[1]) || 0;
+function toStoreType(typeValue) {
+  return normalizeItemTypeValue(typeValue) === "SERVICE" ? "Service" : "Product";
+}
+
+function createPriceLevel() {
+  return {
+    id: `pl_${Date.now().toString(16)}_${Math.floor(Math.random() * 1000)}`,
+    label: "",
+    price: 0
+  };
+}
+
+function createTaxMapping(country, rate) {
+  return {
+    id: `tm_${Date.now().toString(16)}_${Math.floor(Math.random() * 1000)}`,
+    country: String(country || "").trim(),
+    rate: parseNumber(rate)
+  };
+}
+
+function createDraft(type = "PRODUCT") {
+  const normalizedType = normalizeItemTypeValue(type);
+  return {
+    type: normalizedType,
+    itemName: "",
+    category: "",
+    unit: "pcs",
+    status: "Active",
+    description: "",
+    salePrice: 0,
+    purchasePrice: 0,
+    taxRate: 0,
+    taxInclusive: false,
+    hsnOrSac: "",
+    trackInventory: defaultTrackInventoryForType(normalizedType),
+    openingQty: 0,
+    openingStockValue: 0,
+    lowStockQty: 0,
+    sku: "",
+    barcode: "",
+    priceLevels: [],
+    taxMappings: [],
+    salePriceTaxMode: "WITHOUT_TAX",
+    purchasePriceTaxMode: "WITHOUT_TAX",
+    discountValue: 0,
+    discountType: "PERCENT",
+    warehouse: "",
+    imageUrl: "",
+    itemCode: getNextItemCode(toStoreType(normalizedType))
+  };
+}
+
+function readInitialCategories() {
+  try {
+    const raw = localStorage.getItem(CATEGORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(parsed) ? parsed : [];
+    return Array.from(new Set([...DEFAULT_CATEGORIES, ...list]));
+  } catch {
+    return DEFAULT_CATEGORIES;
+  }
+}
+
+function moneyLike(value) {
+  return parseNumber(value).toFixed(2);
 }
 
 export default function ItemCreate() {
-  const { country: organizationCountry = "", countryCode: organizationCountryCode = "" } = useOrganization();
   const nav = useNavigate();
-  const [item, setItem] = useState(DEFAULT_ITEM);
-  const [tab, setTab] = useState("pricing");
-  const [unitOpen, setUnitOpen] = useState(false);
-  const [companyCountry, setCompanyCountry] = useState("India");
-  const [categoryOpen, setCategoryOpen] = useState(false);
+  const toast = useToast();
+  const { country: organizationCountry = "", countryCode: organizationCountryCode = "", profile: organizationProfile = {} } =
+    useOrganization();
+  const companyCountry = useMemo(
+    () => normalizeCompanyCountry(organizationCountry, organizationCountryCode),
+    [organizationCountry, organizationCountryCode]
+  );
+
+  const [form, setForm] = useState(() => createDraft("PRODUCT"));
+  const [errors, setErrors] = useState({});
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [categories, setCategories] = useState(readInitialCategories);
   const [newCategory, setNewCategory] = useState("");
-  const [categories, setCategories] = useState(() => {
-    try {
-      const raw = localStorage.getItem(CATEGORY_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      const list = Array.isArray(parsed) ? parsed : [];
-      return Array.from(new Set([...DEFAULT_CATEGORIES, ...list]));
-    } catch {
-      return DEFAULT_CATEGORIES;
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+
+  const showIndiaCompliance = shouldShowIndiaComplianceFields(companyCountry);
+  const taxRateLabel = taxRateLabelForCountry(companyCountry);
+  const taxHint = taxHintForCountry(companyCountry);
+  const showInventoryCard = shouldShowInventorySection(form.type, form.trackInventory);
+  const showInventoryInputs = shouldShowInventoryFields(form.type, form.trackInventory);
+  const complianceCodeLabel = form.type === "SERVICE" ? "SAC" : "HSN";
+  const itemTypeLabel = form.type === "SERVICE" ? "Service" : "Product";
+  const multiCountryEnabled =
+    !!organizationProfile?.settings?.numbering?.allowCountryOverride ||
+    !!organizationProfile?.settings?.preferences?.multiCurrency;
+  const inputClassName =
+    "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100";
+  const errorClassName = "mt-1 text-xs font-medium text-rose-600";
+
+  const summaryName = form.itemName.trim() || `Untitled ${itemTypeLabel.toLowerCase()}`;
+  const summaryTaxType = showIndiaCompliance ? "GST" : "Tax/VAT";
+  const summaryTaxRate = `${parseNumber(form.taxRate)}%`;
+
+  function updateField(key, value) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    setErrors((prev) => {
+      if (!prev?.[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function rememberCategory(name) {
+    const clean = String(name || "").trim();
+    if (!clean) return;
+    setCategories((prev) => {
+      const exists = prev.some((entry) => entry.toLowerCase() === clean.toLowerCase());
+      if (exists) return prev;
+      const next = [...prev, clean];
+      localStorage.setItem(CATEGORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function applyType(nextTypeValue) {
+    const nextType = normalizeItemTypeValue(nextTypeValue);
+    setForm((prev) => {
+      if (prev.type === nextType) return prev;
+      const currentCode = String(prev.itemCode || "").trim();
+      const expectedPrefix = nextType === "SERVICE" ? "SER-" : "PRD-";
+      const keepCurrentCode = !!currentCode && currentCode.toUpperCase().startsWith(expectedPrefix);
+      const nextTrackInventory =
+        nextType === "SERVICE"
+          ? false
+          : prev.type === "SERVICE"
+            ? defaultTrackInventoryForType(nextType)
+            : !!prev.trackInventory;
+
+      return {
+        ...prev,
+        type: nextType,
+        trackInventory: nextTrackInventory,
+        itemCode: keepCurrentCode ? currentCode : getNextItemCode(toStoreType(nextType)),
+        openingQty: nextType === "SERVICE" ? 0 : prev.openingQty,
+        openingStockValue: nextType === "SERVICE" ? 0 : prev.openingStockValue,
+        lowStockQty: nextType === "SERVICE" ? 0 : prev.lowStockQty
+      };
+    });
+  }
+
+  function addPriceLevel() {
+    setForm((prev) => ({ ...prev, priceLevels: [...prev.priceLevels, createPriceLevel()] }));
+  }
+
+  function updatePriceLevel(id, patch) {
+    setForm((prev) => ({
+      ...prev,
+      priceLevels: prev.priceLevels.map((level) => (level.id === id ? { ...level, ...patch } : level))
+    }));
+  }
+
+  function removePriceLevel(id) {
+    setForm((prev) => ({
+      ...prev,
+      priceLevels: prev.priceLevels.filter((level) => level.id !== id)
+    }));
+  }
+
+  function addTaxMapping() {
+    setForm((prev) => ({
+      ...prev,
+      taxMappings: [...prev.taxMappings, createTaxMapping(companyCountry, prev.taxRate)]
+    }));
+  }
+
+  function updateTaxMapping(id, patch) {
+    setForm((prev) => ({
+      ...prev,
+      taxMappings: prev.taxMappings.map((row) => (row.id === id ? { ...row, ...patch } : row))
+    }));
+  }
+
+  function removeTaxMapping(id) {
+    setForm((prev) => ({
+      ...prev,
+      taxMappings: prev.taxMappings.filter((row) => row.id !== id)
+    }));
+  }
+
+  function validate() {
+    const nextErrors = {};
+    if (!String(form.itemName || "").trim()) nextErrors.itemName = "Item name is required.";
+    if (parseNumber(form.salePrice) < 0) nextErrors.salePrice = "Sales rate cannot be negative.";
+    if (parseNumber(form.purchasePrice) < 0) nextErrors.purchasePrice = "Purchase rate cannot be negative.";
+    if (parseNumber(form.taxRate) < 0) nextErrors.taxRate = `${taxRateLabel} cannot be negative.`;
+    if (showInventoryInputs && parseNumber(form.openingQty) < 0) nextErrors.openingQty = "Opening stock cannot be negative.";
+    if (showInventoryInputs && parseNumber(form.openingStockValue) < 0) {
+      nextErrors.openingStockValue = "Opening stock value cannot be negative.";
     }
-  });
+    if (showInventoryInputs && parseNumber(form.lowStockQty) < 0) nextErrors.lowStockQty = "Low stock alert cannot be negative.";
 
-  useEffect(() => {
-    const normalized = normalizeCountry(organizationCountry || organizationCountryCode);
-    if (normalized) {
-      setCompanyCountry(normalized);
-      return;
-    }
-    const fallback = normalizeCountry(localStorage.getItem("companyCountryCode"));
-    if (fallback) setCompanyCountry(fallback);
-  }, [organizationCountry, organizationCountryCode]);
-
-  const isIndia = useMemo(() => companyCountry === "India", [companyCountry]);
-  const isValid = item.itemName.trim().length > 0;
-
-  function updateItem(patch) {
-    setItem((prev) => ({ ...prev, ...patch }));
+    setErrors(nextErrors);
+    return !Object.keys(nextErrors).length;
   }
 
-  function toggleType() {
-    updateItem({ type: item.type === "PRODUCT" ? "SERVICE" : "PRODUCT" });
-  }
+  async function saveItem(mode = "save") {
+    if (saving) return;
+    if (!validate()) return;
 
-  function handleAssignCode() {
-    updateItem({ itemCode: getNextItemCode(item.type === "SERVICE" ? "Service" : "Product") });
-  }
+    setSaving(true);
+    setSaveError("");
 
-  function handleLogoFile(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => updateItem({ imageUrl: reader.result });
-    reader.readAsDataURL(file);
-  }
+    const numericTaxRate = parseNumber(form.taxRate);
+    const trimmedCode = String(form.hsnOrSac || "").trim();
+    const normalizedPriceLevels = form.priceLevels
+      .map((row) => ({
+        ...row,
+        label: String(row.label || "").trim(),
+        price: parseNumber(row.price)
+      }))
+      .filter((row) => row.label);
+    const normalizedTaxMappings = (multiCountryEnabled ? form.taxMappings : [])
+      .map((row) => ({
+        ...row,
+        country: String(row.country || "").trim(),
+        rate: parseNumber(row.rate)
+      }))
+      .filter((row) => row.country);
 
-  async function saveItem(mode) {
-    if (!isValid) return;
-    const taxRate = parseTaxRate(item.taxLabel);
-    try {
-      await upsertItemRemote(
-        {
-          name: item.itemName,
-          type: item.type === "PRODUCT" ? "Product" : "Service",
-          salesRate: Number(item.salePrice || 0),
-          purchaseRate: Number(item.purchasePrice || 0),
-          unit: item.unit || "pcs",
-          taxRate,
-          taxLabel: item.taxLabel,
-          openingStock: item.trackStock ? Number(item.openingQty || 0) : 0,
-          hsn: item.type === "PRODUCT" ? item.hsn : "",
-          sac: item.type === "SERVICE" ? item.hsn : "",
-          trackInventory: !!item.trackStock,
-          lowStockAlert: Number(item.lowStockQty || 0),
-          status: "Active",
-          category: item.category,
-          itemCode: item.itemCode,
-          sku: item.itemCode,
-          metadata: {
-            category: item.category,
-            itemCode: item.itemCode,
-            salePriceTaxMode: item.salePriceTaxMode,
-            purchasePrice: item.purchasePrice,
-            purchasePriceTaxMode: item.purchasePriceTaxMode,
-            discountValue: item.discountValue,
-            discountType: item.discountType,
-            trackStock: item.trackStock,
-            lowStockQty: item.lowStockQty,
-            warehouse: item.warehouse,
-            imageUrl: item.imageUrl
-          }
-        },
-        companyCountry
-      );
-      localStorage.setItem("itemsDraft", JSON.stringify(item));
-      if (mode === "new") {
-        setItem(DEFAULT_ITEM);
-        setTab("pricing");
-        return;
+    const payload = {
+      name: String(form.itemName || "").trim(),
+      type: toStoreType(form.type),
+      description: String(form.description || "").trim(),
+      unit: String(form.unit || "pcs").trim() || "pcs",
+      salesRate: parseNumber(form.salePrice),
+      purchaseRate: parseNumber(form.purchasePrice),
+      taxRate: numericTaxRate,
+      taxLabel: buildTaxLabel(companyCountry, numericTaxRate),
+      taxInclusive: !!form.taxInclusive,
+      status: form.status === "Inactive" ? "Inactive" : "Active",
+      trackInventory: !!showInventoryInputs,
+      openingStock: showInventoryInputs ? parseNumber(form.openingQty) : 0,
+      openingStockValue: showInventoryInputs ? parseNumber(form.openingStockValue) : 0,
+      lowStockAlert: showInventoryInputs ? parseNumber(form.lowStockQty) : 0,
+      category: String(form.category || "").trim(),
+      itemCode: String(form.itemCode || "").trim(),
+      sku: String(form.sku || "").trim() || String(form.itemCode || "").trim(),
+      barcode: String(form.barcode || "").trim(),
+      priceLevels: normalizedPriceLevels,
+      taxMappings: normalizedTaxMappings,
+      hsn: showIndiaCompliance && form.type === "PRODUCT" ? trimmedCode : "",
+      sac: showIndiaCompliance && form.type === "SERVICE" ? trimmedCode : "",
+      gstPercent: showIndiaCompliance ? numericTaxRate : 0,
+      taxPercent: showIndiaCompliance ? 0 : numericTaxRate,
+      hsnOrSac: showIndiaCompliance ? trimmedCode : "",
+      metadata: {
+        category: String(form.category || "").trim(),
+        itemCode: String(form.itemCode || "").trim(),
+        sku: String(form.sku || "").trim() || String(form.itemCode || "").trim(),
+        barcode: String(form.barcode || "").trim(),
+        description: String(form.description || "").trim(),
+        purchasePrice: parseNumber(form.purchasePrice),
+        taxInclusive: !!form.taxInclusive,
+        salePriceTaxMode: form.taxInclusive ? "WITH_TAX" : form.salePriceTaxMode,
+        purchasePriceTaxMode: form.taxInclusive ? "WITH_TAX" : form.purchasePriceTaxMode,
+        discountValue: parseNumber(form.discountValue),
+        discountType: form.discountType,
+        trackStock: !!showInventoryInputs,
+        openingStock: showInventoryInputs ? parseNumber(form.openingQty) : 0,
+        openingQty: showInventoryInputs ? parseNumber(form.openingQty) : 0,
+        openingStockValue: showInventoryInputs ? parseNumber(form.openingStockValue) : 0,
+        lowStockQty: showInventoryInputs ? parseNumber(form.lowStockQty) : 0,
+        warehouse: String(form.warehouse || "").trim(),
+        imageUrl: String(form.imageUrl || "").trim(),
+        gstPercent: showIndiaCompliance ? numericTaxRate : 0,
+        taxPercent: showIndiaCompliance ? 0 : numericTaxRate,
+        hsnOrSac: showIndiaCompliance ? trimmedCode : "",
+        priceLevels: normalizedPriceLevels,
+        taxMappings: normalizedTaxMappings
       }
-      nav("/items", { replace: true });
+    };
+
+    try {
+      await upsertItemRemote(payload, companyCountry);
+      if (mode === "new") {
+        setForm(createDraft(form.type));
+      } else {
+        nav("/items", { replace: true });
+      }
+      toast.success(`${itemTypeLabel} saved`, `Saved for ${companyCountry}.`);
     } catch (error) {
-      window.alert(error?.message || "Failed to save item.");
+      const message = error?.message || "Failed to save item.";
+      setSaveError(message);
+      toast.error("Failed to save item", message);
+    } finally {
+      setSaving(false);
     }
-  }
-
-  function handleCategoryChange(value) {
-    if (value === "__add__") {
-      setCategoryOpen(true);
-      return;
-    }
-    updateItem({ category: value });
-  }
-
-  function saveCategory() {
-    const name = newCategory.trim();
-    if (!name) return;
-    const exists = categories.some((c) => c.toLowerCase() === name.toLowerCase());
-    const next = exists ? categories : [...categories, name];
-    setCategories(next);
-    localStorage.setItem(CATEGORY_KEY, JSON.stringify(next));
-    updateItem({ category: name });
-    setNewCategory("");
-    setCategoryOpen(false);
   }
 
   return (
-    <div className="max-w-6xl">
-      <Card className="p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-            <div className="flex flex-wrap items-center gap-4">
-              <h1 className="text-lg font-semibold text-slate-900">Add Item</h1>
-              <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
-                <button
-                  type="button"
-                  onClick={() => updateItem({ type: "PRODUCT" })}
-                  className={clsx(item.type === "PRODUCT" ? "text-slate-900" : "text-slate-400")}
-                >
-                  Product
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleType}
-                  className={clsx(
-                    "relative h-7 w-12 rounded-full border transition-colors",
-                    item.type === "SERVICE" ? "border-emerald-400 bg-emerald-400" : "border-slate-200 bg-slate-200"
-                  )}
-                  aria-pressed={item.type === "SERVICE"}
-                >
-                  <span
-                    className={clsx(
-                      "absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform",
-                      item.type === "SERVICE" ? "translate-x-5" : "translate-x-0"
-                    )}
-                  />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateItem({ type: "SERVICE" })}
-                className={clsx(item.type === "SERVICE" ? "text-slate-900" : "text-slate-400")}
-              >
-                Service
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button className="h-9 w-9 rounded-2xl border border-slate-100 bg-white hover:bg-slate-50 flex items-center justify-center">
-              <Settings className="h-4 w-4 text-slate-500" />
-            </button>
-            <button
-              onClick={() => nav("/items")}
-              className="h-9 w-9 rounded-2xl border border-slate-100 bg-white hover:bg-slate-50 flex items-center justify-center"
-            >
-              <X className="h-4 w-4 text-slate-600" />
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-5 grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <div className="lg:col-span-5">
-            <FormField label="Item Name *">
-              <input
-                value={item.itemName}
-                onChange={(e) => updateItem({ itemName: e.target.value })}
-                className="w-full rounded-3xl border border-slate-100 px-4 py-2.5 text-sm outline-none focus:ring-4"
-                style={{ "--tw-ring-color": UI.COLORS.ring }}
-                placeholder="Enter item name"
-              />
-            </FormField>
-          </div>
-
-          <div className="lg:col-span-3">
-            <FormField label="Item HSN (optional)">
-              <div className="relative">
-                <Search className="h-4 w-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
-                <input
-                  value={item.hsn}
-                  onChange={(e) => updateItem({ hsn: e.target.value })}
-                  className="w-full rounded-3xl border border-slate-100 px-4 py-2.5 text-sm outline-none"
-                  placeholder="HSN code"
-                />
-              </div>
-            </FormField>
-          </div>
-
-          <div className="lg:col-span-2">
-            <FormField label="Unit">
-              <button
-                type="button"
-                onClick={() => setUnitOpen(true)}
-                className="w-full rounded-3xl border border-slate-100 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-              >
-                {item.unit ? `Select Unit (${item.unit})` : "Select Unit"}
-              </button>
-            </FormField>
-          </div>
-
-          <div className="lg:col-span-2">
-            <FormField label="Item Image">
-              <label className="flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-3xl border border-slate-100 bg-white text-sm font-semibold text-slate-600 hover:bg-slate-50">
-                <ImagePlus className="h-4 w-4" />
-                Add Item Image
-                <input type="file" accept="image/*" onChange={handleLogoFile} className="hidden" />
-              </label>
-            </FormField>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <div className="lg:col-span-4">
-            <FormField label="Category">
-              <select
-                value={item.category}
-                onChange={(e) => handleCategoryChange(e.target.value)}
-                className="w-full rounded-3xl border border-slate-100 bg-white px-4 py-2.5 text-sm outline-none"
-              >
-                {categories.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-                <option value="__add__">+ Add Category</option>
-              </select>
-            </FormField>
-          </div>
-
-          <div className="lg:col-span-4">
-            <FormField label="Item Code">
-              <input
-                value={item.itemCode}
-                onChange={(e) => updateItem({ itemCode: e.target.value })}
-                className="w-full rounded-3xl border border-slate-100 px-4 py-2.5 text-sm outline-none"
-                placeholder="Item code"
-              />
-            </FormField>
-          </div>
-
-          <div className="lg:col-span-2 flex items-end">
+    <div className="mx-auto max-w-[1180px] pb-32">
+      <Card className="overflow-hidden border border-slate-200 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 md:px-6">
+          <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={handleAssignCode}
-              className="w-full rounded-3xl border border-slate-100 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+              onClick={() => nav("/items")}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
             >
-              Assign Code
+              <ArrowLeft className="h-4 w-4" />
             </button>
+            <div>
+              <h1 className="text-base font-semibold text-slate-900">Create Product / Service</h1>
+              <p className="text-xs text-slate-500">Fast entry first, advanced controls below.</p>
+            </div>
+          </div>
+          <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+            Company Country: {companyCountry}
           </div>
         </div>
 
-        <div className="mt-6 border-b border-slate-100 flex gap-6">
-          <button
-            type="button"
-            onClick={() => setTab("pricing")}
-            className={clsx(
-              "pb-3 text-sm font-semibold",
-              tab === "pricing"
-                ? "text-rose-500 border-b-2 border-rose-500"
-                : "text-slate-400 border-b-2 border-transparent"
-            )}
-          >
-            Pricing
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("stock")}
-            className={clsx(
-              "pb-3 text-sm font-semibold",
-              tab === "stock"
-                ? "text-rose-500 border-b-2 border-rose-500"
-                : "text-slate-400 border-b-2 border-transparent"
-            )}
-          >
-            Stock
-          </button>
-        </div>
-
-        {tab === "pricing" ? (
-          <div className="mt-6 space-y-4">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="rounded-3xl border border-slate-100 p-4">
-                <p className="text-sm font-semibold text-slate-900">Sale Price</p>
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <input
-                    value={item.salePrice}
-                    onChange={(e) => updateItem({ salePrice: e.target.value })}
-                    className="rounded-2xl border border-slate-100 px-3 py-2 text-sm outline-none"
-                    placeholder="Sale Price"
-                  />
-                  <select
-                    value={item.salePriceTaxMode}
-                    onChange={(e) => updateItem({ salePriceTaxMode: e.target.value })}
-                    className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none"
-                  >
-                    {PRICE_TAX_MODES.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    value={item.discountValue}
-                    onChange={(e) => updateItem({ discountValue: e.target.value })}
-                    className="rounded-2xl border border-slate-100 px-3 py-2 text-sm outline-none"
-                    placeholder="Disc. On Sale Price"
-                  />
-                  <select
-                    value={item.discountType}
-                    onChange={(e) => updateItem({ discountType: e.target.value })}
-                    className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none"
-                  >
-                    {DISCOUNT_TYPES.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <button className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-blue-600">
-                  + Add Wholesale Price
-                </button>
-              </div>
-
-              <div className="rounded-3xl border border-slate-100 p-4">
-                <p className="text-sm font-semibold text-slate-900">Purchase Price</p>
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <input
-                    value={item.purchasePrice}
-                    onChange={(e) => updateItem({ purchasePrice: e.target.value })}
-                    className="rounded-2xl border border-slate-100 px-3 py-2 text-sm outline-none"
-                    placeholder="Purchase Price"
-                  />
-                  <select
-                    value={item.purchasePriceTaxMode}
-                    onChange={(e) => updateItem({ purchasePriceTaxMode: e.target.value })}
-                    className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none"
-                  >
-                    {PRICE_TAX_MODES.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-slate-100 p-4">
-              <p className="text-sm font-semibold text-slate-900">
-                {isIndia ? "GST / IGST" : "VAT"}
-              </p>
-              <div className="mt-3 max-w-xs">
-                <TaxDropdown
-                  country={companyCountry}
-                  value={item.taxLabel}
-                  onChange={(val) => updateItem({ taxLabel: val })}
-                  className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none"
-                />
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="mt-6 rounded-3xl border border-slate-100 p-4">
-            <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-              <input
-                type="checkbox"
-                checked={item.trackStock}
-                onChange={(e) => updateItem({ trackStock: e.target.checked })}
-                className="h-4 w-4 rounded border-slate-300"
-              />
-              Track stock
-            </label>
-
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField label="Opening Stock Qty">
+        <div className="space-y-4 px-5 py-5 md:px-6 md:py-6">
+          <FormSection title="1. Essentials" description="Core details for quick creation.">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <FormField label="Item Name *">
                 <input
-                  value={item.openingQty}
-                  onChange={(e) => updateItem({ openingQty: e.target.value })}
-                  className="w-full rounded-2xl border border-slate-100 px-3 py-2 text-sm outline-none"
-                  disabled={!item.trackStock}
+                  value={form.itemName}
+                  onChange={(event) => updateField("itemName", event.target.value)}
+                  className={inputClassName}
+                  placeholder="Premium granite slab, consulting hour"
+                />
+                {errors.itemName ? <p className={errorClassName}>{errors.itemName}</p> : null}
+              </FormField>
+
+              <FormField label="Type">
+                <div className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-1">
+                  {[
+                    { value: "PRODUCT", label: "Product" },
+                    { value: "SERVICE", label: "Service" }
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => applyType(option.value)}
+                      className={clsx(
+                        "rounded-xl px-3 py-2 text-sm font-semibold transition",
+                        form.type === option.value ? "bg-white text-slate-900 shadow-soft" : "text-slate-500 hover:text-slate-700"
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </FormField>
+
+              <FormField label="Category">
+                <div className="flex items-center gap-2">
+                  <input
+                    list="item-category-options"
+                    value={form.category}
+                    onChange={(event) => updateField("category", event.target.value)}
+                    onBlur={() => {
+                      const clean = String(form.category || "").trim();
+                      if (!clean) return;
+                      rememberCategory(clean);
+                      const inferredType = inferTypeFromCategory(clean, form.type);
+                      if (inferredType !== form.type) applyType(inferredType);
+                      updateField("category", clean);
+                    }}
+                    className={inputClassName}
+                    placeholder="Tiles, Hardware, Services"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setCategoryModalOpen(true)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    title="Add category"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
+                <datalist id="item-category-options">
+                  {categories.map((category) => (
+                    <option key={category} value={category} />
+                  ))}
+                </datalist>
+              </FormField>
+
+              <FormField label="Unit of Measure">
+                <input
+                  list="item-unit-options"
+                  value={form.unit}
+                  onChange={(event) => updateField("unit", event.target.value)}
+                  className={inputClassName}
+                  placeholder="pcs, kg, hr"
+                />
+                <datalist id="item-unit-options">
+                  {UNITS.map((unit) => (
+                    <option key={unit} value={unit} />
+                  ))}
+                </datalist>
+              </FormField>
+
+              <FormField label="Status">
+                <select
+                  value={form.status}
+                  onChange={(event) => updateField("status", event.target.value)}
+                  className={inputClassName}
+                >
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                </select>
+              </FormField>
+
+              <FormField label="Description (short)">
+                <textarea
+                  value={form.description}
+                  onChange={(event) => updateField("description", event.target.value)}
+                  rows={2}
+                  className={inputClassName}
+                  placeholder="Shown in invoices and reports."
+                />
+              </FormField>
+            </div>
+          </FormSection>
+
+          <FormSection title="2. Pricing" description="Rates and tax inclusion setup.">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <FormField label="Sales Rate">
+                <input
+                  type="number"
+                  min={0}
+                  value={form.salePrice}
+                  onChange={(event) => updateField("salePrice", parseNumber(event.target.value))}
+                  className={inputClassName}
+                  placeholder="0"
+                />
+                {errors.salePrice ? <p className={errorClassName}>{errors.salePrice}</p> : null}
+              </FormField>
+
+              <FormField label="Purchase Rate">
+                <input
+                  type="number"
+                  min={0}
+                  value={form.purchasePrice}
+                  onChange={(event) => updateField("purchasePrice", parseNumber(event.target.value))}
+                  className={inputClassName}
+                  placeholder="0"
+                />
+                {errors.purchasePrice ? <p className={errorClassName}>{errors.purchasePrice}</p> : null}
+              </FormField>
+
+              <FormField label="Tax Inclusive" className="md:col-span-2">
+                <label className="inline-flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+                  <span>Prices include tax</span>
+                  <input
+                    type="checkbox"
+                    checked={form.taxInclusive}
+                    onChange={(event) => updateField("taxInclusive", event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                </label>
+              </FormField>
+            </div>
+          </FormSection>
+
+          <FormSection
+            title="3. Tax & Compliance"
+            description={taxHint}
+            collapsible
+            defaultOpen
+          >
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <FormField label={taxRateLabel}>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.taxRate}
+                  onChange={(event) => updateField("taxRate", parseNumber(event.target.value))}
+                  className={inputClassName}
+                  placeholder="0"
+                />
+                {errors.taxRate ? <p className={errorClassName}>{errors.taxRate}</p> : null}
+              </FormField>
+
+              {showIndiaCompliance ? (
+                <FormField label={`${complianceCodeLabel} (optional)`} hint="Recommended for tax filings">
+                  <input
+                    value={form.hsnOrSac}
+                    onChange={(event) => updateField("hsnOrSac", event.target.value)}
+                    className={inputClassName}
+                    placeholder={form.type === "SERVICE" ? "SAC code" : "HSN code"}
+                  />
+                </FormField>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
+                  HSN/SAC fields are hidden for non-India companies.
+                </div>
+              )}
+            </div>
+
+            {multiCountryEnabled ? (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Country Tax Mapping</p>
+                    <p className="text-xs text-slate-500">Override tax per country when enabled.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addTaxMapping}
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add
+                  </button>
+                </div>
+
+                {form.taxMappings.length ? (
+                  <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                    {form.taxMappings.map((row) => (
+                      <div key={row.id} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-2">
+                        <input
+                          value={row.country}
+                          onChange={(event) => updateTaxMapping(row.id, { country: event.target.value })}
+                          className="flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
+                          placeholder="Country"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          value={row.rate}
+                          onChange={(event) => updateTaxMapping(row.id, { rate: parseNumber(event.target.value) })}
+                          className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
+                          placeholder="0"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeTaxMapping(row.id)}
+                          className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-rose-600 hover:bg-rose-50"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">No country-specific mapping added.</p>
+                )}
+              </div>
+            ) : null}
+          </FormSection>
+
+          {showInventoryCard ? (
+            <FormSection
+              title="4. Inventory"
+              description="Visible for products and tracked stock."
+              collapsible
+              defaultOpen={form.type === "PRODUCT"}
+            >
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <FormField label="Track Inventory" className="md:col-span-2">
+                  <label className="inline-flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+                    <span>Enable stock tracking for this item</span>
+                    <input
+                      type="checkbox"
+                      checked={form.trackInventory}
+                      onChange={(event) => updateField("trackInventory", event.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300"
+                      disabled={form.type === "SERVICE"}
+                    />
+                  </label>
+                </FormField>
+
+                {showInventoryInputs ? (
+                  <>
+                    <FormField label="Opening Stock">
+                      <input
+                        type="number"
+                        min={0}
+                        value={form.openingQty}
+                        onChange={(event) => updateField("openingQty", parseNumber(event.target.value))}
+                        className={inputClassName}
+                        placeholder="0"
+                      />
+                      {errors.openingQty ? <p className={errorClassName}>{errors.openingQty}</p> : null}
+                    </FormField>
+
+                    <FormField label="Opening Stock Value (optional)">
+                      <input
+                        type="number"
+                        min={0}
+                        value={form.openingStockValue}
+                        onChange={(event) => updateField("openingStockValue", parseNumber(event.target.value))}
+                        className={inputClassName}
+                        placeholder="0"
+                      />
+                      {errors.openingStockValue ? <p className={errorClassName}>{errors.openingStockValue}</p> : null}
+                    </FormField>
+
+                    <FormField label="Low Stock Alert">
+                      <input
+                        type="number"
+                        min={0}
+                        value={form.lowStockQty}
+                        onChange={(event) => updateField("lowStockQty", parseNumber(event.target.value))}
+                        className={inputClassName}
+                        placeholder="0"
+                      />
+                      {errors.lowStockQty ? <p className={errorClassName}>{errors.lowStockQty}</p> : null}
+                    </FormField>
+                  </>
+                ) : (
+                  <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
+                    Opening stock fields are hidden while inventory tracking is off.
+                  </div>
+                )}
+              </div>
+            </FormSection>
+          ) : null}
+
+          <FormSection title="5. Identifiers" description="Optional codes used for scanning and internal lookup." collapsible defaultOpen={false}>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <FormField label="SKU">
+                <input
+                  value={form.sku}
+                  onChange={(event) => updateField("sku", event.target.value)}
+                  className={inputClassName}
+                  placeholder="SKU-001"
+                />
+              </FormField>
+              <FormField label="Barcode (EAN / UPC)">
+                <input
+                  value={form.barcode}
+                  onChange={(event) => updateField("barcode", event.target.value)}
+                  className={inputClassName}
+                  placeholder="EAN / UPC"
+                />
+              </FormField>
+            </div>
+          </FormSection>
+
+          <FormSection title="6. Price Levels" description="Optional wholesale and tier pricing." collapsible defaultOpen={false}>
+            <div className="flex items-center justify-end">
+              <button
+                type="button"
+                onClick={addPriceLevel}
+                className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add Price Level
+              </button>
+            </div>
+
+            {form.priceLevels.length ? (
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                {form.priceLevels.map((level) => (
+                  <div key={level.id} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                    <input
+                      value={level.label}
+                      onChange={(event) => updatePriceLevel(level.id, { label: event.target.value })}
+                      className="flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
+                      placeholder="Wholesale / Dealer"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      value={level.price}
+                      onChange={(event) => updatePriceLevel(level.id, { price: parseNumber(event.target.value) })}
+                      className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
+                      placeholder="0"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removePriceLevel(level.id)}
+                      className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-rose-600 hover:bg-rose-50"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-slate-500">No price levels configured.</p>
+            )}
+          </FormSection>
+
+          <FormSection title="Advanced" description="Legacy pricing and warehousing controls." collapsible defaultOpen={false}>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <FormField label="Sales Price Mode">
+                <select
+                  value={form.salePriceTaxMode}
+                  onChange={(event) => updateField("salePriceTaxMode", event.target.value)}
+                  className={inputClassName}
+                  disabled={form.taxInclusive}
+                >
+                  {PRICE_TAX_MODES.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+
+              <FormField label="Purchase Price Mode">
+                <select
+                  value={form.purchasePriceTaxMode}
+                  onChange={(event) => updateField("purchasePriceTaxMode", event.target.value)}
+                  className={inputClassName}
+                  disabled={form.taxInclusive}
+                >
+                  {PRICE_TAX_MODES.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+
+              <FormField label="Discount Value">
+                <input
+                  type="number"
+                  min={0}
+                  value={form.discountValue}
+                  onChange={(event) => updateField("discountValue", parseNumber(event.target.value))}
+                  className={inputClassName}
+                  placeholder="0"
                 />
               </FormField>
 
-              <FormField label="Low Stock Alert Qty">
-                <input
-                  value={item.lowStockQty}
-                  onChange={(e) => updateItem({ lowStockQty: e.target.value })}
-                  className="w-full rounded-2xl border border-slate-100 px-3 py-2 text-sm outline-none"
-                  disabled={!item.trackStock}
-                />
-              </FormField>
-
-              <FormField label="Unit">
-                <input
-                  value={item.unit}
-                  readOnly
-                  className="w-full rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm outline-none"
-                />
+              <FormField label="Discount Type">
+                <select
+                  value={form.discountType}
+                  onChange={(event) => updateField("discountType", event.target.value)}
+                  className={inputClassName}
+                >
+                  {DISCOUNT_TYPES.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </FormField>
 
               <FormField label="Warehouse / Location">
                 <input
-                  value={item.warehouse}
-                  onChange={(e) => updateItem({ warehouse: e.target.value })}
-                  className="w-full rounded-2xl border border-slate-100 px-3 py-2 text-sm outline-none"
-                  disabled={!item.trackStock}
+                  value={form.warehouse}
+                  onChange={(event) => updateField("warehouse", event.target.value)}
+                  className={inputClassName}
+                  placeholder="Main warehouse"
+                />
+              </FormField>
+
+              <FormField label="Image URL">
+                <input
+                  value={form.imageUrl}
+                  onChange={(event) => updateField("imageUrl", event.target.value)}
+                  className={inputClassName}
+                  placeholder="https://..."
                 />
               </FormField>
             </div>
-          </div>
-        )}
-
-        <div className="mt-6 flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
-          <button
-            type="button"
-            onClick={() => saveItem("new")}
-            disabled={!isValid}
-            className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Save & New
-          </button>
-          <GradientButton onClick={() => saveItem("save")} disabled={!isValid}>
-            Save
-          </GradientButton>
+          </FormSection>
         </div>
       </Card>
 
-      <UnitPickerModal
-        open={unitOpen}
-        value={item.unit}
-        onClose={() => setUnitOpen(false)}
-        onSelect={(unit) => updateItem({ unit })}
-      />
+      <div className="fixed bottom-4 right-4 left-4 z-30 md:left-auto md:w-[560px]">
+        <div className="rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-slate-900">{summaryName}</p>
+              <p className="text-xs text-slate-500">
+                Sales: {moneyLike(form.salePrice)} | {summaryTaxType}: {summaryTaxRate}
+              </p>
+              {saveError ? <p className="mt-1 text-xs font-semibold text-rose-600">{saveError}</p> : null}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => nav("/items")}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  void saveItem("new");
+                }}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Save & New
+              </button>
+              <GradientButton
+                disabled={saving}
+                onClick={() => {
+                  void saveItem("save");
+                }}
+                className="rounded-xl px-4 py-2 text-xs"
+              >
+                {saving ? "Saving..." : "Save"}
+              </GradientButton>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <Modal
-        open={categoryOpen}
+        open={categoryModalOpen}
         title="Add Category"
         onClose={() => {
-          setCategoryOpen(false);
+          setCategoryModalOpen(false);
           setNewCategory("");
         }}
         footer={
-          <div className="flex items-center justify-end">
-            <button
-              type="button"
-              onClick={saveCategory}
+          <div className="flex justify-end">
+            <GradientButton
               disabled={!newCategory.trim()}
-              className="w-full rounded-full bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => {
+                const clean = newCategory.trim();
+                if (!clean) return;
+                rememberCategory(clean);
+                updateField("category", clean);
+                setNewCategory("");
+                setCategoryModalOpen(false);
+              }}
             >
-              Create
-            </button>
+              Create Category
+            </GradientButton>
           </div>
         }
       >
-        <FormField label="Enter Category Name">
+        <FormField label="Category Name">
           <input
             value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-            className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none"
-            placeholder="e.g., Grocery"
+            onChange={(event) => setNewCategory(event.target.value)}
+            className={inputClassName}
+            placeholder="e.g., Electrical"
           />
         </FormField>
       </Modal>

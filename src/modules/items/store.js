@@ -117,8 +117,15 @@ function resolveItemCodeForUpsert({ draftItemCode, id, list, type }) {
 function normalizeItem(raw) {
   const type = normalizeItemType(raw?.type);
   const metadata = raw?.metadata || {};
+  const rawHsnOrSac = raw?.hsnOrSac || metadata?.hsnOrSac || "";
   const taxRate =
-    parseNumber(raw?.taxRate) || parseTaxRate(raw?.taxLabel) || parseNumber(metadata?.taxRate);
+    parseNumber(raw?.taxRate) ||
+    parseNumber(raw?.gstPercent) ||
+    parseNumber(raw?.taxPercent) ||
+    parseTaxRate(raw?.taxLabel) ||
+    parseNumber(metadata?.taxRate) ||
+    parseNumber(metadata?.gstPercent) ||
+    parseNumber(metadata?.taxPercent);
   const taxInclusive =
     !!metadata?.taxInclusive ||
     metadata?.salePriceTaxMode === "WITH_TAX" ||
@@ -135,8 +142,8 @@ function normalizeItem(raw) {
     type,
     name: raw?.name || raw?.itemName || "",
     description: raw?.description || metadata?.description || "",
-    hsn: raw?.hsn || metadata?.hsn || "",
-    sac: raw?.sac || metadata?.sac || "",
+    hsn: raw?.hsn || metadata?.hsn || (type === "Product" ? rawHsnOrSac : ""),
+    sac: raw?.sac || metadata?.sac || (type === "Service" ? rawHsnOrSac : ""),
     unit: raw?.unit || metadata?.unit || "pcs",
     salesRate: parseNumber(raw?.price ?? raw?.salesRate ?? raw?.salePrice),
     purchaseRate: parseNumber(metadata?.purchasePrice ?? raw?.purchaseRate),
@@ -273,6 +280,11 @@ export function upsertItem(draft, country) {
       openingStock: parseNumber(draft.openingStock),
       openingStockValue: parseNumber(draft.openingStockValue),
       lowStockQty: parseNumber(draft.lowStockAlert),
+      gstPercent: parseNumber(draft.gstPercent ?? draft.taxRate),
+      taxPercent: parseNumber(draft.taxPercent ?? draft.taxRate),
+      hsnOrSac:
+        (draft.type === "Service" ? draft.sac || draft.hsn || draft.hsnOrSac : draft.hsn || draft.sac || draft.hsnOrSac) ||
+        "",
       priceLevels: draft.priceLevels || [],
       taxMappings: draft.taxMappings || [],
       updated_at: now
