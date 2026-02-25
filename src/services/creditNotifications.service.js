@@ -4,6 +4,7 @@ import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "
 
 const CREDIT_NOTIFICATION_EVENT = "credit-notifications-updated";
 const SYSTEM_ACTOR = "System";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
@@ -25,6 +26,10 @@ function toSupabaseFailure(error, fallback) {
 function parseNumber(value) {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
+}
+
+function looksLikeUuid(value) {
+  return UUID_PATTERN.test(String(value || ""));
 }
 
 function toIso(value) {
@@ -406,11 +411,11 @@ function setLocalList(list, options = {}) {
 }
 
 function hasRemoteConnection() {
-  return !!(isSupabaseConfigured && supabase && authGetOrganizationId());
+  return !!(isSupabaseConfigured && supabase && looksLikeUuid(authGetOrganizationId()));
 }
 
 async function ensureOwnerMembershipIfPossible(organizationId) {
-  if (!supabase || !organizationId) return false;
+  if (!supabase || !looksLikeUuid(organizationId)) return false;
   const { error } = await supabase.rpc("ensure_owner_membership", {
     p_organization_id: organizationId
   });
@@ -421,6 +426,10 @@ async function ensureOwnerMembershipIfPossible(organizationId) {
 
 function candidateKey(item) {
   return `${String(item?.partyId || "")}::${normalizeAlertType(item?.alertType)}`;
+}
+
+function isRemoteAlertState(state) {
+  return looksLikeUuid(state?.partyId);
 }
 
 function normalizeEvaluation(raw) {
@@ -510,6 +519,8 @@ function buildAlertStates(evaluations) {
 }
 
 async function ensureRemoteNotification(candidate) {
+  if (!hasRemoteConnection()) return { created: false, reason: "no_remote_connection" };
+  if (!looksLikeUuid(candidate?.partyId)) return { created: false, reason: "invalid_party_id" };
   const organizationId = authGetOrganizationId();
   const alertType = normalizeAlertType(candidate.alertType);
   const partyType = normalizePartyType(candidate.partyType);
@@ -627,6 +638,7 @@ async function ensureRemoteNotification(candidate) {
 
 async function resolveRemoteNotification(state) {
   if (!hasRemoteConnection()) return;
+  if (!looksLikeUuid(state?.partyId)) return;
   const organizationId = authGetOrganizationId();
   const alertType = normalizeAlertType(state.alertType);
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -830,12 +842,22 @@ export async function syncCreditMonitoringNotifications(evaluations, options = {
   const normalized = ensureArray(evaluations).map(normalizeEvaluation).filter(Boolean);
   const alertStates = buildAlertStates(normalized);
   const candidates = buildCandidates(normalized);
+  const dedupedStates = new Map();
+  alertStates.forEach((state) => {
+    dedupedStates.set(candidateKey(state), state);
+  });
+  const uniqueStates = [...dedupedStates.values()];
+  const remoteStates = uniqueStates.filter(isRemoteAlertState);
+  const localOnlyStates = uniqueStates.filter((state) => !isRemoteAlertState(state));
+  const remoteCandidates = candidates.filter((candidate) => looksLikeUuid(candidate?.partyId));
 
   console.log("[CreditMonitoring] Notification evaluation started", {
     source,
     evaluations: normalized.length,
     states: alertStates.length,
     candidates: candidates.length,
+    remoteStates: remoteStates.length,
+    localOnlyStates: localOnlyStates.length,
     remote: hasRemoteConnection()
   });
 
@@ -845,28 +867,37 @@ export async function syncCreditMonitoringNotifications(evaluations, options = {
 
   if (hasRemoteConnection()) {
     try {
-      for (const state of alertStates) {
+      localOnlyStates.forEach((state) => {
+        if (state.exceeded) {
+          ensureLocalNotification(state);
+          return;
+        }
+        resolveLocalNotification(state);
+      });
+
+      for (const state of remoteStates) {
         if (state.exceeded) {
           await ensureRemoteNotification(state);
           continue;
         }
         await resolveRemoteNotification(state);
       }
+
       const synced = await syncCreditNotificationsFromRemote();
-      const merged = mergeCandidateContext(synced, candidates);
+      const merged = mergeCandidateContext(synced, remoteCandidates);
+      const localOnlyNotifications = localList().filter(
+        (entry) => !looksLikeUuid(entry?.partyId)
+      );
+      const combined = mergeCandidateContext([...merged, ...localOnlyNotifications], candidates);
       // Emit once so UI (bell/panel/page) updates immediately after invoice save.
-      setLocalList(merged, { emit: true });
-      return merged;
+      setLocalList(combined, { emit: true });
+      return combined;
     } catch (error) {
       console.warn("Credit notification remote sync failed, using local fallback", error);
     }
   }
 
-  const dedupedStates = new Map();
-  alertStates.forEach((state) => {
-    dedupedStates.set(candidateKey(state), state);
-  });
-  dedupedStates.forEach((state) => {
+  uniqueStates.forEach((state) => {
     if (state.exceeded) {
       ensureLocalNotification(state);
       return;

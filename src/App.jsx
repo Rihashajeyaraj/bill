@@ -7,6 +7,7 @@ import { companyLoadMyOrganization } from "./services/company.service";
 
 export default function App() {
   const [ready, setReady] = useState(false);
+  const element = useRoutes(routes);
 
   useEffect(() => {
     let mounted = true;
@@ -35,6 +36,5 @@ export default function App() {
     );
   }
 
-  const element = useRoutes(routes);
   return element;
 }
