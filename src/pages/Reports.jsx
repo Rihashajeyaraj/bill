@@ -45,6 +45,12 @@ import { formatMoney, normalizeText } from "../modules/items/utils";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 
 const SCOPE_OPTIONS = ["All", "Sales", "Purchase", "Party", "Item"];
+const DATE_PRESETS = [
+  { id: "today", label: "Today" },
+  { id: "7d", label: "Last 7 Days" },
+  { id: "30d", label: "Last 30 Days" },
+  { id: "month", label: "This Month" }
+];
 
 const REPORT_CARDS = [
   {
@@ -584,6 +590,31 @@ function toLocalIsoDate(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function resolvePresetRange(presetId) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (presetId === "today") {
+    const iso = toLocalIsoDate(today);
+    return { from: iso, to: iso };
+  }
+  if (presetId === "7d") {
+    const start = new Date(today);
+    start.setDate(start.getDate() - 6);
+    return { from: toLocalIsoDate(start), to: toLocalIsoDate(today) };
+  }
+  if (presetId === "30d") {
+    const start = new Date(today);
+    start.setDate(start.getDate() - 29);
+    return { from: toLocalIsoDate(start), to: toLocalIsoDate(today) };
+  }
+  if (presetId === "month") {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
+    return { from: toLocalIsoDate(start), to: toLocalIsoDate(today) };
+  }
+  const iso = toLocalIsoDate(today);
+  return { from: iso, to: iso };
+}
+
 function formatIsoAsDmy(value) {
   if (!value) return "";
   const [year, month, day] = String(value).split("-");
@@ -649,37 +680,37 @@ function ReportCard({ report, active, currency, onSelect }) {
       type="button"
       onClick={() => onSelect(report.id)}
       className={clsx(
-        "group w-full rounded-3xl border p-4 text-left shadow-soft transition",
+        "group w-full rounded-2xl border p-4 text-left transition-all",
         active
-          ? "border-emerald-200 bg-emerald-50/60"
-          : "border-slate-200 bg-white hover:-translate-y-0.5 hover:border-emerald-200"
+          ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white shadow-soft ring-2 ring-emerald-100"
+          : "border-slate-200 bg-white hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-soft"
       )}
     >
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div
             className={clsx(
-              "flex h-11 w-11 items-center justify-center rounded-2xl",
+              "flex h-10 w-10 items-center justify-center rounded-xl",
               active ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"
             )}
           >
-            <Icon className="h-5 w-5" />
+            <Icon className="h-4 w-4" />
           </div>
           <div>
             <p className="text-sm font-semibold text-slate-900">{report.label}</p>
-            <p className="text-xs text-slate-500">{report.description}</p>
+            <p className="text-xs text-slate-500 line-clamp-1">{report.description}</p>
           </div>
         </div>
         <MetricDelta delta={report.delta} />
       </div>
-      <div className="mt-4 flex items-end justify-between">
+      <div className="mt-3 flex items-end justify-between">
         <div>
           <p className="text-xs font-semibold text-slate-500">{report.metricLabel}</p>
-          <p className="mt-1 text-lg font-semibold text-slate-900">
+          <p className="mt-1 text-base font-semibold text-slate-900">
             {formatValue(report.metricValue, metricFormat, currency)}
           </p>
         </div>
-        <div className="text-xs text-slate-400">Tap to open</div>
+        <div className="text-[11px] font-semibold text-slate-400">{active ? "Opened" : "Open"}</div>
       </div>
     </button>
   );
@@ -1372,11 +1403,11 @@ export default function Reports() {
   const todayIso = toLocalIsoDate(new Date());
   const [fromDate, setFromDate] = useState(todayIso);
   const [toDate, setToDate] = useState(todayIso);
+  const [datePreset, setDatePreset] = useState("today");
   const [scope, setScope] = useState("All");
 
   const [activeReport, setActiveReport] = useState("sales");
   const [metric, setMetric] = useState("amount");
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailSearch, setDetailSearch] = useState("");
   const [partyTypeFilter, setPartyTypeFilter] = useState("All");
   const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
@@ -1602,6 +1633,13 @@ export default function Reports() {
 
   const tableColumns = activeContent?.details?.columns || [];
 
+  function applyDatePreset(presetId) {
+    const range = resolvePresetRange(presetId);
+    setFromDate(range.from);
+    setToDate(range.to);
+    setDatePreset(presetId);
+  }
+
   return (
     <div className="mx-auto max-w-[1360px] space-y-4 pb-24">
       <PageHeader
@@ -1634,43 +1672,66 @@ export default function Reports() {
         }
       />
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr_1fr]">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="min-w-[140px]">
-              <p className="text-xs font-semibold text-slate-500">Date Range</p>
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  type="date"
-                  value={fromDate}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setFromDate(next);
-                    if (next && toDate && next > toDate) setToDate(next);
-                  }}
-                  lang="en-GB"
-                  max={toDate || undefined}
-                  className="w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm"
-                />
-                <span className="text-xs text-slate-400">to</span>
-                <input
-                  type="date"
-                  value={toDate}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setToDate(next);
-                    if (next && fromDate && next < fromDate) setFromDate(next);
-                  }}
-                  lang="en-GB"
-                  min={fromDate || undefined}
-                  className="w-full rounded-full border border-slate-200 bg-white px-3 py-2 text-sm"
-                />
-              </div>
+      <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-5 shadow-soft">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Smart Filters</p>
+            <p className="text-xs text-slate-500">Pick range, scope, then open a report card.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {DATE_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => applyDatePreset(preset.id)}
+                className={clsx(
+                  "rounded-full border px-3 py-1.5 text-xs font-semibold",
+                  datePreset === preset.id
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                )}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1.5fr_0.8fr_1.2fr]">
+          <div>
+            <p className="text-xs font-semibold text-slate-500">Date Range</p>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="date"
+                value={fromDate}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setFromDate(next);
+                  setDatePreset("custom");
+                  if (next && toDate && next > toDate) setToDate(next);
+                }}
+                lang="en-GB"
+                max={toDate || undefined}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+              />
+              <span className="text-xs text-slate-400">to</span>
+              <input
+                type="date"
+                value={toDate}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setToDate(next);
+                  setDatePreset("custom");
+                  if (next && fromDate && next < fromDate) setFromDate(next);
+                }}
+                lang="en-GB"
+                min={fromDate || undefined}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+              />
             </div>
           </div>
           <div>
             <p className="text-xs font-semibold text-slate-500">Country</p>
-            <div className="mt-2 w-full rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700">
+            <div className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
               {countryCode} {country}
             </div>
           </div>
@@ -1683,7 +1744,7 @@ export default function Reports() {
                   type="button"
                   onClick={() => setScope(entry)}
                   className={clsx(
-                    "rounded-full border px-4 py-2 text-sm font-semibold",
+                    "rounded-full border px-3 py-1.5 text-xs font-semibold",
                     scope === entry
                       ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                       : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
@@ -1697,7 +1758,7 @@ export default function Reports() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {scopedCardReports.length ? (
           scopedCardReports.map((report) => (
             <ReportCard
@@ -1718,11 +1779,11 @@ export default function Reports() {
       <Card className="p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-slate-900">
+            <p className="text-base font-semibold text-slate-900">
               {REPORT_CARDS.find((report) => report.id === activeReport)?.label}
             </p>
             <p className="text-xs text-slate-500">
-              Filters applied: {formatIsoAsDmy(fromDate)} to {formatIsoAsDmy(toDate)} - {countryCode} {country}
+              Live data from {formatIsoAsDmy(fromDate)} to {formatIsoAsDmy(toDate)} - {countryCode} {country}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1761,12 +1822,24 @@ export default function Reports() {
                 </div>
               ))
             : summaryCards.map((card) => (
-                <div key={card.label} className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <p className="text-xs font-semibold text-slate-500">{card.label}</p>
+                <div
+                  key={card.label}
+                  className={clsx(
+                    "rounded-2xl border p-4",
+                    card.tone === "success"
+                      ? "border-emerald-200 bg-emerald-50/40"
+                      : card.tone === "danger"
+                      ? "border-rose-200 bg-rose-50/40"
+                      : card.tone === "warn"
+                      ? "border-amber-200 bg-amber-50/40"
+                      : "border-slate-200 bg-white"
+                  )}
+                >
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{card.label}</p>
                   <p
                     title={card.format === "text" ? String(card.value || "-") : undefined}
                     className={clsx(
-                      "mt-2 text-2xl font-bold",
+                      "mt-2 text-2xl font-bold leading-none",
                       card.format === "text" && "truncate whitespace-nowrap text-xl leading-tight",
                       card.tone === "success"
                         ? "text-emerald-600"
@@ -1822,29 +1895,11 @@ export default function Reports() {
               </ul>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-sm font-semibold text-slate-900">Quick Actions</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                >
-                  <FileDown className="h-3.5 w-3.5" />
-                  Export PDF
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                >
-                  <Boxes className="h-3.5 w-3.5" />
-                  Export Excel
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                >
-                  <Printer className="h-3.5 w-3.5" />
-                  Print
-                </button>
+              <p className="text-sm font-semibold text-slate-900">How To Use</p>
+              <div className="mt-3 space-y-2 text-sm text-slate-600">
+                <p>1. Pick date range and scope above.</p>
+                <p>2. Open a report card to switch module view.</p>
+                <p>3. Use search and sort in details table to find entries quickly.</p>
               </div>
             </div>
           </div>
@@ -1855,120 +1910,108 @@ export default function Reports() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold text-slate-900">Details</p>
-            <p className="text-xs text-slate-500">Expandable data table with sorting and search.</p>
+            <p className="text-xs text-slate-500">Search, filter and sort live entries.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => setDetailsOpen((prev) => !prev)}
-            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            {detailsOpen ? "Collapse" : "Expand"}
-          </button>
+          <Badge tone="neutral">{filteredRows.length} rows</Badge>
         </div>
 
-        {detailsOpen ? (
-          <div className="mt-4 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="relative w-full max-w-sm">
-                <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                <input
-                  value={detailSearch}
-                  onChange={(event) => setDetailSearch(event.target.value)}
-                  placeholder="Search within report"
-                  className="w-full rounded-full border border-slate-200 bg-slate-50 px-10 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200"
-                />
-              </label>
-              {activeReport === "parties" ? (
-                <select
-                  value={partyTypeFilter}
-                  onChange={(event) => setPartyTypeFilter(event.target.value)}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700"
-                >
-                  <option value="All">All Parties</option>
-                  <option value="Customer">Customer</option>
-                  <option value="Supplier">Supplier</option>
-                </select>
-              ) : null}
-              <span className="text-xs text-slate-500">Click row to drill down to source</span>
-            </div>
+        <div className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="relative w-full max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+              <input
+                value={detailSearch}
+                onChange={(event) => setDetailSearch(event.target.value)}
+                placeholder="Search within report"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-10 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200"
+              />
+            </label>
+            {activeReport === "parties" ? (
+              <select
+                value={partyTypeFilter}
+                onChange={(event) => setPartyTypeFilter(event.target.value)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700"
+              >
+                <option value="All">All Parties</option>
+                <option value="Customer">Customer</option>
+                <option value="Supplier">Supplier</option>
+              </select>
+            ) : null}
+            <span className="text-xs text-slate-500">Tip: click a column header to sort</span>
+          </div>
 
-            <div className="overflow-auto rounded-2xl border border-slate-200">
-              <table className="w-full min-w-[900px] text-left text-sm">
-                <thead className="sticky top-0 bg-slate-50">
+          <div className="overflow-auto rounded-2xl border border-slate-200">
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead className="sticky top-0 bg-slate-50">
+                <tr>
+                  {tableColumns.map((col) => (
+                    <th
+                      key={col.key}
+                      onClick={() => toggleSort(col.key)}
+                      className={clsx(
+                        "cursor-pointer px-4 py-3 font-semibold text-slate-700",
+                        col.align === "right" ? "text-right" : "text-left"
+                      )}
+                    >
+                      <div
+                        className={clsx(
+                          "flex items-center gap-2",
+                          col.align === "right" ? "justify-end" : "justify-start"
+                        )}
+                      >
+                        {col.label}
+                        {sortConfig.key === col.key ? (
+                          <span className="text-[10px] text-slate-400">
+                            {sortConfig.direction === "asc" ? "ASC" : "DESC"}
+                          </span>
+                        ) : null}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
                   <tr>
-                    {tableColumns.map((col) => (
-                      <th
-                        key={col.key}
-                        onClick={() => toggleSort(col.key)}
-                        className={clsx(
-                          "cursor-pointer px-4 py-3 font-semibold text-slate-700",
-                          col.align === "right" ? "text-right" : "text-left"
-                        )}
-                      >
-                        <div
-                          className={clsx(
-                            "flex items-center gap-2",
-                            col.align === "right" ? "justify-end" : "justify-start"
-                          )}
-                        >
-                          {col.label}
-                          {sortConfig.key === col.key ? (
-                            <span className="text-[10px] text-slate-400">
-                              {sortConfig.direction === "asc" ? "ASC" : "DESC"}
-                            </span>
-                          ) : null}
-                        </div>
-                      </th>
-                    ))}
+                    <td colSpan={tableColumns.length} className="px-4 py-10 text-center text-slate-500">
+                      Loading report data...
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td colSpan={tableColumns.length} className="px-4 py-10 text-center text-slate-500">
-                        Loading report data...
-                      </td>
+                ) : filteredRows.length ? (
+                  filteredRows.map((row) => (
+                    <tr
+                      key={row.id}
+                      onClick={() => setSelectedRow(row.id)}
+                      className={clsx(
+                        "border-t border-slate-100 hover:bg-slate-50/70",
+                        selectedRow === row.id ? "bg-emerald-50/60" : ""
+                      )}
+                    >
+                      {tableColumns.map((col) => (
+                        <td
+                          key={`${row.id}-${col.key}`}
+                          className={clsx("px-4 py-3", col.align === "right" ? "text-right" : "text-left")}
+                        >
+                          {col.format === "status" ? (
+                            <Badge tone={statusTone(row[col.key])}>{row[col.key]}</Badge>
+                          ) : (
+                            formatValue(row[col.key], col.format, currency)
+                          )}
+                        </td>
+                      ))}
                     </tr>
-                  ) : filteredRows.length ? (
-                    filteredRows.map((row) => (
-                      <tr
-                        key={row.id}
-                        onClick={() => setSelectedRow(row.id)}
-                        className={clsx(
-                          "border-t border-slate-100 hover:bg-slate-50/70",
-                          selectedRow === row.id ? "bg-emerald-50/60" : ""
-                        )}
-                      >
-                        {tableColumns.map((col) => (
-                          <td
-                            key={`${row.id}-${col.key}`}
-                            className={clsx("px-4 py-3", col.align === "right" ? "text-right" : "text-left")}
-                          >
-                            {col.format === "status" ? (
-                              <Badge tone={statusTone(row[col.key])}>{row[col.key]}</Badge>
-                            ) : (
-                              formatValue(row[col.key], col.format, currency)
-                            )}
-                          </td>
-                        ))}
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={tableColumns.length} className="px-4 py-10 text-center text-slate-500">
-                        No data for selected filters
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={tableColumns.length} className="px-4 py-10 text-center text-slate-500">
+                      No data for selected filters
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-        ) : (
-          <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-            Details are collapsed to keep the page fast. Expand to view the sortable report table.
-          </div>
-        )}
+        </div>
       </Card>
     </div>
   );
