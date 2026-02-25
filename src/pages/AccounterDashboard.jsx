@@ -5,6 +5,7 @@ import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.servi
 import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
 import { fetchPartiesCount } from "../modules/parties/store";
 import { useOrganization } from "../context/OrganizationContext";
+import { lsGetOrganizationScoped } from "../services/storage";
 
 function money(n) {
   const value = Number(n || 0);
@@ -15,6 +16,12 @@ export default function AccounterDashboard() {
   const { currency = "INR" } = useOrganization();
   const [invoices, setInvoices] = useState(() => invoicesList());
   const [payments, setPayments] = useState(() => paymentsList());
+  const [paymentInPremium, setPaymentInPremium] = useState(() =>
+    lsGetOrganizationScoped("paymentInPremiumV1", [])
+  );
+  const [paymentOutPremium, setPaymentOutPremium] = useState(() =>
+    lsGetOrganizationScoped("paymentOutPremiumV1", [])
+  );
   const [partyCounts, setPartyCounts] = useState({ total: 0, customers: 0, suppliers: 0 });
 
   useEffect(() => {
@@ -29,11 +36,15 @@ export default function AccounterDashboard() {
         if (!mounted) return;
         setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
         setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList());
+        setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
+        setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
         setPartyCounts(counts || { total: 0, customers: 0, suppliers: 0 });
       } catch {
         if (!mounted) return;
         setInvoices(invoicesList());
         setPayments(paymentsList());
+        setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
+        setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
         setPartyCounts({ total: 0, customers: 0, suppliers: 0 });
       }
     }
@@ -50,13 +61,34 @@ export default function AccounterDashboard() {
       return status !== "paid";
     });
 
-    const incoming = payments
-      .filter((entry) => String(entry?.direction || "").toUpperCase() === "IN")
+    const incomingLegacy = payments
+      .filter((entry) => {
+        const direction = String(entry?.direction || "").toUpperCase();
+        if (direction !== "IN") return false;
+        const reference = String(entry?.referenceNo || entry?.reference_no || "");
+        return !reference.startsWith("PI:");
+      })
       .reduce((sum, entry) => sum + Number(entry?.amount || 0), 0);
 
-    const outgoing = payments
-      .filter((entry) => String(entry?.direction || "").toUpperCase() === "OUT")
+    const outgoingLegacy = payments
+      .filter((entry) => {
+        const direction = String(entry?.direction || "").toUpperCase();
+        if (direction !== "OUT") return false;
+        const reference = String(entry?.referenceNo || entry?.reference_no || "");
+        return !reference.startsWith("PO:");
+      })
       .reduce((sum, entry) => sum + Number(entry?.amount || 0), 0);
+
+    const incomingPremium = (Array.isArray(paymentInPremium) ? paymentInPremium : [])
+      .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
+      .reduce((sum, entry) => sum + Number(entry?.totals?.amountReceived || 0), 0);
+
+    const outgoingPremium = (Array.isArray(paymentOutPremium) ? paymentOutPremium : [])
+      .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
+      .reduce((sum, entry) => sum + Number(entry?.totals?.amountPaid || 0), 0);
+
+    const incoming = Math.max(0, incomingLegacy + incomingPremium);
+    const outgoing = Math.max(0, outgoingLegacy + outgoingPremium);
 
     const pendingTotal = pendingInvoices.reduce(
       (sum, invoice) => sum + Number(invoice?.totals?.balance || invoice?.totals?.grandTotal || 0),
@@ -70,7 +102,7 @@ export default function AccounterDashboard() {
       incoming,
       outgoing
     };
-  }, [invoices, payments]);
+  }, [invoices, payments, paymentInPremium, paymentOutPremium]);
 
   return (
     <div className="dashboard-theme max-w-6xl space-y-4">

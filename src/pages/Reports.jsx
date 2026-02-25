@@ -853,9 +853,16 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
     countryMatches(recordCountry(row), country)
   );
   const salesPayments = arrayFromLs("paymentInPremiumV1").filter((row) =>
-    countryMatches(recordCountry(row), country)
+    countryMatches(recordCountry(row), country) &&
+    String(row?.status || "").toLowerCase() !== "draft" &&
+    dateInRange(row?.paymentDate || row?.payment_date || row?.created_at, fromDate, toDate)
   );
   const purchasePayments = arrayFromLs("paymentOutPremiumV1").filter((row) =>
+    countryMatches(recordCountry(row), country) &&
+    String(row?.status || "").toLowerCase() !== "draft" &&
+    dateInRange(row?.paymentDate || row?.payment_date || row?.created_at, fromDate, toDate)
+  );
+  const legacyPayments = arrayFromLs(LS_KEYS.payments).filter((row) =>
     countryMatches(recordCountry(row), country)
   );
 
@@ -1088,11 +1095,27 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
   const totalReceived = salesPayments.reduce(
     (sum, row) => sum + parseAmount(row?.totals?.amountReceived),
     0
-  );
+  ) + legacyPayments
+    .filter((row) => {
+      const direction = String(row?.direction || "").toUpperCase();
+      if (direction !== "IN") return false;
+      const reference = String(row?.referenceNo || row?.reference_no || "");
+      if (reference.startsWith("PI:")) return false;
+      return dateInRange(row?.date || row?.payment_date || row?.created_at, fromDate, toDate);
+    })
+    .reduce((sum, row) => sum + parseAmount(row?.amount), 0);
   const totalPaid = purchasePayments.reduce(
     (sum, row) => sum + parseAmount(row?.totals?.amountPaid),
     0
-  );
+  ) + legacyPayments
+    .filter((row) => {
+      const direction = String(row?.direction || "").toUpperCase();
+      if (direction !== "OUT") return false;
+      const reference = String(row?.referenceNo || row?.reference_no || "");
+      if (reference.startsWith("PO:")) return false;
+      return dateInRange(row?.date || row?.payment_date || row?.created_at, fromDate, toDate);
+    })
+    .reduce((sum, row) => sum + parseAmount(row?.amount), 0);
 
   return {
     ...REPORT_CONTENT,

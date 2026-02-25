@@ -4,9 +4,11 @@ import {
   FileDown,
   Mail,
   Plus,
+  Search,
   Save,
   Send,
-  Wallet
+  Wallet,
+  X
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import Badge from "../../components/Badge";
@@ -47,6 +49,21 @@ function statusBadge(status) {
   return "neutral";
 }
 
+function normalizePhoneForLookup(value) {
+  let digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length > 10) digits = digits.slice(-10);
+  digits = digits.replace(/^0+/, "");
+  return digits || "0";
+}
+
+function supplierAddressSummary(supplier) {
+  return [supplier?.address, supplier?.state, supplier?.country]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
 export default function PaymentOutPremium() {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
@@ -72,6 +89,9 @@ export default function PaymentOutPremium() {
   const [modeFilter, setModeFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [supplierSearchPhone, setSupplierSearchPhone] = useState("");
+  const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
+  const [supplierSearchError, setSupplierSearchError] = useState("");
   const prefillBillId = searchParams.get("billId") || "";
 
   const payments = useMemo(() => listPaymentOut(country), [country, refreshKey]);
@@ -110,6 +130,30 @@ export default function PaymentOutPremium() {
       return matchQuery && matchSupplier && matchStatus && matchMode && matchFrom && matchTo;
     });
   }, [payments, search, supplierFilter, statusFilter, modeFilter, fromDate, toDate]);
+
+  const supplierLookupResults = useMemo(() => {
+    const query = String(supplierLookupQuery || "").trim().toLowerCase();
+    if (!query) return [];
+    const normalizedPhoneQuery = normalizePhoneForLookup(query);
+    return suppliers
+      .filter((supplier) => {
+        const text = [
+          supplier?.name,
+          supplier?.email,
+          supplier?.address,
+          supplier?.state,
+          supplier?.country
+        ]
+          .map((value) => String(value || "").toLowerCase())
+          .join(" ");
+        const supplierPhone = normalizePhoneForLookup(supplier?.phone);
+        return (
+          text.includes(query) ||
+          (normalizedPhoneQuery && supplierPhone && supplierPhone.includes(normalizedPhoneQuery))
+        );
+      })
+      .slice(0, 8);
+  }, [suppliers, supplierLookupQuery]);
 
   const supplierLastPayment = useMemo(() => {
     if (!form.supplierId) return "";
@@ -153,6 +197,13 @@ export default function PaymentOutPremium() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
+
+  useEffect(() => {
+    if (!form.supplierId) return;
+    const selected = suppliers.find((entry) => entry.id === form.supplierId);
+    if (!selected) return;
+    setSupplierSearchPhone(String(selected.phone || "").replace(/\D/g, "").slice(-10));
+  }, [form.supplierId, suppliers]);
 
   useEffect(() => {
     if (!prefillBillId) return;
@@ -226,6 +277,9 @@ export default function PaymentOutPremium() {
     setPanelMode("form");
     setActiveStep(0);
     setDirty(false);
+    setSupplierSearchPhone("");
+    setSupplierLookupQuery("");
+    setSupplierSearchError("");
   }
 
   function openRecord(record, mode) {
@@ -249,6 +303,9 @@ export default function PaymentOutPremium() {
     setForm(defaultPaymentForm(country, currency));
     setActivePayment(null);
     setDirty(false);
+    setSupplierSearchPhone("");
+    setSupplierLookupQuery("");
+    setSupplierSearchError("");
   }
 
   function updateField(key, value) {
@@ -265,6 +322,85 @@ export default function PaymentOutPremium() {
       allocations: allocationsFromBills(bills.filter((bill) => bill.supplierId === supplierId))
     }));
     setDirty(true);
+  }
+
+  function applySupplierSelection(supplier) {
+    if (!supplier) return;
+    updateSupplier(supplier.id);
+    setSupplierSearchPhone(String(supplier.phone || "").replace(/\D/g, "").slice(-10));
+    setSupplierLookupQuery("");
+    setSupplierSearchError("");
+  }
+
+  function handleSupplierPhoneChange(value) {
+    const digits = String(value || "").replace(/\D/g, "").slice(0, 10);
+    setSupplierSearchPhone(digits);
+    setSupplierSearchError("");
+    if (
+      form.supplierId &&
+      normalizePhoneForLookup(digits) !== normalizePhoneForLookup(selectedSupplier?.phone)
+    ) {
+      setForm((prev) => ({
+        ...prev,
+        supplierId: "",
+        supplierName: "",
+        allocations: []
+      }));
+      setDirty(true);
+    }
+  }
+
+  function handleSupplierLookupChange(value) {
+    setSupplierLookupQuery(value);
+    setSupplierSearchError("");
+  }
+
+  function handleSupplierSearch() {
+    const normalizedQuery = normalizePhoneForLookup(supplierSearchPhone);
+    const phoneDigits = String(supplierSearchPhone || "").replace(/\D/g, "");
+    if (phoneDigits) {
+      if (phoneDigits.length !== 10) {
+        setSupplierSearchError("Enter a valid 10-digit supplier mobile number.");
+        return;
+      }
+      const matchedSupplier = suppliers.find(
+        (supplier) => normalizePhoneForLookup(supplier?.phone) === normalizedQuery
+      );
+      if (!matchedSupplier) {
+        setSupplierSearchError("No supplier found for this mobile number.");
+        return;
+      }
+      applySupplierSelection(matchedSupplier);
+      return;
+    }
+
+    const query = String(supplierLookupQuery || "").trim();
+    if (query.length < 2) {
+      setSupplierSearchError("Enter mobile number or name/email/address to search.");
+      return;
+    }
+    if (supplierLookupResults.length === 1) {
+      applySupplierSelection(supplierLookupResults[0]);
+      return;
+    }
+    if (!supplierLookupResults.length) {
+      setSupplierSearchError("No supplier found for this search.");
+      return;
+    }
+    setSupplierSearchError("Multiple suppliers found. Choose one from the list below.");
+  }
+
+  function resetSupplierSelection() {
+    setForm((prev) => ({
+      ...prev,
+      supplierId: "",
+      supplierName: "",
+      allocations: []
+    }));
+    setDirty(true);
+    setSupplierSearchPhone("");
+    setSupplierLookupQuery("");
+    setSupplierSearchError("");
   }
 
   function updateAllocation(billId, value) {
@@ -316,8 +452,8 @@ export default function PaymentOutPremium() {
   const readOnly = !!form.readOnly;
 
   return (
-    <div className="mx-auto max-w-[1360px] space-y-4 pb-24">
-      <div className="sticky top-0 z-30 rounded-2xl border border-slate-200/80 bg-white/90 px-3 py-2 shadow-sm backdrop-blur sm:px-4">
+    <div className="mx-auto min-h-full max-w-[1360px] space-y-4 pb-32">
+      <div className="z-30 rounded-2xl border border-slate-200/80 bg-gradient-to-r from-white/95 to-slate-50/95 px-3 py-2 shadow-sm backdrop-blur sm:px-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <p className="text-base font-semibold text-slate-900">Payment Out</p>
@@ -425,7 +561,7 @@ export default function PaymentOutPremium() {
               </div>
             </div>
 
-            <div className="overflow-auto">
+            <div className="overflow-x-auto">
               <table className="w-full min-w-[1200px] text-left text-sm">
                 <thead className="sticky top-0 bg-slate-50">
                   <tr>
@@ -538,22 +674,97 @@ export default function PaymentOutPremium() {
                       disabled={readOnly}
                     />
                   </label>
-                  <label className="block">
-                    <span className="text-xs font-semibold text-slate-600">Supplier</span>
-                    <select
-                      value={form.supplierId}
-                      onChange={(event) => updateSupplier(event.target.value)}
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                  <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold text-slate-600">Supplier Search</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        value={supplierSearchPhone}
+                        onChange={(event) => handleSupplierPhoneChange(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            handleSupplierSearch();
+                          }
+                        }}
+                        inputMode="numeric"
+                        maxLength={10}
+                        placeholder="Enter 10-digit mobile number"
+                        disabled={readOnly}
+                        className="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSupplierSearch}
+                        disabled={readOnly}
+                        className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Search className="h-3.5 w-3.5" />
+                        Search
+                      </button>
+                      {form.supplierId ? (
+                        <button
+                          type="button"
+                          onClick={resetSupplierSelection}
+                          disabled={readOnly}
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                          Clear
+                        </button>
+                      ) : null}
+                    </div>
+                    <input
+                      value={supplierLookupQuery}
+                      onChange={(event) => handleSupplierLookupChange(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          handleSupplierSearch();
+                        }
+                      }}
+                      placeholder="Type supplier name, email, or address"
                       disabled={readOnly}
-                    >
-                      <option value="">Select supplier</option>
-                      {suppliers.map((entry) => (
-                        <option key={entry.id} value={entry.id}>
-                          {entry.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
+                    />
+                    {supplierSearchError ? (
+                      <p className="text-xs font-medium text-rose-600">{supplierSearchError}</p>
+                    ) : null}
+                    {supplierLookupQuery.trim() ? (
+                      supplierLookupResults.length ? (
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {supplierLookupResults.map((supplier) => (
+                            <button
+                              key={supplier.id}
+                              type="button"
+                              onClick={() => applySupplierSelection(supplier)}
+                              disabled={readOnly}
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <p className="text-sm font-semibold text-slate-900">{supplier.name || "-"}</p>
+                              <p className="text-xs text-slate-600">{supplier.phone || "-"}</p>
+                              <p className="text-xs text-slate-500">{supplierAddressSummary(supplier) || "-"}</p>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                          No supplier found. Try another search.
+                        </p>
+                      )
+                    ) : null}
+                  </div>
+                  {selectedSupplier ? (
+                    <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs">
+                      <p className="font-semibold text-slate-900">{selectedSupplier.name || "-"}</p>
+                      <p className="mt-1 text-slate-500">{selectedSupplier.phone || "-"}</p>
+                      <p className="mt-1 text-slate-500">{selectedSupplier.email || "-"}</p>
+                      <p className="mt-1 text-slate-500">{supplierAddressSummary(selectedSupplier) || "-"}</p>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                      Search supplier by mobile, name, email, or address.
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <div className="rounded-xl bg-slate-50 p-3 text-xs">
                       <p className="text-slate-500">Outstanding</p>

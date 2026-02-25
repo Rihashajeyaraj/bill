@@ -205,6 +205,8 @@ export function mapSuppliersByCountry(country) {
         id: party.id,
         name: party.name,
         email: party.email || "",
+        phone: party.phone || "",
+        address: party.address || "",
         state: party.state || "",
         country: target || party.country || ""
       };
@@ -214,6 +216,8 @@ export function mapSuppliersByCountry(country) {
   const fromBills = purchases.map((bill) => ({
     id: bill.partyId || bill.supplierId || bill.vendorId || bill.partyName || bill.supplierName,
     name: bill.partyName || bill.supplierName || bill.vendorName || "Supplier",
+    phone: bill.phone || "",
+    address: bill.partyAddress || "",
     country: target || bill.country || ""
   }));
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Send } from "lucide-react";
+import { ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Search, Send, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, COUNTRY_OPTIONS, type CountryCode, type PaymentMode, type PaymentStatus } from "../../modules/paymentIn/countryConfig";
 import {
@@ -74,6 +74,21 @@ function resolveFixedCountry(organizationCountry: string, organizationCountryCod
   return "IN";
 }
 
+function normalizePhoneForLookup(value: unknown) {
+  let digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length > 10) digits = digits.slice(-10);
+  digits = digits.replace(/^0+/, "");
+  return digits || "0";
+}
+
+function customerAddressSummary(customer: any) {
+  return [customer?.address, customer?.state, customer?.country]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
 export default function PaymentInPremium() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
@@ -101,6 +116,9 @@ export default function PaymentInPremium() {
   const [statusFilter, setStatusFilter] = useState<PaymentStatus | "">("");
   const [customerFilter, setCustomerFilter] = useState("");
   const [modeFilter, setModeFilter] = useState("");
+  const [customerSearchPhone, setCustomerSearchPhone] = useState("");
+  const [customerLookupQuery, setCustomerLookupQuery] = useState("");
+  const [customerSearchError, setCustomerSearchError] = useState("");
   useGlobalLoadingBridge(loading, "payment-in");
 
   const payments = useMemo(() => listPaymentIn(country), [country, refreshKey]);
@@ -117,6 +135,29 @@ export default function PaymentInPremium() {
     const q = search.trim().toLowerCase();
     return (!q || haystack.includes(q)) && (!statusFilter || entry.status === statusFilter) && (!customerFilter || entry.customerId === customerFilter) && (!modeFilter || entry.paymentMode === modeFilter);
   }), [payments, search, statusFilter, customerFilter, modeFilter]);
+  const customerLookupResults = useMemo(() => {
+    const query = String(customerLookupQuery || "").trim().toLowerCase();
+    if (!query) return [];
+    const normalizedPhoneQuery = normalizePhoneForLookup(query);
+    return customers
+      .filter((customer) => {
+        const text = [
+          customer?.name,
+          customer?.email,
+          customer?.address,
+          customer?.state,
+          customer?.country
+        ]
+          .map((value) => String(value || "").toLowerCase())
+          .join(" ");
+        const customerPhone = normalizePhoneForLookup(customer?.phone);
+        return (
+          text.includes(query) ||
+          (normalizedPhoneQuery && customerPhone && customerPhone.includes(normalizedPhoneQuery))
+        );
+      })
+      .slice(0, 8);
+  }, [customers, customerLookupQuery]);
 
   const allowed = access.allowedCountries.includes(country);
   const readOnly = flowMode === "view";
@@ -158,6 +199,13 @@ export default function PaymentInPremium() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
+
+  useEffect(() => {
+    if (!form?.customerId) return;
+    const selected = customers.find((entry) => entry.id === form.customerId);
+    if (!selected) return;
+    setCustomerSearchPhone(String(selected.phone || "").replace(/\D/g, "").slice(-10));
+  }, [form?.customerId, customers]);
 
   useEffect(() => {
     if (!prefillInvoiceId) return;
@@ -202,6 +250,9 @@ export default function PaymentInPremium() {
     setFlowMode("create");
     setActiveStep(0);
     setDirty(false);
+    setCustomerSearchPhone("");
+    setCustomerLookupQuery("");
+    setCustomerSearchError("");
     clearMessages();
   }
 
@@ -225,6 +276,9 @@ export default function PaymentInPremium() {
     setForm(null);
     setActivePayment(null);
     setDirty(false);
+    setCustomerSearchPhone("");
+    setCustomerLookupQuery("");
+    setCustomerSearchError("");
     clearMessages();
   }
 
@@ -248,6 +302,93 @@ export default function PaymentInPremium() {
         : prev
     );
     setDirty(true);
+  }
+
+  function applyCustomerSelection(customer: any) {
+    if (!customer) return;
+    applyCustomer(customer.id, customer.name);
+    setCustomerSearchPhone(String(customer.phone || "").replace(/\D/g, "").slice(-10));
+    setCustomerLookupQuery("");
+    setCustomerSearchError("");
+  }
+
+  function handleCustomerPhoneChange(value: string) {
+    const digits = String(value || "").replace(/\D/g, "").slice(0, 10);
+    setCustomerSearchPhone(digits);
+    setCustomerSearchError("");
+    if (form?.customerId) {
+      const selected = customers.find((entry) => entry.id === form.customerId);
+      if (normalizePhoneForLookup(digits) !== normalizePhoneForLookup(selected?.phone)) {
+        setForm((prev) =>
+          prev
+            ? {
+                ...prev,
+                customerId: "",
+                customerInput: "",
+                allocations: []
+              }
+            : prev
+        );
+        setDirty(true);
+      }
+    }
+  }
+
+  function handleCustomerLookupChange(value: string) {
+    setCustomerLookupQuery(value);
+    setCustomerSearchError("");
+  }
+
+  function handleCustomerSearch() {
+    const phoneDigits = String(customerSearchPhone || "").replace(/\D/g, "");
+    if (phoneDigits) {
+      if (phoneDigits.length !== 10) {
+        setCustomerSearchError("Enter valid 10-digit mobile number.");
+        return;
+      }
+      const normalizedPhone = normalizePhoneForLookup(phoneDigits);
+      const matchedCustomer = customers.find(
+        (customer) => normalizePhoneForLookup(customer?.phone) === normalizedPhone
+      );
+      if (!matchedCustomer) {
+        setCustomerSearchError("No customer found for this mobile number.");
+        return;
+      }
+      applyCustomerSelection(matchedCustomer);
+      return;
+    }
+
+    const query = String(customerLookupQuery || "").trim();
+    if (query.length < 2) {
+      setCustomerSearchError("Enter mobile number or name/email/address to search.");
+      return;
+    }
+    if (!customerLookupResults.length) {
+      setCustomerSearchError("No customer found.");
+      return;
+    }
+    if (customerLookupResults.length === 1) {
+      applyCustomerSelection(customerLookupResults[0]);
+      return;
+    }
+    setCustomerSearchError("Multiple customers found. Select one below.");
+  }
+
+  function resetCustomerSelection() {
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            customerId: "",
+            customerInput: "",
+            allocations: []
+          }
+        : prev
+    );
+    setDirty(true);
+    setCustomerSearchPhone("");
+    setCustomerLookupQuery("");
+    setCustomerSearchError("");
   }
 
   function setAllocateAmount(totalAllocate: number) {
@@ -396,8 +537,8 @@ export default function PaymentInPremium() {
   const confirmStatus: PaymentStatus = access.canApply && totals.amountApplied > 0 ? "Applied" : "Received";
 
   return (
-    <div className="mx-auto max-w-[1360px] space-y-4 pb-32">
-      <div className="sticky top-0 z-30 rounded-2xl border border-slate-200/80 bg-white/90 px-3 py-2 shadow-sm backdrop-blur sm:px-4">
+    <div className="mx-auto min-h-full max-w-[1360px] space-y-4 pb-36">
+      <div className="z-30 rounded-2xl border border-slate-200/80 bg-gradient-to-r from-white/95 to-slate-50/95 px-3 py-2 shadow-sm backdrop-blur sm:px-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <p className="text-base font-semibold text-slate-900">Payment In</p>
@@ -547,16 +688,97 @@ export default function PaymentInPremium() {
 
                   <FlowCard title="Customer" subtitle="Search and pick a customer to begin">
                     <div className="space-y-3">
-                      <input list="payment-customer-options" value={form.customerInput} disabled={readOnly} onChange={(event) => {
-                        const next = event.target.value;
-                        const matched = customers.find((customer) => customer.name.toLowerCase() === next.trim().toLowerCase());
-                        if (matched) applyCustomer(matched.id, matched.name);
-                        else {
-                          updateForm("customerInput", next);
-                          updateForm("customerId", "");
-                        }
-                      }} placeholder="Type customer name" className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-base outline-none focus:ring-4 focus:ring-slate-200" />
-                      <datalist id="payment-customer-options">{customers.map((customer) => <option key={customer.id} value={customer.name} />)}</datalist>
+                      <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs font-semibold text-slate-600">Customer Search</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            value={customerSearchPhone}
+                            onChange={(event) => handleCustomerPhoneChange(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                handleCustomerSearch();
+                              }
+                            }}
+                            inputMode="numeric"
+                            maxLength={10}
+                            placeholder="Enter 10-digit mobile number"
+                            disabled={readOnly}
+                            className="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleCustomerSearch}
+                            disabled={readOnly}
+                            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Search className="h-3.5 w-3.5" />
+                            Search
+                          </button>
+                          {form.customerId ? (
+                            <button
+                              type="button"
+                              onClick={resetCustomerSelection}
+                              disabled={readOnly}
+                              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                              Clear
+                            </button>
+                          ) : null}
+                        </div>
+                        <input
+                          value={customerLookupQuery}
+                          onChange={(event) => handleCustomerLookupChange(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              handleCustomerSearch();
+                            }
+                          }}
+                          placeholder="Type customer name, email, or address"
+                          disabled={readOnly}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
+                        />
+                        {customerSearchError ? (
+                          <p className="text-xs font-medium text-rose-600">{customerSearchError}</p>
+                        ) : null}
+                        {customerLookupQuery.trim() ? (
+                          customerLookupResults.length ? (
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              {customerLookupResults.map((customer) => (
+                                <button
+                                  key={customer.id}
+                                  type="button"
+                                  onClick={() => applyCustomerSelection(customer)}
+                                  disabled={readOnly}
+                                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <p className="text-sm font-semibold text-slate-900">{customer.name || "-"}</p>
+                                  <p className="text-xs text-slate-600">{customer.phone || "-"}</p>
+                                  <p className="text-xs text-slate-500">{customerAddressSummary(customer) || "-"}</p>
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                              No customer found. Try another search.
+                            </p>
+                          )
+                        ) : null}
+                      </div>
+                      {selectedCustomer ? (
+                        <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs">
+                          <p className="font-semibold text-slate-900">{selectedCustomer.name || "-"}</p>
+                          <p className="mt-1 text-slate-500">{selectedCustomer.phone || "-"}</p>
+                          <p className="mt-1 text-slate-500">{selectedCustomer.email || "-"}</p>
+                          <p className="mt-1 text-slate-500">{customerAddressSummary(selectedCustomer) || "-"}</p>
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                          Search customer by mobile, name, email, or address.
+                        </div>
+                      )}
                       {fieldErrors.customerId ? <p className="text-xs text-rose-600">{fieldErrors.customerId}</p> : null}
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                         <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Outstanding</p><p className="font-semibold text-slate-900">{formatMoney(customerOutstandingBefore, country)}</p></div>

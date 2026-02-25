@@ -29,7 +29,7 @@ import {
   Cell
 } from "recharts";
 import { beginPageLoading, endPageLoading } from "../state/pageLoadingStore";
-import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../services/storage";
+import { isOrganizationScopedStorageEventKey, LS_KEYS, lsGetOrganizationScoped } from "../services/storage";
 
 function money(n) {
   const v = Number(n || 0);
@@ -64,6 +64,12 @@ export default function Dashboard() {
   const [invoices, setInvoices] = useState(() => invoicesList());
   const [purchases, setPurchases] = useState(() => purchasesList());
   const [payments, setPayments] = useState(() => paymentsList());
+  const [paymentInPremium, setPaymentInPremium] = useState(() =>
+    lsGetOrganizationScoped("paymentInPremiumV1", [])
+  );
+  const [paymentOutPremium, setPaymentOutPremium] = useState(() =>
+    lsGetOrganizationScoped("paymentOutPremiumV1", [])
+  );
   const [expenseCategorySummary, setExpenseCategorySummary] = useState([]);
   const [partyCounts, setPartyCounts] = useState({ total: 0, customers: 0, suppliers: 0 });
   const [donutTab, setDonutTab] = useState("income");
@@ -92,6 +98,8 @@ export default function Dashboard() {
         setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
         setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList());
         setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList());
+        setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
+        setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
         setPartyCounts(counts || { total: 0, customers: 0, suppliers: 0 });
         setExpenseCategorySummary(Array.isArray(summary) ? summary : []);
       } catch {
@@ -99,6 +107,8 @@ export default function Dashboard() {
         setInvoices(invoicesList());
         setPurchases(purchasesList());
         setPayments(paymentsList());
+        setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
+        setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
         setPartyCounts({ total: 0, customers: 0, suppliers: 0 });
         setExpenseCategorySummary([]);
       }
@@ -136,8 +146,30 @@ export default function Dashboard() {
     const totalExpense = expenseCategorySummary.reduce((sum, entry) => sum + Number(entry?.total || 0), 0);
     const payables = mapOpenBillsByCountry().reduce((sum, bill) => sum + Number(bill?.balanceDue || 0), 0);
 
-    const received = payments.filter((p) => p.direction === "IN").reduce((a, x) => a + Number(x.amount || 0), 0);
-    const paid = payments.filter((p) => p.direction === "OUT").reduce((a, x) => a + Number(x.amount || 0), 0);
+    const receivedLegacy = payments
+      .filter((entry) => {
+        const direction = String(entry?.direction || "").toUpperCase();
+        if (direction !== "IN") return false;
+        const reference = String(entry?.referenceNo || entry?.reference_no || "");
+        return !reference.startsWith("PI:");
+      })
+      .reduce((sum, entry) => sum + Number(entry?.amount || 0), 0);
+    const paidLegacy = payments
+      .filter((entry) => {
+        const direction = String(entry?.direction || "").toUpperCase();
+        if (direction !== "OUT") return false;
+        const reference = String(entry?.referenceNo || entry?.reference_no || "");
+        return !reference.startsWith("PO:");
+      })
+      .reduce((sum, entry) => sum + Number(entry?.amount || 0), 0);
+    const receivedPremium = (Array.isArray(paymentInPremium) ? paymentInPremium : [])
+      .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
+      .reduce((sum, entry) => sum + Number(entry?.totals?.amountReceived || 0), 0);
+    const paidPremium = (Array.isArray(paymentOutPremium) ? paymentOutPremium : [])
+      .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
+      .reduce((sum, entry) => sum + Number(entry?.totals?.amountPaid || 0), 0);
+    const received = Math.max(0, receivedLegacy + receivedPremium);
+    const paid = Math.max(0, paidLegacy + paidPremium);
     const overdueCutoff = new Date();
     overdueCutoff.setHours(0, 0, 0, 0);
     overdueCutoff.setDate(overdueCutoff.getDate() - 30);
@@ -187,7 +219,7 @@ export default function Dashboard() {
       paid,
       totalExpense: Math.max(0, totalExpense)
     };
-  }, [invoices, purchases, payments, expenseCategorySummary]);
+  }, [invoices, purchases, payments, expenseCategorySummary, paymentInPremium, paymentOutPremium]);
 
   const chart = useMemo(() => {
     const months = buildMonthLabels();

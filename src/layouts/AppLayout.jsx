@@ -46,7 +46,10 @@ export default function AppLayout() {
         <div className="topbar shrink-0">
           <Topbar collapsed={collapsed} />
         </div>
-        <main className="app-main relative min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-4 lg:px-5 lg:py-5">
+        <main
+          className="app-main relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-4 py-4 lg:px-5 lg:py-5"
+          style={{ WebkitOverflowScrolling: "touch" }}
+        >
           <Outlet />
           <PageLoader visible={isLoading} />
         </main>

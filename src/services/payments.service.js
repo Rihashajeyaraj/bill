@@ -28,6 +28,36 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
+function referenceFromEntry(entry) {
+  return String(entry?.referenceNo || entry?.reference_no || "");
+}
+
+function mergeSourceRowsToLocalPayments(sourcePrefix, rows) {
+  const keep = getAll().filter((entry) => !referenceFromEntry(entry).startsWith(sourcePrefix));
+  if (!Array.isArray(rows) || !rows.length) {
+    setAll(keep);
+    return;
+  }
+
+  const mapped = rows.map((row, index) => ({
+    id: uid("pay_"),
+    date: row?.payment_date || new Date().toISOString().slice(0, 10),
+    paymentNo: row?.payment_no || `PAY-${Date.now()}`,
+    direction: String(row?.direction || "").toUpperCase() === "OUT" ? "OUT" : "IN",
+    partyId: row?.party_id || "",
+    invoiceId: row?.invoice_id || "",
+    billId: row?.bill_id || "",
+    amount: parseNumber(row?.amount),
+    mode: row?.payment_mode || "",
+    referenceNo: row?.reference_no || `${sourcePrefix}${index + 1}`,
+    note: row?.notes || "",
+    status: row?.status || "posted",
+    created_at: row?.created_at || new Date().toISOString()
+  }));
+
+  setAll([...mapped, ...keep]);
+}
+
 async function findInvoiceIdByNumber(organizationId, invoiceNo) {
   if (!supabase || !organizationId || !invoiceNo) return null;
   const { data } = await supabase
@@ -129,69 +159,44 @@ export function paymentsCreate(payment) {
 }
 
 export async function syncPaymentInRemote(record) {
-  if (!isSupabaseConfigured || !supabase || !record) return;
+  if (!record) return;
 
   const organizationId = authGetOrganizationId();
-  if (!organizationId) return;
-
   const actorUserId = authGetUser()?.id || null;
   const sourcePrefix = `PI:${record.id}:`;
   const shouldApply = String(record?.status || "").toLowerCase() === "applied";
   const shouldPost = String(record?.status || "").toLowerCase() !== "draft";
-
-  const { error: deleteError } = await supabase
-    .from("payments")
-    .delete()
-    .eq("organization_id", organizationId)
-    .ilike("reference_no", `${sourcePrefix}%`);
-  if (deleteError) {
-    throw new Error(normalizeSupabaseError(deleteError, "Failed to refresh payment-in rows"));
-  }
-
-  if (!shouldPost) {
-    console.log("[CreditMonitoring] Triggering notification check from syncPaymentInRemote (non-posted)", {
-      paymentId: record?.id || null,
-      status: record?.status || null,
-      partyId: record?.customerId || null
-    });
-    await triggerCreditLimitNotifications();
-    return;
-  }
-
   const rows = [];
-  const partyId = looksLikeUuid(record?.customerId) ? record.customerId : null;
+  const partyId = record?.customerId || null;
   const paymentDate = record?.paymentDate || new Date().toISOString().slice(0, 10);
   const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
 
-  if (shouldApply) {
+  if (shouldPost && shouldApply) {
     for (let index = 0; index < allocations.length; index += 1) {
       const line = allocations[index];
       const amount = Math.max(0, parseNumber(line?.applyAmount));
       if (!amount) continue;
       let invoiceId = looksLikeUuid(line?.invoiceId) ? line.invoiceId : null;
-      if (!invoiceId && line?.invoiceNo) {
+      if (!invoiceId && line?.invoiceNo && organizationId) {
         invoiceId = await findInvoiceIdByNumber(organizationId, line.invoiceNo);
       }
       rows.push({
-        organization_id: organizationId,
         payment_no: record?.receiptNo || `RCPT-${Date.now()}`,
         payment_date: paymentDate,
         direction: "in",
         party_id: partyId,
-        invoice_id: invoiceId,
+        invoice_id: invoiceId || line?.invoiceId || null,
         amount,
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}${index + 1}`,
         notes: record?.internalNotes || `Payment in ${record?.status || "received"}`,
-        status: "posted",
-        created_by: actorUserId
+        status: "posted"
       });
     }
 
     const unappliedAmount = Math.max(0, parseNumber(record?.totals?.unappliedAmount));
     if (unappliedAmount > 0) {
       rows.push({
-        organization_id: organizationId,
         payment_no: record?.receiptNo || `RCPT-${Date.now()}`,
         payment_date: paymentDate,
         direction: "in",
@@ -201,18 +206,16 @@ export async function syncPaymentInRemote(record) {
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}UNAPPLIED`,
         notes: record?.internalNotes || `Unapplied payment in ${record?.status || "received"}`,
-        status: "posted",
-        created_by: actorUserId
+        status: "posted"
       });
     }
-  } else {
+  } else if (shouldPost) {
     const amountReceived = Math.max(
       0,
       parseNumber(record?.totals?.amountReceived ?? record?.amountReceived)
     );
     if (amountReceived > 0) {
       rows.push({
-        organization_id: organizationId,
         payment_no: record?.receiptNo || `RCPT-${Date.now()}`,
         payment_date: paymentDate,
         direction: "in",
@@ -222,18 +225,38 @@ export async function syncPaymentInRemote(record) {
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}RECEIVED`,
         notes: record?.internalNotes || `Payment in ${record?.status || "received"}`,
-        status: "posted",
-        created_by: actorUserId
+        status: "posted"
       });
     }
   }
 
-  if (rows.length) {
-    const { error: insertError } = await supabase.from("payments").insert(rows);
-    if (insertError) {
-      throw new Error(normalizeSupabaseError(insertError, "Failed to save payment-in rows"));
+  if (isSupabaseConfigured && supabase && organizationId) {
+    const { error: deleteError } = await supabase
+      .from("payments")
+      .delete()
+      .eq("organization_id", organizationId)
+      .ilike("reference_no", `${sourcePrefix}%`);
+    if (deleteError) {
+      throw new Error(normalizeSupabaseError(deleteError, "Failed to refresh payment-in rows"));
+    }
+
+    if (rows.length) {
+      const remoteRows = rows.map((row) => ({
+        ...row,
+        organization_id: organizationId,
+        party_id: looksLikeUuid(row?.party_id) ? row.party_id : null,
+        invoice_id: looksLikeUuid(row?.invoice_id) ? row.invoice_id : null,
+        bill_id: looksLikeUuid(row?.bill_id) ? row.bill_id : null,
+        created_by: actorUserId
+      }));
+      const { error: insertError } = await supabase.from("payments").insert(remoteRows);
+      if (insertError) {
+        throw new Error(normalizeSupabaseError(insertError, "Failed to save payment-in rows"));
+      }
     }
   }
+
+  mergeSourceRowsToLocalPayments(sourcePrefix, rows);
   console.log("[CreditMonitoring] Triggering notification check from syncPaymentInRemote", {
     paymentId: record?.id || null,
     status: record?.status || null,
@@ -244,69 +267,44 @@ export async function syncPaymentInRemote(record) {
 }
 
 export async function syncPaymentOutRemote(record) {
-  if (!isSupabaseConfigured || !supabase || !record) return;
+  if (!record) return;
 
   const organizationId = authGetOrganizationId();
-  if (!organizationId) return;
-
   const actorUserId = authGetUser()?.id || null;
   const sourcePrefix = `PO:${record.id}:`;
   const shouldApply = String(record?.status || "").toLowerCase() === "applied";
   const shouldPost = String(record?.status || "").toLowerCase() !== "draft";
-
-  const { error: deleteError } = await supabase
-    .from("payments")
-    .delete()
-    .eq("organization_id", organizationId)
-    .ilike("reference_no", `${sourcePrefix}%`);
-  if (deleteError) {
-    throw new Error(normalizeSupabaseError(deleteError, "Failed to refresh payment-out rows"));
-  }
-
-  if (!shouldPost) {
-    console.log("[CreditMonitoring] Triggering notification check from syncPaymentOutRemote (non-posted)", {
-      paymentId: record?.id || null,
-      status: record?.status || null,
-      partyId: record?.supplierId || null
-    });
-    await triggerCreditLimitNotifications();
-    return;
-  }
-
   const rows = [];
-  const partyId = looksLikeUuid(record?.supplierId) ? record.supplierId : null;
+  const partyId = record?.supplierId || null;
   const paymentDate = record?.paymentDate || new Date().toISOString().slice(0, 10);
   const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
 
-  if (shouldApply) {
+  if (shouldPost && shouldApply) {
     for (let index = 0; index < allocations.length; index += 1) {
       const line = allocations[index];
       const amount = Math.max(0, parseNumber(line?.applyAmount));
       if (!amount) continue;
       let billId = looksLikeUuid(line?.billId) ? line.billId : null;
-      if (!billId && line?.billNo) {
+      if (!billId && line?.billNo && organizationId) {
         billId = await findBillIdByNumber(organizationId, line.billNo);
       }
       rows.push({
-        organization_id: organizationId,
         payment_no: record?.paymentNo || `PAY-${Date.now()}`,
         payment_date: paymentDate,
         direction: "out",
         party_id: partyId,
-        bill_id: billId,
+        bill_id: billId || line?.billId || null,
         amount,
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}${index + 1}`,
         notes: record?.internalNotes || `Payment out ${record?.status || "paid"}`,
-        status: "posted",
-        created_by: actorUserId
+        status: "posted"
       });
     }
 
     const unappliedAmount = Math.max(0, parseNumber(record?.totals?.unappliedAmount));
     if (unappliedAmount > 0) {
       rows.push({
-        organization_id: organizationId,
         payment_no: record?.paymentNo || `PAY-${Date.now()}`,
         payment_date: paymentDate,
         direction: "out",
@@ -316,15 +314,13 @@ export async function syncPaymentOutRemote(record) {
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}UNAPPLIED`,
         notes: record?.internalNotes || `Unapplied payment out ${record?.status || "paid"}`,
-        status: "posted",
-        created_by: actorUserId
+        status: "posted"
       });
     }
-  } else {
+  } else if (shouldPost) {
     const amountPaid = Math.max(0, parseNumber(record?.totals?.amountPaid ?? record?.amountPaid));
     if (amountPaid > 0) {
       rows.push({
-        organization_id: organizationId,
         payment_no: record?.paymentNo || `PAY-${Date.now()}`,
         payment_date: paymentDate,
         direction: "out",
@@ -334,18 +330,38 @@ export async function syncPaymentOutRemote(record) {
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}PAID`,
         notes: record?.internalNotes || `Payment out ${record?.status || "paid"}`,
-        status: "posted",
-        created_by: actorUserId
+        status: "posted"
       });
     }
   }
 
-  if (rows.length) {
-    const { error: insertError } = await supabase.from("payments").insert(rows);
-    if (insertError) {
-      throw new Error(normalizeSupabaseError(insertError, "Failed to save payment-out rows"));
+  if (isSupabaseConfigured && supabase && organizationId) {
+    const { error: deleteError } = await supabase
+      .from("payments")
+      .delete()
+      .eq("organization_id", organizationId)
+      .ilike("reference_no", `${sourcePrefix}%`);
+    if (deleteError) {
+      throw new Error(normalizeSupabaseError(deleteError, "Failed to refresh payment-out rows"));
+    }
+
+    if (rows.length) {
+      const remoteRows = rows.map((row) => ({
+        ...row,
+        organization_id: organizationId,
+        party_id: looksLikeUuid(row?.party_id) ? row.party_id : null,
+        invoice_id: looksLikeUuid(row?.invoice_id) ? row.invoice_id : null,
+        bill_id: looksLikeUuid(row?.bill_id) ? row.bill_id : null,
+        created_by: actorUserId
+      }));
+      const { error: insertError } = await supabase.from("payments").insert(remoteRows);
+      if (insertError) {
+        throw new Error(normalizeSupabaseError(insertError, "Failed to save payment-out rows"));
+      }
     }
   }
+
+  mergeSourceRowsToLocalPayments(sourcePrefix, rows);
   console.log("[CreditMonitoring] Triggering notification check from syncPaymentOutRemote", {
     paymentId: record?.id || null,
     status: record?.status || null,
