@@ -2,7 +2,7 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, Plus, Trash2 } from "lucide-react";
 import Card from "../components/Card";
 import FormField from "../components/FormField";
 import GradientButton from "../components/GradientButton";
@@ -78,7 +78,7 @@ function createDraft(type = "PRODUCT") {
     type: normalizedType,
     itemName: "",
     category: "",
-    unit: "pcs",
+    unit: "",
     status: "Active",
     description: "",
     salePrice: 0,
@@ -144,6 +144,7 @@ export default function ItemCreate() {
   const showInventoryInputs = shouldShowInventoryFields(form.type, form.trackInventory);
   const complianceCodeLabel = form.type === "SERVICE" ? "SAC" : "HSN";
   const itemTypeLabel = form.type === "SERVICE" ? "Service" : "Product";
+  const skuPreview = String(form.sku || form.itemCode || "").trim();
   const multiCountryEnabled =
     !!organizationProfile?.settings?.numbering?.allowCountryOverride ||
     !!organizationProfile?.settings?.preferences?.multiCurrency;
@@ -245,6 +246,7 @@ export default function ItemCreate() {
   function validate() {
     const nextErrors = {};
     if (!String(form.itemName || "").trim()) nextErrors.itemName = "Item name is required.";
+    if (!String(form.unit || "").trim()) nextErrors.unit = "Select unit of measure.";
     if (parseNumber(form.salePrice) < 0) nextErrors.salePrice = "Sales rate cannot be negative.";
     if (parseNumber(form.purchasePrice) < 0) nextErrors.purchasePrice = "Purchase rate cannot be negative.";
     if (parseNumber(form.taxRate) < 0) nextErrors.taxRate = `${taxRateLabel} cannot be negative.`;
@@ -286,7 +288,7 @@ export default function ItemCreate() {
       name: String(form.itemName || "").trim(),
       type: toStoreType(form.type),
       description: String(form.description || "").trim(),
-      unit: String(form.unit || "pcs").trim() || "pcs",
+      unit: String(form.unit || "").trim() || "pcs",
       salesRate: parseNumber(form.salePrice),
       purchaseRate: parseNumber(form.purchasePrice),
       taxRate: numericTaxRate,
@@ -441,19 +443,33 @@ export default function ItemCreate() {
                 </datalist>
               </FormField>
 
-              <FormField label="Unit of Measure">
+              <FormField label="SKU / Item ID (Auto)">
                 <input
-                  list="item-unit-options"
-                  value={form.unit}
-                  onChange={(event) => updateField("unit", event.target.value)}
-                  className={inputClassName}
-                  placeholder="pcs, kg, hr"
+                  value={skuPreview}
+                  className={`${inputClassName} bg-slate-50 text-slate-700`}
+                  placeholder="Auto-generated"
+                  readOnly
                 />
-                <datalist id="item-unit-options">
-                  {UNITS.map((unit) => (
-                    <option key={unit} value={unit} />
-                  ))}
-                </datalist>
+                <p className="mt-1 text-xs text-slate-500">Auto-generated. Cannot be edited.</p>
+              </FormField>
+
+              <FormField label="Unit of Measure">
+                <div className="relative">
+                  <select
+                    value={form.unit}
+                    onChange={(event) => updateField("unit", event.target.value)}
+                    className={`${inputClassName} appearance-none pr-10`}
+                  >
+                    <option value="">Select unit</option>
+                    {UNITS.map((unit) => (
+                      <option key={unit} value={unit}>
+                        {unit}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                </div>
+                {errors.unit ? <p className={errorClassName}>{errors.unit}</p> : null}
               </FormField>
 
               <FormField label="Status">
@@ -676,15 +692,7 @@ export default function ItemCreate() {
 
           <FormSection title="5. Identifiers" description="Optional codes used for scanning and internal lookup." collapsible defaultOpen={false}>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <FormField label="SKU">
-                <input
-                  value={form.sku}
-                  onChange={(event) => updateField("sku", event.target.value)}
-                  className={inputClassName}
-                  placeholder="SKU-001"
-                />
-              </FormField>
-              <FormField label="Barcode (EAN / UPC)">
+              <FormField label="Barcode (EAN / UPC)" className="md:col-span-2">
                 <input
                   value={form.barcode}
                   onChange={(event) => updateField("barcode", event.target.value)}
