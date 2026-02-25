@@ -139,7 +139,11 @@ function formatIsoToDayMonthYear(value) {
   return `${day}/${month}/${year}`;
 }
 
-function resolvePaymentCountryCode(country) {
+function resolvePaymentCountryCode(country, countryCode) {
+  const code = String(countryCode || "").trim().toUpperCase();
+  if (code === "LK") return "SL";
+  if (code === "GB") return "UK";
+  if (code && code in COUNTRY_CONFIG) return code;
   const normalized = String(country || "").trim();
   if (COUNTRY_NAME_TO_CODE[normalized]) return COUNTRY_NAME_TO_CODE[normalized];
   if (normalized.toUpperCase() in COUNTRY_CONFIG) return normalized.toUpperCase();
@@ -148,7 +152,7 @@ function resolvePaymentCountryCode(country) {
 
 export default function InvoiceCreate() {
   const navigate = useNavigate();
-  const { profile: company = {}, country = "", currency = "", currencySymbol = "" } = useOrganization();
+  const { profile: company = {}, country = "", countryCode = "", currency = "", currencySymbol = "" } = useOrganization();
   const [templateConfig, setTemplateConfig] = useState(() => getInvoiceTemplateConfig());
   const isIndiaOrg = country === "India";
 
@@ -186,7 +190,10 @@ export default function InvoiceCreate() {
 
   const companyState = company?.address?.state || "";
   const customerState = isIndiaOrg ? placeOfSupply || party?.state || "" : party?.state || "";
-  const paymentCountryCode = useMemo(() => resolvePaymentCountryCode(country), [country]);
+  const paymentCountryCode = useMemo(
+    () => resolvePaymentCountryCode(country, countryCode),
+    [country, countryCode]
+  );
   const paymentModes = useMemo(
     () => COUNTRY_CONFIG[paymentCountryCode]?.paymentModes || ["Cash", "Bank Transfer", "Cheque", "Card", "Online Gateway"],
     [paymentCountryCode]
@@ -797,13 +804,14 @@ export default function InvoiceCreate() {
       const savedInvoiceId = await invoicesCreate(payload);
       setLastSavedInvoiceId(savedInvoiceId || "");
       let paymentSaved = false;
+      let paymentSavedAsUnapplied = false;
 
       if (markAsPaid && paymentAmount > 0 && savedInvoiceId) {
         try {
           const outstandingBefore = outstandingByCustomer(paymentCountryCode, partyId);
           const applyAmount = Math.min(paymentAmount, Number(computed.grandTotal || 0));
           const actor = authGetUser()?.name || authGetUser()?.email || "System User";
-          const paymentRecord = savePaymentIn({
+          const basePaymentPayload = {
             country: paymentCountryCode,
             paymentDate: paymentDate || invoiceDate,
             customerId: partyId,
@@ -824,7 +832,6 @@ export default function InvoiceCreate() {
             internalNotes: paymentNotes || `Payment for invoice ${invoiceNo}`,
             customerNotes: "",
             attachment: null,
-            desiredStatus: "Applied",
             amountReceived: paymentAmount,
             allocations: [
               {
@@ -838,15 +845,61 @@ export default function InvoiceCreate() {
             ],
             customerOutstandingBefore: outstandingBefore,
             actor
+          };
+          const stagedPayment = savePaymentIn({
+            ...basePaymentPayload,
+            desiredStatus: "Received"
+          });
+          const paymentRecord = savePaymentIn({
+            ...basePaymentPayload,
+            id: stagedPayment.id,
+            desiredStatus: "Applied",
+            customerOutstandingBefore: stagedPayment.totals.customerOutstandingBefore
           });
           await syncPaymentInRemote(paymentRecord);
           paymentSaved = true;
         } catch (paymentError) {
-          alert(
-            `Invoice saved, but Payment In was not saved: ${
-              paymentError?.message || "Unknown payment error"
-            }`
-          );
+          try {
+            // Fallback: keep payment visible in Payment In as unapplied if allocation mapping fails.
+            const actor = authGetUser()?.name || authGetUser()?.email || "System User";
+            const fallbackRecord = savePaymentIn({
+              country: paymentCountryCode,
+              paymentDate: paymentDate || invoiceDate,
+              customerId: partyId,
+              customerName: party?.name || "",
+              paymentMode,
+              referenceNo: referenceNo || "",
+              chequeNo: paymentMode === "Cheque" ? chequeNo : "",
+              bankName: paymentMode === "Bank Transfer" ? bankName : "",
+              bankAccount: paymentMode === "Bank Transfer" ? bankAccount : "",
+              transactionId:
+                paymentMode === "Bank Transfer" ||
+                paymentMode === "Card" ||
+                paymentMode === "UPI" ||
+                paymentMode === "Online Gateway"
+                  ? transactionId
+                  : "",
+              paymentReference: referenceNo || "",
+              internalNotes:
+                paymentNotes || `Payment for invoice ${invoiceNo} (saved as unapplied)`,
+              customerNotes: "",
+              attachment: null,
+              desiredStatus: "Received",
+              amountReceived: paymentAmount,
+              allocations: [],
+              customerOutstandingBefore: 0,
+              actor
+            });
+            await syncPaymentInRemote(fallbackRecord);
+            paymentSaved = true;
+            paymentSavedAsUnapplied = true;
+          } catch (fallbackError) {
+            alert(
+              `Invoice saved, but Payment In was not saved: ${
+                fallbackError?.message || paymentError?.message || "Unknown payment error"
+              }`
+            );
+          }
         }
       }
 
@@ -864,7 +917,11 @@ export default function InvoiceCreate() {
       await invoicesSyncFromRemote();
 
       if (!silent) {
-        alert(paymentSaved ? "Invoice and Payment In saved successfully." : "Invoice saved successfully.");
+        if (paymentSavedAsUnapplied) {
+          alert("Invoice saved. Payment In saved as unapplied. You can allocate it in Payment In page.");
+        } else {
+          alert(paymentSaved ? "Invoice and Payment In saved successfully." : "Invoice saved successfully.");
+        }
       }
       return savedInvoiceId || "";
     } catch (error) {

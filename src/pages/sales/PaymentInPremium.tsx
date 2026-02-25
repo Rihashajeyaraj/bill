@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Send, Sparkles } from "lucide-react";
+import { ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Send } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, COUNTRY_OPTIONS, type CountryCode, type PaymentMode, type PaymentStatus } from "../../modules/paymentIn/countryConfig";
 import {
@@ -25,7 +25,6 @@ import { syncPartiesFromRemote } from "../../modules/parties/store";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import PaymentModePicker from "../../modules/paymentIn/PaymentModePicker";
-import ReceiptFeedCard from "../../modules/paymentIn/ReceiptFeedCard";
 import PaymentInSkeleton from "../../modules/paymentIn/PaymentInSkeleton";
 import AuditDrawer from "../../modules/paymentIn/AuditDrawer";
 import { useGlobalLoadingBridge } from "../../hooks/useGlobalLoadingBridge";
@@ -53,6 +52,12 @@ function canReopenWithinWindow(record: PaymentInRecord | null) {
   if (!record || record.status !== "Applied") return false;
   const touched = new Date(record.audit.modifiedAt).getTime();
   return Number.isFinite(touched) && Date.now() - touched <= EDIT_WINDOW_MS;
+}
+
+function statusBadgeClass(status: PaymentStatus) {
+  if (status === "Applied") return "bg-emerald-100 text-emerald-700";
+  if (status === "Received") return "bg-amber-100 text-amber-700";
+  return "bg-slate-100 text-slate-700";
 }
 
 function resolveFixedCountry(organizationCountry: string, organizationCountryCode: string): CountryCode {
@@ -436,15 +441,84 @@ export default function PaymentInPremium() {
               {loading ? (
                 <PaymentInSkeleton />
               ) : (
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {filteredPayments.map((record) => (
-                    <ReceiptFeedCard key={record.id} record={record} onView={() => openFlow(record, "view")} onEdit={() => openFlow(record, "edit")} onPdf={() => exportSinglePaymentInPdf(record)} canUndo={canReopenWithinWindow(record)} onUndo={() => undoApplied(record)} />
-                  ))}
-                  {!filteredPayments.length ? (
-                    <FlowCard className="md:col-span-2 xl:col-span-3" title="No payments found" subtitle="Try different search/filter or create a new payment.">
-                      <button onClick={startNewPayment} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"><Sparkles className="h-4 w-4" />Start Payment Flow</button>
-                    </FlowCard>
-                  ) : null}
+                <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+                  <table className="min-w-[980px] w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-slate-600">
+                      <tr>
+                        <th className="px-3 py-3 font-semibold">Receipt No</th>
+                        <th className="px-3 py-3 font-semibold">Date</th>
+                        <th className="px-3 py-3 font-semibold">Customer</th>
+                        <th className="px-3 py-3 font-semibold">Mode</th>
+                        <th className="px-3 py-3 font-semibold text-right">Received</th>
+                        <th className="px-3 py-3 font-semibold text-right">Applied</th>
+                        <th className="px-3 py-3 font-semibold">Status</th>
+                        <th className="px-3 py-3 font-semibold">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {!filteredPayments.length ? (
+                        <tr className="border-t border-slate-100">
+                          <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
+                            No payments found. Create a new payment to get started.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredPayments.map((record) => (
+                          <tr key={record.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                            <td className="px-3 py-3 font-semibold text-slate-900">{record.receiptNo}</td>
+                            <td className="px-3 py-3 text-slate-600">{record.paymentDate || "-"}</td>
+                            <td className="px-3 py-3 text-slate-700">{record.customerName || "-"}</td>
+                            <td className="px-3 py-3 text-slate-600">{record.paymentMode}</td>
+                            <td className="px-3 py-3 text-right font-semibold text-slate-900">
+                              {formatMoney(record?.totals?.amountReceived || 0, country)}
+                            </td>
+                            <td className="px-3 py-3 text-right text-slate-700">
+                              {formatMoney(record?.totals?.amountApplied || 0, country)}
+                            </td>
+                            <td className="px-3 py-3">
+                              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(record.status)}`}>
+                                {record.status}
+                              </span>
+                            </td>
+                            <td className="px-3 py-3">
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => openFlow(record, "view")}
+                                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  View
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openFlow(record, "edit")}
+                                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => exportSinglePaymentInPdf(record)}
+                                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  PDF
+                                </button>
+                                {canReopenWithinWindow(record) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => undoApplied(record)}
+                                    className="rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                                  >
+                                    Undo
+                                  </button>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </>

@@ -639,45 +639,97 @@ export default function PurchaseBill() {
         supplyType: computed.tax.supplyType || null
       });
 
+      let paymentSaved = false;
+      let paymentSavedUnapplied = false;
       if (paymentAmount > 0) {
-        const payableBefore = outstandingBySupplier(country, partyId);
-        const applyAmount = Math.min(paymentAmount, Number(computed.finalTotal || 0));
-        const paymentOutRecord = savePaymentOut({
-          country,
-          paymentDate: paymentDate || billDate,
-          supplierId: partyId,
-          supplierName: party?.name || "",
-          currency: currency || "",
-          paymentMode: paymentType,
-          referenceNo: referenceNo || "",
-          chequeNo: paymentType === "Cheque" ? chequeNo : "",
-          bankName: paymentType === "Bank Transfer" ? bankName : "",
-          transactionId:
-            paymentType === "Bank Transfer" || paymentType === "Card" || paymentType === "Online"
-              ? transactionId
-              : "",
-          paymentReference: referenceNo || "",
-          internalNotes: paymentNotes || `Payment from purchase bill ${effectiveBillNumber}`,
-          attachment: null,
-          desiredStatus: "Applied",
-          amountPaid: paymentAmount,
-          allocations: [
-            {
-              billId: createdBillId,
-              billNo: effectiveBillNumber,
-              billDate,
-              billAmount: Number(computed.finalTotal || 0),
-              balanceDue: Number(computed.finalTotal || 0),
-              applyAmount
-            }
-          ],
-          supplierOutstandingBefore: payableBefore,
-          actor: authGetUser()?.name || authGetUser()?.email || "System User"
-        });
-        await syncPaymentOutRemote(paymentOutRecord);
+        try {
+          const payableBefore = outstandingBySupplier(country, partyId);
+          const applyAmount = Math.min(paymentAmount, Number(computed.finalTotal || 0));
+          const paymentOutRecord = savePaymentOut({
+            country,
+            paymentDate: paymentDate || billDate,
+            supplierId: partyId,
+            supplierName: party?.name || "",
+            currency: currency || "",
+            paymentMode: paymentType,
+            referenceNo: referenceNo || "",
+            chequeNo: paymentType === "Cheque" ? chequeNo : "",
+            bankName: paymentType === "Bank Transfer" ? bankName : "",
+            transactionId:
+              paymentType === "Bank Transfer" || paymentType === "Card" || paymentType === "Online"
+                ? transactionId
+                : "",
+            paymentReference: referenceNo || "",
+            internalNotes: paymentNotes || `Payment from purchase bill ${effectiveBillNumber}`,
+            attachment: null,
+            desiredStatus: "Applied",
+            amountPaid: paymentAmount,
+            allocations: [
+              {
+                billId: createdBillId,
+                billNo: effectiveBillNumber,
+                billDate,
+                billAmount: Number(computed.finalTotal || 0),
+                balanceDue: Number(computed.finalTotal || 0),
+                applyAmount
+              }
+            ],
+            supplierOutstandingBefore: payableBefore,
+            actor: authGetUser()?.name || authGetUser()?.email || "System User"
+          });
+          await syncPaymentOutRemote(paymentOutRecord);
+          paymentSaved = true;
+        } catch (paymentError) {
+          try {
+            const fallbackRecord = savePaymentOut({
+              country,
+              paymentDate: paymentDate || billDate,
+              supplierId: partyId,
+              supplierName: party?.name || "",
+              currency: currency || "",
+              paymentMode: paymentType,
+              referenceNo: referenceNo || "",
+              chequeNo: paymentType === "Cheque" ? chequeNo : "",
+              bankName: paymentType === "Bank Transfer" ? bankName : "",
+              transactionId:
+                paymentType === "Bank Transfer" || paymentType === "Card" || paymentType === "Online"
+                  ? transactionId
+                  : "",
+              paymentReference: referenceNo || "",
+              internalNotes:
+                paymentNotes || `Payment from purchase bill ${effectiveBillNumber} (saved as unapplied)`,
+              attachment: null,
+              desiredStatus: "Paid",
+              amountPaid: paymentAmount,
+              allocations: [],
+              supplierOutstandingBefore: 0,
+              actor: authGetUser()?.name || authGetUser()?.email || "System User"
+            });
+            await syncPaymentOutRemote(fallbackRecord);
+            paymentSaved = true;
+            paymentSavedUnapplied = true;
+          } catch (fallbackError) {
+            toast.warning(
+              "Bill saved but payment not linked",
+              fallbackError?.message || paymentError?.message || "Payment record could not be saved."
+            );
+          }
+        }
       }
 
-      toast.success("Purchase bill saved", `Bill ${effectiveBillNumber} saved successfully.`);
+      if (paymentSavedUnapplied) {
+        toast.success(
+          "Purchase bill saved",
+          `Bill ${effectiveBillNumber} saved. Payment saved as unapplied in Payment Out.`
+        );
+      } else if (paymentSaved) {
+        toast.success(
+          "Purchase bill saved",
+          `Bill ${effectiveBillNumber} and Payment Out saved successfully.`
+        );
+      } else {
+        toast.success("Purchase bill saved", `Bill ${effectiveBillNumber} saved successfully.`);
+      }
       setAutoBillNumber(generateBillNumber());
       setMarkAsPaid(false);
       setPaymentType("Cash");
