@@ -167,6 +167,14 @@ function formatDayMonthYear(value) {
   return `${day}/${month}/${year}`;
 }
 
+function normalizeCountry(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "in") return "india";
+  return normalized;
+}
+
 export default function InvoicePreview({ templateId, styleConfig, invoiceData }) {
   const variant = VARIANTS[templateId] || VARIANTS.standard;
   const { primaryColor, bgColor, fontFamily, logoUrl, logoPosition } = styleConfig || {};
@@ -198,6 +206,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
     gstin: invoiceData.companyGstin || "",
     phone: invoiceData.companyPhone || "",
     email: invoiceData.companyEmail || "",
+    country: invoiceData.companyCountry || "",
     state: invoiceData.companyState || ""
   };
 
@@ -206,6 +215,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
     address: invoiceData.customer?.address || "",
     gstin: invoiceData.customer?.gstin || "",
     phone: invoiceData.customer?.phone || "",
+    country: invoiceData.customer?.country || "",
     state: invoiceData.customer?.state || ""
   };
 
@@ -252,6 +262,9 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
     if (typeof invoiceData.tax?.sameState === "boolean") return invoiceData.tax.sameState;
     if (taxBreakup?.supplyType) return taxBreakup.supplyType === "INTRA";
     if (invoiceData.tax?.supplyType) return invoiceData.tax.supplyType !== "INTER";
+    const sellerCountry = normalizeCountry(seller.country || invoiceData.country || invoiceData.companyCountry || "");
+    const buyerCountry = normalizeCountry(buyer.country || invoiceData.customer?.country || "");
+    if (sellerCountry && buyerCountry && sellerCountry !== buyerCountry) return false;
     const sellerState = (seller.state || "").trim().toLowerCase();
     const buyerState = (buyer.state || invoiceData.placeOfSupply || "").trim().toLowerCase();
     return sellerState && buyerState ? sellerState === buyerState : false;

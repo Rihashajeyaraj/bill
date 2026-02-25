@@ -125,6 +125,8 @@ export default function PurchaseBill() {
   const [chequeNo, setChequeNo] = useState("");
   const [bankName, setBankName] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
+  const companyCountry = String(country || company?.country || company?.address?.country || "").trim();
+  const supplierCountry = String(party?.country || "").trim();
   const purchasableItems = useMemo(
     () =>
       items.filter(
@@ -411,11 +413,12 @@ export default function PurchaseBill() {
       taxableAmount: subTotal,
       taxRate: effectiveRate,
       org: {
-        country,
+        country: companyCountry,
         state: company?.address?.state || "",
         gstin: ""
       },
       party: {
+        country: supplierCountry,
         state: party?.state || "",
         gstin: ""
       }
@@ -444,7 +447,7 @@ export default function PurchaseBill() {
     const roundOff = roundOffEnabled ? Number(roundOffValue || 0) : 0;
     const finalTotal = round2(grandTotal + roundOff);
     return { detailed, totalQty, subTotal, tax, taxTotal, grandTotal, roundOff, finalTotal, effectiveRate };
-  }, [lines, roundOffEnabled, roundOffValue, country, company?.address?.state, company?.tax?.gstin, party?.state, party?.gstin, party?.taxId]);
+  }, [lines, roundOffEnabled, roundOffValue, companyCountry, company?.address?.state, supplierCountry, party?.state, party?.gstin, party?.taxId]);
 
   const paymentAmount = useMemo(() => {
     if (!markAsPaid) return 0;

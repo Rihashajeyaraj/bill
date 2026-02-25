@@ -50,18 +50,6 @@ function formatAddress(address) {
   return parts.join(", ");
 }
 
-const GST_RATES = [0, 5, 12, 18, 28];
-const INDIA_STATES = [
-  "Andhra Pradesh",
-  "Delhi",
-  "Gujarat",
-  "Karnataka",
-  "Kerala",
-  "Maharashtra",
-  "Tamil Nadu",
-  "Telangana",
-  "West Bengal"
-];
 const VAT_RATES = {
   "Sri Lanka": 18,
   UAE: 5,
@@ -171,7 +159,6 @@ export default function InvoiceCreate() {
   const [customerSearchPhone, setCustomerSearchPhone] = useState("");
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerSearchError, setCustomerSearchError] = useState("");
-  const [placeOfSupply, setPlaceOfSupply] = useState("");
 
   const [lines, setLines] = useState([]);
   const [lastSavedInvoiceId, setLastSavedInvoiceId] = useState("");
@@ -188,8 +175,10 @@ export default function InvoiceCreate() {
   const [bankAccount, setBankAccount] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
 
+  const companyCountry = String(country || company?.country || company?.address?.country || "").trim();
+  const customerCountry = String(party?.country || "").trim();
   const companyState = company?.address?.state || "";
-  const customerState = isIndiaOrg ? placeOfSupply || party?.state || "" : party?.state || "";
+  const customerState = party?.state || "";
   const paymentCountryCode = useMemo(
     () => resolvePaymentCountryCode(country, countryCode),
     [country, countryCode]
@@ -253,22 +242,6 @@ export default function InvoiceCreate() {
       setVatInput(`TAX ${Number.isFinite(rate) ? rate : 0}%`);
     }
   }, [country, isIndiaOrg, companyVatRate]);
-
-  useEffect(() => {
-    if (!isIndiaOrg) return;
-    const candidate = party?.state || "";
-    const normalizedCandidate = INDIA_STATES.find(
-      (state) => state.toLowerCase() === candidate.trim().toLowerCase()
-    );
-    if (normalizedCandidate) {
-      setPlaceOfSupply(normalizedCandidate);
-      return;
-    }
-    const normalizedCompany = INDIA_STATES.find(
-      (state) => state.toLowerCase() === companyState.trim().toLowerCase()
-    );
-    setPlaceOfSupply(normalizedCompany || "");
-  }, [party?.state, companyState, isIndiaOrg]);
 
   useEffect(() => {
     if (!party?.phone) return;
@@ -509,11 +482,12 @@ export default function InvoiceCreate() {
       taxableAmount: subTotal,
       taxRate: effectiveTaxRate,
       org: {
-        country,
+        country: companyCountry,
         state: companyState,
         gstin: company?.tax?.gstin || ""
       },
       party: {
+        country: customerCountry,
         state: customerState,
         gstin: party?.gstin || party?.taxId || ""
       }
@@ -549,7 +523,7 @@ export default function InvoiceCreate() {
     const grandTotal = round2(subTotal + (tax.totalTax || 0));
 
     return { enriched, subTotal, tax, grandTotal, effectiveTaxRate };
-  }, [lines, items, country, companyState, customerState, taxRate, company?.tax?.gstin, party?.gstin, party?.taxId]);
+  }, [lines, items, companyCountry, companyState, customerCountry, customerState, taxRate, company?.tax?.gstin, party?.gstin, party?.taxId]);
 
   const paymentAmount = useMemo(() => {
     if (!markAsPaid) return 0;
@@ -686,6 +660,7 @@ export default function InvoiceCreate() {
       gstin: company?.tax?.gstin || "",
       phone: company?.phone || "",
       email: company?.email || "",
+      country: companyCountry,
       state: companyState
     };
     const buyer = {
@@ -693,6 +668,7 @@ export default function InvoiceCreate() {
       address: party?.address || "",
       gstin: party?.gstin || party?.taxId || "",
       phone: party?.phone || "",
+      country: customerCountry,
       state: customerState
     };
     return {
@@ -703,13 +679,14 @@ export default function InvoiceCreate() {
       invoiceNo: invoiceNo || "-",
       invoiceDate,
       dueDate: invoiceDate,
-      placeOfSupply: placeOfSupply || customerState,
+      placeOfSupply: customerState,
       seller,
       buyer,
       customer: {
         name: buyer.name,
         address: buyer.address,
         phone: buyer.phone,
+        country: buyer.country,
         state: buyer.state,
         gstin: buyer.gstin
       },
@@ -767,6 +744,7 @@ export default function InvoiceCreate() {
     };
   }, [
     company,
+    companyCountry,
     companyState,
     computed.enriched,
     computed.grandTotal,
@@ -774,12 +752,12 @@ export default function InvoiceCreate() {
     computed.tax,
     country,
     currency,
+    customerCountry,
     customerState,
     invoiceDate,
     invoiceNo,
     isIndiaOrg,
     party,
-    placeOfSupply,
     taxRate,
     computed.effectiveTaxRate
   ]);
@@ -840,6 +818,7 @@ export default function InvoiceCreate() {
       gstin: company?.tax?.gstin || "",
       phone: company?.phone || "",
       email: company?.email || "",
+      country: companyCountry,
       state: company?.address?.state || ""
     };
     const buyer = {
@@ -847,6 +826,7 @@ export default function InvoiceCreate() {
       address: party?.address || "",
       gstin: party?.gstin || party?.taxId || "",
       phone: party?.phone || "",
+      country: customerCountry,
       state: party?.state || ""
     };
     const payload = {
@@ -854,7 +834,7 @@ export default function InvoiceCreate() {
       invoiceNo,
       partyId,
       partyName: party?.name || "",
-      placeOfSupply: placeOfSupply || buyer.state,
+      placeOfSupply: buyer.state,
       country,
       taxRate: computed.effectiveTaxRate,
       companySnapshot: company,
@@ -1204,53 +1184,10 @@ export default function InvoiceCreate() {
               <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {isIndiaOrg ? (
-                    <>
-                      <FormField label="Place of Supply (State) *">
-                        <>
-                          <input
-                            list="india-states-invoice"
-                            value={placeOfSupply}
-                            onChange={(e) => setPlaceOfSupply(e.target.value)}
-                            className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
-                            style={{ "--tw-ring-color": UI.COLORS.ring }}
-                            placeholder="Select or type state"
-                          />
-                          <datalist id="india-states-invoice">
-                            {INDIA_STATES.map((state) => (
-                              <option key={state} value={state} />
-                            ))}
-                          </datalist>
-                        </>
-                      </FormField>
-                      <FormField label="GST Rate" hint="Select GST %">
-                        <select
-                          value={taxRate}
-                          onChange={(e) => setTaxRate(Number(e.target.value))}
-                          className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
-                          style={{ "--tw-ring-color": UI.COLORS.ring }}
-                        >
-                          {GST_RATES.map((rate) => (
-                            <option key={rate} value={rate}>
-                              {`GST ${rate}%`}
-                            </option>
-                          ))}
-                        </select>
-                      </FormField>
-                      <FormField label="Company State">
-                        <input
-                          value={companyState}
-                          readOnly
-                          className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none"
-                        />
-                      </FormField>
-                      <FormField label="Customer State">
-                        <input
-                          value={customerState}
-                          readOnly
-                          className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none"
-                        />
-                      </FormField>
-                    </>
+                    <p className="rounded-xl border border-slate-100 bg-white px-3 py-2.5 text-sm text-slate-600 md:col-span-2">
+                      GST is auto-calculated from company and customer country/state details. Same India state uses
+                      CGST + SGST, otherwise IGST is applied.
+                    </p>
                   ) : (
                     <FormField label="Tax Rate" hint="Auto tax % / Type custom">
                       <>
@@ -1732,8 +1669,10 @@ export default function InvoiceCreate() {
               {computed.tax.taxMode === "GST" ? (
                 computed.tax.supplyType === "INTER" ? (
                   <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="text-slate-600">GST Total</span>
-                    <span className="font-semibold text-slate-900">{money(computed.tax.totalTax)}</span>
+                    <span className="text-slate-600">IGST</span>
+                    <span className="font-semibold text-slate-900">
+                      {money(Number(computed.tax.igst || computed.tax.totalTax || 0))}
+                    </span>
                   </div>
                 ) : (
                   <div className="mt-2 flex items-center justify-between text-sm">

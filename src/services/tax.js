@@ -13,13 +13,15 @@ function normalizeText(value) {
     .toLowerCase();
 }
 
-function resolveOrgCountry(org = {}) {
-  const rawCountry = normalizeText(org?.country);
+function resolveCountry(entity = {}) {
+  const rawCountry = normalizeText(entity?.country);
+  if (rawCountry === "india" || rawCountry === "in") return "india";
   if (rawCountry) return rawCountry;
-  const countryCode = String(org?.countryCode || org?.country_code || "")
+  const countryCode = String(entity?.countryCode || entity?.country_code || "")
     .trim()
     .toUpperCase();
   if (countryCode === "IN") return "india";
+  if (countryCode) return countryCode.toLowerCase();
   return "";
 }
 
@@ -35,11 +37,31 @@ export function extractStateCodeFromGstin(gstin = "") {
   return match ? match[1] : "";
 }
 
-function resolveSupplyType({ orgState = "", partyState = "", orgGstin = "", partyGstin = "" }) {
+function resolveSupplyType({
+  orgState = "",
+  partyState = "",
+  orgGstin = "",
+  partyGstin = "",
+  orgCountry = "",
+  partyCountry = ""
+}) {
+  const normalizedOrgCountry = resolveCountry({ country: orgCountry });
+  const normalizedPartyCountry = resolveCountry({ country: partyCountry });
   const normalizedOrgState = normalizeText(orgState);
   const normalizedPartyState = normalizeText(partyState);
   const orgCode = extractStateCodeFromGstin(orgGstin);
   const partyCode = extractStateCodeFromGstin(partyGstin);
+
+  if (
+    normalizedOrgCountry &&
+    normalizedPartyCountry &&
+    normalizedOrgCountry !== normalizedPartyCountry
+  ) {
+    return {
+      supplyType: "INTER",
+      warning: ""
+    };
+  }
 
   // Prefer GSTIN-derived state codes when both are available.
   if (orgCode && partyCode) {
@@ -57,8 +79,8 @@ function resolveSupplyType({ orgState = "", partyState = "", orgGstin = "", part
   }
 
   return {
-    supplyType: "INTRA",
-    warning: "State missing, please select state"
+    supplyType: "INTER",
+    warning: "State missing, assuming IGST"
   };
 }
 
@@ -71,7 +93,9 @@ export function calculateTaxes({
 } = {}) {
   const base = Math.max(0, round2(taxableAmount));
   const rate = normalizeTaxRate(taxRate);
-  const isIndiaOrg = resolveOrgCountry(org) === "india";
+  const orgCountry = resolveCountry(org);
+  const partyCountry = resolveCountry(party);
+  const isIndiaOrg = orgCountry === "india";
 
   if (!isIndiaOrg) {
     const taxAmount = round2((base * rate) / 100);
@@ -103,7 +127,9 @@ export function calculateTaxes({
     orgState: org?.state || org?.address?.state || "",
     partyState: party?.state || "",
     orgGstin: org?.gstin || org?.tax?.gstin || "",
-    partyGstin: party?.gstin || party?.taxId || ""
+    partyGstin: party?.gstin || party?.taxId || "",
+    orgCountry,
+    partyCountry
   });
 
   const gstAmount = round2((base * rate) / 100);
