@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Plus, Printer, Save } from "lucide-react";
+import { Plus, Printer, Save, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import PageHeader from "../../components/PageHeader";
@@ -14,10 +14,14 @@ import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesCreate, invoicesSyncFromRemote } from "../../services/invoices.service";
 import { calculateTaxes } from "../../services/tax";
 import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
+import { authGetUser } from "../../services/auth.service";
+import { syncPaymentInRemote } from "../../services/payments.service";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus, listParties, syncPartiesFromRemote } from "../../modules/parties/store";
 import { listItems, syncItemsFromRemote } from "../../modules/items/store";
+import { outstandingByCustomer, savePaymentIn } from "../../modules/paymentIn/store";
+import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE } from "../../modules/paymentIn/countryConfig";
 import { getInvoiceTemplateConfig } from "../../lib/templateStore";
 
 function money(n) {
@@ -81,6 +85,21 @@ function resolveCurrencySymbol(symbol, currencyCode) {
   return normalized ? `${normalized} ` : "";
 }
 
+function normalizePhoneForLookup(value) {
+  let digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length > 10) digits = digits.slice(-10);
+  digits = digits.replace(/^0+/, "");
+  return digits || "0";
+}
+
+function customerAddressSummary(customer) {
+  return [customer?.address, customer?.state, customer?.country]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
 function isValidDateParts(year, month, day) {
   const candidate = new Date(Date.UTC(year, month - 1, day));
   return (
@@ -120,6 +139,13 @@ function formatIsoToDayMonthYear(value) {
   return `${day}/${month}/${year}`;
 }
 
+function resolvePaymentCountryCode(country) {
+  const normalized = String(country || "").trim();
+  if (COUNTRY_NAME_TO_CODE[normalized]) return COUNTRY_NAME_TO_CODE[normalized];
+  if (normalized.toUpperCase() in COUNTRY_CONFIG) return normalized.toUpperCase();
+  return "IN";
+}
+
 export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { profile: company = {}, country = "", currency = "", currencySymbol = "" } = useOrganization();
@@ -138,15 +164,33 @@ export default function InvoiceCreate() {
   const [invoiceNo, setInvoiceNo] = useState(() => generateInvoiceNumber());
   const [partyId, setPartyId] = useState("");
   const party = useMemo(() => customers.find((c) => c.id === partyId) || null, [customers, partyId]);
+  const [customerSearchPhone, setCustomerSearchPhone] = useState("");
+  const [customerLookupQuery, setCustomerLookupQuery] = useState("");
+  const [customerSearchError, setCustomerSearchError] = useState("");
   const [placeOfSupply, setPlaceOfSupply] = useState("");
 
   const [lines, setLines] = useState([]);
   const [lastSavedInvoiceId, setLastSavedInvoiceId] = useState("");
   const [printInvoiceData, setPrintInvoiceData] = useState(null);
   const [printQueued, setPrintQueued] = useState(false);
+  const [markAsPaid, setMarkAsPaid] = useState(false);
+  const [paymentMode, setPaymentMode] = useState("Cash");
+  const [paymentDate, setPaymentDate] = useState(initialInvoiceDate);
+  const [paidAmount, setPaidAmount] = useState("");
+  const [referenceNo, setReferenceNo] = useState("");
+  const [transactionId, setTransactionId] = useState("");
+  const [chequeNo, setChequeNo] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [bankAccount, setBankAccount] = useState("");
+  const [paymentNotes, setPaymentNotes] = useState("");
 
   const companyState = company?.address?.state || "";
   const customerState = isIndiaOrg ? placeOfSupply || party?.state || "" : party?.state || "";
+  const paymentCountryCode = useMemo(() => resolvePaymentCountryCode(country), [country]);
+  const paymentModes = useMemo(
+    () => COUNTRY_CONFIG[paymentCountryCode]?.paymentModes || ["Cash", "Bank Transfer", "Cheque", "Card", "Online Gateway"],
+    [paymentCountryCode]
+  );
   const companyVatRate = company?.tax?.vatRate;
   const defaultRate = isIndiaOrg ? 18 : getVatRate(country, company);
   const [taxRate, setTaxRate] = useState(defaultRate);
@@ -220,6 +264,11 @@ export default function InvoiceCreate() {
   }, [party?.state, companyState, isIndiaOrg]);
 
   useEffect(() => {
+    if (!party?.phone) return;
+    setCustomerSearchPhone(String(party.phone).replace(/\D/g, "").slice(-10));
+  }, [party?.phone]);
+
+  useEffect(() => {
     if (!printQueued || !printInvoiceData) return;
 
     const handleAfterPrint = () => {
@@ -238,6 +287,51 @@ export default function InvoiceCreate() {
       window.removeEventListener("afterprint", handleAfterPrint);
     };
   }, [printQueued, printInvoiceData]);
+
+  useEffect(() => {
+    setPaymentDate(invoiceDate);
+  }, [invoiceDate]);
+
+  useEffect(() => {
+    if (!paymentModes.includes(paymentMode)) {
+      setPaymentMode(paymentModes[0] || "Cash");
+    }
+  }, [paymentMode, paymentModes]);
+
+  useEffect(() => {
+    if (!markAsPaid) {
+      setPaidAmount("");
+      setReferenceNo("");
+      setTransactionId("");
+      setChequeNo("");
+      setBankName("");
+      setBankAccount("");
+      setPaymentNotes("");
+      return;
+    }
+    if (paymentMode === "Cash") {
+      setTransactionId("");
+      setChequeNo("");
+      setBankName("");
+      setBankAccount("");
+      return;
+    }
+    if (paymentMode === "Cheque") {
+      setTransactionId("");
+      setBankName("");
+      setBankAccount("");
+      return;
+    }
+    if (paymentMode === "Bank Transfer") {
+      setChequeNo("");
+      return;
+    }
+    if (paymentMode === "Card" || paymentMode === "UPI" || paymentMode === "Online Gateway") {
+      setChequeNo("");
+      setBankName("");
+      setBankAccount("");
+    }
+  }, [markAsPaid, paymentMode]);
 
   function addLine() {
     setLines((p) => [
@@ -278,6 +372,63 @@ export default function InvoiceCreate() {
 
   function removeLine(id) {
     setLines((p) => p.filter((x) => x.id !== id));
+  }
+
+  function applyCustomerSelection(nextCustomer) {
+    if (!nextCustomer) return;
+    setCustomerSearchError("");
+    setPartyId(nextCustomer.id);
+    setCustomerSearchPhone(String(nextCustomer.phone || "").replace(/\D/g, "").slice(-10));
+    setCustomerLookupQuery("");
+  }
+
+  function handleCustomerPhoneChange(value) {
+    const digits = String(value || "").replace(/\D/g, "").slice(0, 10);
+    setCustomerSearchPhone(digits);
+    setCustomerSearchError("");
+    if (partyId && normalizePhoneForLookup(digits) !== normalizePhoneForLookup(party?.phone)) {
+      setPartyId("");
+    }
+  }
+
+  function handleCustomerLookupChange(value) {
+    setCustomerLookupQuery(value);
+    setCustomerSearchError("");
+  }
+
+  function handleCustomerSearch() {
+    const phoneDigits = String(customerSearchPhone || "").replace(/\D/g, "");
+    if (phoneDigits) {
+      if (phoneDigits.length !== 10) {
+        setCustomerSearchError("Enter valid 10-digit mobile number.");
+        return;
+      }
+      const normalizedPhone = normalizePhoneForLookup(phoneDigits);
+      const matchedCustomer = customers.find(
+        (customer) => normalizePhoneForLookup(customer?.phone) === normalizedPhone
+      );
+      if (!matchedCustomer) {
+        setCustomerSearchError("No customer found for this mobile number.");
+        return;
+      }
+      applyCustomerSelection(matchedCustomer);
+      return;
+    }
+
+    const query = String(customerLookupQuery || "").trim();
+    if (query.length < 2) {
+      setCustomerSearchError("Enter mobile number or name/email/address to search.");
+      return;
+    }
+    if (!customerLookupResults.length) {
+      setCustomerSearchError("No customer found.");
+      return;
+    }
+    if (customerLookupResults.length === 1) {
+      applyCustomerSelection(customerLookupResults[0]);
+      return;
+    }
+    setCustomerSearchError("Multiple customers found. Select one below.");
   }
 
   function handleInvoiceDateChange(value) {
@@ -364,6 +515,22 @@ export default function InvoiceCreate() {
     return { enriched, subTotal, tax, grandTotal, effectiveTaxRate };
   }, [lines, items, country, companyState, customerState, taxRate, company?.tax?.gstin, party?.gstin, party?.taxId]);
 
+  const paymentAmount = useMemo(() => {
+    if (!markAsPaid) return 0;
+    const parsed = Number(paidAmount || 0);
+    return round2(Math.max(0, parsed));
+  }, [markAsPaid, paidAmount]);
+
+  const pendingAmount = useMemo(
+    () => round2(Math.max(0, Number(computed.grandTotal || 0) - Number(paymentAmount || 0))),
+    [computed.grandTotal, paymentAmount]
+  );
+
+  const advanceAmount = useMemo(
+    () => round2(Math.max(0, Number(paymentAmount || 0) - Number(computed.grandTotal || 0))),
+    [paymentAmount, computed.grandTotal]
+  );
+
   const creditLimitEnabled = !!creditStatus.party?.creditLimitEnabled;
   const creditLimitType = creditStatus.creditLimitType || "Amount";
   const projectedOutstanding =
@@ -382,6 +549,30 @@ export default function InvoiceCreate() {
     creditLimitEnabled &&
     creditLimitType === "Days" &&
     !!creditStatus.overdueExceeded;
+
+  const customerLookupResults = useMemo(() => {
+    const query = String(customerLookupQuery || "").trim().toLowerCase();
+    if (!query) return [];
+    const normalizedPhoneQuery = normalizePhoneForLookup(query);
+    return customers
+      .filter((customer) => {
+        const text = [
+          customer?.name,
+          customer?.email,
+          customer?.address,
+          customer?.state,
+          customer?.country
+        ]
+          .map((value) => String(value || "").toLowerCase())
+          .join(" ");
+        const customerPhone = normalizePhoneForLookup(customer?.phone);
+        return (
+          text.includes(query) ||
+          (normalizedPhoneQuery && customerPhone && customerPhone.includes(normalizedPhoneQuery))
+        );
+      })
+      .slice(0, 8);
+  }, [customers, customerLookupQuery]);
 
   const filteredItems = useMemo(() => {
     const query = itemSearch.trim().toLowerCase();
@@ -507,6 +698,48 @@ export default function InvoiceCreate() {
   ]);
 
   async function saveInvoice({ silent = false } = {}) {
+    if (!partyId) {
+      alert("Select customer before saving invoice.");
+      return null;
+    }
+    if (!computed.enriched.length) {
+      alert("Add at least one line item before saving invoice.");
+      return null;
+    }
+    if (markAsPaid && paymentAmount <= 0) {
+      alert("Enter valid paid amount.");
+      return null;
+    }
+    if (markAsPaid && !paymentDate) {
+      alert("Select payment date.");
+      return null;
+    }
+    if (markAsPaid && paymentMode === "Cheque" && !String(chequeNo || "").trim()) {
+      alert("Enter cheque number.");
+      return null;
+    }
+    if (markAsPaid && paymentMode === "Bank Transfer") {
+      if (!String(bankName || "").trim()) {
+        alert("Enter bank name.");
+        return null;
+      }
+      if (!String(bankAccount || "").trim()) {
+        alert("Enter bank account.");
+        return null;
+      }
+    }
+    if (
+      markAsPaid &&
+      (paymentMode === "Bank Transfer" ||
+        paymentMode === "Card" ||
+        paymentMode === "UPI" ||
+        paymentMode === "Online Gateway") &&
+      !String(transactionId || "").trim()
+    ) {
+      alert("Enter transaction ID.");
+      return null;
+    }
+
     const seller = {
       name: company?.companyName || "",
       address: formatAddress(company?.address),
@@ -563,8 +796,75 @@ export default function InvoiceCreate() {
     try {
       const savedInvoiceId = await invoicesCreate(payload);
       setLastSavedInvoiceId(savedInvoiceId || "");
+      let paymentSaved = false;
+
+      if (markAsPaid && paymentAmount > 0 && savedInvoiceId) {
+        try {
+          const outstandingBefore = outstandingByCustomer(paymentCountryCode, partyId);
+          const applyAmount = Math.min(paymentAmount, Number(computed.grandTotal || 0));
+          const actor = authGetUser()?.name || authGetUser()?.email || "System User";
+          const paymentRecord = savePaymentIn({
+            country: paymentCountryCode,
+            paymentDate: paymentDate || invoiceDate,
+            customerId: partyId,
+            customerName: party?.name || "",
+            paymentMode,
+            referenceNo: referenceNo || "",
+            chequeNo: paymentMode === "Cheque" ? chequeNo : "",
+            bankName: paymentMode === "Bank Transfer" ? bankName : "",
+            bankAccount: paymentMode === "Bank Transfer" ? bankAccount : "",
+            transactionId:
+              paymentMode === "Bank Transfer" ||
+              paymentMode === "Card" ||
+              paymentMode === "UPI" ||
+              paymentMode === "Online Gateway"
+                ? transactionId
+                : "",
+            paymentReference: referenceNo || "",
+            internalNotes: paymentNotes || `Payment for invoice ${invoiceNo}`,
+            customerNotes: "",
+            attachment: null,
+            desiredStatus: "Applied",
+            amountReceived: paymentAmount,
+            allocations: [
+              {
+                invoiceId: savedInvoiceId,
+                invoiceNo,
+                invoiceDate,
+                invoiceAmount: Number(computed.grandTotal || 0),
+                balanceDue: Number(computed.grandTotal || 0),
+                applyAmount
+              }
+            ],
+            customerOutstandingBefore: outstandingBefore,
+            actor
+          });
+          await syncPaymentInRemote(paymentRecord);
+          paymentSaved = true;
+        } catch (paymentError) {
+          alert(
+            `Invoice saved, but Payment In was not saved: ${
+              paymentError?.message || "Unknown payment error"
+            }`
+          );
+        }
+      }
+
+      setMarkAsPaid(false);
+      setPaymentMode(paymentModes[0] || "Cash");
+      setPaymentDate(invoiceDate);
+      setPaidAmount("");
+      setReferenceNo("");
+      setTransactionId("");
+      setChequeNo("");
+      setBankName("");
+      setBankAccount("");
+      setPaymentNotes("");
+      setInvoiceNo(generateInvoiceNumber());
+      await invoicesSyncFromRemote();
+
       if (!silent) {
-        alert("Invoice saved successfully.");
+        alert(paymentSaved ? "Invoice and Payment In saved successfully." : "Invoice saved successfully.");
       }
       return savedInvoiceId || "";
     } catch (error) {
@@ -613,12 +913,21 @@ export default function InvoiceCreate() {
           }
         />
       </div>
+      <div className="print-hide mt-4 flex justify-end">
+        <button
+          type="button"
+          onClick={() => navigate("/app/sales/invoice/history")}
+          className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          Invoice History
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 gap-4">
         <Card className="p-5 print-hide">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-semibold text-slate-900">Invoice Form</p>
+              <p className="text-sm font-semibold text-slate-900">1. Find Customer</p>
               <p className="text-xs text-slate-500">Country: {country || "—"}</p>
             </div>
             {isIndiaOrg ? (
@@ -631,134 +940,203 @@ export default function InvoiceCreate() {
           </div>
 
           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Invoice No">
-              <input
-                value={invoiceNo}
-                onChange={(e) => setInvoiceNo(e.target.value)}
-                className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
-                style={{ "--tw-ring-color": UI.COLORS.ring }}
-                placeholder="INV-XXXX"
-              />
+            <FormField label="Customer Mobile Search">
+              <div className="flex gap-2">
+                <input
+                  value={customerSearchPhone}
+                  onChange={(e) => handleCustomerPhoneChange(e.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleCustomerSearch();
+                    }
+                  }}
+                  inputMode="numeric"
+                  maxLength={10}
+                  className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
+                  style={{ "--tw-ring-color": UI.COLORS.ring }}
+                  placeholder="Enter customer mobile number"
+                />
+                <button
+                  type="button"
+                  onClick={handleCustomerSearch}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  <Search className="h-4 w-4" />
+                  Search
+                </button>
+              </div>
             </FormField>
 
-            <FormField label="Invoice Date" hint="DD/MM/YYYY">
+            <FormField label="Search by Name / Email / Address">
               <input
-                type="text"
-                value={invoiceDateInput}
-                onChange={(e) => handleInvoiceDateChange(e.target.value)}
-                onBlur={handleInvoiceDateBlur}
-                className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
-                style={{ "--tw-ring-color": UI.COLORS.ring }}
-                inputMode="numeric"
-                autoComplete="off"
-                maxLength={10}
-                placeholder="DD/MM/YYYY"
-              />
-            </FormField>
-
-            <FormField label="Customer">
-              <select
-                value={partyId}
-                onChange={(e) => setPartyId(e.target.value)}
+                value={customerLookupQuery}
+                onChange={(e) => handleCustomerLookupChange(e.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleCustomerSearch();
+                  }
+                }}
                 className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                 style={{ "--tw-ring-color": UI.COLORS.ring }}
-              >
-                <option value="">Select customer</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+                placeholder="Type customer name, email or address"
+              />
             </FormField>
 
-            {isIndiaOrg ? (
-              <FormField label="Place of Supply (State) *">
-                <>
-                  <input
-                    list="india-states-invoice"
-                    value={placeOfSupply}
-                    onChange={(e) => setPlaceOfSupply(e.target.value)}
-                    className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
-                    style={{ "--tw-ring-color": UI.COLORS.ring }}
-                    placeholder="Select or type state"
-                  />
-                  <datalist id="india-states-invoice">
-                    {INDIA_STATES.map((state) => (
-                      <option key={state} value={state} />
-                    ))}
-                  </datalist>
-                </>
-              </FormField>
-            ) : null}
-
-            <FormField
-              label={isIndiaOrg ? "GST Rate" : "Tax Rate"}
-              hint={isIndiaOrg ? "Select GST %" : "Auto tax % / Type custom"}
-            >
-              {isIndiaOrg ? (
-                <select
-                  value={taxRate}
-                  onChange={(e) => setTaxRate(Number(e.target.value))}
-                  className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
-                  style={{ "--tw-ring-color": UI.COLORS.ring }}
-                >
-                  {GST_RATES.map((rate) => (
-                    <option key={rate} value={rate}>
-                      {`GST ${rate}%`}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <>
-                  <input
-                    list="vat-presets"
-                    value={vatInput}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      setVatInput(next);
-                      setTaxRate(parseRateInput(next));
-                    }}
-                    onBlur={() => {
-                      const parsed = parseRateInput(vatInput);
-                      setVatInput(`TAX ${parsed}%`);
-                    }}
-                    className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
-                    style={{ "--tw-ring-color": UI.COLORS.ring }}
-                    placeholder="TAX 20%"
-                  />
-                  <datalist id="vat-presets">
-                    {[getVatRate(country, company), 0]
-                      .filter((rate, idx, arr) => arr.indexOf(rate) === idx)
-                      .map((rate) => (
-                        <option key={`vat_${rate}`} value={`TAX ${rate}%`} />
-                      ))}
-                  </datalist>
-                </>
-              )}
-            </FormField>
-
-            {isIndiaOrg ? (
-              <>
-                <FormField label="Company State (from Company Profile)">
-                  <input
-                    value={companyState}
-                    readOnly
-                    className="w-full rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-sm outline-none"
-                  />
-                </FormField>
-                <FormField label="Customer State (from Party)">
-                  <input
-                    value={customerState}
-                    readOnly
-                    className="w-full rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-sm outline-none"
-                  />
-                </FormField>
-              </>
-            ) : null}
           </div>
 
-          {isIndiaOrg && computed.tax?.warning ? (
+          {customerSearchError ? (
+            <p className="mt-3 text-xs font-medium text-rose-600">{customerSearchError}</p>
+          ) : null}
+
+          {customerLookupQuery.trim() ? (
+            <div className="mt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Matching Customers
+              </p>
+              {customerLookupResults.length ? (
+                <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {customerLookupResults.map((customer) => (
+                    <button
+                      key={customer.id}
+                      type="button"
+                      onClick={() => applyCustomerSelection(customer)}
+                      className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left transition hover:border-blue-200 hover:bg-blue-50/30"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm font-semibold text-slate-900">{customer.name || "-"}</p>
+                        <p className="text-xs text-slate-600">{customer.phone || "-"}</p>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600">{customer.email || "-"}</p>
+                      <p className="mt-1 text-xs text-slate-500">{customerAddressSummary(customer) || "-"}</p>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  No customer found. Try another search.
+                </p>
+              )}
+            </div>
+          ) : null}
+
+          {party ? (
+            <div className="mt-5">
+              <h2 className="text-base font-semibold text-slate-900">2. Customer Details</h2>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs text-slate-500">Name</p>
+                  <p className="font-semibold text-slate-900">{party.name || "-"}</p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs text-slate-500">Mobile</p>
+                  <p className="font-semibold text-slate-900">{party.phone || "-"}</p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs text-slate-500">Email</p>
+                  <p className="font-semibold text-slate-900">{party.email || "-"}</p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs text-slate-500">State</p>
+                  <p className="font-semibold text-slate-900">{party.state || "-"}</p>
+                </div>
+              </div>
+              <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-sm">
+                <p className="text-xs text-slate-500">Address</p>
+                <p className="font-semibold text-slate-900">{party.address || "-"}</p>
+              </div>
+            </div>
+          ) : null}
+
+          {party ? (
+            <div className="mt-5">
+              <h2 className="text-base font-semibold text-slate-900">3. Tax Details</h2>
+              <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {isIndiaOrg ? (
+                    <>
+                      <FormField label="Place of Supply (State) *">
+                        <>
+                          <input
+                            list="india-states-invoice"
+                            value={placeOfSupply}
+                            onChange={(e) => setPlaceOfSupply(e.target.value)}
+                            className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                            style={{ "--tw-ring-color": UI.COLORS.ring }}
+                            placeholder="Select or type state"
+                          />
+                          <datalist id="india-states-invoice">
+                            {INDIA_STATES.map((state) => (
+                              <option key={state} value={state} />
+                            ))}
+                          </datalist>
+                        </>
+                      </FormField>
+                      <FormField label="GST Rate" hint="Select GST %">
+                        <select
+                          value={taxRate}
+                          onChange={(e) => setTaxRate(Number(e.target.value))}
+                          className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                          style={{ "--tw-ring-color": UI.COLORS.ring }}
+                        >
+                          {GST_RATES.map((rate) => (
+                            <option key={rate} value={rate}>
+                              {`GST ${rate}%`}
+                            </option>
+                          ))}
+                        </select>
+                      </FormField>
+                      <FormField label="Company State">
+                        <input
+                          value={companyState}
+                          readOnly
+                          className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none"
+                        />
+                      </FormField>
+                      <FormField label="Customer State">
+                        <input
+                          value={customerState}
+                          readOnly
+                          className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none"
+                        />
+                      </FormField>
+                    </>
+                  ) : (
+                    <FormField label="Tax Rate" hint="Auto tax % / Type custom">
+                      <>
+                        <input
+                          list="vat-presets"
+                          value={vatInput}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            setVatInput(next);
+                            setTaxRate(parseRateInput(next));
+                          }}
+                          onBlur={() => {
+                            const parsed = parseRateInput(vatInput);
+                            setVatInput(`TAX ${parsed}%`);
+                          }}
+                          className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                          style={{ "--tw-ring-color": UI.COLORS.ring }}
+                          placeholder="TAX 20%"
+                        />
+                        <datalist id="vat-presets">
+                          {[getVatRate(country, company), 0]
+                            .filter((rate, idx, arr) => arr.indexOf(rate) === idx)
+                            .map((rate) => (
+                              <option key={`vat_${rate}`} value={`TAX ${rate}%`} />
+                            ))}
+                        </datalist>
+                      </>
+                    </FormField>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {isIndiaOrg && party && computed.tax?.warning ? (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
               {computed.tax.warning}
             </div>
@@ -766,7 +1144,7 @@ export default function InvoiceCreate() {
 
           {party && creditLimitEnabled ? (
             <div
-              className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${
+              className={`mt-3 rounded-2xl border px-4 py-3 text-sm ${
                 projectedAmountExceeded || overdueWarning
                   ? "border-rose-200 bg-rose-50 text-rose-700"
                   : "border-emerald-200 bg-emerald-50 text-emerald-700"
@@ -801,7 +1179,7 @@ export default function InvoiceCreate() {
           ) : null}
 
           {lastSavedInvoiceId ? (
-            <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 p-3">
+            <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50 p-3">
               <p className="text-xs font-semibold text-blue-700">Invoice linked actions</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
@@ -826,186 +1204,367 @@ export default function InvoiceCreate() {
             </div>
           ) : null}
 
-          <div className="mt-4 flex items-center justify-between">
-            <p className="text-sm font-semibold text-slate-900">Line Items</p>
-            <button
-              onClick={addLine}
-              className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
-            >
-              <Plus className="h-4 w-4" />
-              Add line
-            </button>
-          </div>
-
-          <div className="mt-3 flex items-center gap-3">
-            <div className="relative w-full max-w-sm">
-              <input
-                value={itemSearch}
-                onChange={(e) => setItemSearch(e.target.value)}
-                className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none focus:ring-4"
-                style={{ "--tw-ring-color": UI.COLORS.ring }}
-                placeholder="Search items..."
-              />
-              {itemSearch.trim().length ? (
-                <div className="absolute z-10 mt-2 w-full rounded-2xl border border-slate-100 bg-white shadow-soft p-2 max-h-52 overflow-auto">
-                  {filteredItems.length ? (
-                    filteredItems.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onMouseDown={() => {
-                          addLineWithItem(item);
-                          setItemSearch("");
-                        }}
-                        className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                      >
-                        {item.name}
-                      </button>
-                    ))
-                  ) : (
-                    <div className="px-3 py-2 text-sm text-slate-500">No items found</div>
-                  )}
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="mt-3">
-            <DataTable
-              columns={[
-                {
-                  key: "itemId",
-                  header: "Item",
-                  render: (r) => (
-                    <select
-                      value={r.itemId}
-                      onChange={(e) => {
-                        const it = items.find((x) => x.id === e.target.value);
-                        updateLine(r.id, {
-                          itemId: e.target.value,
-                          rate: it?.salesRate || it?.price || 0,
-                          tax: it?.taxRate || 0
-                        });
-                      }}
-                      className="rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-sm outline-none"
-                    >
-                      {getItemOptions(r.itemId).map((it) => (
-                        <option key={it.id} value={it.id}>
-                          {it.name}
-                        </option>
-                      ))}
-                    </select>
-                  )
-                },
-                {
-                  key: "qty",
-                  header: "Qty",
-                  render: (r) => (
-                    <input
-                      value={r.qty}
-                      onChange={(e) => updateLine(r.id, { qty: e.target.value })}
-                      className="w-20 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
-                    />
-                  )
-                },
-                {
-                  key: "rate",
-                  header: "Rate",
-                  render: (r) => (
-                    <input
-                      value={r.rate}
-                      onChange={(e) => updateLine(r.id, { rate: e.target.value })}
-                      className="w-28 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
-                    />
-                  )
-                },
-                {
-                  key: "discount",
-                  header: "Discount",
-                  render: (r) => (
-                    <input
-                      value={r.discount}
-                      onChange={(e) => updateLine(r.id, { discount: e.target.value })}
-                      className="w-28 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
-                    />
-                  )
-                },
-                {
-                  key: "tax",
-                  header: "Tax %",
-                  render: (r) => (
-                    <input
-                      value={r.tax}
-                      onChange={(e) => updateLine(r.id, { tax: e.target.value })}
-                      className="w-20 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
-                    />
-                  )
-                },
-                { key: "net", header: "Net", render: (r) => money(r.net) },
-                {
-                  key: "rm",
-                  header: "",
-                  render: (r) => (
-                    <button
-                      onClick={() => removeLine(r.id)}
-                      className="rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-xs font-semibold hover:bg-rose-50"
-                    >
-                      Remove
-                    </button>
-                  )
-                }
-              ]}
-              rows={computed.enriched}
-              emptyText="Add items to invoice"
-            />
-          </div>
-        </Card>
-
-        <Card className="p-5">
-          <p className="text-sm font-semibold text-slate-900">Invoice Summary</p>
-          <p className="text-xs text-slate-500 mt-1">
-            Bill template is shown only when you click Save & Print.
-          </p>
-
-          <div className="mt-4 flex items-center justify-between text-sm">
-            <span className="text-slate-600">Sub Total</span>
-            <span className="font-semibold text-slate-900">{money(computed.subTotal)}</span>
-          </div>
-          {computed.tax.taxMode === "GST" ? (
+          {party ? (
             <>
-              <div className="mt-2 flex items-center justify-between text-sm">
-                <span className="text-slate-600">Supply Type</span>
-                <span className="font-semibold text-slate-900">{computed.tax.supplyType || "INTRA"}</span>
+              <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                <div>
+                  <p className="text-xs text-slate-500">Invoice ID</p>
+                  <p className="mt-1 rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-800">
+                    {invoiceNo}
+                  </p>
+                </div>
+                <FormField label="Invoice Date">
+                  <input
+                    value={invoiceDateInput}
+                    onChange={(e) => handleInvoiceDateChange(e.target.value)}
+                    onBlur={handleInvoiceDateBlur}
+                    placeholder="DD/MM/YYYY or YYYY-MM-DD"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                    style={{ "--tw-ring-color": UI.COLORS.ring }}
+                  />
+                </FormField>
               </div>
-              <div className="mt-2 flex items-center justify-between text-sm">
-                <span className="text-slate-600">IGST</span>
-                <span className="font-semibold text-slate-900">{money(computed.tax.igst)}</span>
+
+              <div className="mt-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900">4. Items</h2>
+                  <p className="text-xs text-slate-500">Add item rows, quantity, rate, tax and amount.</p>
+                </div>
+                <button
+                  onClick={addLine}
+                  className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add line
+                </button>
               </div>
-              <div className="mt-2 flex items-center justify-between text-sm">
-                <span className="text-slate-600">CGST + SGST</span>
-                <span className="font-semibold text-slate-900">
-                  {money((Number(computed.tax.cgst || 0) + Number(computed.tax.sgst || 0)))}
-                </span>
+
+              <div className="mt-3 flex items-center gap-3">
+                <div className="relative w-full max-w-sm">
+                  <input
+                    value={itemSearch}
+                    onChange={(e) => setItemSearch(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none focus:ring-4"
+                    style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    placeholder="Search items..."
+                  />
+                  {itemSearch.trim().length ? (
+                    <div className="absolute z-10 mt-2 w-full rounded-2xl border border-slate-100 bg-white shadow-soft p-2 max-h-52 overflow-auto">
+                      {filteredItems.length ? (
+                        filteredItems.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onMouseDown={() => {
+                              addLineWithItem(item);
+                              setItemSearch("");
+                            }}
+                            className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                          >
+                            {item.name}
+                          </button>
+                        ))
+                      ) : (
+                        <div className="px-3 py-2 text-sm text-slate-500">No items found</div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <DataTable
+                  columns={[
+                    {
+                      key: "itemId",
+                      header: "Item",
+                      render: (r) => (
+                        <select
+                          value={r.itemId}
+                          onChange={(e) => {
+                            const it = items.find((x) => x.id === e.target.value);
+                            updateLine(r.id, {
+                              itemId: e.target.value,
+                              rate: it?.salesRate || it?.price || 0,
+                              tax: it?.taxRate || 0
+                            });
+                          }}
+                          className="rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-sm outline-none"
+                        >
+                          {getItemOptions(r.itemId).map((it) => (
+                            <option key={it.id} value={it.id}>
+                              {it.name}
+                            </option>
+                          ))}
+                        </select>
+                      )
+                    },
+                    {
+                      key: "qty",
+                      header: "Qty",
+                      render: (r) => (
+                        <input
+                          value={r.qty}
+                          onChange={(e) => updateLine(r.id, { qty: e.target.value })}
+                          className="w-20 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
+                        />
+                      )
+                    },
+                    {
+                      key: "rate",
+                      header: "Rate",
+                      render: (r) => (
+                        <input
+                          value={r.rate}
+                          onChange={(e) => updateLine(r.id, { rate: e.target.value })}
+                          className="w-28 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
+                        />
+                      )
+                    },
+                    {
+                      key: "discount",
+                      header: "Discount",
+                      render: (r) => (
+                        <input
+                          value={r.discount}
+                          onChange={(e) => updateLine(r.id, { discount: e.target.value })}
+                          className="w-28 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
+                        />
+                      )
+                    },
+                    {
+                      key: "tax",
+                      header: "Tax %",
+                      render: (r) => (
+                        <input
+                          value={r.tax}
+                          onChange={(e) => updateLine(r.id, { tax: e.target.value })}
+                          className="w-20 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
+                        />
+                      )
+                    },
+                    { key: "net", header: "Net", render: (r) => money(r.net) },
+                    {
+                      key: "rm",
+                      header: "",
+                      render: (r) => (
+                        <button
+                          onClick={() => removeLine(r.id)}
+                          className="rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-xs font-semibold hover:bg-rose-50"
+                        >
+                          Remove
+                        </button>
+                      )
+                    }
+                  ]}
+                  rows={computed.enriched}
+                  emptyText="Add items to invoice"
+                />
               </div>
             </>
           ) : (
-            <div className="mt-2 flex items-center justify-between text-sm">
-              <span className="text-slate-600">{computed.tax.taxBreakup?.taxLabel || "TAX"}</span>
-              <span className="font-semibold text-slate-900">{money(computed.tax.taxAmount)}</span>
-            </div>
+            <p className="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              Select a customer first to continue with invoice details and items.
+            </p>
           )}
-          <div className="mt-2 flex items-center justify-between text-base">
-            <span className="font-semibold text-slate-900">Grand Total</span>
-            <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span>
-          </div>
-
-          <div className="mt-4">
-            <GradientButton className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60" onClick={saveInvoice}>
-              <Save className="h-4 w-4" />
-              Save Invoice
-            </GradientButton>
-          </div>
         </Card>
+
+        {party ? (
+          <Card className="p-5">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                <h3 className="text-sm font-semibold text-slate-900">Payment on Invoice</h3>
+                <p className="mt-1 text-xs text-slate-500">Capture received amount now or keep it pending.</p>
+
+                <div className="mt-3 inline-flex rounded-xl border border-slate-200 bg-white p-1">
+                  <button
+                    type="button"
+                    onClick={() => setMarkAsPaid(false)}
+                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                      !markAsPaid ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    Not Received
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMarkAsPaid(true)}
+                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                      markAsPaid ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    Received
+                  </button>
+                </div>
+
+                {markAsPaid ? (
+                  <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <FormField label="Amount Received">
+                    <input
+                      type="number"
+                      min="0"
+                      value={paidAmount}
+                      onChange={(e) => setPaidAmount(e.target.value)}
+                      placeholder="Enter received amount"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                      style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    />
+                  </FormField>
+                  <FormField label="Payment Mode">
+                    <select
+                      value={paymentMode}
+                      onChange={(e) => setPaymentMode(e.target.value)}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                      style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    >
+                      {paymentModes.map((mode) => (
+                        <option key={mode} value={mode}>
+                          {mode}
+                        </option>
+                      ))}
+                    </select>
+                  </FormField>
+                  <FormField label="Payment Date">
+                    <input
+                      type="date"
+                      value={paymentDate}
+                      onChange={(e) => setPaymentDate(e.target.value)}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                      style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    />
+                  </FormField>
+                  <FormField label="Reference No">
+                    <input
+                      value={referenceNo}
+                      onChange={(e) => setReferenceNo(e.target.value)}
+                      placeholder="Enter payment reference"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                      style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    />
+                  </FormField>
+                  {paymentMode === "Cheque" ? (
+                    <FormField label="Cheque No" className="md:col-span-2">
+                      <input
+                        value={chequeNo}
+                        onChange={(e) => setChequeNo(e.target.value)}
+                        placeholder="Enter cheque number"
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                        style={{ "--tw-ring-color": UI.COLORS.ring }}
+                      />
+                    </FormField>
+                  ) : null}
+                  {paymentMode === "Bank Transfer" ? (
+                    <>
+                      <FormField label="Bank Name">
+                        <input
+                          value={bankName}
+                          onChange={(e) => setBankName(e.target.value)}
+                          placeholder="Enter bank name"
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                          style={{ "--tw-ring-color": UI.COLORS.ring }}
+                        />
+                      </FormField>
+                      <FormField label="Bank Account">
+                        <input
+                          value={bankAccount}
+                          onChange={(e) => setBankAccount(e.target.value)}
+                          placeholder="Enter bank account"
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                          style={{ "--tw-ring-color": UI.COLORS.ring }}
+                        />
+                      </FormField>
+                    </>
+                  ) : null}
+                  {paymentMode === "Bank Transfer" ||
+                  paymentMode === "Card" ||
+                  paymentMode === "UPI" ||
+                  paymentMode === "Online Gateway" ? (
+                    <FormField label="Transaction ID" className="md:col-span-2">
+                      <input
+                        value={transactionId}
+                        onChange={(e) => setTransactionId(e.target.value)}
+                        placeholder="Enter transaction ID"
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                        style={{ "--tw-ring-color": UI.COLORS.ring }}
+                      />
+                    </FormField>
+                  ) : null}
+                  <FormField label="Notes" className="md:col-span-2">
+                    <input
+                      value={paymentNotes}
+                      onChange={(e) => setPaymentNotes(e.target.value)}
+                      placeholder="Optional internal note"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                      style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    />
+                  </FormField>
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                    Payment will stay pending. You can record it later in Payment In.
+                  </p>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                <p className="text-sm font-semibold text-slate-900">Invoice Summary</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  Bill template is shown only when you click Save & Print.
+                </p>
+
+              <div className="mt-4 flex items-center justify-between text-sm">
+                <span className="text-slate-600">Sub Total</span>
+                <span className="font-semibold text-slate-900">{money(computed.subTotal)}</span>
+              </div>
+              {computed.tax.taxMode === "GST" ? (
+                computed.tax.supplyType === "INTER" ? (
+                  <div className="mt-2 flex items-center justify-between text-sm">
+                    <span className="text-slate-600">GST Total</span>
+                    <span className="font-semibold text-slate-900">{money(computed.tax.totalTax)}</span>
+                  </div>
+                ) : (
+                  <div className="mt-2 flex items-center justify-between text-sm">
+                    <span className="text-slate-600">CGST + SGST</span>
+                    <span className="font-semibold text-slate-900">
+                      {money(Number(computed.tax.cgst || 0) + Number(computed.tax.sgst || 0))}
+                    </span>
+                  </div>
+                )
+              ) : (
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <span className="text-slate-600">{computed.tax.taxBreakup?.taxLabel || "TAX"}</span>
+                  <span className="font-semibold text-slate-900">{money(computed.tax.taxAmount)}</span>
+                </div>
+              )}
+              <div className="mt-2 flex items-center justify-between text-base">
+                <span className="font-semibold text-slate-900">Grand Total</span>
+                <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-sm">
+                <span className="text-slate-600">Paid Now</span>
+                <span className="font-semibold text-emerald-700">{money(paymentAmount)}</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-sm">
+                <span className="text-slate-600">Balance Due</span>
+                <span className="font-semibold text-rose-700">{money(pendingAmount)}</span>
+              </div>
+              {advanceAmount > 0 ? (
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <span className="text-slate-600">Advance</span>
+                  <span className="font-semibold text-emerald-700">{money(advanceAmount)}</span>
+                </div>
+              ) : null}
+
+                <div className="mt-4">
+                  <GradientButton className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60" onClick={saveInvoice}>
+                    <Save className="h-4 w-4" />
+                    Save Invoice
+                  </GradientButton>
+                </div>
+              </div>
+            </div>
+          </Card>
+        ) : null}
       </div>
 
       {printInvoiceData ? (

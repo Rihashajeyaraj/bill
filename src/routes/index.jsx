@@ -14,6 +14,7 @@ import Items from "../pages/Items";
 import ItemCreate from "../pages/ItemCreate";
 
 import InvoiceCreate from "../pages/sales/InvoiceCreate";
+import InvoiceHistory from "../pages/sales/InvoiceHistory";
 import CreditNote from "../pages/sales/CreditNotePremium";
 import PaymentIn from "../pages/sales/PaymentInPremium";
 
@@ -74,6 +75,7 @@ export const routes = [
               { path: "/items/new", element: <ItemCreate /> },
 
               { path: "/app/sales/invoice", element: <InvoiceCreate /> },
+              { path: "/app/sales/invoice/history", element: <InvoiceHistory /> },
               { path: "/app/sales/credit-note", element: <CreditNote /> },
               { path: "/app/sales/payment-in", element: <PaymentIn /> },
 
