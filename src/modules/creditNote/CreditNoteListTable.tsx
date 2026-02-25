@@ -1,5 +1,6 @@
-import React from "react";
-import { Download, Eye, FilePenLine } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Download, Eye, FilePenLine, MoreHorizontal } from "lucide-react";
+import { createPortal } from "react-dom";
 import type { CreditNoteRecord } from "./store";
 
 interface CreditNoteListTableProps {
@@ -27,6 +28,36 @@ export default function CreditNoteListTable({
   onEdit,
   onDownloadPdf
 }: CreditNoteListTableProps) {
+  const [actionMenu, setActionMenu] = useState<{
+    noteId: string;
+    top: number;
+    left: number;
+    canEdit: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: PointerEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest?.("[data-credit-note-actions-root='true']")) return;
+      if (target?.closest?.("[data-credit-note-actions-menu='true']")) return;
+      setActionMenu(null);
+    }
+    window.addEventListener("pointerdown", handleClickOutside);
+    return () => window.removeEventListener("pointerdown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    function closeMenu() {
+      setActionMenu(null);
+    }
+    window.addEventListener("resize", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+    return () => {
+      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+    };
+  }, []);
+
   const totalPages = Math.max(1, Math.ceil(notes.length / pageSize));
   const currentPage = Math.min(Math.max(page, 1), totalPages);
   const start = (currentPage - 1) * pageSize;
@@ -66,31 +97,37 @@ export default function CreditNoteListTable({
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
+                    <div className="relative inline-flex" data-credit-note-actions-root="true">
                       <button
                         type="button"
-                        onClick={() => onView(note.id)}
-                        className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        onClick={(event) => {
+                          const triggerRect = event.currentTarget.getBoundingClientRect();
+                          const menuWidth = 144;
+                          const menuHeight = 132;
+                          const left = Math.min(
+                            window.innerWidth - menuWidth - 8,
+                            Math.max(8, triggerRect.right - menuWidth)
+                          );
+                          const preferredTop = triggerRect.bottom + 4;
+                          const top =
+                            preferredTop + menuHeight > window.innerHeight - 8
+                              ? Math.max(8, triggerRect.top - menuHeight - 8)
+                              : preferredTop;
+                          setActionMenu((current) =>
+                            current?.noteId === note.id
+                              ? null
+                              : {
+                                  noteId: note.id,
+                                  top,
+                                  left,
+                                  canEdit: note.status !== "Applied"
+                                }
+                          );
+                        }}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        aria-label="Open actions"
                       >
-                        <Eye className="h-3.5 w-3.5" />
-                        View
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onEdit(note.id)}
-                        disabled={note.status === "Applied"}
-                        className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <FilePenLine className="h-3.5 w-3.5" />
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDownloadPdf(note.id)}
-                        className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        PDF
+                        <MoreHorizontal className="h-4 w-4" />
                       </button>
                     </div>
                   </td>
@@ -133,6 +170,55 @@ export default function CreditNoteListTable({
           </button>
         </div>
       </div>
+
+      {actionMenu && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              data-credit-note-actions-menu="true"
+              className="fixed z-[140] w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-lg"
+              style={{ top: actionMenu.top, left: actionMenu.left }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  const noteId = actionMenu.noteId;
+                  setActionMenu(null);
+                  onView(noteId);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                View
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const noteId = actionMenu.noteId;
+                  setActionMenu(null);
+                  onEdit(noteId);
+                }}
+                disabled={!actionMenu.canEdit}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <FilePenLine className="h-3.5 w-3.5" />
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const noteId = actionMenu.noteId;
+                  setActionMenu(null);
+                  onDownloadPdf(noteId);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Download className="h-3.5 w-3.5" />
+                PDF
+              </button>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
