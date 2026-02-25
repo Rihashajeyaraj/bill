@@ -521,6 +521,12 @@ function collectFromLines(records, item, onMatch) {
   });
 }
 
+function includeInventoryRecord(record) {
+  const status = String(record?.status || record?.paymentStatus || "").trim().toLowerCase();
+  if (!status) return true;
+  return status !== "draft" && status !== "cancelled" && status !== "canceled";
+}
+
 function collectItemTotalsLocal(item) {
   const invoices = ensureArray(lsGetOrganizationScoped(LS_KEYS.invoices, []));
   const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
@@ -723,28 +729,32 @@ export function computeItemUsage(item) {
 }
 
 export function computeItemStock(item) {
-  if (!item.trackInventory) return { available: 0, lowStock: false };
+  if (!item.trackInventory) return { available: 0, availableRaw: 0, lowStock: false };
 
-  let available = parseNumber(item.openingStock);
-  const invoices = ensureArray(lsGetOrganizationScoped(LS_KEYS.invoices, []));
-  const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
+  let availableRaw = parseNumber(item.openingStock);
+  const invoices = ensureArray(lsGetOrganizationScoped(LS_KEYS.invoices, [])).filter(
+    includeInventoryRecord
+  );
+  const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, [])).filter(
+    includeInventoryRecord
+  );
   const creditLegacy = ensureArray(lsGetOrganizationScoped(LS_KEYS.creditNotes, []));
   const creditPremium = ensureArray(lsGetOrganizationScoped(CREDIT_NOTES_PREMIUM_KEY, []));
   const debitPremium = ensureArray(lsGetOrganizationScoped(DEBIT_NOTES_PREMIUM_KEY, []));
 
   collectFromLines(purchases, item, (line) => {
-    available += parseNumber(line.qty ?? line.quantity ?? line.qtyOrdered);
+    availableRaw += parseNumber(line.qty ?? line.quantity ?? line.qtyOrdered);
   });
 
   collectFromLines(invoices, item, (line) => {
-    available -= parseNumber(line.qty ?? line.quantity ?? line.qtyOrdered);
+    availableRaw -= parseNumber(line.qty ?? line.quantity ?? line.qtyOrdered);
   });
 
   creditLegacy
     .filter((record) => record?.returnToStock)
     .forEach((record) => {
       collectFromLines([record], item, (line) => {
-        available += parseNumber(line.qty ?? line.quantity ?? line.qtyOrdered);
+        availableRaw += parseNumber(line.qty ?? line.quantity ?? line.qtyOrdered);
       });
     });
 
@@ -752,7 +762,7 @@ export function computeItemStock(item) {
     .filter((record) => record?.returnToStock || record?.status === "Applied")
     .forEach((record) => {
       collectFromLines([record], item, (line) => {
-        available += parseNumber(line.quantity ?? line.qty ?? line.qtyOrdered);
+        availableRaw += parseNumber(line.quantity ?? line.qty ?? line.qtyOrdered);
       });
     });
 
@@ -760,11 +770,12 @@ export function computeItemStock(item) {
     .filter((record) => record?.status === "Applied")
     .forEach((record) => {
       collectFromLines([record], item, (line) => {
-        available -= parseNumber(line.quantity ?? line.qty ?? line.qtyOrdered);
+        availableRaw -= parseNumber(line.quantity ?? line.qty ?? line.qtyOrdered);
       });
     });
 
+  const available = Math.max(0, parseNumber(availableRaw));
   const lowStockAlert = parseNumber(item.lowStockAlert);
   const lowStock = lowStockAlert > 0 && available <= lowStockAlert;
-  return { available, lowStock };
+  return { available, availableRaw, lowStock };
 }
