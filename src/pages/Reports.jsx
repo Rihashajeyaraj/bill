@@ -53,8 +53,6 @@ const REPORT_CARDS = [
     scope: "Sales",
     description: "Invoice revenue and credit impact.",
     metricLabel: "Net Sales",
-    metricValue: 1284000,
-    delta: 0.082,
     icon: Receipt
   },
   {
@@ -63,8 +61,6 @@ const REPORT_CARDS = [
     scope: "Purchase",
     description: "Bills, debit notes, and spend mix.",
     metricLabel: "Net Purchase",
-    metricValue: 844600,
-    delta: -0.031,
     icon: Briefcase
   },
   {
@@ -73,8 +69,6 @@ const REPORT_CARDS = [
     scope: "Party",
     description: "Customer outstanding and aging.",
     metricLabel: "Outstanding",
-    metricValue: 392200,
-    delta: 0.054,
     icon: Users
   },
   {
@@ -83,8 +77,6 @@ const REPORT_CARDS = [
     scope: "Party",
     description: "Supplier outstanding and due risk.",
     metricLabel: "Payables",
-    metricValue: 266800,
-    delta: -0.018,
     icon: Users
   },
   {
@@ -93,8 +85,6 @@ const REPORT_CARDS = [
     scope: "Item",
     description: "Top items, stock, and margins.",
     metricLabel: "Top Item Sales",
-    metricValue: 214200,
-    delta: 0.064,
     icon: Package
   },
   {
@@ -103,8 +93,6 @@ const REPORT_CARDS = [
     scope: "Party",
     description: "Top parties and statement health.",
     metricLabel: "Top Party",
-    metricValue: 164800,
-    delta: 0.041,
     icon: ClipboardList
   }
 ];
@@ -572,6 +560,23 @@ const REPORT_CONTENT = {
 
 const PIE_COLORS = ["#1f6b45", "#2e8d5a", "#8fbfa7", "#dbe8e2"];
 
+const REPORT_TEMPLATE = Object.fromEntries(
+  Object.entries(REPORT_CONTENT).map(([key, section]) => [
+    key,
+    {
+      summary: [],
+      chart: {
+        type: section?.chart?.type || "bar",
+        data: []
+      },
+      details: {
+        columns: Array.isArray(section?.details?.columns) ? section.details.columns : [],
+        rows: []
+      }
+    }
+  ])
+);
+
 function toLocalIsoDate(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -620,6 +625,7 @@ function statusTone(value) {
 }
 
 function MetricDelta({ delta }) {
+  if (typeof delta !== "number") return null;
   const isUp = delta >= 0;
   const Icon = isUp ? ArrowUpRight : ArrowDownRight;
   return (
@@ -637,6 +643,7 @@ function MetricDelta({ delta }) {
 
 function ReportCard({ report, active, currency, onSelect }) {
   const Icon = report.icon || BarChart3;
+  const metricFormat = report.metricFormat || "money";
   return (
     <button
       type="button"
@@ -669,7 +676,7 @@ function ReportCard({ report, active, currency, onSelect }) {
         <div>
           <p className="text-xs font-semibold text-slate-500">{report.metricLabel}</p>
           <p className="mt-1 text-lg font-semibold text-slate-900">
-            {formatMoney(report.metricValue, currency)}
+            {formatValue(report.metricValue, metricFormat, currency)}
           </p>
         </div>
         <div className="text-xs text-slate-400">Tap to open</div>
@@ -681,6 +688,16 @@ function ReportCard({ report, active, currency, onSelect }) {
 function ChartBlock({ type, data, metric, currency }) {
   const isMoney = metric === "amount";
   const valueFormatter = (value) => (isMoney ? formatMoney(value, currency) : value);
+  const safeData = Array.isArray(data) ? data : [];
+
+  if (!safeData.length) {
+    return (
+      <div className="flex h-[280px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+        No data in selected date range.
+      </div>
+    );
+  }
+
   if (type === "pie") {
     return (
       <ResponsiveContainer width="100%" height={280}>
@@ -688,14 +705,14 @@ function ChartBlock({ type, data, metric, currency }) {
           <Tooltip formatter={valueFormatter} />
           <Legend verticalAlign="bottom" height={36} />
           <Pie
-            data={data}
+            data={safeData}
             dataKey={metric}
             nameKey="label"
             innerRadius={65}
             outerRadius={110}
             paddingAngle={3}
           >
-            {data.map((entry, index) => (
+            {safeData.map((entry, index) => (
               <Cell key={`${entry.label}-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
             ))}
           </Pie>
@@ -707,7 +724,7 @@ function ChartBlock({ type, data, metric, currency }) {
   if (type === "line") {
     return (
       <ResponsiveContainer width="100%" height={280}>
-        <LineChart data={data} margin={{ top: 12, right: 16, left: 0, bottom: 8 }}>
+        <LineChart data={safeData} margin={{ top: 12, right: 16, left: 0, bottom: 8 }}>
           <CartesianGrid strokeDasharray="4 4" stroke="#e2ebe5" />
           <XAxis dataKey="label" tickLine={false} axisLine={false} />
           <YAxis tickLine={false} axisLine={false} width={60} />
@@ -720,7 +737,7 @@ function ChartBlock({ type, data, metric, currency }) {
 
   return (
     <ResponsiveContainer width="100%" height={280}>
-      <BarChart data={data} margin={{ top: 12, right: 16, left: 0, bottom: 8 }}>
+      <BarChart data={safeData} margin={{ top: 12, right: 16, left: 0, bottom: 8 }}>
         <CartesianGrid strokeDasharray="4 4" stroke="#e2ebe5" />
         <XAxis dataKey="label" tickLine={false} axisLine={false} />
         <YAxis tickLine={false} axisLine={false} width={60} />
@@ -832,7 +849,78 @@ function computeDaysOverdue(dueDate) {
   return diff > 0 ? Math.floor(diff / (24 * 60 * 60 * 1000)) : 0;
 }
 
+function buildAgingChartData(rows) {
+  const order = ["0-30", "31-60", "61-90", "90+"];
+  const map = new Map(order.map((bucket) => [bucket, { label: `${bucket} days`, amount: 0, count: 0 }]));
+  rows.forEach((row) => {
+    const bucket = order.includes(String(row?.bucket || "")) ? String(row.bucket) : "90+";
+    const current = map.get(bucket);
+    current.amount += parseAmount(row?.amount);
+    current.count += 1;
+    map.set(bucket, current);
+  });
+  return order.map((bucket) => map.get(bucket));
+}
+
+function rowMatchesParty(row, partyId, partyName) {
+  const rowId = String(row?.partyId || "");
+  if (partyId && rowId && rowId === partyId) return true;
+  return normalizeText(row?.party) === normalizeText(partyName);
+}
+
+function deriveCardMetric(reportId, reportContent) {
+  const content = reportContent?.[reportId];
+  const summary = Array.isArray(content?.summary) ? content.summary : [];
+  const rows = Array.isArray(content?.details?.rows) ? content.details.rows : [];
+
+  if (reportId === "sales") {
+    return {
+      metricLabel: "Net Sales",
+      metricValue: summary.find((card) => card.label === "Net Sales")?.value || 0,
+      metricFormat: "money"
+    };
+  }
+  if (reportId === "purchases") {
+    return {
+      metricLabel: "Net Purchase",
+      metricValue: summary.find((card) => card.label === "Net Purchase")?.value || 0,
+      metricFormat: "money"
+    };
+  }
+  if (reportId === "receivables") {
+    return {
+      metricLabel: "Outstanding",
+      metricValue: summary.find((card) => card.label === "Total Outstanding")?.value || 0,
+      metricFormat: "money"
+    };
+  }
+  if (reportId === "payables") {
+    return {
+      metricLabel: "Payables",
+      metricValue: summary.find((card) => card.label === "Supplier Outstanding")?.value || 0,
+      metricFormat: "money"
+    };
+  }
+  if (reportId === "items") {
+    return {
+      metricLabel: "Top Item Sales",
+      metricValue: summary.find((card) => card.label === "Top Item Sales")?.value || 0,
+      metricFormat: "money"
+    };
+  }
+  if (reportId === "parties") {
+    const ranked = [...rows].sort((a, b) => parseAmount(b?.value) - parseAmount(a?.value));
+    return {
+      metricLabel: "Top Party",
+      metricValue: ranked[0]?.party || "-",
+      metricFormat: "text"
+    };
+  }
+  return { metricLabel: "Value", metricValue: 0, metricFormat: "money" };
+}
+
 function buildLiveReportContent({ fromDate, toDate, country }) {
+  const template = REPORT_TEMPLATE;
   const invoices = arrayFromLs(LS_KEYS.invoices).filter((row) =>
     countryMatches(recordCountry(row), country)
   );
@@ -916,6 +1004,7 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
       id: row?.id || row?.invoiceNo,
       date: toIsoDate(row?.invoiceDate || row?.date || row?.created_at),
       doc: row?.invoiceNo || row?.id || "-",
+      partyId: row?.partyId || row?.customerId || row?.buyer?.id || "",
       party: row?.partyName || row?.buyer?.name || "Customer",
       amount,
       credit,
@@ -940,6 +1029,7 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
       id: row?.id || row?.billNumber,
       date: toIsoDate(row?.billDate || row?.invoiceDate || row?.date || row?.created_at),
       doc: row?.billNumber || row?.invoiceNo || row?.id || "-",
+      partyId: row?.partyId || row?.supplierId || row?.vendorId || "",
       party: row?.partyName || row?.supplierName || "Supplier",
       amount,
       debit,
@@ -962,6 +1052,7 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
       const overdueDays = computeDaysOverdue(due);
       return {
         id: row?.id || row?.invoiceNo,
+        partyId: row?.partyId || row?.customerId || row?.buyer?.id || "",
         party: row?.partyName || row?.buyer?.name || "Customer",
         invoice: row?.invoiceNo || row?.id || "-",
         due,
@@ -987,6 +1078,7 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
       const overdueDays = computeDaysOverdue(due);
       return {
         id: row?.id || row?.billNumber,
+        partyId: row?.partyId || row?.supplierId || row?.vendorId || "",
         party: row?.partyName || row?.supplierName || "Supplier",
         bill: row?.billNumber || row?.invoiceNo || row?.id || "-",
         due,
@@ -1024,8 +1116,12 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
   invoiceRows.forEach((row) => {
     const lines = Array.isArray(row?.lines) ? row.lines : [];
     lines.forEach((line) => {
-      const key = line?.itemName || line?.name || "Unknown";
-      const current = itemSalesMap.get(key) || { sold: 0, revenue: 0 };
+      const itemName = line?.itemName || line?.name || "Unknown";
+      const itemId = line?.itemId || "";
+      const key = itemId ? `id:${itemId}` : `name:${normalizeText(itemName)}`;
+      const current = itemSalesMap.get(key) || { itemId: "", itemName, sold: 0, revenue: 0 };
+      current.itemId = current.itemId || itemId;
+      current.itemName = itemName || current.itemName;
       current.sold += parseAmount(line?.qty ?? line?.quantity);
       current.revenue += parseAmount(line?.amount ?? line?.lineTotal ?? line?.net);
       itemSalesMap.set(key, current);
@@ -1033,8 +1129,10 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
   });
 
   const itemDetailsRows = Array.from(itemSalesMap.entries())
-    .map(([itemName, stat]) => {
+    .map(([, stat]) => {
+      const itemName = stat.itemName || "Unknown";
       const itemMeta =
+        items.find((entry) => String(entry?.id || "") === String(stat.itemId || "")) ||
         items.find((entry) => String(entry?.name || "").toLowerCase() === String(itemName).toLowerCase()) ||
         {};
       const salesRate = parseAmount(itemMeta?.salesRate ?? itemMeta?.price);
@@ -1056,33 +1154,38 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
 
   const partyDetailsRows = parties.map((party) => {
     const type = String(party?.type || "Customer");
-    const byName = String(party?.name || "").toLowerCase();
     const byId = String(party?.id || "");
-    const sales = salesDetailRows
-      .filter((row) => String(row.party || "").toLowerCase() === byName)
+    const byName = String(party?.name || "");
+    const matchedSales = salesDetailRows.filter((row) => rowMatchesParty(row, byId, byName));
+    const matchedPurchase = purchaseDetailRows.filter((row) => rowMatchesParty(row, byId, byName));
+    const matchedReceivables = receivablesRows.filter((row) => rowMatchesParty(row, byId, byName));
+    const matchedPayables = payablesRows.filter((row) => rowMatchesParty(row, byId, byName));
+    const sales = matchedSales
       .reduce((sum, row) => sum + parseAmount(row.net), 0);
-    const purchase = purchaseDetailRows
-      .filter((row) => String(row.party || "").toLowerCase() === byName)
+    const purchase = matchedPurchase
       .reduce((sum, row) => sum + parseAmount(row.net), 0);
-    const receivable = receivablesRows
-      .filter((row) => String(row.party || "").toLowerCase() === byName)
+    const receivable = matchedReceivables
       .reduce((sum, row) => sum + parseAmount(row.amount), 0);
-    const payable = payablesRows
-      .filter((row) => String(row.party || "").toLowerCase() === byName)
+    const payable = matchedPayables
       .reduce((sum, row) => sum + parseAmount(row.amount), 0);
     const value = type.toLowerCase() === "supplier" ? purchase : sales;
     const outstanding = type.toLowerCase() === "supplier" ? payable : receivable;
+    const transactions = type.toLowerCase() === "supplier" ? matchedPurchase.length : matchedSales.length;
+    if (transactions <= 0 && outstanding <= 0 && value <= 0) return null;
     return {
       id: byId || `party_${party?.name || Math.random().toString(16).slice(2)}`,
       party: party?.name || "Party",
       type,
-      transactions: type.toLowerCase() === "supplier" ? purchaseDetailRows.length : salesDetailRows.length,
+      transactions,
       value,
       outstanding,
       created_at: party?.created_at,
       status: outstanding > 0 ? "Attention" : "Healthy"
     };
-  });
+  }).filter(Boolean);
+
+  const receivableAging = buildAgingChartData(receivablesRows);
+  const payableAging = buildAgingChartData(payablesRows);
 
   const grossSales = salesDetailRows.reduce((sum, row) => sum + parseAmount(row.amount), 0);
   const totalCredit = salesDetailRows.reduce((sum, row) => sum + parseAmount(row.credit), 0);
@@ -1118,20 +1221,20 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
     .reduce((sum, row) => sum + parseAmount(row?.amount), 0);
 
   return {
-    ...REPORT_CONTENT,
+    ...template,
     sales: {
-      ...REPORT_CONTENT.sales,
+      ...template.sales,
       summary: [
         { label: "Gross Sales", value: grossSales, tone: "default" },
         { label: "Credit Given", value: totalCredit, tone: "warn" },
         { label: "Net Sales", value: netSales, tone: "success" },
         { label: "Invoice Count", value: salesDetailRows.length, tone: "default", format: "count" }
       ],
-      chart: { type: "line", data: salesByMonth.length ? salesByMonth : REPORT_CONTENT.sales.chart.data },
-      details: { ...REPORT_CONTENT.sales.details, rows: salesDetailRows.length ? salesDetailRows : REPORT_CONTENT.sales.details.rows }
+      chart: { type: "line", data: salesByMonth },
+      details: { ...template.sales.details, rows: salesDetailRows }
     },
     purchases: {
-      ...REPORT_CONTENT.purchases,
+      ...template.purchases,
       summary: [
         { label: "Gross Purchase", value: grossPurchase, tone: "default" },
         { label: "Debit Added", value: totalDebit, tone: "warn" },
@@ -1140,15 +1243,15 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
       ],
       chart: {
         type: "bar",
-        data: purchasesByMonth.length ? purchasesByMonth : REPORT_CONTENT.purchases.chart.data
+        data: purchasesByMonth
       },
       details: {
-        ...REPORT_CONTENT.purchases.details,
-        rows: purchaseDetailRows.length ? purchaseDetailRows : REPORT_CONTENT.purchases.details.rows
+        ...template.purchases.details,
+        rows: purchaseDetailRows
       }
     },
     receivables: {
-      ...REPORT_CONTENT.receivables,
+      ...template.receivables,
       summary: [
         {
           label: "Total Outstanding",
@@ -1165,13 +1268,17 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
         { label: "Collected", value: totalReceived, tone: "default" },
         { label: "Open Invoices", value: receivablesRows.length, tone: "default", format: "count" }
       ],
+      chart: {
+        type: "pie",
+        data: receivableAging
+      },
       details: {
-        ...REPORT_CONTENT.receivables.details,
-        rows: receivablesRows.length ? receivablesRows : REPORT_CONTENT.receivables.details.rows
+        ...template.receivables.details,
+        rows: receivablesRows
       }
     },
     payables: {
-      ...REPORT_CONTENT.payables,
+      ...template.payables,
       summary: [
         {
           label: "Supplier Outstanding",
@@ -1188,33 +1295,72 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
         { label: "Payments Out", value: totalPaid, tone: "default" },
         { label: "Open Bills", value: payablesRows.length, tone: "default", format: "count" }
       ],
+      chart: {
+        type: "pie",
+        data: payableAging
+      },
       details: {
-        ...REPORT_CONTENT.payables.details,
-        rows: payablesRows.length ? payablesRows : REPORT_CONTENT.payables.details.rows
+        ...template.payables.details,
+        rows: payablesRows
       }
     },
     items: {
-      ...REPORT_CONTENT.items,
+      ...template.items,
+      summary: [
+        { label: "Top Item Sales", value: itemDetailsRows[0]?.revenue || 0, tone: "success" },
+        {
+          label: "Low Stock Items",
+          value: itemDetailsRows.filter((row) => String(row?.status || "").toLowerCase() === "low").length,
+          tone: "warn",
+          format: "count"
+        },
+        {
+          label: "Avg Margin",
+          value: itemDetailsRows.length
+            ? Number(
+                (
+                  itemDetailsRows.reduce((sum, row) => sum + parseAmount(row?.margin), 0) / itemDetailsRows.length
+                ).toFixed(2)
+              )
+            : 0,
+          tone: "default",
+          format: "percent"
+        },
+        {
+          label: "Inventory Value",
+          value: itemDetailsRows.reduce((sum, row) => sum + parseAmount(row?.revenue), 0),
+          tone: "default"
+        }
+      ],
       details: {
-        ...REPORT_CONTENT.items.details,
-        rows: itemDetailsRows.length ? itemDetailsRows.slice(0, 100) : REPORT_CONTENT.items.details.rows
+        ...template.items.details,
+        rows: itemDetailsRows.slice(0, 100)
       },
       chart: {
-        ...REPORT_CONTENT.items.chart,
-        data: itemDetailsRows.length
-          ? itemDetailsRows.slice(0, 6).map((row) => ({
-              label: row.item,
-              amount: row.revenue,
-              count: row.sold
-            }))
-          : REPORT_CONTENT.items.chart.data
+        ...template.items.chart,
+        data: itemDetailsRows.slice(0, 6).map((row) => ({
+          label: row.item,
+          amount: row.revenue,
+          count: row.sold
+        }))
       }
     },
     parties: {
-      ...REPORT_CONTENT.parties,
+      ...template.parties,
+      chart: {
+        type: "bar",
+        data: [...partyDetailsRows]
+          .sort((a, b) => parseAmount(b?.value) - parseAmount(a?.value))
+          .slice(0, 6)
+          .map((row) => ({
+            label: row.party,
+            amount: parseAmount(row.value),
+            count: parseAmount(row.transactions)
+          }))
+      },
       details: {
-        ...REPORT_CONTENT.parties.details,
-        rows: partyDetailsRows.length ? partyDetailsRows : REPORT_CONTENT.parties.details.rows
+        ...template.parties.details,
+        rows: partyDetailsRows
       }
     }
   };
@@ -1284,7 +1430,19 @@ export default function Reports() {
     [fromDate, toDate, country, dataVersion]
   );
 
-  const activeContent = reportContent?.[activeReport] || REPORT_CONTENT[activeReport];
+  const scopedCardReports = useMemo(() => {
+    const decorated = REPORT_CARDS.map((report) => ({
+      ...report,
+      ...deriveCardMetric(report.id, reportContent)
+    }));
+    if (scope === "All") return decorated;
+    return decorated.filter((report) => report.scope === scope);
+  }, [reportContent, scope]);
+
+  const activeContent =
+    reportContent?.[activeReport] ||
+    REPORT_TEMPLATE?.[activeReport] ||
+    { summary: [], chart: { type: "bar", data: [] }, details: { columns: [], rows: [] } };
   const chartLabel = metric === "amount" ? "Amount" : "Count";
   const detailsRows = activeContent?.details?.rows || [];
 
@@ -1374,6 +1532,65 @@ export default function Reports() {
     return sortConfig.direction === "desc" ? sorted.reverse() : sorted;
   }, [detailsRows, detailSearch, activeReport, partyTypeFilter, sortConfig]);
 
+  const highlightItems = useMemo(() => {
+    if (!detailsRows.length) {
+      return [
+        "No records found in the selected date range.",
+        "This report reads only live business data from your current organization.",
+        "Change the date range to include more records."
+      ];
+    }
+
+    if (activeReport === "sales") {
+      const top = [...detailsRows].sort((a, b) => parseAmount(b?.net) - parseAmount(a?.net))[0];
+      const pending = detailsRows.filter((row) => String(row?.status || "").toLowerCase() !== "paid").length;
+      return [
+        `Invoices in range: ${detailsRows.length}.`,
+        top ? `Highest net invoice: ${top.doc} (${formatMoney(top.net, currency)}).` : "No invoice ranking available.",
+        `Pending or partial invoices: ${pending}.`
+      ];
+    }
+
+    if (activeReport === "purchases") {
+      const top = [...detailsRows].sort((a, b) => parseAmount(b?.net) - parseAmount(a?.net))[0];
+      const pending = detailsRows.filter((row) => String(row?.status || "").toLowerCase() !== "paid").length;
+      return [
+        `Bills in range: ${detailsRows.length}.`,
+        top ? `Highest bill impact: ${top.doc} (${formatMoney(top.net, currency)}).` : "No bill ranking available.",
+        `Pending or partial bills: ${pending}.`
+      ];
+    }
+
+    if (activeReport === "receivables" || activeReport === "payables") {
+      const overdue = detailsRows.filter((row) => String(row?.status || "").toLowerCase() === "overdue");
+      const totalOutstanding = detailsRows.reduce((sum, row) => sum + parseAmount(row?.amount), 0);
+      const oldest = detailsRows.reduce((max, row) => Math.max(max, overdueDaysFromDueDate(row?.due)), 0);
+      return [
+        `Open entries: ${detailsRows.length}.`,
+        `Total outstanding: ${formatMoney(totalOutstanding, currency)}.`,
+        `Overdue entries: ${overdue.length} (oldest ${oldest} days).`
+      ];
+    }
+
+    if (activeReport === "items") {
+      const top = [...detailsRows].sort((a, b) => parseAmount(b?.revenue) - parseAmount(a?.revenue))[0];
+      const low = detailsRows.filter((row) => String(row?.status || "").toLowerCase() === "low").length;
+      return [
+        `Tracked items in report: ${detailsRows.length}.`,
+        top ? `Top item by revenue: ${top.item} (${formatMoney(top.revenue, currency)}).` : "No top item available.",
+        `Low stock items: ${low}.`
+      ];
+    }
+
+    const top = [...detailsRows].sort((a, b) => parseAmount(b?.value) - parseAmount(a?.value))[0];
+    const attention = detailsRows.filter((row) => String(row?.status || "").toLowerCase() === "attention").length;
+    return [
+      `Active parties in report: ${detailsRows.length}.`,
+      top ? `Top party by value: ${top.party} (${formatMoney(top.value, currency)}).` : "No top party available.",
+      `Parties needing attention: ${attention}.`
+    ];
+  }, [activeReport, detailsRows, currency]);
+
   function toggleSort(key) {
     setSortConfig((prev) => {
       if (prev.key === key) {
@@ -1417,7 +1634,7 @@ export default function Reports() {
         }
       />
 
-      <div className="sticky top-4 z-20 rounded-3xl border border-slate-200 bg-white/90 p-4 shadow-soft backdrop-blur">
+      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft">
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr_1fr]">
           <div className="flex flex-wrap items-center gap-2">
             <div className="min-w-[140px]">
@@ -1481,8 +1698,8 @@ export default function Reports() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {scopedReports.length ? (
-          scopedReports.map((report) => (
+        {scopedCardReports.length ? (
+          scopedCardReports.map((report) => (
             <ReportCard
               key={report.id}
               report={report}
@@ -1599,9 +1816,9 @@ export default function Reports() {
                 <Badge tone="success">Auto insights</Badge>
               </div>
               <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                <li>Top 3 accounts contribute 54% of the total volume.</li>
-                <li>Receivables aging improved by 6 days since last month.</li>
-                <li>Tax payable is down 2.7% after input offsets.</li>
+                {highlightItems.map((entry) => (
+                  <li key={entry}>{entry}</li>
+                ))}
               </ul>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
