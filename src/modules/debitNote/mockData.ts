@@ -6,6 +6,8 @@ export interface MockSupplier {
   country: CountryCode;
   registrationNumber: string;
   email: string;
+  phone?: string;
+  address?: string;
   state?: string;
 }
 
@@ -37,6 +39,8 @@ export const MOCK_SUPPLIERS: MockSupplier[] = [
     country: "SL",
     registrationNumber: "123456789V",
     email: "accounts@lankadistributors.lk",
+    phone: "0717654321",
+    address: "128 Baseline Road, Colombo",
     state: "Western"
   },
   {
@@ -45,6 +49,8 @@ export const MOCK_SUPPLIERS: MockSupplier[] = [
     country: "IN",
     registrationNumber: "29ABCDE1234F1Z5",
     email: "finance@bharatcomponents.in",
+    phone: "9988776655",
+    address: "Plot 44, Peenya Industrial Estate, Bengaluru",
     state: "Karnataka"
   },
   {
@@ -53,6 +59,8 @@ export const MOCK_SUPPLIERS: MockSupplier[] = [
     country: "AE",
     registrationNumber: "100123456700003",
     email: "ap@dubaiindustrial.ae",
+    phone: "0582345678",
+    address: "Unit 8, Jebel Ali Free Zone",
     state: "Dubai"
   },
   {
@@ -60,14 +68,18 @@ export const MOCK_SUPPLIERS: MockSupplier[] = [
     name: "Jurong Supply Pte Ltd",
     country: "SG",
     registrationNumber: "M12345678X",
-    email: "finance@jurongsupply.sg"
+    email: "finance@jurongsupply.sg",
+    phone: "92345678",
+    address: "18 Pioneer Crescent"
   },
   {
     id: "mock_sup_uk_1",
     name: "Manchester Wholesale Ltd",
     country: "UK",
     registrationNumber: "GB123456789",
-    email: "accounts@manchesterwholesale.co.uk"
+    email: "accounts@manchesterwholesale.co.uk",
+    phone: "07822111222",
+    address: "34 Piccadilly, Manchester"
   },
   {
     id: "mock_sup_us_1",
@@ -75,6 +87,8 @@ export const MOCK_SUPPLIERS: MockSupplier[] = [
     country: "US",
     registrationNumber: "TX-4789102",
     email: "billing@austinwarehouse.us",
+    phone: "(737) 555-0198",
+    address: "1100 E Howard Ln, Austin",
     state: "Texas"
   }
 ];

@@ -1,10 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Save } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Search, X } from "lucide-react";
 import { COUNTRY_CONFIG, DEBIT_REASONS, type CountryCode, type DebitStatus, type DebitType } from "./countryConfig";
 import type { PurchaseInvoice, DebitNoteRecord, SupplierOption } from "./store";
 import type { DebitNoteFormState } from "./types";
 import { formatMoney, parseNumber } from "./utils";
-import FloatingCard, { defaultFloatingCardState, sanitizeFloatingCardState, type FloatingCardState } from "./FloatingCard";
 
 interface DebitNoteEditorProps {
   country: CountryCode;
@@ -44,22 +43,19 @@ const DEBIT_TYPES: DebitType[] = [
   "Additional Charges"
 ];
 
-function readStoredTotalsCard(storageKey: string) {
-  if (typeof window === "undefined") return defaultFloatingCardState();
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    const saved = raw ? sanitizeFloatingCardState(JSON.parse(raw)) : defaultFloatingCardState();
-    if (window.innerWidth >= 1280 && saved.size !== "maximized" && !saved.hidden) {
-      return {
-        ...saved,
-        x: Math.max(92, window.innerWidth - 420),
-        y: 170
-      };
-    }
-    return saved;
-  } catch {
-    return defaultFloatingCardState();
-  }
+function normalizePhoneForLookup(value: unknown) {
+  let digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length > 10) digits = digits.slice(-10);
+  digits = digits.replace(/^0+/, "");
+  return digits || "0";
+}
+
+function supplierAddressSummary(supplier: SupplierOption | null) {
+  return [supplier?.address, supplier?.state, supplier?.country]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(", ");
 }
 
 export default function DebitNoteEditor({
@@ -84,24 +80,150 @@ export default function DebitNoteEditor({
 }: DebitNoteEditorProps) {
   const cfg = COUNTRY_CONFIG[country];
   const isReadOnly = !!readOnly;
-  const supplierInvoices = form.supplierId ? invoices.filter((invoice) => invoice.supplierId === form.supplierId) : invoices;
-  const totalsCardStorageKey = useMemo(
-    () => `debitNoteTotalsCardState:${country}:${(actorName || "user").toLowerCase()}`,
-    [country, actorName]
+  const selectedSupplierId = form.supplierId;
+  const selectedSupplier = useMemo(
+    () => suppliers.find((supplier) => supplier.id === selectedSupplierId) || null,
+    [suppliers, selectedSupplierId]
   );
-  const [totalsCard, setTotalsCard] = useState<FloatingCardState>(() => readStoredTotalsCard(totalsCardStorageKey));
+  const [availableInvoices, setAvailableInvoices] = useState<PurchaseInvoice[]>([]);
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
+  const [supplierSearchPhone, setSupplierSearchPhone] = useState("");
+  const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
+  const [supplierSearchError, setSupplierSearchError] = useState("");
+  const supplierLookupResults = useMemo(() => {
+    const query = String(supplierLookupQuery || "").trim().toLowerCase();
+    if (!query) return [];
+    const normalizedPhoneQuery = normalizePhoneForLookup(query);
+    return suppliers
+      .filter((supplier) => {
+        const text = [supplier?.name, supplier?.email, supplier?.address, supplier?.state, supplier?.country]
+          .map((value) => String(value || "").toLowerCase())
+          .join(" ");
+        const supplierPhone = normalizePhoneForLookup(supplier?.phone);
+        return text.includes(query) || (normalizedPhoneQuery && supplierPhone && supplierPhone.includes(normalizedPhoneQuery));
+      })
+      .slice(0, 8);
+  }, [suppliers, supplierLookupQuery]);
 
   useEffect(() => {
-    setTotalsCard(readStoredTotalsCard(totalsCardStorageKey));
-  }, [totalsCardStorageKey]);
+    if (!selectedSupplierId) {
+      setAvailableInvoices([]);
+      setInvoiceLoading(false);
+      return;
+    }
+
+    setInvoiceLoading(true);
+    const timer = window.setTimeout(() => {
+      const next = invoices.filter((invoice) => {
+        const remainingBalance = Math.max(0, parseNumber(invoice.remainingBalance));
+        return invoice.supplierId === selectedSupplierId && invoice.country === country && remainingBalance > 0;
+      });
+      setAvailableInvoices(next);
+      setInvoiceLoading(false);
+    }, 260);
+
+    return () => window.clearTimeout(timer);
+  }, [selectedSupplierId, country, invoices]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(totalsCardStorageKey, JSON.stringify(totalsCard));
-  }, [totalsCardStorageKey, totalsCard]);
+    setAvailableInvoices([]);
+    setInvoiceLoading(false);
+  }, [country]);
+
+  useEffect(() => {
+    if (!selectedSupplierId) {
+      setSupplierSearchPhone("");
+      return;
+    }
+    setSupplierSearchPhone(String(selectedSupplier?.phone || "").replace(/\D/g, "").slice(-10));
+  }, [selectedSupplierId, selectedSupplier?.phone]);
+
+  function resetInvoiceSelection() {
+    onUpdateForm("linkedPurchaseInvoiceId", "");
+    onUpdateForm("lines", []);
+    onUpdateForm("partialAmountCap", "");
+    onUpdateForm("priceAdjustmentAmount", "");
+    onUpdateForm("additionalChargesAmount", "");
+    onUpdateForm("taxAdjustmentAmount", "");
+  }
+
+  function applySupplierSelection(supplier: SupplierOption) {
+    const supplierChanged = supplier.id !== selectedSupplierId;
+    onUpdateForm("supplierId", supplier.id);
+    onUpdateForm("supplierInput", supplier.name || "");
+    if (supplier.registrationNumber) {
+      onUpdateForm("registrationNumber", supplier.registrationNumber);
+    }
+    if (supplierChanged) {
+      resetInvoiceSelection();
+    }
+    setSupplierSearchPhone(String(supplier.phone || "").replace(/\D/g, "").slice(-10));
+    setSupplierLookupQuery("");
+    setSupplierSearchError("");
+  }
+
+  function handleSupplierPhoneChange(value: string) {
+    const digits = String(value || "").replace(/\D/g, "").slice(0, 10);
+    setSupplierSearchPhone(digits);
+    setSupplierSearchError("");
+    if (selectedSupplierId && normalizePhoneForLookup(digits) !== normalizePhoneForLookup(selectedSupplier?.phone)) {
+      onUpdateForm("supplierId", "");
+      onUpdateForm("supplierInput", "");
+      resetInvoiceSelection();
+    }
+  }
+
+  function handleSupplierLookupChange(value: string) {
+    setSupplierLookupQuery(value);
+    setSupplierSearchError("");
+  }
+
+  function handleSupplierSearch() {
+    const phoneDigits = String(supplierSearchPhone || "").replace(/\D/g, "");
+    if (phoneDigits) {
+      if (phoneDigits.length !== 10) {
+        setSupplierSearchError("Enter a valid 10-digit supplier mobile number.");
+        return;
+      }
+      const normalizedPhone = normalizePhoneForLookup(phoneDigits);
+      const matchedSupplier = suppliers.find(
+        (supplier) => normalizePhoneForLookup(supplier?.phone) === normalizedPhone
+      );
+      if (!matchedSupplier) {
+        setSupplierSearchError("No supplier found for this mobile number.");
+        return;
+      }
+      applySupplierSelection(matchedSupplier);
+      return;
+    }
+
+    const query = String(supplierLookupQuery || "").trim();
+    if (query.length < 2) {
+      setSupplierSearchError("Enter mobile number or name/email/address to search.");
+      return;
+    }
+    if (!supplierLookupResults.length) {
+      setSupplierSearchError("No supplier found for this search.");
+      return;
+    }
+    if (supplierLookupResults.length === 1) {
+      applySupplierSelection(supplierLookupResults[0]);
+      return;
+    }
+    setSupplierSearchError("Multiple suppliers found. Choose one from the list below.");
+  }
+
+  function resetSupplierSelection() {
+    onUpdateForm("supplierId", "");
+    onUpdateForm("supplierInput", "");
+    resetInvoiceSelection();
+    setSupplierSearchPhone("");
+    setSupplierLookupQuery("");
+    setSupplierSearchError("");
+  }
 
   return (
-    <div className="debit-note-compact flex h-full min-h-0 flex-col gap-2.5">
+    <div className="debit-note-compact flex min-h-full flex-col gap-2.5">
       <div className="shrink-0 flex flex-wrap items-center justify-between gap-2.5">
         <button
           onClick={onBack}
@@ -115,7 +237,7 @@ export default function DebitNoteEditor({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1 pb-2 xl:pr-[400px]">
+      <div className="pr-1 pb-2">
         <fieldset className="space-y-2.5" disabled={isReadOnly}>
           <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
             <p className="text-sm font-semibold text-slate-900">Section 1 - Basic Info</p>
@@ -146,42 +268,123 @@ export default function DebitNoteEditor({
                 />
                 {fieldErrors.debitNoteDate ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.debitNoteDate}</span> : null}
               </label>
-              <label className="text-xs font-semibold text-slate-600">
-                Supplier / Vendor
+              <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 md:col-span-2 xl:col-span-2">
+                <p className="text-xs font-semibold text-slate-600">Supplier Search</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    value={supplierSearchPhone}
+                    onChange={(event) => handleSupplierPhoneChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        handleSupplierSearch();
+                      }
+                    }}
+                    inputMode="numeric"
+                    maxLength={10}
+                    placeholder="Enter 10-digit mobile number"
+                    disabled={isReadOnly}
+                    className="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSupplierSearch}
+                    disabled={isReadOnly}
+                    className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Search className="h-3.5 w-3.5" />
+                    Search
+                  </button>
+                  {selectedSupplierId ? (
+                    <button
+                      type="button"
+                      onClick={resetSupplierSelection}
+                      disabled={isReadOnly}
+                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
                 <input
-                  list="debit-note-supplier-options"
-                  value={form.supplierInput}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    const matched = suppliers.find((supplier) => supplier.name.toLowerCase() === next.trim().toLowerCase());
-                    onUpdateForm("supplierInput", next);
-                    if (matched) onUpdateForm("supplierId", matched.id);
+                  value={supplierLookupQuery}
+                  onChange={(event) => handleSupplierLookupChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleSupplierSearch();
+                    }
                   }}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
-                  placeholder="Type supplier"
+                  placeholder="Type supplier name, email, or address"
+                  disabled={isReadOnly}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
                 />
-                <datalist id="debit-note-supplier-options">
-                  {suppliers.map((supplier) => (
-                    <option key={supplier.id} value={supplier.name} />
-                  ))}
-                </datalist>
-                {fieldErrors.supplierId ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.supplierId}</span> : null}
-              </label>
+                {supplierSearchError ? <p className="text-xs font-medium text-rose-600">{supplierSearchError}</p> : null}
+                {supplierLookupQuery.trim() ? (
+                  supplierLookupResults.length ? (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {supplierLookupResults.map((supplier) => (
+                        <button
+                          key={supplier.id}
+                          type="button"
+                          onClick={() => applySupplierSelection(supplier)}
+                          disabled={isReadOnly}
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <p className="text-sm font-semibold text-slate-900">{supplier.name || "-"}</p>
+                          <p className="text-xs text-slate-600">{supplier.phone || "-"}</p>
+                          <p className="text-xs text-slate-500">{supplierAddressSummary(supplier) || "-"}</p>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                      No supplier found. Try another search.
+                    </p>
+                  )
+                ) : null}
+                {selectedSupplier ? (
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs">
+                    <p className="font-semibold text-slate-900">{selectedSupplier.name || "-"}</p>
+                    <p className="mt-1 text-slate-500">{selectedSupplier.phone || "-"}</p>
+                    <p className="mt-1 text-slate-500">{selectedSupplier.email || "-"}</p>
+                    <p className="mt-1 text-slate-500">{supplierAddressSummary(selectedSupplier) || "-"}</p>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                    Search supplier by mobile, name, email, or address.
+                  </div>
+                )}
+                {fieldErrors.supplierId ? <span className="block text-xs text-rose-600">{fieldErrors.supplierId}</span> : null}
+              </div>
               <label className="text-xs font-semibold text-slate-600 md:col-span-2 xl:col-span-3">
-                Linked Purchase Invoice (same country only)
+                <span className="inline-flex items-center gap-2">
+                  Linked Purchase Invoice (same country only)
+                  {invoiceLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" /> : null}
+                </span>
                 <select
                   value={form.linkedPurchaseInvoiceId}
                   onChange={(event) => onApplyInvoice(event.target.value)}
+                  disabled={!selectedSupplierId || invoiceLoading}
                   className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
                 >
-                  <option value="">Select invoice</option>
-                  {supplierInvoices.map((invoice) => (
+                  {!selectedSupplierId ? <option value="">Select supplier first</option> : null}
+                  {selectedSupplierId && invoiceLoading ? <option value="">Loading invoices...</option> : null}
+                  {selectedSupplierId && !invoiceLoading && !availableInvoices.length ? (
+                    <option value="">No open invoices for this supplier</option>
+                  ) : null}
+                  {selectedSupplierId && !invoiceLoading && availableInvoices.length ? <option value="">Select invoice</option> : null}
+                  {availableInvoices.map((invoice) => (
                     <option key={invoice.id} value={invoice.id}>
                       {invoice.invoiceNo} | {invoice.supplierName} | Payable {formatMoney(invoice.remainingBalance, country)}
                     </option>
                   ))}
                 </select>
                 {fieldErrors.linkedPurchaseInvoiceId ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.linkedPurchaseInvoiceId}</span> : null}
+                {selectedSupplierId && !invoiceLoading && !availableInvoices.length ? (
+                  <span className="mt-1 block text-xs text-slate-500">No open invoices for this supplier</span>
+                ) : null}
               </label>
             </div>
           </div>
@@ -249,66 +452,78 @@ export default function DebitNoteEditor({
 
           <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold text-slate-900">Section 3 - Items Table</p>
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Section 3 - Items</p>
+                <p className="text-xs text-slate-500">Add or adjust line items in invoice-style cards.</p>
+              </div>
               <button onClick={onAddLine} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
                 Add line
               </button>
             </div>
             {fieldErrors.lines ? <p className="mt-2 text-xs text-rose-600">{fieldErrors.lines}</p> : null}
-            <div className="mt-2.5 max-h-[32vh] overflow-auto">
-              <table className="min-w-[1060px] w-full text-left text-sm">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-3 py-2 font-semibold text-slate-700">Item Name</th>
-                    {country === "IN" ? <th className="px-3 py-2 font-semibold text-slate-700">HSN/SAC</th> : null}
-                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Qty</th>
-                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Rate</th>
-                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Base Amount</th>
-                    <th className="px-3 py-2 text-right font-semibold text-slate-700">{cfg.taxLabel} %</th>
-                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Tax Amount</th>
-                    <th className="px-3 py-2 text-right font-semibold text-slate-700">After Tax</th>
-                    <th className="px-3 py-2 font-semibold text-slate-700">Debit Type</th>
-                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Debit Value</th>
-                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Debit Amount</th>
-                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Final Total</th>
-                    <th className="px-3 py-2 font-semibold text-slate-700">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {totals.detailed.map((line) => (
-                    <tr key={line.id} className="border-t border-slate-100">
-                      <td className="px-3 py-2"><input value={line.itemName} onChange={(event) => onUpdateLine(line.id, { itemName: event.target.value })} className="w-44 rounded-lg border border-slate-200 px-2 py-1.5 text-sm" /></td>
-                      {country === "IN" ? <td className="px-3 py-2"><input value={line.hsnSac || ""} onChange={(event) => onUpdateLine(line.id, { hsnSac: event.target.value })} className="w-28 rounded-lg border border-slate-200 px-2 py-1.5 text-sm" /></td> : null}
-                      <td className="px-3 py-2"><input type="number" min={0} value={line.quantity} onChange={(event) => onUpdateLine(line.id, { quantity: parseNumber(event.target.value) })} className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm" /></td>
-                      <td className="px-3 py-2"><input type="number" min={0} value={line.rate} onChange={(event) => onUpdateLine(line.id, { rate: parseNumber(event.target.value) })} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm" /></td>
-                      <td className="px-3 py-2 text-right font-medium text-slate-700">{formatMoney(line.baseAmount, country)}</td>
-                      <td className="px-3 py-2"><input type="number" min={0} value={line.taxRate} onChange={(event) => onUpdateLine(line.id, { taxRate: parseNumber(event.target.value) })} className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm" /></td>
-                      <td className="px-3 py-2 text-right font-medium text-slate-700">{formatMoney(line.taxAmount, country)}</td>
-                      <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatMoney(line.amountAfterTax, country)}</td>
-                      <td className="px-3 py-2">
-                        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
-                          <button type="button" onClick={() => onUpdateLine(line.id, { debitValueType: "Percentage" })} className={`rounded-md px-2 py-1 text-xs font-semibold ${line.debitValueType === "Percentage" ? "bg-slate-900 text-white" : "text-slate-600"}`}>%</button>
-                          <button type="button" onClick={() => onUpdateLine(line.id, { debitValueType: "Fixed" })} className={`rounded-md px-2 py-1 text-xs font-semibold ${line.debitValueType === "Fixed" ? "bg-slate-900 text-white" : "text-slate-600"}`}>Amount</button>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="number"
-                          min={0}
-                          value={line.debitValue}
-                          onChange={(event) => onUpdateLine(line.id, { debitValue: parseNumber(event.target.value) })}
-                          className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
-                        />
-                        {line.validationMessage ? <p className="mt-1 text-right text-[11px] text-rose-600">{line.validationMessage}</p> : null}
-                      </td>
-                      <td className="px-3 py-2 text-right font-medium text-slate-700">{formatMoney(line.debitCharge, country)}</td>
-                      <td className="px-3 py-2 text-right text-base font-bold text-emerald-700">{formatMoney(line.debitAmount, country)}</td>
-                      <td className="px-3 py-2"><button onClick={() => onRemoveLine(line.id)} className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold">Remove</button></td>
-                    </tr>
-                  ))}
-                  {!totals.detailed.length ? <tr><td colSpan={country === "IN" ? 13 : 12} className="px-3 py-8 text-center text-slate-500">Select purchase invoice to load items.</td></tr> : null}
-                </tbody>
-              </table>
+            <div className="mt-3 space-y-3">
+              {totals.detailed.map((line, index) => (
+                <div key={line.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold text-slate-700">Line {index + 1}</p>
+                    <button onClick={() => onRemoveLine(line.id)} className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                      Remove
+                    </button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-4">
+                    <label className="text-xs font-semibold text-slate-600 xl:col-span-2">
+                      Item Name
+                      <input value={line.itemName} onChange={(event) => onUpdateLine(line.id, { itemName: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                    </label>
+                    {country === "IN" ? (
+                      <label className="text-xs font-semibold text-slate-600">
+                        HSN/SAC (optional)
+                        <input value={line.hsnSac || ""} onChange={(event) => onUpdateLine(line.id, { hsnSac: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                      </label>
+                    ) : null}
+                    <label className="text-xs font-semibold text-slate-600">
+                      Quantity
+                      <input type="number" min={0} value={line.quantity} onChange={(event) => onUpdateLine(line.id, { quantity: parseNumber(event.target.value) })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                    </label>
+                    <label className="text-xs font-semibold text-slate-600">
+                      Rate
+                      <input type="number" min={0} value={line.rate} onChange={(event) => onUpdateLine(line.id, { rate: parseNumber(event.target.value) })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                    </label>
+                    <label className="text-xs font-semibold text-slate-600">
+                      {cfg.taxLabel} %
+                      <input type="number" min={0} value={line.taxRate} onChange={(event) => onUpdateLine(line.id, { taxRate: parseNumber(event.target.value) })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                    </label>
+                    <label className="text-xs font-semibold text-slate-600">
+                      Debit Value Type
+                      <div className="mt-1 inline-flex w-full rounded-xl border border-slate-200 bg-white p-1">
+                        <button type="button" onClick={() => onUpdateLine(line.id, { debitValueType: "Percentage" })} className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold ${line.debitValueType === "Percentage" ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"}`}>%</button>
+                        <button type="button" onClick={() => onUpdateLine(line.id, { debitValueType: "Fixed" })} className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold ${line.debitValueType === "Fixed" ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"}`}>Amount</button>
+                      </div>
+                    </label>
+                    <label className="text-xs font-semibold text-slate-600">
+                      Debit Value
+                      <input
+                        type="number"
+                        min={0}
+                        value={line.debitValue}
+                        onChange={(event) => onUpdateLine(line.id, { debitValue: parseNumber(event.target.value) })}
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                      />
+                      {line.validationMessage ? <p className="mt-1 text-[11px] text-rose-600">{line.validationMessage}</p> : null}
+                    </label>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Base Amount</p><p className="font-semibold text-slate-900">{formatMoney(line.baseAmount, country)}</p></div>
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Tax Amount</p><p className="font-semibold text-slate-900">{formatMoney(line.taxAmount, country)}</p></div>
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">After Tax</p><p className="font-semibold text-slate-900">{formatMoney(line.amountAfterTax, country)}</p></div>
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Debit Charge</p><p className="font-semibold text-amber-700">{formatMoney(line.debitCharge, country)}</p></div>
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Final Total</p><p className="font-semibold text-emerald-700">{formatMoney(line.debitAmount, country)}</p></div>
+                  </div>
+                </div>
+              ))}
+              {!totals.detailed.length ? (
+                <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-6 text-center text-xs text-slate-500">Select purchase invoice to load items.</p>
+              ) : null}
             </div>
           </div>
 
@@ -340,55 +555,60 @@ export default function DebitNoteEditor({
         </fieldset>
       </div>
 
-      <FloatingCard
-        title="Totals"
-        previewValue={formatMoney(totals.total, country)}
-        state={totalsCard}
-        onChange={setTotalsCard}
-      >
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between">
+      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft">
+        <h3 className="text-sm font-semibold text-slate-900">Summary</h3>
+        <p className="mt-1 text-xs text-slate-500">Auto-calculated totals and payable balance.</p>
+        <div className="mt-4 space-y-3 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-600">Total Quantity</span>
+            <span className="font-semibold text-slate-900">{totals.detailed.reduce((sum, line) => sum + parseNumber(line.quantity), 0)}</span>
+          </div>
+          <div className="flex items-center justify-between">
             <span className="text-slate-600">Subtotal</span>
             <span className="font-semibold text-slate-900">{formatMoney(totals.subtotal, country)}</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex items-center justify-between">
             <span className="text-slate-600">{cfg.taxLabel}</span>
             <span className="font-semibold text-slate-900">{formatMoney(totals.taxTotal, country)}</span>
           </div>
           {country === "IN" ? (
-            <>
-              <div className="flex justify-between text-xs text-slate-600">
-                <span>CGST</span>
-                <span>{formatMoney(totals.cgst, country)}</span>
+            totals.igst > 0 ? (
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">IGST</span>
+                <span className="font-semibold text-slate-900">{formatMoney(totals.igst, country)}</span>
               </div>
-              <div className="flex justify-between text-xs text-slate-600">
-                <span>SGST</span>
-                <span>{formatMoney(totals.sgst, country)}</span>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600">CGST + SGST</span>
+                <span className="font-semibold text-slate-900">{formatMoney(totals.cgst + totals.sgst, country)}</span>
               </div>
-              <div className="flex justify-between text-xs text-slate-600">
-                <span>IGST</span>
-                <span>{formatMoney(totals.igst, country)}</span>
-              </div>
-            </>
-          ) : null}
-          <div className="flex justify-between border-t border-slate-200 pt-2">
-            <span className="font-semibold text-slate-900">Total Debit Amount</span>
-            <span className="font-semibold text-slate-900">{formatMoney(totals.total, country)}</span>
+            )
+          ) : (
+            <div className="flex items-center justify-between">
+              <span className="text-slate-600">{cfg.taxLabel}</span>
+              <span className="font-semibold text-slate-900">{formatMoney(totals.taxTotal, country)}</span>
+            </div>
+          )}
+          <div className="border-t border-slate-200 pt-3">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-slate-900">Total Debit Amount</span>
+              <span className="font-semibold text-slate-900">{formatMoney(totals.total, country)}</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-slate-600">Current Payable Balance</span>
+              <span className="font-semibold text-slate-900">{formatMoney(selectedInvoice?.remainingBalance || 0, country)}</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-slate-600">Updated Payable Balance</span>
+              <span className="font-semibold text-emerald-700">{formatMoney(totals.updatedPayable, country)}</span>
+            </div>
           </div>
-          <div className="flex justify-between">
-            <span className="text-slate-600">Current payable balance</span>
-            <span className="font-semibold text-slate-900">{formatMoney(selectedInvoice?.remainingBalance || 0, country)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-600">Updated payable balance</span>
-            <span className="font-semibold text-slate-900">{formatMoney(totals.updatedPayable, country)}</span>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+            <p className="font-semibold text-slate-700">{cfg.label}</p>
+            <p className="mt-1">{cfg.legalWording}</p>
           </div>
         </div>
-        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-          <p className="font-semibold text-slate-700">{cfg.label}</p>
-          <p className="mt-1">{cfg.legalWording}</p>
-        </div>
-      </FloatingCard>
+      </div>
 
       <div className="shrink-0 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-3">

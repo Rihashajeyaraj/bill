@@ -35,6 +35,8 @@ export interface CustomerOption {
   id: string;
   name: string;
   email?: string;
+  phone?: string;
+  address?: string;
   state?: string;
   registrationNumber?: string;
   country: CountryCode;
@@ -436,6 +438,8 @@ export function mapCustomersByCountry(country: CountryCode): CustomerOption[] {
         id: party.id,
         name: party.name,
         email: party.email || "",
+        phone: party.phone || "",
+        address: party.address || "",
         state: party.state || "",
         registrationNumber: party.gstin || party.trn || party.vatNo || "",
         country

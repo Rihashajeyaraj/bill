@@ -34,6 +34,8 @@ export interface SupplierOption {
   id: string;
   name: string;
   email?: string;
+  phone?: string;
+  address?: string;
   state?: string;
   registrationNumber?: string;
   country: CountryCode;
@@ -458,6 +460,8 @@ export function mapSuppliersByCountry(country: CountryCode): SupplierOption[] {
         id: party.id,
         name: party.name,
         email: party.email || "",
+        phone: party.phone || "",
+        address: party.address || "",
         state: party.state || "",
         registrationNumber: party.gstin || party.trn || party.vatNo || "",
         country

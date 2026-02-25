@@ -291,6 +291,19 @@ export default function DebitNotePremium() {
   }
 
   function applyInvoice(invoiceId: string) {
+    if (!invoiceId) {
+      setForm((prev) =>
+        prev
+          ? {
+              ...prev,
+              linkedPurchaseInvoiceId: "",
+              lines: []
+            }
+          : prev
+      );
+      setDirty(true);
+      return;
+    }
     const invoice = invoices.find((entry) => entry.id === invoiceId);
     if (!invoice) return;
     setForm((prev) =>
@@ -350,7 +363,6 @@ export default function DebitNotePremium() {
     if (!form.debitNoteDate) errors.debitNoteDate = "Debit note date is required.";
     if (!form.supplierId) errors.supplierId = "Supplier is required.";
     if (!form.linkedPurchaseInvoiceId) errors.linkedPurchaseInvoiceId = "Linked purchase invoice is mandatory.";
-    if (country === "IN" && form.lines.some((line) => !line.hsnSac?.trim())) errors.lines = "HSN/SAC is mandatory for India.";
     if (!form.lines.length) errors.lines = "At least one line item is required.";
     if (form.debitType === "Partial Debit" && parseNumber(form.partialAmountCap) <= 0) errors.partialAmountCap = "Partial debit amount is required.";
     if (form.debitType === "Price Increase" && parseNumber(form.priceAdjustmentAmount) <= 0) errors.priceAdjustmentAmount = "Price increase amount is required.";
@@ -418,13 +430,13 @@ export default function DebitNotePremium() {
   }
 
   return (
-    <div className="mx-auto flex h-full max-w-[1440px] flex-col gap-3">
+    <div className="mx-auto min-h-full max-w-[1440px] space-y-3 pb-36">
       {country ? (
-        <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
+        <div className="rounded-3xl border border-slate-200 bg-gradient-to-r from-white to-slate-50 p-3.5 shadow-soft">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold text-slate-900">Country Context</p>
-              <p className="text-xs text-slate-500">Debit Note is locked to {COUNTRY_CONFIG[country].name}.</p>
+              <p className="text-sm font-semibold text-slate-900">Debit Note</p>
+              <p className="text-xs text-slate-500">Create and manage supplier debit adjustments for {COUNTRY_CONFIG[country].name}.</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
               {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].code} {COUNTRY_CONFIG[country].name}
@@ -438,11 +450,11 @@ export default function DebitNotePremium() {
       {!country ? (
         <EmptyState icon={AlertTriangle} title="Select a country to continue" description="Country is mandatory before creating or viewing debit notes." />
       ) : (
-        <div className={`min-h-0 flex flex-1 flex-col gap-3 transition-all duration-300 ${switching ? "translate-y-1 opacity-40" : "opacity-100"}`}>
+        <div className={`flex flex-col gap-3 transition-all duration-300 ${switching ? "translate-y-1 opacity-40" : "opacity-100"}`}>
           {!allowed ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">You do not have access to manage {COUNTRY_CONFIG[country].name} data.</div> : null}
 
           {viewMode === "list" ? (
-            <div className="min-h-0 overflow-y-auto pr-1 pb-2">
+            <div className="space-y-3">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Debit Notes</p><p className="mt-3 text-2xl font-bold text-slate-900">{summary?.count || 0}</p></div>
                 <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Debit Amount</p><p className="mt-3 text-2xl font-bold text-slate-900">{formatMoney(summary?.totalAmount || 0, country)}</p></div>
@@ -452,7 +464,7 @@ export default function DebitNotePremium() {
               <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft">
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                   <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-                    <label className="text-xs font-semibold text-slate-600">Search<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Supplier / invoice" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
+                    <label className="text-xs font-semibold text-slate-600">Search<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Supplier, invoice, debit note no" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                     <label className="text-xs font-semibold text-slate-600">Status<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as DebitStatus | "")} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All</option><option value="Draft">Draft</option><option value="Issued">Issued</option><option value="Applied">Applied</option></select></label>
                     <label className="text-xs font-semibold text-slate-600">Supplier<select value={supplierFilter} onChange={(event) => setSupplierFilter(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></label>
                     <label className="text-xs font-semibold text-slate-600">From<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
@@ -484,7 +496,7 @@ export default function DebitNotePremium() {
               )}
             </div>
           ) : form ? (
-            <div className="min-h-0 flex-1">
+            <div>
               {editorLoading ? (
                 <DebitNoteSkeleton />
               ) : (

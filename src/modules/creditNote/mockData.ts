@@ -6,6 +6,8 @@ export interface MockCustomer {
   country: CountryCode;
   registrationNumber: string;
   email: string;
+  phone?: string;
+  address?: string;
   state?: string;
 }
 
@@ -39,6 +41,8 @@ export const MOCK_CUSTOMERS: MockCustomer[] = [
     country: "SL",
     registrationNumber: "123456789V",
     email: "finance@colomboretail.lk",
+    phone: "0771234567",
+    address: "No. 14 Galle Road, Colombo",
     state: "Western"
   },
   {
@@ -47,6 +51,8 @@ export const MOCK_CUSTOMERS: MockCustomer[] = [
     country: "IN",
     registrationNumber: "29ABCDE1234F1Z5",
     email: "accounts@btm.in",
+    phone: "9876543210",
+    address: "55 Residency Road, Bengaluru",
     state: "Karnataka"
   },
   {
@@ -55,6 +61,8 @@ export const MOCK_CUSTOMERS: MockCustomer[] = [
     country: "AE",
     registrationNumber: "100123456700003",
     email: "ap@dubaitradelink.ae",
+    phone: "0551234567",
+    address: "Warehouse 12, Al Quoz Industrial Area",
     state: "Dubai"
   },
   {
@@ -62,14 +70,18 @@ export const MOCK_CUSTOMERS: MockCustomer[] = [
     name: "Jurong Office Supply",
     country: "SG",
     registrationNumber: "M12345678X",
-    email: "finance@jurongoffice.sg"
+    email: "finance@jurongoffice.sg",
+    phone: "91234567",
+    address: "23 Jurong Port Road"
   },
   {
     id: "mock_cust_uk_1",
     name: "Manchester Design Studio",
     country: "UK",
     registrationNumber: "GB123456789",
-    email: "accounts@mds.co.uk"
+    email: "accounts@mds.co.uk",
+    phone: "07911123456",
+    address: "21 King Street, Manchester"
   },
   {
     id: "mock_cust_us_1",
@@ -77,6 +89,8 @@ export const MOCK_CUSTOMERS: MockCustomer[] = [
     country: "US",
     registrationNumber: "TX-4789102",
     email: "billing@austinenterprise.us",
+    phone: "(512) 555-0147",
+    address: "2045 W Anderson Ln, Austin",
     state: "Texas"
   }
 ];
