@@ -496,9 +496,14 @@ function ensureTransition(previous: DebitStatus, next: DebitStatus) {
 }
 
 export function saveDebitNote(payload: SaveDebitNotePayload): DebitNoteRecord {
-  const linkedInvoice = mapPurchaseInvoicesByCountry(payload.country).find((invoice) => invoice.id === payload.linkedPurchaseInvoiceId);
+  const linkedInvoice = mapPurchaseInvoicesByCountry(payload.country).find(
+    (invoice) => String(invoice.id) === String(payload.linkedPurchaseInvoiceId)
+  );
   if (!linkedInvoice) {
     throw new Error("Linked purchase invoice is invalid for the selected country.");
+  }
+  if (String(linkedInvoice.supplierId) !== String(payload.supplierId)) {
+    throw new Error(`Bill ${linkedInvoice.invoiceNo} belongs to a different supplier.`);
   }
 
   const list = getAllNotes();

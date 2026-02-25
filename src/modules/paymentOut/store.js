@@ -17,6 +17,32 @@ const STATUS_FLOW = {
   Applied: ["Applied"]
 };
 
+const COUNTRY_CODE_ALIASES = {
+  IN: "IN",
+  AE: "AE",
+  SG: "SG",
+  UK: "UK",
+  GB: "UK",
+  IE: "IE",
+  US: "US",
+  USA: "US",
+  SL: "SL",
+  LK: "SL"
+};
+
+const COUNTRY_NAME_TO_CODE = {
+  india: "IN",
+  uae: "AE",
+  "united arab emirates": "AE",
+  singapore: "SG",
+  uk: "UK",
+  "united kingdom": "UK",
+  ireland: "IE",
+  usa: "US",
+  "united states": "US",
+  "sri lanka": "SL"
+};
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -29,7 +55,11 @@ function normalizeCountry(value) {
   if (!value) return "";
   const clean = String(value).trim();
   if (!clean) return "";
-  if (clean.length === 2) return clean.toUpperCase();
+  const upper = clean.toUpperCase();
+  if (COUNTRY_CODE_ALIASES[upper]) return COUNTRY_CODE_ALIASES[upper];
+  const mapped = COUNTRY_NAME_TO_CODE[clean.toLowerCase()];
+  if (mapped) return mapped;
+  if (clean.length === 2) return upper;
   return clean;
 }
 
@@ -106,8 +136,9 @@ function computeTotals(payload) {
     throw new Error("Applied amount cannot exceed amount paid.");
   }
 
+  const supplierOutstandingBefore = Math.max(0, parseNumber(payload.supplierOutstandingBefore));
   const unappliedAmount = Math.max(0, amountPaid - amountApplied);
-  const supplierOutstandingAfter = parseNumber(payload.supplierOutstandingBefore) - amountApplied;
+  const supplierOutstandingAfter = Math.max(0, supplierOutstandingBefore - amountApplied);
 
   return {
     allocations,
@@ -115,7 +146,7 @@ function computeTotals(payload) {
       amountPaid,
       amountApplied,
       unappliedAmount,
-      supplierOutstandingBefore: parseNumber(payload.supplierOutstandingBefore),
+      supplierOutstandingBefore,
       supplierOutstandingAfter
     }
   };
@@ -213,13 +244,19 @@ export function mapSuppliersByCountry(country) {
     })
     .filter(Boolean);
 
-  const fromBills = purchases.map((bill) => ({
-    id: bill.partyId || bill.supplierId || bill.vendorId || bill.partyName || bill.supplierName,
-    name: bill.partyName || bill.supplierName || bill.vendorName || "Supplier",
-    phone: bill.phone || "",
-    address: bill.partyAddress || "",
-    country: target || bill.country || ""
-  }));
+  const fromBills = purchases
+    .map((bill) => {
+      const mapped = normalizeCountry(bill?.country);
+      if (mapped && target && mapped !== target) return null;
+      return {
+        id: bill.partyId || bill.supplierId || bill.vendorId || bill.partyName || bill.supplierName,
+        name: bill.partyName || bill.supplierName || bill.vendorName || "Supplier",
+        phone: bill.phone || "",
+        address: bill.partyAddress || "",
+        country: mapped || target || bill.country || ""
+      };
+    })
+    .filter(Boolean);
 
   const byId = new Map();
   [...fromParties, ...fromBills].forEach((entry) => {
@@ -290,6 +327,37 @@ export function outstandingBySupplier(country, supplierId) {
 export function savePaymentOut(payload) {
   const list = getAllPayments();
   const existing = payload.id ? list.find((entry) => entry.id === payload.id) : undefined;
+  if (existing && String(existing.supplierId) !== String(payload.supplierId)) {
+    throw new Error("Supplier cannot be changed for an existing payment.");
+  }
+
+  const existingAppliedByBill = new Map();
+  ensureArray(existing?.allocations).forEach((line) => {
+    const billId = String(line?.billId || "");
+    if (!billId) return;
+    const current = existingAppliedByBill.get(billId) || 0;
+    existingAppliedByBill.set(billId, current + Math.max(0, parseNumber(line?.applyAmount)));
+  });
+
+  const openBills = mapOpenBillsByCountry(payload.country).filter(
+    (bill) => String(bill.supplierId) === String(payload.supplierId)
+  );
+  const openBillMap = new Map(openBills.map((bill) => [String(bill.id), bill]));
+  payload.allocations.forEach((line) => {
+    if (parseNumber(line?.applyAmount) <= 0) return;
+    const billId = String(line?.billId || "");
+    const linked = openBillMap.get(billId);
+    const existingApplied = existingAppliedByBill.get(billId) || 0;
+    const maxAllowed = Math.max(0, parseNumber(linked?.balanceDue) + existingApplied);
+    if (!linked && existingApplied <= 0) {
+      throw new Error(`Bill ${line?.billNo || line?.billId || ""} is not valid for selected supplier.`);
+    }
+    if (parseNumber(line?.applyAmount) > maxAllowed) {
+      const billNo = linked?.billNo || line?.billNo || billId;
+      throw new Error(`Applied amount exceeds live balance due for ${billNo}.`);
+    }
+  });
+
   const now = nowIso();
   const previousStatus = existing?.status || "Draft";
   const nextStatus = payload.desiredStatus;

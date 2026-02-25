@@ -432,6 +432,7 @@ export function mapCustomersByCountry(country: CountryCode): CustomerOption[] {
 
   const fromParties = parties
     .map((party: any) => {
+      if (party?.type && String(party.type).toLowerCase() !== "customer") return null;
       const mappedCountry = normalizeCountryCode(party.country);
       if (mappedCountry && mappedCountry !== country) return null;
       return {
@@ -474,6 +475,16 @@ function ensureTransition(previous: CreditStatus, next: CreditStatus) {
 }
 
 export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord {
+  const linkedInvoice = mapInvoicesByCountry(payload.country).find(
+    (invoice) => String(invoice.id) === String(payload.linkedInvoiceId)
+  );
+  if (!linkedInvoice) {
+    throw new Error("Linked invoice is invalid for the selected country.");
+  }
+  if (String(linkedInvoice.customerId) !== String(payload.customerId)) {
+    throw new Error(`Invoice ${linkedInvoice.invoiceNo} belongs to a different customer.`);
+  }
+
   const list = getAllNotes();
   const existing = payload.id ? list.find((note) => note.id === payload.id) : undefined;
   const now = nowIso();
