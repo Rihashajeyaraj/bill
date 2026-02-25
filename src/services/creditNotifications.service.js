@@ -481,11 +481,19 @@ async function ensureRemoteNotification(candidate) {
   const organizationId = authGetOrganizationId();
   const alertType = normalizeAlertType(candidate.alertType);
   const partyType = normalizePartyType(candidate.partyType);
+  const notificationPayload = {
+    party_type: partyType,
+    alert_type: alertType,
+    limit_value: candidate.limitValue,
+    current_value: candidate.currentValue,
+    is_read: false,
+    created_at: new Date().toISOString()
+  };
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const { data: unreadRow, error: unreadError } = await supabase
       .from("credit_monitor_notifications")
-      .select("id,current_value,limit_value")
+      .select("id")
       .eq("organization_id", organizationId)
       .eq("party_id", candidate.partyId)
       .eq("alert_type", alertType)
@@ -503,40 +511,64 @@ async function ensureRemoteNotification(candidate) {
     }
 
     if (unreadRow?.id) {
-      const { error: closeError } = await supabase
+      const { error: updateUnreadError } = await supabase
         .from("credit_monitor_notifications")
-        .update({
-          is_read: true
-        })
+        .update(notificationPayload)
         .eq("organization_id", organizationId)
         .eq("id", unreadRow.id);
-      if (closeError) {
-        if (attempt === 0 && closeError?.code === "42501") {
+      if (updateUnreadError) {
+        if (attempt === 0 && updateUnreadError?.code === "42501") {
           const repaired = await ensureOwnerMembershipIfPossible(organizationId);
           if (repaired) continue;
         }
-        throw toSupabaseFailure(closeError, "Failed to rotate unread credit notification");
+        throw toSupabaseFailure(updateUnreadError, "Failed to refresh unread credit notification");
       }
-      console.log("[CreditMonitoring] Existing unread notification rotated to read", {
+      console.log("[CreditMonitoring] Existing unread notification refreshed", {
         partyId: candidate.partyId,
         alertType
       });
+      return { created: false, reason: "updated_unread" };
     }
 
     const { error: insertError } = await supabase.from("credit_monitor_notifications").insert({
       organization_id: organizationId,
       party_id: candidate.partyId,
-      party_type: partyType,
-      alert_type: alertType,
-      limit_value: candidate.limitValue,
-      current_value: candidate.currentValue,
-      is_read: false
+      ...notificationPayload
     });
 
     if (insertError) {
       if (attempt === 0 && insertError?.code === "42501") {
         const repaired = await ensureOwnerMembershipIfPossible(organizationId);
         if (repaired) continue;
+      }
+      if (insertError?.code === "23505") {
+        const { data: existingRow, error: existingError } = await supabase
+          .from("credit_monitor_notifications")
+          .select("id,is_read")
+          .eq("organization_id", organizationId)
+          .eq("party_id", candidate.partyId)
+          .eq("alert_type", alertType)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (existingError) {
+          throw toSupabaseFailure(existingError, "Failed to resolve duplicate credit notification");
+        }
+        if (existingRow?.id) {
+          const { error: adoptError } = await supabase
+            .from("credit_monitor_notifications")
+            .update(notificationPayload)
+            .eq("organization_id", organizationId)
+            .eq("id", existingRow.id);
+          if (adoptError) {
+            throw toSupabaseFailure(adoptError, "Failed to reconcile duplicate credit notification");
+          }
+          console.log("[CreditMonitoring] Duplicate notification reconciled", {
+            partyId: candidate.partyId,
+            alertType
+          });
+          return { created: false, reason: "reconciled_duplicate" };
+        }
       }
       throw toSupabaseFailure(insertError, "Failed to create credit notification");
     }
