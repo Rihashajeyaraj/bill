@@ -19,7 +19,7 @@ import { syncPaymentInRemote } from "../../services/payments.service";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus, listParties, syncPartiesFromRemote } from "../../modules/parties/store";
-import { listItems, syncItemsFromRemote } from "../../modules/items/store";
+import { computeItemStock, listItems, syncItemsFromRemote } from "../../modules/items/store";
 import { outstandingByCustomer, savePaymentIn } from "../../modules/paymentIn/store";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE } from "../../modules/paymentIn/countryConfig";
 import { getInvoiceTemplateConfig } from "../../lib/templateStore";
@@ -356,12 +356,17 @@ export default function InvoiceCreate() {
 
   function addLineWithItem(item) {
     if (!item) return;
+    const maxAssignable = getMaxAssignableQty(item.id);
+    if (Number.isFinite(maxAssignable) && maxAssignable <= 0) {
+      alert(`Out of stock: ${item.name}.`);
+      return;
+    }
     setLines((prev) => {
       const emptyIndex = prev.findIndex((line) => !line.itemId);
       const nextLine = {
         id: `l_${Date.now()}`,
         itemId: item.id,
-        qty: 1,
+        qty: Number.isFinite(maxAssignable) ? Math.min(1, maxAssignable) : 1,
         rate: item.salesRate || item.price || 0,
         discount: 0,
         tax: item.taxRate || 0
@@ -374,7 +379,31 @@ export default function InvoiceCreate() {
   }
 
   function updateLine(id, patch) {
-    setLines((p) => p.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+    setLines((p) =>
+      p.map((x) => {
+        if (x.id !== id) return x;
+        const next = { ...x, ...patch };
+        const parsedQty = Number(next.qty);
+        if (next.itemId && Number.isFinite(parsedQty) && parsedQty >= 0) {
+          const stockInfo = stockByItemId.get(next.itemId);
+          const maxAssignable = stockInfo
+            ? Math.max(
+                0,
+                Number(stockInfo.available || 0) -
+                  p.reduce((sum, line) => {
+                    if (String(line?.id || "") === String(id)) return sum;
+                    if (String(line?.itemId || "") !== String(next.itemId || "")) return sum;
+                    return sum + Math.max(0, Number(line?.qty || 0));
+                  }, 0)
+              )
+            : Number.POSITIVE_INFINITY;
+          if (Number.isFinite(maxAssignable) && parsedQty > maxAssignable) {
+            next.qty = maxAssignable;
+          }
+        }
+        return next;
+      })
+    );
   }
 
   function removeLine(id) {
@@ -589,6 +618,57 @@ export default function InvoiceCreate() {
     return items.filter((item) => item.name?.toLowerCase().includes(query));
   }, [items, itemSearch]);
 
+  const stockByItemId = useMemo(() => {
+    const map = new Map();
+    items.forEach((item) => {
+      if (item?.type !== "Product" || !item?.trackInventory) return;
+      map.set(item.id, {
+        itemId: item.id,
+        itemName: item.name || "Item",
+        ...computeItemStock(item)
+      });
+    });
+    return map;
+  }, [items]);
+
+  function getMaxAssignableQty(itemId, excludeLineId = "") {
+    const stockInfo = stockByItemId.get(itemId);
+    if (!stockInfo) return Number.POSITIVE_INFINITY;
+    const reservedQty = lines.reduce((sum, line) => {
+      if (excludeLineId && String(line?.id || "") === String(excludeLineId)) return sum;
+      if (String(line?.itemId || "") !== String(itemId || "")) return sum;
+      return sum + Math.max(0, Number(line?.qty || 0));
+    }, 0);
+    return Math.max(0, Number(stockInfo.available || 0) - reservedQty);
+  }
+
+  const stockValidationIssues = useMemo(() => {
+    const requestedByItem = new Map();
+    computed.enriched.forEach((line) => {
+      if (!line?.itemId) return;
+      const qty = Math.max(0, Number(line?.qty || 0));
+      if (!qty) return;
+      requestedByItem.set(line.itemId, (requestedByItem.get(line.itemId) || 0) + qty);
+    });
+
+    const issues = [];
+    requestedByItem.forEach((requested, itemId) => {
+      const stockInfo = stockByItemId.get(itemId);
+      if (!stockInfo) return;
+      if (requested > stockInfo.available) {
+        issues.push({
+          itemId,
+          itemName: stockInfo.itemName,
+          available: stockInfo.available,
+          requested
+        });
+      }
+    });
+    return issues;
+  }, [computed.enriched, stockByItemId]);
+
+  const hasStockErrors = stockValidationIssues.length > 0;
+
   function getItemOptions(currentId) {
     const selected = items.find((item) => item.id === currentId);
     if (!selected) return filteredItems;
@@ -711,6 +791,13 @@ export default function InvoiceCreate() {
     }
     if (!computed.enriched.length) {
       alert("Add at least one line item before saving invoice.");
+      return null;
+    }
+    if (stockValidationIssues.length) {
+      const issue = stockValidationIssues[0];
+      alert(
+        `Insufficient stock for ${issue.itemName}. Available ${issue.available}, requested ${issue.requested}.`
+      );
       return null;
     }
     if (markAsPaid && paymentAmount <= 0) {
@@ -957,12 +1044,17 @@ export default function InvoiceCreate() {
             <div className="flex items-center gap-2">
               <button
                 onClick={handleSaveAndPrint}
+                disabled={hasStockErrors}
                 className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
               >
                 <Printer className="h-4 w-4" />
                 Save & Print
               </button>
-              <GradientButton onClick={saveInvoice} className="disabled:cursor-not-allowed disabled:opacity-60">
+              <GradientButton
+                onClick={saveInvoice}
+                disabled={hasStockErrors}
+                className="disabled:cursor-not-allowed disabled:opacity-60"
+              >
                 <Save className="h-4 w-4" />
                 Save
               </GradientButton>
@@ -1308,19 +1400,35 @@ export default function InvoiceCreate() {
                   {itemSearch.trim().length ? (
                     <div className="absolute z-10 mt-2 w-full rounded-2xl border border-slate-100 bg-white shadow-soft p-2 max-h-52 overflow-auto">
                       {filteredItems.length ? (
-                        filteredItems.map((item) => (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onMouseDown={() => {
-                              addLineWithItem(item);
-                              setItemSearch("");
-                            }}
-                            className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                          >
-                            {item.name}
-                          </button>
-                        ))
+                        filteredItems.map((item) => {
+                          const stockInfo = stockByItemId.get(item.id);
+                          const maxAssignable = getMaxAssignableQty(item.id);
+                          const outOfStock = Number.isFinite(maxAssignable) && maxAssignable <= 0;
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              disabled={outOfStock}
+                              onMouseDown={() => {
+                                if (outOfStock) return;
+                                addLineWithItem(item);
+                                setItemSearch("");
+                              }}
+                              className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span>{item.name}</span>
+                                {stockInfo ? (
+                                  <span className={`text-xs font-semibold ${outOfStock ? "text-rose-600" : "text-slate-500"}`}>
+                                    Remaining: {stockInfo.available}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-slate-400">Service / Not tracked</span>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })
                       ) : (
                         <div className="px-3 py-2 text-sm text-slate-500">No items found</div>
                       )}
@@ -1340,8 +1448,23 @@ export default function InvoiceCreate() {
                           value={r.itemId}
                           onChange={(e) => {
                             const it = items.find((x) => x.id === e.target.value);
+                            if (!it) {
+                              updateLine(r.id, { itemId: e.target.value });
+                              return;
+                            }
+                            const maxAssignable = getMaxAssignableQty(it.id, r.id);
+                            if (Number.isFinite(maxAssignable) && maxAssignable <= 0) {
+                              alert(`Out of stock: ${it.name}.`);
+                              return;
+                            }
+                            const nextQtyRaw = Number(r.qty || 0);
+                            const normalizedQty = Number.isFinite(nextQtyRaw) && nextQtyRaw > 0 ? nextQtyRaw : 1;
+                            const nextQty = Number.isFinite(maxAssignable)
+                              ? Math.min(normalizedQty, maxAssignable)
+                              : normalizedQty;
                             updateLine(r.id, {
                               itemId: e.target.value,
+                              qty: nextQty,
                               rate: it?.salesRate || it?.price || 0,
                               tax: it?.taxRate || 0
                             });
@@ -1350,7 +1473,11 @@ export default function InvoiceCreate() {
                         >
                           {getItemOptions(r.itemId).map((it) => (
                             <option key={it.id} value={it.id}>
-                              {it.name}
+                              {(() => {
+                                const stockInfo = stockByItemId.get(it.id);
+                                if (!stockInfo) return it.name;
+                                return `${it.name} (Stock: ${stockInfo.available})`;
+                              })()}
                             </option>
                           ))}
                         </select>
@@ -1362,7 +1489,26 @@ export default function InvoiceCreate() {
                       render: (r) => (
                         <input
                           value={r.qty}
-                          onChange={(e) => updateLine(r.id, { qty: e.target.value })}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw === "") {
+                              updateLine(r.id, { qty: raw });
+                              return;
+                            }
+                            const parsed = Number(raw);
+                            if (!Number.isFinite(parsed) || parsed < 0) {
+                              updateLine(r.id, { qty: raw });
+                              return;
+                            }
+                            if (r.itemId) {
+                              const maxAssignable = getMaxAssignableQty(r.itemId, r.id);
+                              if (Number.isFinite(maxAssignable) && parsed > maxAssignable) {
+                                updateLine(r.id, { qty: maxAssignable });
+                                return;
+                              }
+                            }
+                            updateLine(r.id, { qty: raw });
+                          }}
                           className="w-20 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
                         />
                       )
@@ -1417,6 +1563,16 @@ export default function InvoiceCreate() {
                   rows={computed.enriched}
                   emptyText="Add items to invoice"
                 />
+                {hasStockErrors ? (
+                  <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                    {stockValidationIssues.slice(0, 3).map((issue) => (
+                      <p key={issue.itemId}>
+                        {issue.itemName}: requested {issue.requested}, available {issue.available}
+                      </p>
+                    ))}
+                    {stockValidationIssues.length > 3 ? <p>More items have stock shortages.</p> : null}
+                  </div>
+                ) : null}
               </div>
             </>
           ) : (
@@ -1613,7 +1769,11 @@ export default function InvoiceCreate() {
               ) : null}
 
                 <div className="mt-4">
-                  <GradientButton className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60" onClick={saveInvoice}>
+                  <GradientButton
+                    className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={saveInvoice}
+                    disabled={hasStockErrors}
+                  >
                     <Save className="h-4 w-4" />
                     Save Invoice
                   </GradientButton>
