@@ -116,6 +116,7 @@ function normalizeStoredRecord(raw) {
     currentValue,
     ...details,
     isRead: !!(raw?.isRead ?? raw?.is_read),
+    isActive: raw?.isActive ?? raw?.is_active ?? true,
     createdAt: toIso(raw?.createdAt || raw?.created_at)
   };
 }
@@ -387,7 +388,9 @@ function enrichNotificationList(list) {
 
 function localList() {
   const stored = ensureArray(lsGetOrganizationScoped(LS_KEYS.credit_notifications, []));
-  const normalized = sortByDate(stored).map(normalizeStoredRecord);
+  const normalized = sortByDate(stored)
+    .map(normalizeStoredRecord)
+    .filter((entry) => entry.isActive !== false);
   return enrichNotificationList(normalized);
 }
 
@@ -477,6 +480,35 @@ function buildCandidates(evaluations) {
   return candidates;
 }
 
+function buildAlertStates(evaluations) {
+  const states = [];
+  evaluations.forEach((entry) => {
+    const amountTracked = !!entry.monitoringEnabled && entry.amount.limitValue > 0;
+    const daysTracked = !!entry.monitoringEnabled && entry.days.limitValue > 0;
+    states.push({
+      partyId: entry.partyId,
+      partyName: entry.partyName,
+      partyType: entry.partyType,
+      alertType: "amount",
+      limitValue: entry.amount.limitValue,
+      currentValue: entry.amount.currentValue,
+      exceeded: amountTracked && !!entry.amount.exceeded,
+      ...(entry.amount.details || {})
+    });
+    states.push({
+      partyId: entry.partyId,
+      partyName: entry.partyName,
+      partyType: entry.partyType,
+      alertType: "days",
+      limitValue: entry.days.limitValue,
+      currentValue: entry.days.currentValue,
+      exceeded: daysTracked && !!entry.days.exceeded,
+      ...(entry.days.details || {})
+    });
+  });
+  return states;
+}
+
 async function ensureRemoteNotification(candidate) {
   const organizationId = authGetOrganizationId();
   const alertType = normalizeAlertType(candidate.alertType);
@@ -486,54 +518,58 @@ async function ensureRemoteNotification(candidate) {
     alert_type: alertType,
     limit_value: candidate.limitValue,
     current_value: candidate.currentValue,
-    is_read: false,
-    created_at: new Date().toISOString()
+    is_active: true
   };
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const { data: unreadRow, error: unreadError } = await supabase
+    const { data: activeRow, error: activeError } = await supabase
       .from("credit_monitor_notifications")
-      .select("id")
+      .select("id,is_read")
       .eq("organization_id", organizationId)
       .eq("party_id", candidate.partyId)
       .eq("alert_type", alertType)
-      .eq("is_read", false)
+      .eq("is_active", true)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    if (unreadError) {
-      if (attempt === 0 && unreadError?.code === "42501") {
+    if (activeError) {
+      if (attempt === 0 && activeError?.code === "42501") {
         const repaired = await ensureOwnerMembershipIfPossible(organizationId);
         if (repaired) continue;
       }
-      throw toSupabaseFailure(unreadError, "Failed to check unread credit notification");
+      throw toSupabaseFailure(activeError, "Failed to check active credit notification");
     }
 
-    if (unreadRow?.id) {
-      const { error: updateUnreadError } = await supabase
+    if (activeRow?.id) {
+      const { error: updateActiveError } = await supabase
         .from("credit_monitor_notifications")
-        .update(notificationPayload)
+        .update({
+          ...notificationPayload,
+          is_read: !!activeRow.is_read
+        })
         .eq("organization_id", organizationId)
-        .eq("id", unreadRow.id);
-      if (updateUnreadError) {
-        if (attempt === 0 && updateUnreadError?.code === "42501") {
+        .eq("id", activeRow.id);
+      if (updateActiveError) {
+        if (attempt === 0 && updateActiveError?.code === "42501") {
           const repaired = await ensureOwnerMembershipIfPossible(organizationId);
           if (repaired) continue;
         }
-        throw toSupabaseFailure(updateUnreadError, "Failed to refresh unread credit notification");
+        throw toSupabaseFailure(updateActiveError, "Failed to refresh active credit notification");
       }
-      console.log("[CreditMonitoring] Existing unread notification refreshed", {
+      console.log("[CreditMonitoring] Existing active notification refreshed", {
         partyId: candidate.partyId,
         alertType
       });
-      return { created: false, reason: "updated_unread" };
+      return { created: false, reason: "updated_active" };
     }
 
     const { error: insertError } = await supabase.from("credit_monitor_notifications").insert({
       organization_id: organizationId,
       party_id: candidate.partyId,
-      ...notificationPayload
+      ...notificationPayload,
+      is_read: false,
+      created_at: new Date().toISOString()
     });
 
     if (insertError) {
@@ -548,6 +584,7 @@ async function ensureRemoteNotification(candidate) {
           .eq("organization_id", organizationId)
           .eq("party_id", candidate.partyId)
           .eq("alert_type", alertType)
+          .eq("is_active", true)
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -557,7 +594,10 @@ async function ensureRemoteNotification(candidate) {
         if (existingRow?.id) {
           const { error: adoptError } = await supabase
             .from("credit_monitor_notifications")
-            .update(notificationPayload)
+            .update({
+              ...notificationPayload,
+              is_read: !!existingRow.is_read
+            })
             .eq("organization_id", organizationId)
             .eq("id", existingRow.id);
           if (adoptError) {
@@ -585,11 +625,36 @@ async function ensureRemoteNotification(candidate) {
   throw new Error("Failed to create credit notification");
 }
 
+async function resolveRemoteNotification(state) {
+  if (!hasRemoteConnection()) return;
+  const organizationId = authGetOrganizationId();
+  const alertType = normalizeAlertType(state.alertType);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { error } = await supabase
+      .from("credit_monitor_notifications")
+      .update({
+        is_active: false,
+        is_read: true
+      })
+      .eq("organization_id", organizationId)
+      .eq("party_id", state.partyId)
+      .eq("alert_type", alertType)
+      .eq("is_active", true);
+
+    if (!error) return;
+    if (attempt === 0 && error?.code === "42501") {
+      const repaired = await ensureOwnerMembershipIfPossible(organizationId);
+      if (repaired) continue;
+    }
+    throw toSupabaseFailure(error, "Failed to resolve active credit notification");
+  }
+}
+
 function ensureLocalNotification(candidate) {
   const list = localList();
-  const existingUnread = list.find(
+  const existingActive = list.find(
     (entry) =>
-      !entry.isRead &&
+      entry.isActive !== false &&
       String(entry.partyId) === String(candidate.partyId) &&
       normalizeAlertType(entry.alertType) === normalizeAlertType(candidate.alertType)
   );
@@ -600,18 +665,32 @@ function ensureLocalNotification(candidate) {
     alertType: normalizeAlertType(candidate.alertType)
   });
 
-  const rotated = existingUnread
-    ? list.map((entry) => (entry.id === existingUnread.id ? { ...entry, isRead: true } : entry))
-    : list;
+  if (existingActive) {
+    const updated = list.map((entry) =>
+      entry.id === existingActive.id
+        ? {
+            ...entry,
+            ...candidateRecord,
+            id: entry.id,
+            createdAt: entry.createdAt,
+            isRead: entry.isRead,
+            isActive: true
+          }
+        : entry
+    );
+    setLocalList(updated);
+    return { created: false, reason: "updated_active" };
+  }
 
   const next = [
     {
       ...candidateRecord,
       id: uid("cnf_"),
       isRead: false,
+      isActive: true,
       createdAt: new Date().toISOString()
     },
-    ...rotated
+    ...list
   ];
   setLocalList(next);
   console.log("[CreditMonitoring] Local notification created", {
@@ -621,6 +700,24 @@ function ensureLocalNotification(candidate) {
   return { created: true, reason: "inserted" };
 }
 
+function resolveLocalNotification(state) {
+  const list = localList();
+  const alertType = normalizeAlertType(state.alertType);
+  const next = list.map((entry) => {
+    const isSame =
+      entry.isActive !== false &&
+      String(entry.partyId) === String(state.partyId) &&
+      normalizeAlertType(entry.alertType) === alertType;
+    if (!isSame) return entry;
+    return {
+      ...entry,
+      isActive: false,
+      isRead: true
+    };
+  });
+  setLocalList(next);
+}
+
 function mergeCandidateContext(records, candidates) {
   const byKey = new Map();
   ensureArray(candidates).forEach((candidate) => {
@@ -628,6 +725,7 @@ function mergeCandidateContext(records, candidates) {
   });
   if (!byKey.size) return records;
   return records.map((record) => {
+    if (record?.isActive === false) return record;
     const candidate = byKey.get(candidateKey(record));
     if (!candidate) return record;
     return enrichNotificationRecord({
@@ -635,7 +733,8 @@ function mergeCandidateContext(records, candidates) {
       ...candidate,
       id: record.id,
       createdAt: record.createdAt,
-      isRead: record.isRead
+      isRead: record.isRead,
+      isActive: record.isActive
     });
   });
 }
@@ -657,9 +756,10 @@ export async function syncCreditNotificationsFromRemote() {
     const result = await supabase
       .from("credit_monitor_notifications")
       .select(
-        "id,party_id,party_type,alert_type,limit_value,current_value,is_read,created_at,parties(display_name)"
+        "id,party_id,party_type,alert_type,limit_value,current_value,is_read,is_active,created_at,parties(display_name)"
       )
       .eq("organization_id", organizationId)
+      .eq("is_active", true)
       .order("created_at", { ascending: false });
     data = result?.data || null;
     error = result?.error || null;
@@ -728,23 +828,29 @@ export async function markAllCreditNotificationsRead() {
 export async function syncCreditMonitoringNotifications(evaluations, options = {}) {
   const source = String(options?.source || "unknown");
   const normalized = ensureArray(evaluations).map(normalizeEvaluation).filter(Boolean);
+  const alertStates = buildAlertStates(normalized);
   const candidates = buildCandidates(normalized);
 
   console.log("[CreditMonitoring] Notification evaluation started", {
     source,
     evaluations: normalized.length,
+    states: alertStates.length,
     candidates: candidates.length,
     remote: hasRemoteConnection()
   });
 
-  if (!candidates.length) {
+  if (!alertStates.length) {
     return hasRemoteConnection() ? syncCreditNotificationsFromRemote() : localList();
   }
 
   if (hasRemoteConnection()) {
     try {
-      for (const candidate of candidates) {
-        await ensureRemoteNotification(candidate);
+      for (const state of alertStates) {
+        if (state.exceeded) {
+          await ensureRemoteNotification(state);
+          continue;
+        }
+        await resolveRemoteNotification(state);
       }
       const synced = await syncCreditNotificationsFromRemote();
       const merged = mergeCandidateContext(synced, candidates);
@@ -756,12 +862,16 @@ export async function syncCreditMonitoringNotifications(evaluations, options = {
     }
   }
 
-  const deduped = new Map();
-  candidates.forEach((candidate) => {
-    deduped.set(candidateKey(candidate), candidate);
+  const dedupedStates = new Map();
+  alertStates.forEach((state) => {
+    dedupedStates.set(candidateKey(state), state);
   });
-  deduped.forEach((candidate) => {
-    ensureLocalNotification(candidate);
+  dedupedStates.forEach((state) => {
+    if (state.exceeded) {
+      ensureLocalNotification(state);
+      return;
+    }
+    resolveLocalNotification(state);
   });
   return localList();
 }

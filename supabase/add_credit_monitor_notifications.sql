@@ -7,6 +7,7 @@ create table if not exists public.credit_monitor_notifications (
   limit_value numeric(14,2) not null check (limit_value >= 0),
   current_value numeric(14,2) not null check (current_value >= 0),
   is_read boolean not null default false,
+  is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
 
@@ -17,9 +18,10 @@ create index if not exists idx_credit_notifications_party_id
 create index if not exists idx_credit_notifications_created_at
   on public.credit_monitor_notifications(created_at desc);
 drop index if exists public.idx_credit_notifications_dedupe;
-create unique index if not exists idx_credit_notifications_unread_unique
+drop index if exists public.idx_credit_notifications_unread_unique;
+create unique index if not exists idx_credit_notifications_active_unique
   on public.credit_monitor_notifications(organization_id, party_id, alert_type)
-  where is_read = false;
+  where is_active = true;
 
 alter table public.credit_monitor_notifications enable row level security;
 

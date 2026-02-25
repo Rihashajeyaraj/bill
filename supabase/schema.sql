@@ -477,6 +477,7 @@ create table if not exists public.credit_monitor_notifications (
   limit_value numeric(14,2) not null check (limit_value >= 0),
   current_value numeric(14,2) not null check (current_value >= 0),
   is_read boolean not null default false,
+  is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
 create index if not exists idx_credit_notifications_org_id
@@ -485,9 +486,9 @@ create index if not exists idx_credit_notifications_party_id
   on public.credit_monitor_notifications(party_id);
 create index if not exists idx_credit_notifications_created_at
   on public.credit_monitor_notifications(created_at desc);
-create unique index if not exists idx_credit_notifications_unread_unique
+create unique index if not exists idx_credit_notifications_active_unique
   on public.credit_monitor_notifications(organization_id, party_id, alert_type)
-  where is_read = false;
+  where is_active = true;
 
 -- =========================
 -- RLS helper functions
