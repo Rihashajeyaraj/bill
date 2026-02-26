@@ -6,6 +6,7 @@ export const LS_KEYS = {
   organization_id: "organization_id",
   theme_mode: "theme_mode",
   theme_preset: "theme_preset",
+  theme_overrides: "theme_overrides",
   app_font_family: "app_font_family",
   company_profile: "company_profile",
   companyProfileCompleted: "companyProfileCompleted",

@@ -16,6 +16,7 @@ import { setInvoiceTemplateCompleted } from "../lib/templateStore";
 
 export const COUNTRIES = ["India", "Sri Lanka", "UAE", "USA", "United Kingdom", "Ireland"];
 export const ORGANIZATION_UPDATED_EVENT = "organization:updated";
+const COMPANY_SETTINGS_TABLE = "company_settings";
 
 const COUNTRY_NAME_TO_CODE = {
   India: "IN",
@@ -41,6 +42,12 @@ const LOGO_MIME_TO_EXTENSION = {
   "image/jpeg": "jpg",
   "image/jpg": "jpg",
   "image/svg+xml": "svg"
+};
+
+const DEFAULT_ROLE_PERMISSIONS = {
+  Owner: { create: true, edit: true, delete: true, reports: true, approvals: true },
+  Accounter: { create: true, edit: true, delete: false, reports: true, approvals: false },
+  Staff: { create: true, edit: false, delete: false, reports: false, approvals: false }
 };
 
 function getCountryCode(countryName) {
@@ -76,6 +83,44 @@ function deriveTaxRegime(country) {
   if (["Sri Lanka", "UAE", "United Kingdom", "Ireland"].includes(country)) return "vat";
   if (country === "USA") return "sales_tax";
   return "none";
+}
+
+function normalizeSupabaseError(error, fallback) {
+  if (error?.code === "42501") {
+    return `${fallback}. Supabase RLS denied access. Verify organization membership and policies.`;
+  }
+  return error?.message || fallback;
+}
+
+function isMissingRelationError(error) {
+  const code = String(error?.code || "").toUpperCase();
+  const message = String(error?.message || "").toLowerCase();
+  return code === "42P01" || message.includes("does not exist");
+}
+
+function normalizeRolePermissions(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const next = {};
+  Object.keys(DEFAULT_ROLE_PERMISSIONS).forEach((role) => {
+    const defaults = DEFAULT_ROLE_PERMISSIONS[role];
+    const row = source[role] && typeof source[role] === "object" ? source[role] : {};
+    next[role] = {
+      create: row.create ?? defaults.create,
+      edit: row.edit ?? defaults.edit,
+      delete: row.delete ?? defaults.delete,
+      reports: row.reports ?? defaults.reports,
+      approvals: row.approvals ?? defaults.approvals
+    };
+  });
+  return next;
+}
+
+function normalizeMemberStatus(value) {
+  return String(value || "").trim().toLowerCase() === "inactive" ? "Inactive" : "Active";
+}
+
+function toDbMemberStatus(value) {
+  return normalizeMemberStatus(value).toLowerCase();
 }
 
 function normalizeLogoMime(mime = "") {
@@ -435,6 +480,196 @@ async function fetchOrganizationBundle(organizationId) {
   return { organization, taxProfile: taxProfile || null };
 }
 
+async function fetchCompanySettingsRow(organizationId) {
+  if (!isSupabaseConfigured || !supabase || !organizationId) return null;
+  const { data, error } = await supabase
+    .from(COMPANY_SETTINGS_TABLE)
+    .select("settings")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingRelationError(error)) return null;
+    throw new Error(normalizeSupabaseError(error, "Failed to load company settings"));
+  }
+  return data?.settings && typeof data.settings === "object" ? data.settings : null;
+}
+
+async function upsertCompanySettingsRow({ organizationId, settings, updatedBy }) {
+  if (!isSupabaseConfigured || !supabase || !organizationId) return;
+  const payload = settings && typeof settings === "object" ? settings : {};
+  const { error } = await supabase.from(COMPANY_SETTINGS_TABLE).upsert(
+    {
+      organization_id: organizationId,
+      settings: payload,
+      updated_by: updatedBy || null
+    },
+    { onConflict: "organization_id" }
+  );
+
+  if (error) {
+    if (isMissingRelationError(error)) return;
+    throw new Error(normalizeSupabaseError(error, "Failed to save company settings"));
+  }
+}
+
+function mapDocumentSequencesRow(row) {
+  if (!row || typeof row !== "object") return null;
+  return {
+    numbering: {
+      resetYearly: !!row.reset_yearly,
+      prefixes: {
+        invoice: row.invoice_prefix || "INV",
+        purchase: row.purchase_prefix || "BILL",
+        creditNote: row.credit_note_prefix || "CN",
+        debitNote: row.debit_note_prefix || "DN",
+        paymentIn: row.payment_in_prefix || "RCPT",
+        paymentOut: row.payment_out_prefix || "PAY"
+      },
+      counters: {
+        invoice: Number(row.invoice_next_no || 1),
+        purchase: Number(row.purchase_next_no || 1),
+        creditNote: Number(row.credit_note_next_no || 1),
+        debitNote: Number(row.debit_note_next_no || 1),
+        paymentIn: Number(row.payment_in_next_no || 1),
+        paymentOut: Number(row.payment_out_next_no || 1)
+      }
+    }
+  };
+}
+
+function toPositiveCounter(value, fallback = 1) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 1) return Math.max(1, Number(fallback) || 1);
+  return Math.trunc(numeric);
+}
+
+async function fetchDocumentSequences(organizationId) {
+  if (!isSupabaseConfigured || !supabase || !organizationId) return null;
+  const { data, error } = await supabase
+    .from("organization_document_sequences")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingRelationError(error)) return null;
+    throw new Error(normalizeSupabaseError(error, "Failed to load document numbering"));
+  }
+  return mapDocumentSequencesRow(data);
+}
+
+async function upsertDocumentSequences(organizationId, numbering = {}) {
+  if (!isSupabaseConfigured || !supabase || !organizationId) return;
+  const prefixes = numbering?.prefixes || {};
+  const counters = numbering?.counters || {};
+  const payload = {
+    organization_id: organizationId,
+    invoice_prefix: String(prefixes.invoice || "INV"),
+    invoice_next_no: toPositiveCounter(counters.invoice, 1),
+    purchase_prefix: String(prefixes.purchase || "BILL"),
+    purchase_next_no: toPositiveCounter(counters.purchase, 1),
+    credit_note_prefix: String(prefixes.creditNote || "CN"),
+    credit_note_next_no: toPositiveCounter(counters.creditNote, 1),
+    debit_note_prefix: String(prefixes.debitNote || "DN"),
+    debit_note_next_no: toPositiveCounter(counters.debitNote, 1),
+    payment_in_prefix: String(prefixes.paymentIn || "RCPT"),
+    payment_in_next_no: toPositiveCounter(counters.paymentIn, 1),
+    payment_out_prefix: String(prefixes.paymentOut || "PAY"),
+    payment_out_next_no: toPositiveCounter(counters.paymentOut, 1),
+    reset_yearly: !!numbering?.resetYearly,
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase
+    .from("organization_document_sequences")
+    .upsert(payload, { onConflict: "organization_id" });
+
+  if (error) {
+    if (isMissingRelationError(error)) return;
+    throw new Error(normalizeSupabaseError(error, "Failed to save document numbering"));
+  }
+}
+
+async function fetchOrganizationMembersDetailed(organizationId) {
+  if (!isSupabaseConfigured || !supabase || !organizationId) return [];
+
+  const { data: members, error: memberError } = await supabase
+    .from("organization_members")
+    .select("id, user_id, role, status, joined_at, created_at")
+    .eq("organization_id", organizationId)
+    .order("joined_at", { ascending: true });
+
+  if (memberError || !Array.isArray(members)) {
+    if (isMissingRelationError(memberError)) return [];
+    throw new Error(normalizeSupabaseError(memberError, "Failed to load organization users"));
+  }
+
+  const userIds = members.map((entry) => entry?.user_id).filter(Boolean);
+  let profilesById = {};
+  if (userIds.length) {
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, full_name, email")
+      .in("id", userIds);
+    profilesById = (Array.isArray(profiles) ? profiles : []).reduce((acc, row) => {
+      acc[row.id] = row;
+      return acc;
+    }, {});
+  }
+
+  return members.map((entry) => {
+    const profile = profilesById[entry.user_id] || {};
+    const email = profile?.email || "";
+    const fallbackName = email ? email.split("@")[0] : String(entry.user_id || "User").slice(0, 8);
+    return {
+      id: entry?.id || entry?.user_id || `member_${Date.now().toString(16)}`,
+      userId: entry?.user_id || "",
+      name: profile?.full_name || fallbackName,
+      email,
+      role: fromDbRole(entry?.role),
+      status: normalizeMemberStatus(entry?.status),
+      joinedAt: entry?.joined_at || entry?.created_at || ""
+    };
+  });
+}
+
+function withMergedSettings(baseProfile, settingsPatch = null, sequencePatch = null) {
+  const base = baseProfile || {};
+  const baseSettings = base?.settings && typeof base.settings === "object" ? base.settings : {};
+  const merged = {
+    ...baseSettings,
+    ...(settingsPatch && typeof settingsPatch === "object" ? settingsPatch : {})
+  };
+
+  if (sequencePatch?.numbering) {
+    merged.numbering = {
+      ...(merged.numbering || {}),
+      ...sequencePatch.numbering,
+      prefixes: {
+        ...(merged.numbering?.prefixes || {}),
+        ...(sequencePatch.numbering?.prefixes || {})
+      },
+      counters: {
+        ...(merged.numbering?.counters || {}),
+        ...(sequencePatch.numbering?.counters || {})
+      }
+    };
+  }
+
+  if (merged?.users?.roles) {
+    merged.users = {
+      ...(merged.users || {}),
+      roles: normalizeRolePermissions(merged.users.roles)
+    };
+  }
+
+  return {
+    ...base,
+    settings: merged
+  };
+}
+
 export async function companyLoadMyOrganization(selectedOrganizationId = "") {
   if (!isSupabaseConfigured || !supabase) {
     return companyGetProfile();
@@ -453,8 +688,18 @@ export async function companyLoadMyOrganization(selectedOrganizationId = "") {
 
   const organization = bundle.organization;
   const taxProfile = bundle.taxProfile;
-  const profile = mapOrganizationToProfile(organization, taxProfile);
+  let profile = mapOrganizationToProfile(organization, taxProfile);
   if (!profile) return companyGetProfile();
+
+  try {
+    const [settingsRow, sequenceSettings] = await Promise.all([
+      fetchCompanySettingsRow(activeOrganizationId),
+      fetchDocumentSequences(activeOrganizationId)
+    ]);
+    profile = withMergedSettings(profile, settingsRow, sequenceSettings);
+  } catch {
+    // Use organization payload as fallback when optional settings tables/functions are unavailable.
+  }
 
   const { data: membership } = await supabase
     .from("organization_members")
@@ -598,6 +843,17 @@ export async function companySaveProfileRemote(profile, options = {}) {
 
   if (taxError) throw new Error(taxError.message || "Failed to save tax settings");
 
+  try {
+    await upsertCompanySettingsRow({
+      organizationId,
+      settings: mergedProfile?.settings || {},
+      updatedBy: userId
+    });
+    await upsertDocumentSequences(organizationId, mergedProfile?.settings?.numbering || {});
+  } catch (settingsError) {
+    warnings.push(settingsError?.message || "Failed to sync company settings table.");
+  }
+
   lsSet(LS_KEYS.organization_id, organizationId);
   ssSet(LS_KEYS.organization_id, organizationId);
   lsSetUserScoped(LS_KEYS.organization_id, organizationId, authGetUser()?.id);
@@ -617,6 +873,148 @@ export async function companySaveProfileRemote(profile, options = {}) {
     logoUrl: mergedProfile.logoBase64 || "",
     warnings
   };
+}
+
+export async function organizationListUsers() {
+  const organizationId = authGetOrganizationId();
+  if (!organizationId) return [];
+  return fetchOrganizationMembersDetailed(organizationId);
+}
+
+export async function organizationUpdateUser({ userId, role, status }) {
+  const organizationId = authGetOrganizationId();
+  if (!organizationId || !userId) {
+    throw new Error("Organization and user are required.");
+  }
+  if (!isOwnerRole(authGetRole())) {
+    throw new Error("Only Owner can change user roles.");
+  }
+  if (!isSupabaseConfigured || !supabase) {
+    return {
+      userId,
+      role: fromDbRole(toDbRole(role)),
+      status: normalizeMemberStatus(status)
+    };
+  }
+
+  const payload = {};
+  if (role) payload.role = toDbRole(role);
+  if (status) payload.status = toDbMemberStatus(status);
+  if (!Object.keys(payload).length) return null;
+  payload.updated_at = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("organization_members")
+    .update(payload)
+    .eq("organization_id", organizationId)
+    .eq("user_id", userId)
+    .select("user_id, role, status")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(normalizeSupabaseError(error, "Failed to update user role"));
+  }
+
+  if (String(userId) === String(authGetUser()?.id) && data?.role) {
+    const roleLabel = fromDbRole(data.role);
+    lsSet(LS_KEYS.role, roleLabel);
+    ssSet(LS_KEYS.role, roleLabel);
+  }
+
+  return {
+    userId: data?.user_id || userId,
+    role: fromDbRole(data?.role || payload.role),
+    status: normalizeMemberStatus(data?.status || payload.status)
+  };
+}
+
+export async function settingsGetCompany() {
+  const profile = await companyLoadMyOrganization().catch(() => companyGetProfile()) || companyGetProfile() || {};
+  const organizationId = authGetOrganizationId();
+  if (!organizationId || !isSupabaseConfigured || !supabase) {
+    return {
+      profile,
+      users: Array.isArray(profile?.settings?.users?.members) ? profile.settings.users.members : []
+    };
+  }
+
+  let mergedProfile = profile;
+  try {
+    const [settingsRow, sequenceSettings, users] = await Promise.all([
+      fetchCompanySettingsRow(organizationId),
+      fetchDocumentSequences(organizationId),
+      fetchOrganizationMembersDetailed(organizationId)
+    ]);
+
+    mergedProfile = withMergedSettings(mergedProfile, settingsRow, sequenceSettings);
+    mergedProfile = {
+      ...mergedProfile,
+      settings: {
+        ...(mergedProfile.settings || {}),
+        users: {
+          ...(mergedProfile.settings?.users || {}),
+          roles: normalizeRolePermissions(mergedProfile.settings?.users?.roles || {}),
+          members: users
+        }
+      }
+    };
+    companySaveProfile(mergedProfile);
+    return { profile: mergedProfile, users };
+  } catch (error) {
+    throw new Error(error?.message || "Failed to load company settings");
+  }
+}
+
+export async function settingsPutCompany(profile, options = {}) {
+  const result = await companySaveProfileRemote(profile, options);
+  const organizationId = result?.organizationId || authGetOrganizationId();
+  const savedProfile = result?.profile || profile || {};
+
+  if (organizationId && isSupabaseConfigured && supabase) {
+    const actorUserId = authGetUser()?.id || (await getCurrentUserId()) || null;
+    const settingsPayload = savedProfile?.settings || {};
+    await upsertCompanySettingsRow({
+      organizationId,
+      settings: {
+        ...settingsPayload,
+        users: {
+          ...(settingsPayload.users || {}),
+          roles: normalizeRolePermissions(settingsPayload?.users?.roles || {})
+        }
+      },
+      updatedBy: actorUserId
+    });
+    await upsertDocumentSequences(organizationId, settingsPayload?.numbering || {});
+  }
+
+  const users = await organizationListUsers().catch(() => []);
+  const profileWithUsers = {
+    ...savedProfile,
+    settings: {
+      ...(savedProfile?.settings || {}),
+      users: {
+        ...(savedProfile?.settings?.users || {}),
+        roles: normalizeRolePermissions(savedProfile?.settings?.users?.roles || {}),
+        members: users.length ? users : savedProfile?.settings?.users?.members || []
+      }
+    }
+  };
+  companySaveProfile(profileWithUsers);
+
+  return {
+    ...result,
+    profile: profileWithUsers,
+    users
+  };
+}
+
+export async function settingsLogoUpload({ logoBase64 = "", logoFile = null } = {}) {
+  const current = companyGetProfile() || {};
+  const next = {
+    ...current,
+    logoBase64: logoBase64 || current.logoBase64 || ""
+  };
+  return settingsPutCompany(next, { logoFile });
 }
 
 function generateInviteCodeToken() {

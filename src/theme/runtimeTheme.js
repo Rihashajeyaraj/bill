@@ -61,6 +61,10 @@ function alpha(hex, opacity) {
   return `rgba(${r}, ${g}, ${b}, ${o.toFixed(3)})`;
 }
 
+function normalizeThemeMode(value) {
+  return String(value || "").trim().toLowerCase() === "dark" ? "dark" : "light";
+}
+
 export function resolveThemePreset(themeId) {
   return findThemePresetById(themeId) || findThemePresetById(DEFAULT_THEME_PRESET_ID);
 }
@@ -196,6 +200,46 @@ export function applyThemeToDocument(themeId) {
   root.style.colorScheme = config.mode;
   root.setAttribute("data-theme", config.id);
   return config;
+}
+
+export function normalizeThemeOverrides(overrides = {}) {
+  if (!overrides || typeof overrides !== "object") return null;
+  const rawPrimary = String(overrides.primaryColor || "").trim();
+  const rawAccent = String(overrides.accentColor || "").trim();
+  if (!rawPrimary && !rawAccent) return null;
+  const primaryColor = normalizeHex(rawPrimary || rawAccent);
+  const accentColor = normalizeHex(rawAccent || rawPrimary);
+  const mode = normalizeThemeMode(overrides.mode);
+  return {
+    mode,
+    primaryColor,
+    accentColor
+  };
+}
+
+export function applyThemeOverridesToDocument(overrides = null) {
+  if (typeof document === "undefined") return null;
+  const normalized = normalizeThemeOverrides(overrides);
+  if (!normalized) return null;
+
+  const root = document.documentElement;
+  const isDark = normalized.mode === "dark";
+  const primary = normalized.primaryColor;
+  const accent = normalized.accentColor;
+  const ring = alpha(primary, isDark ? 0.36 : 0.24);
+  const cream = isDark ? mix("#1E293B", primary, 0.22) : mix("#ECF7F1", primary, 0.14);
+  const sidebar = isDark ? mix("#0B1220", primary, 0.34) : mix("#102A20", primary, 0.58);
+  const sidebarActiveBg = alpha(primary, isDark ? 0.34 : 0.22);
+
+  root.style.setProperty("--primary", primary);
+  root.style.setProperty("--accent", accent);
+  root.style.setProperty("--ring", ring);
+  root.style.setProperty("--cream", cream);
+  root.style.setProperty("--sidebar", sidebar);
+  root.style.setProperty("--sidebar-active-bg", sidebarActiveBg);
+  root.style.colorScheme = normalized.mode;
+
+  return normalized;
 }
 
 export function applyFontToDocument(fontFamily) {

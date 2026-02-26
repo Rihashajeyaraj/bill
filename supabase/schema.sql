@@ -159,6 +159,17 @@ create trigger trg_organization_document_sequences_updated_at
 before update on public.organization_document_sequences
 for each row execute procedure public.set_updated_at();
 
+create table if not exists public.company_settings (
+  organization_id uuid primary key references public.organizations(id) on delete cascade,
+  settings jsonb not null default '{}'::jsonb,
+  updated_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create trigger trg_company_settings_updated_at
+before update on public.company_settings
+for each row execute procedure public.set_updated_at();
+
 -- =========================
 -- Masters
 -- =========================
@@ -739,6 +750,7 @@ alter table public.organization_members enable row level security;
 alter table public.organization_invite_codes enable row level security;
 alter table public.organization_tax_profiles enable row level security;
 alter table public.organization_document_sequences enable row level security;
+alter table public.company_settings enable row level security;
 alter table public.parties enable row level security;
 alter table public.items enable row level security;
 alter table public.invoices enable row level security;
@@ -864,6 +876,12 @@ on public.organization_document_sequences for all
 to authenticated
 using (public.current_user_org_role(organization_id) in ('owner', 'accounter'))
 with check (public.current_user_org_role(organization_id) in ('owner', 'accounter'));
+
+create policy "company_settings_member_access"
+on public.company_settings for all
+to authenticated
+using (public.current_user_is_org_member(organization_id))
+with check (public.current_user_is_org_member(organization_id));
 
 -- Generic org member access
 create policy "parties_member_access"

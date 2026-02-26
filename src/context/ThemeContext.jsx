@@ -1,10 +1,13 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { THEME_PRESETS, findThemePresetById } from "../components/theme/themePresets";
 import { LS_KEYS } from "../services/storage";
+import { companyGetProfile, ORGANIZATION_UPDATED_EVENT } from "../services/company.service";
 import {
   applyFontToDocument,
+  applyThemeOverridesToDocument,
   applyThemeToDocument,
   buildThemeConfig,
+  normalizeThemeOverrides,
   readStoredFontFamily,
   readStoredThemeId,
   resolveThemePreset,
@@ -36,9 +39,27 @@ function readInitialThemeId() {
   return stored || DEFAULT_THEME_ID;
 }
 
+function readStoredThemeOverrides() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(LS_KEYS.theme_overrides);
+    if (!raw) return null;
+    return normalizeThemeOverrides(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function readProfileThemeOverrides() {
+  return normalizeThemeOverrides(companyGetProfile()?.settings?.theme || null);
+}
+
 export function ThemeProvider({ children }) {
   const [theme, setThemeState] = useState(readInitialThemeId);
   const [fontFamily, setFontFamilyState] = useState(readStoredFontFamily);
+  const [themeOverrides, setThemeOverridesState] = useState(
+    () => readStoredThemeOverrides() || readProfileThemeOverrides()
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -46,7 +67,8 @@ export function ThemeProvider({ children }) {
     localStorage.setItem(LS_KEYS.theme_preset, theme);
     localStorage.setItem(LS_KEYS.theme_mode, mode);
     applyThemeToDocument(theme);
-  }, [theme]);
+    applyThemeOverridesToDocument(themeOverrides);
+  }, [theme, themeOverrides]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -54,10 +76,24 @@ export function ThemeProvider({ children }) {
     applyFontToDocument(fontFamily);
   }, [fontFamily]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!themeOverrides) {
+      localStorage.removeItem(LS_KEYS.theme_overrides);
+      return;
+    }
+    localStorage.setItem(LS_KEYS.theme_overrides, JSON.stringify(themeOverrides));
+  }, [themeOverrides]);
+
   const setTheme = useCallback((themeId) => {
     const nextTheme = normalizeThemeId(themeId);
     if (!nextTheme) return;
     setThemeState(nextTheme);
+  }, []);
+
+  const setThemeOverrides = useCallback((overrides) => {
+    const normalized = normalizeThemeOverrides(overrides);
+    setThemeOverridesState(normalized);
   }, []);
 
   const setFont = useCallback((fontName) => {
@@ -67,6 +103,23 @@ export function ThemeProvider({ children }) {
 
   const toggleTheme = useCallback(() => {
     setThemeState((prevTheme) => (getThemeMode(prevTheme) === "dark" ? "focus-mint" : "task-ink"));
+  }, []);
+
+  useEffect(() => {
+    function hydrateFromOrganizationProfile() {
+      const profileTheme = readProfileThemeOverrides();
+      if (!profileTheme) return;
+      setThemeOverridesState(profileTheme);
+      setThemeState((prevTheme) => {
+        const currentMode = getThemeMode(prevTheme);
+        if (currentMode === profileTheme.mode) return prevTheme;
+        return profileTheme.mode === "dark" ? "task-ink" : "focus-mint";
+      });
+    }
+
+    hydrateFromOrganizationProfile();
+    window.addEventListener(ORGANIZATION_UPDATED_EVENT, hydrateFromOrganizationProfile);
+    return () => window.removeEventListener(ORGANIZATION_UPDATED_EVENT, hydrateFromOrganizationProfile);
   }, []);
 
   const value = useMemo(
@@ -82,12 +135,14 @@ export function ThemeProvider({ children }) {
       setFont,
       fontOptions: APP_FONT_OPTIONS,
       setTheme,
+      themeOverrides,
+      setThemeOverrides,
       toggleTheme,
       themePresetId: theme,
       themePreset: findThemePresetById(theme),
       setThemePreset: setTheme
     }),
-    [theme, setTheme, toggleTheme, fontFamily, setFont]
+    [theme, setTheme, themeOverrides, setThemeOverrides, toggleTheme, fontFamily, setFont]
   );
 
   return (

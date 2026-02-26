@@ -30,12 +30,16 @@ import {
 } from "../components/theme/themePresets";
 import { useTheme } from "../context/ThemeContext";
 import { useOrganization } from "../context/OrganizationContext";
+import { useToast } from "../context/ToastContext";
 import {
   COUNTRIES,
   companyGetProfile,
-  companySaveProfileRemote,
+  organizationListUsers,
+  organizationUpdateUser,
   organizationGenerateCode,
-  organizationListActiveCodes
+  organizationListActiveCodes,
+  settingsGetCompany,
+  settingsPutCompany
 } from "../services/company.service";
 import { authGetRole, authGetUser } from "../services/auth.service";
 import { isOwnerRole, normalizeRoleLabel } from "../services/roles";
@@ -136,6 +140,7 @@ const VAT_COUNTRIES = ["Sri Lanka", "UAE", "United Kingdom", "Ireland"];
 
 const DOCUMENT_TYPES = [
   { key: "invoice", label: "Invoice", prefix: "INV" },
+  { key: "purchase", label: "Purchase", prefix: "BILL" },
   { key: "creditNote", label: "Credit Note", prefix: "CN" },
   { key: "debitNote", label: "Debit Note", prefix: "DN" },
   { key: "paymentIn", label: "Payment In", prefix: "PR" },
@@ -195,11 +200,7 @@ function buildDefaultPrefixes(country) {
   }, {});
 }
 
-function formatSectionTitle(section) {
-  const config = SECTION_ITEMS.find((item) => item.id === section);
-  return config?.label || "Settings";
-}
-function buildDefaultSettings(profile, currentUser) {
+function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
   const stored = profile?.settings || {};
   const baseCountry = stored.localization?.defaultCountry || profile?.country || "India";
   const localizationCurrencies = normalizeLocalizationCurrencies({
@@ -256,7 +257,7 @@ function buildDefaultSettings(profile, currentUser) {
     enableSalesTax: taxStored.enableSalesTax ?? baseCountry === "USA",
     salesTaxStates: Array.isArray(taxStored.salesTaxStates)
       ? taxStored.salesTaxStates
-      : [{ id: uid("tax_"), state: "CA", rate: 8.25 }]
+      : []
   };
 
   const numberingStored = stored.numbering || {};
@@ -265,6 +266,14 @@ function buildDefaultSettings(profile, currentUser) {
     autoIncrement: numberingStored.autoIncrement ?? true,
     resetYearly: numberingStored.resetYearly ?? false,
     prefixes: { ...prefixDefaults, ...(numberingStored.prefixes || {}) },
+    counters: {
+      invoice: Math.max(1, Number(numberingStored.counters?.invoice || 1)),
+      purchase: Math.max(1, Number(numberingStored.counters?.purchase || 1)),
+      creditNote: Math.max(1, Number(numberingStored.counters?.creditNote || 1)),
+      debitNote: Math.max(1, Number(numberingStored.counters?.debitNote || 1)),
+      paymentIn: Math.max(1, Number(numberingStored.counters?.paymentIn || 1)),
+      paymentOut: Math.max(1, Number(numberingStored.counters?.paymentOut || 1))
+    },
     allowCountryOverride: numberingStored.allowCountryOverride ?? false,
     countryOverrides: Array.isArray(numberingStored.countryOverrides)
       ? numberingStored.countryOverrides
@@ -294,31 +303,22 @@ function buildDefaultSettings(profile, currentUser) {
     logoUrl: mergedTemplate.logoUrl || profile?.logoBase64 || ""
   };
 
-  const members = Array.isArray(stored.users?.members) && stored.users.members.length
-    ? stored.users.members
-    : [
-        {
-          id: uid("user_"),
-          name: currentUser?.name || "Primary Owner",
-          email: currentUser?.email || "owner@demo.com",
-          role: "Owner",
-          status: "Active"
-        },
-        {
-          id: uid("user_"),
-          name: "Finance Accounter",
-          email: "finance@demo.com",
-          role: "Accounter",
-          status: "Active"
-        },
-        {
-          id: uid("user_"),
-          name: "Warehouse",
-          email: "warehouse@demo.com",
-          role: "Staff",
-          status: "Inactive"
-        }
-      ];
+  const members = Array.isArray(remoteMembers)
+    ? remoteMembers
+    : Array.isArray(stored.users?.members)
+      ? stored.users.members
+      : currentUser
+        ? [
+            {
+              id: uid("user_"),
+              userId: currentUser.id || "",
+              name: currentUser?.name || currentUser?.email?.split("@")[0] || "Owner",
+              email: currentUser?.email || "",
+              role: "Owner",
+              status: "Active"
+            }
+          ]
+        : [];
 
   const users = {
     roles: stored.users?.roles || DEFAULT_ROLE_PERMISSIONS,
@@ -538,19 +538,95 @@ function validateProfile(profile) {
   const errors = {};
   if (!profile.companyName?.trim()) errors.companyName = "Company name is required.";
   if (!profile.email?.trim()) errors.email = "Email is required.";
+  if (profile.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email.trim())) {
+    errors.email = "Enter a valid email address.";
+  }
   if (!profile.phone?.trim()) errors.phone = "Phone number is required.";
+  if (profile.phone && !/^[+\d][\d\s()-]{5,}$/.test(profile.phone.trim())) {
+    errors.phone = "Enter a valid phone number.";
+  }
   if (!profile.country?.trim()) errors.country = "Country is required.";
   if (!profile.address?.line1?.trim()) errors.line1 = "Address line 1 is required.";
+  if (profile.website && !/^https?:\/\/|^[a-z0-9.-]+\.[a-z]{2,}/i.test(profile.website.trim())) {
+    errors.website = "Enter a valid website URL.";
+  }
+  return errors;
+}
+
+function validateLocalization(localization) {
+  const errors = {};
+  if (!localization?.defaultCountry?.trim()) errors.defaultCountry = "Default country is required.";
+  if (!localization?.currency?.trim()) errors.currency = "Currency is required.";
+  if (!localization?.dateFormat?.trim()) errors.dateFormat = "Date format is required.";
+  if (!localization?.numberFormat?.trim()) errors.numberFormat = "Number format is required.";
+  return errors;
+}
+
+function validateTax(settings) {
+  const errors = {};
+  const country = settings?.localization?.defaultCountry;
+  const tax = settings?.tax || {};
+  if (country === "India" && tax.enableGst) {
+    if (!tax.gstin?.trim()) errors.gstin = "GSTIN is required when GST is enabled.";
+    if (Number(tax.defaultGstRate) < 0) errors.defaultGstRate = "GST rate cannot be negative.";
+  }
+  if (VAT_COUNTRIES.includes(country) && tax.enableVat) {
+    if (!tax.vatNumber?.trim()) errors.vatNumber = "VAT number is required when VAT is enabled.";
+    if (Number(tax.defaultVatRate) < 0) errors.defaultVatRate = "VAT rate cannot be negative.";
+  }
+  if (country === "USA" && tax.enableSalesTax) {
+    const rows = Array.isArray(tax.salesTaxStates) ? tax.salesTaxStates : [];
+    const hasInvalid = rows.some((entry) => !String(entry?.state || "").trim() || Number(entry?.rate) < 0);
+    if (hasInvalid) errors.salesTaxStates = "Enter valid state code and non-negative rate.";
+  }
+  return errors;
+}
+
+function validateNumbering(numbering) {
+  const errors = {};
+  const prefixes = numbering?.prefixes || {};
+  ["invoice", "purchase", "creditNote", "debitNote"].forEach((key) => {
+    if (!String(prefixes[key] || "").trim()) {
+      errors[`prefix_${key}`] = "Prefix is required.";
+    }
+  });
+  const counters = numbering?.counters || {};
+  ["invoice", "purchase", "creditNote", "debitNote"].forEach((key) => {
+    const value = Number(counters[key] || 0);
+    if (!Number.isFinite(value) || value < 1) {
+      errors[`counter_${key}`] = "Counter must be 1 or greater.";
+    }
+  });
+  return errors;
+}
+
+function validateTheme(theme) {
+  const errors = {};
+  if (!/^#[0-9a-f]{6}$/i.test(String(theme?.primaryColor || ""))) {
+    errors.primaryColor = "Primary color must be a valid hex code.";
+  }
+  if (!/^#[0-9a-f]{6}$/i.test(String(theme?.accentColor || ""))) {
+    errors.accentColor = "Accent color must be a valid hex code.";
+  }
+  return errors;
+}
+
+function validateInvoiceTemplate(config) {
+  const errors = {};
+  if (!String(config?.templateId || "").trim()) errors.templateId = "Template is required.";
+  if (!String(config?.fontFamily || "").trim()) errors.fontFamily = "Font is required.";
   return errors;
 }
 
 export default function CompanySettings() {
   const navigate = useNavigate();
-  const { setTheme, themePresetId, setFont, fontFamily } = useTheme();
+  const toast = useToast();
+  const { setTheme, themePresetId, setFont, fontFamily, setThemeOverrides } = useTheme();
   const { profile: organizationProfile } = useOrganization();
   const currentProfile = organizationProfile || companyGetProfile();
   const currentUser = authGetUser();
   const currentRole = authGetRole();
+  const canManageUsers = isOwnerRole(currentRole);
   const canGenerateRegisterCodes = isOwnerRole(currentRole);
   const [settings, setSettings] = useState(() => buildDefaultSettings(currentProfile, currentUser));
   const [savedSettings, setSavedSettings] = useState(() => buildDefaultSettings(currentProfile, currentUser));
@@ -569,6 +645,7 @@ export default function CompanySettings() {
   const [codeError, setCodeError] = useState("");
   const [profileLogoFile, setProfileLogoFile] = useState(null);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
+  const [savingSection, setSavingSection] = useState("");
   useGlobalLoadingBridge(loadingSection, "company-settings");
 
   useEffect(() => {
@@ -595,6 +672,29 @@ export default function CompanySettings() {
     });
   }, [fontFamily]);
 
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setLoadingSection(true);
+      try {
+        const payload = await settingsGetCompany();
+        if (!active) return;
+        const defaults = buildDefaultSettings(payload?.profile || currentProfile, currentUser, payload?.users);
+        setSettings(defaults);
+        setSavedSettings(defaults);
+        setErrors({});
+      } catch (error) {
+        if (!active) return;
+        toast.error("Failed to load company settings", error?.message || "Using cached settings.");
+      } finally {
+        if (active) setLoadingSection(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [currentUser?.id, toast]);
+
   const dirtyMap = useMemo(() => {
     return SECTION_ITEMS.reduce((acc, section) => {
       acc[section.id] =
@@ -611,6 +711,17 @@ export default function CompanySettings() {
       THEME_PRESETS[0],
     [settings.theme, themePresetId]
   );
+
+  useEffect(() => {
+    if (!settings?.theme) return;
+    const fallbackTheme = settings.theme.mode === "Dark" ? "task-ink" : "focus-mint";
+    setTheme(fallbackTheme);
+    setThemeOverrides({
+      mode: settings.theme.mode,
+      primaryColor: settings.theme.primaryColor,
+      accentColor: settings.theme.accentColor
+    });
+  }, [settings.theme?.mode, settings.theme?.primaryColor, settings.theme?.accentColor, setTheme, setThemeOverrides]);
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
@@ -623,7 +734,11 @@ export default function CompanySettings() {
     const latestProfile = organizationProfile || companyGetProfile();
     if (!latestProfile) return;
 
-    const nextDefaults = buildDefaultSettings(latestProfile, currentUser);
+    const nextDefaults = buildDefaultSettings(
+      latestProfile,
+      currentUser,
+      latestProfile?.settings?.users?.members
+    );
     const liveSettings = settingsRef.current;
     const liveSavedSettings = savedSettingsRef.current;
     const hasUnsavedLocalEdits =
@@ -677,7 +792,6 @@ export default function CompanySettings() {
     () => getCountryTemplates(settings.localization.defaultCountry),
     [settings.localization.defaultCountry]
   );
-  const sectionTitle = formatSectionTitle(activeSection);
 
   function updateSection(section, patch) {
     setSettings((prev) => ({
@@ -759,17 +873,24 @@ export default function CompanySettings() {
     });
   }
 
-  async function handleSave(section) {
-    if (section === "profile") {
-      const logoError = String(errors?.profile?.logo || "").trim();
-      if (logoError) return;
-      const profileErrors = validateProfile(settings.profile);
-      if (Object.keys(profileErrors).length) {
-        setErrors((prev) => ({ ...prev, profile: profileErrors }));
-        return;
-      }
-      setErrors((prev) => ({ ...prev, profile: {} }));
+  function validateSection(section, nextSettings) {
+    if (section === "profile") return validateProfile(nextSettings.profile);
+    if (section === "localization") return validateLocalization(nextSettings.localization);
+    if (section === "tax") return validateTax(nextSettings);
+    if (section === "numbering") return validateNumbering(nextSettings.numbering);
+    if (section === "theme") return validateTheme(nextSettings.theme);
+    if (section === "invoiceTemplate") return validateInvoiceTemplate(nextSettings.invoiceTemplate);
+    if (section === "users" && !canManageUsers) {
+      return { users: "Only Owner can change roles and permissions." };
     }
+    return {};
+  }
+
+  async function handleSave(section) {
+    if (savingSection) return;
+
+    const logoError = String(errors?.profile?.logo || "").trim();
+    if (section === "profile" && logoError) return;
 
     let nextSettings = settings;
     if (section === "invoiceTemplate") {
@@ -779,45 +900,87 @@ export default function CompanySettings() {
       setSettings(nextSettings);
     }
 
-    setSavedSettings((prev) => ({ ...prev, [section]: nextSettings[section] }));
+    const sectionErrors = validateSection(section, nextSettings);
+    if (Object.keys(sectionErrors).length) {
+      setErrors((prev) => ({ ...prev, [section]: sectionErrors }));
+      toast.warning("Fix validation errors", "Please correct highlighted fields before saving.");
+      return;
+    }
+    setErrors((prev) => ({ ...prev, [section]: {} }));
+
     const nextProfile = mapSettingsToProfile(nextSettings);
 
     try {
-      const result = await companySaveProfileRemote(
+      setSavingSection(section);
+      if (section === "users" && canManageUsers) {
+        const previousMembers = Array.isArray(savedSettings?.users?.members) ? savedSettings.users.members : [];
+        const previousMap = new Map(
+          previousMembers
+            .map((member) => [member?.userId || member?.id, member])
+            .filter(([key]) => !!key)
+        );
+        const currentMembers = Array.isArray(nextSettings?.users?.members) ? nextSettings.users.members : [];
+        for (const member of currentMembers) {
+          const userId = member?.userId || member?.id;
+          if (!userId) continue;
+          const previous = previousMap.get(userId);
+          if (!previous) continue;
+          if (previous.role === member.role && previous.status === member.status) continue;
+          await organizationUpdateUser({
+            userId,
+            role: member.role,
+            status: member.status
+          });
+        }
+      }
+
+      const result = await settingsPutCompany(
         nextProfile,
         section === "profile" && profileLogoFile ? { logoFile: profileLogoFile } : {}
       );
 
+      const refreshedUsers =
+        section === "users" ? await organizationListUsers().catch(() => result?.users || []) : result?.users;
+
+      const resolvedProfile = result?.profile || nextProfile;
+      const defaults = buildDefaultSettings(
+        resolvedProfile,
+        currentUser,
+        refreshedUsers?.length ? refreshedUsers : resolvedProfile?.settings?.users?.members
+      );
+      setSettings(defaults);
+      setSavedSettings(defaults);
+
       if (section === "profile") {
         setProfileLogoFile(null);
-        if (result?.logoUrl) {
-          setSettings((prev) => ({
-            ...prev,
-            profile: { ...prev.profile, logoBase64: result.logoUrl }
-          }));
-          setSavedSettings((prev) => ({
-            ...prev,
-            profile: { ...prev.profile, logoBase64: result.logoUrl }
-          }));
-        }
+      }
+
+      if (section === "theme") {
+        const fallbackTheme = nextSettings.theme.mode === "Dark" ? "task-ink" : "focus-mint";
+        setTheme(fallbackTheme);
+        setThemeOverrides({
+          mode: nextSettings.theme.mode,
+          primaryColor: nextSettings.theme.primaryColor,
+          accentColor: nextSettings.theme.accentColor
+        });
       }
 
       const warningText =
         Array.isArray(result?.warnings) && result.warnings.length
           ? ` ${result.warnings.join(" ")}`
           : "";
-      setSectionMessage((prev) => ({
-        ...prev,
-        [section]: `Changes saved successfully.${warningText}`.trim()
-      }));
+      const successText = `Changes saved successfully.${warningText}`.trim();
+      setSectionMessage((prev) => ({ ...prev, [section]: successText }));
+      toast.success("Settings saved", successText);
       window.setTimeout(() => {
         setSectionMessage((prev) => ({ ...prev, [section]: "" }));
       }, 2400);
     } catch (error) {
-      setSectionMessage((prev) => ({
-        ...prev,
-        [section]: error?.message || "Saved locally, but sync to Supabase failed."
-      }));
+      const message = error?.message || "Failed to save settings.";
+      setSectionMessage((prev) => ({ ...prev, [section]: message }));
+      toast.error("Save failed", message);
+    } finally {
+      setSavingSection("");
     }
   }
 
@@ -827,9 +990,20 @@ export default function CompanySettings() {
     if (section === "profile") {
       setProfileLogoFile(null);
     }
+    if (section === "theme") {
+      const savedTheme = savedSettings.theme || {};
+      const fallbackTheme = savedTheme.mode === "Dark" ? "task-ink" : "focus-mint";
+      setTheme(fallbackTheme);
+      setThemeOverrides({
+        mode: savedTheme.mode,
+        primaryColor: savedTheme.primaryColor,
+        accentColor: savedTheme.accentColor
+      });
+    }
   }
 
   function updatePermission(role, key, value) {
+    if (!canManageUsers) return;
     setSettings((prev) => ({
       ...prev,
       users: {
@@ -843,6 +1017,7 @@ export default function CompanySettings() {
   }
 
   function updateUser(id, patch) {
+    if (!canManageUsers) return;
     setSettings((prev) => ({
       ...prev,
       users: {
@@ -854,17 +1029,10 @@ export default function CompanySettings() {
 
   function handleInvite() {
     if (!invite.email.trim()) return;
-    const nextMember = {
-      id: uid("user_"),
-      name: invite.name || invite.email.split("@")[0],
-      email: invite.email,
-      role: invite.role,
-      status: "Active"
-    };
-    setSettings((prev) => ({
-      ...prev,
-      users: { ...prev.users, members: [nextMember, ...prev.users.members] }
-    }));
+    toast.info(
+      "Use register code",
+      "Direct invite is not yet wired to auth email flow. Share register code from this section."
+    );
     setInvite({ name: "", email: "", role: "Staff" });
   }
 
@@ -927,6 +1095,7 @@ export default function CompanySettings() {
   const sectionDirty = dirtyMap[activeSection];
   const activeMessage = sectionMessage[activeSection];
   const sectionErrors = errors[activeSection] || {};
+  const activeMessageIsError = /failed|error|denied|unable/i.test(String(activeMessage || ""));
 
   return (
     <div className="mx-auto max-w-[1320px] space-y-4 pb-24">
@@ -945,8 +1114,12 @@ export default function CompanySettings() {
                 Create New Company
               </button>
             ) : null}
-            <GradientButton onClick={() => handleSave(activeSection)}>
-              Save {sectionTitle}
+            <GradientButton onClick={() => handleSave(activeSection)} disabled={!!savingSection}>
+              {savingSection
+                ? "Saving..."
+                : activeSection === "profile"
+                  ? "Save Company Profile"
+                  : "Save changes"}
             </GradientButton>
           </div>
         }
@@ -975,8 +1148,15 @@ export default function CompanySettings() {
 
         <section className="space-y-4">
           {activeMessage ? (
-            <div className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700">
-              <BadgeCheck className="h-4 w-4" />
+            <div
+              className={clsx(
+                "flex items-center gap-2 rounded-2xl border px-4 py-3 text-xs",
+                activeMessageIsError
+                  ? "border-rose-200 bg-rose-50 text-rose-700"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-700"
+              )}
+            >
+              {activeMessageIsError ? <AlertTriangle className="h-4 w-4" /> : <BadgeCheck className="h-4 w-4" />}
               {activeMessage}
             </div>
           ) : null}
@@ -1080,6 +1260,9 @@ export default function CompanySettings() {
                         onChange={(event) => updateSection("profile", { website: event.target.value })}
                         className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                       />
+                      {sectionErrors.website ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.website}</p>
+                      ) : null}
                     </FormField>
                   </div>
                   <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -1198,6 +1381,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
+                    disabled={!sectionDirty || !!savingSection}
                     onSave={() => handleSave("profile")}
                     onCancel={() => handleCancel("profile")}
                   />
@@ -1226,6 +1410,9 @@ export default function CompanySettings() {
                       <p className="mt-1 text-xs text-slate-500">
                         Changing country updates tax defaults and document numbering.
                       </p>
+                      {sectionErrors.defaultCountry ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.defaultCountry}</p>
+                      ) : null}
                     </FormField>
 
                     <FormField label="Currency (auto from country)">
@@ -1234,6 +1421,9 @@ export default function CompanySettings() {
                         readOnly
                         className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
                       />
+                      {sectionErrors.currency ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.currency}</p>
+                      ) : null}
                     </FormField>
 
                     <FormField label="Additional Currencies" hint={`Add up to ${MAX_CURRENCIES - 1}`}>
@@ -1278,6 +1468,9 @@ export default function CompanySettings() {
                           </option>
                         ))}
                       </select>
+                      {sectionErrors.dateFormat ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.dateFormat}</p>
+                      ) : null}
                     </FormField>
 
                     <FormField label="Number Format">
@@ -1294,11 +1487,15 @@ export default function CompanySettings() {
                           </option>
                         ))}
                       </select>
+                      {sectionErrors.numberFormat ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.numberFormat}</p>
+                      ) : null}
                     </FormField>
                   </div>
 
                   <ActionRow
                     dirty={sectionDirty}
+                    disabled={!sectionDirty || !!savingSection}
                     onSave={() => handleSave("localization")}
                     onCancel={() => handleCancel("localization")}
                   />
@@ -1327,6 +1524,9 @@ export default function CompanySettings() {
                               onChange={(event) => updateSection("tax", { gstin: event.target.value })}
                               className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                             />
+                            {sectionErrors.gstin ? (
+                              <p className="mt-1 text-xs text-rose-600">{sectionErrors.gstin}</p>
+                            ) : null}
                           </FormField>
                           <FormField label="Default GST %">
                             <input
@@ -1337,6 +1537,9 @@ export default function CompanySettings() {
                               }
                               className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                             />
+                            {sectionErrors.defaultGstRate ? (
+                              <p className="mt-1 text-xs text-rose-600">{sectionErrors.defaultGstRate}</p>
+                            ) : null}
                           </FormField>
                         </div>
                       </>
@@ -1357,6 +1560,9 @@ export default function CompanySettings() {
                               onChange={(event) => updateSection("tax", { vatNumber: event.target.value })}
                               className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                             />
+                            {sectionErrors.vatNumber ? (
+                              <p className="mt-1 text-xs text-rose-600">{sectionErrors.vatNumber}</p>
+                            ) : null}
                           </FormField>
                           <FormField label="Default VAT %">
                             <input
@@ -1367,6 +1573,9 @@ export default function CompanySettings() {
                               }
                               className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                             />
+                            {sectionErrors.defaultVatRate ? (
+                              <p className="mt-1 text-xs text-rose-600">{sectionErrors.defaultVatRate}</p>
+                            ) : null}
                           </FormField>
                         </div>
                       </>
@@ -1447,6 +1656,9 @@ export default function CompanySettings() {
                               </div>
                             ))}
                           </div>
+                          {sectionErrors.salesTaxStates ? (
+                            <p className="mt-2 text-xs text-rose-600">{sectionErrors.salesTaxStates}</p>
+                          ) : null}
                         </div>
                       </>
                     ) : null}
@@ -1460,6 +1672,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
+                    disabled={!sectionDirty || !!savingSection}
                     onSave={() => handleSave("tax")}
                     onCancel={() => handleCancel("tax")}
                   />
@@ -1487,6 +1700,38 @@ export default function CompanySettings() {
                           }
                           className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                         />
+                        {sectionErrors[`prefix_${doc.key}`] ? (
+                          <p className="mt-1 text-xs text-rose-600">{sectionErrors[`prefix_${doc.key}`]}</p>
+                        ) : null}
+                      </FormField>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {[
+                      { key: "invoice", label: "Invoice Counter" },
+                      { key: "purchase", label: "Purchase Counter" },
+                      { key: "creditNote", label: "Credit Note Counter" },
+                      { key: "debitNote", label: "Debit Note Counter" }
+                    ].map((entry) => (
+                      <FormField key={entry.key} label={entry.label}>
+                        <input
+                          type="number"
+                          min={1}
+                          value={settings.numbering.counters?.[entry.key] || 1}
+                          onChange={(event) =>
+                            updateSection("numbering", {
+                              counters: {
+                                ...(settings.numbering.counters || {}),
+                                [entry.key]: Math.max(1, Number(event.target.value || 1))
+                              }
+                            })
+                          }
+                          className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                        />
+                        {sectionErrors[`counter_${entry.key}`] ? (
+                          <p className="mt-1 text-xs text-rose-600">{sectionErrors[`counter_${entry.key}`]}</p>
+                        ) : null}
                       </FormField>
                     ))}
                   </div>
@@ -1616,6 +1861,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
+                    disabled={!sectionDirty || !!savingSection}
                     onSave={() => handleSave("numbering")}
                     onCancel={() => handleCancel("numbering")}
                   />
@@ -1687,6 +1933,9 @@ export default function CompanySettings() {
                           className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                         />
                       </div>
+                      {sectionErrors.primaryColor ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.primaryColor}</p>
+                      ) : null}
                     </FormField>
 
                     <FormField label="Accent Color">
@@ -1707,6 +1956,9 @@ export default function CompanySettings() {
                           className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                         />
                       </div>
+                      {sectionErrors.accentColor ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.accentColor}</p>
+                      ) : null}
                     </FormField>
                   </div>
 
@@ -1743,6 +1995,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
+                    disabled={!sectionDirty || !!savingSection}
                     onSave={() => handleSave("theme")}
                     onCancel={() => handleCancel("theme")}
                   />
@@ -1787,6 +2040,9 @@ export default function CompanySettings() {
                           </option>
                         ))}
                       </select>
+                      {sectionErrors.templateId ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.templateId}</p>
+                      ) : null}
                     </FormField>
 
                     <FormField label="Font">
@@ -1805,6 +2061,9 @@ export default function CompanySettings() {
                           </option>
                         ))}
                       </select>
+                      {sectionErrors.fontFamily ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.fontFamily}</p>
+                      ) : null}
                     </FormField>
 
                     <FormField label="Background Color">
@@ -1853,6 +2112,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
+                    disabled={!sectionDirty || !!savingSection}
                     onSave={() => handleSave("invoiceTemplate")}
                     onCancel={() => handleCancel("invoiceTemplate")}
                   />
@@ -1885,6 +2145,7 @@ export default function CompanySettings() {
                                 <input
                                   type="checkbox"
                                   checked={settings.users.roles[role]?.[permission.key] || false}
+                                  disabled={!canManageUsers}
                                   onChange={(event) =>
                                     updatePermission(role, permission.key, event.target.checked)
                                   }
@@ -1975,21 +2236,27 @@ export default function CompanySettings() {
 
                       <div className="rounded-2xl border border-slate-200 bg-white p-4">
                         <p className="text-sm font-semibold text-slate-900">Invite User</p>
+                        {!canManageUsers ? (
+                          <p className="mt-1 text-xs text-slate-500">Only Owner can invite team members.</p>
+                        ) : null}
                         <div className="mt-3 space-y-2">
                           <input
                             value={invite.name}
+                            disabled={!canManageUsers}
                             onChange={(event) => setInvite((prev) => ({ ...prev, name: event.target.value }))}
                             placeholder="Full name"
                             className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                           />
                           <input
                             value={invite.email}
+                            disabled={!canManageUsers}
                             onChange={(event) => setInvite((prev) => ({ ...prev, email: event.target.value }))}
                             placeholder="Email address"
                             className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                           />
                           <select
                             value={invite.role}
+                            disabled={!canManageUsers}
                             onChange={(event) => setInvite((prev) => ({ ...prev, role: event.target.value }))}
                             className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
                           >
@@ -2001,8 +2268,12 @@ export default function CompanySettings() {
                           </select>
                           <button
                             type="button"
+                            disabled={!canManageUsers}
                             onClick={handleInvite}
-                            className="w-full rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white"
+                            className={clsx(
+                              "w-full rounded-full px-4 py-2 text-xs font-semibold text-white",
+                              canManageUsers ? "bg-slate-900" : "bg-slate-400"
+                            )}
                           >
                             Send Invite
                           </button>
@@ -2026,6 +2297,7 @@ export default function CompanySettings() {
                               <div className="mt-2 flex flex-wrap items-center gap-2">
                                 <select
                                   value={member.role}
+                                  disabled={!canManageUsers}
                                   onChange={(event) => updateUser(member.id, { role: event.target.value })}
                                   className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs"
                                 >
@@ -2037,12 +2309,16 @@ export default function CompanySettings() {
                                 </select>
                                 <button
                                   type="button"
+                                  disabled={!canManageUsers}
                                   onClick={() =>
                                     updateUser(member.id, {
                                       status: member.status === "Active" ? "Inactive" : "Active"
                                     })
                                   }
-                                  className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600"
+                                  className={clsx(
+                                    "rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold",
+                                    canManageUsers ? "text-slate-600" : "cursor-not-allowed text-slate-400"
+                                  )}
                                 >
                                   {member.status === "Active" ? "Deactivate" : "Activate"}
                                 </button>
@@ -2056,6 +2332,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
+                    disabled={!sectionDirty || !!savingSection}
                     onSave={() => handleSave("users")}
                     onCancel={() => handleCancel("users")}
                   />
@@ -2131,6 +2408,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
+                    disabled={!sectionDirty || !!savingSection}
                     onSave={() => handleSave("preferences")}
                     onCancel={() => handleCancel("preferences")}
                   />
