@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+
+    "deploy": "npm run build && wrangler pages deploy dist --branch=main && start https://twitebilling.pages.dev",
+
     "test:tax": "node tests/taxLogic.test.mjs",
     "test:customer-tax": "node tests/customerTaxValidation.test.mjs",
     "test:item-form-rules": "node tests/itemFormRules.test.mjs"
