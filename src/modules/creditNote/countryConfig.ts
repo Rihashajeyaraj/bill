@@ -187,5 +187,3 @@ export const STATUS_FLOW: Record<CreditStatus, CreditStatus[]> = {
   Issued: ["Issued", "Applied"],
   Applied: ["Applied"]
 };
-
-export const CREDIT_REASONS = ["Return", "Discount", "Error"];

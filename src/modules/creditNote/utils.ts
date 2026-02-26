@@ -1,4 +1,4 @@
-import { CREDIT_REASONS, COUNTRY_CONFIG, type CountryCode } from "./countryConfig";
+import { COUNTRY_CONFIG, type CountryCode } from "./countryConfig";
 import type { CreditLineDraft, CreditNoteRecord, CreditInvoice } from "./store";
 import type { CreditNoteFormState } from "./types";
 
@@ -32,7 +32,7 @@ export function defaultForm(country: CountryCode, company: any): CreditNoteFormS
     customerId: "",
     customerInput: "",
     linkedInvoiceId: "",
-    reason: CREDIT_REASONS[0],
+    reason: "",
     creditType: "Full Credit",
     taxRate: COUNTRY_CONFIG[country].defaultTaxRate,
     placeOfSupply: "",

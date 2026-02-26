@@ -180,5 +180,3 @@ export const STATUS_FLOW: Record<DebitStatus, DebitStatus[]> = {
   Issued: ["Issued", "Applied"],
   Applied: ["Applied"]
 };
-
-export const DEBIT_REASONS = ["Price Increase", "Shortage", "Tax Adjustment", "Charges"];

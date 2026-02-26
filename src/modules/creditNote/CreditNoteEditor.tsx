@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Loader2, Save, Search, X } from "lucide-react";
-import { CREDIT_REASONS, COUNTRY_CONFIG, type CountryCode, type CreditStatus, type CreditType } from "./countryConfig";
+import { COUNTRY_CONFIG, type CountryCode, type CreditStatus, type CreditType } from "./countryConfig";
 import type { CreditInvoice, CreditNoteRecord, CustomerOption } from "./store";
 import type { CreditNoteFormState } from "./types";
 import { formatMoney, parseNumber } from "./utils";
@@ -527,9 +527,12 @@ export default function CreditNoteEditor({
             <div className="mt-2.5 grid grid-cols-1 gap-2.5 md:grid-cols-2">
               <label className="text-xs font-semibold text-slate-600">
                 Reason
-                <select value={form.reason} onChange={(event) => onUpdateForm("reason", event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                  {CREDIT_REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
-                </select>
+                <input
+                  type="text"
+                  value={form.reason}
+                  onChange={(event) => onUpdateForm("reason", event.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                />
               </label>
               <div className="text-xs text-slate-600">
                 <p className="font-semibold">Audit Trail</p>

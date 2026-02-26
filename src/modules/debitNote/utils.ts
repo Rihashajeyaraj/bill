@@ -1,4 +1,4 @@
-import { DEBIT_REASONS, COUNTRY_CONFIG, type CountryCode } from "./countryConfig";
+import { COUNTRY_CONFIG, type CountryCode } from "./countryConfig";
 import type { DebitLineDraft, DebitNoteRecord, PurchaseInvoice } from "./store";
 import type { DebitNoteFormState } from "./types";
 
@@ -32,7 +32,7 @@ export function defaultForm(country: CountryCode, company: any): DebitNoteFormSt
     supplierId: "",
     supplierInput: "",
     linkedPurchaseInvoiceId: "",
-    reason: DEBIT_REASONS[0],
+    reason: "",
     debitType: "Full Debit",
     taxRate: COUNTRY_CONFIG[country].defaultTaxRate,
     placeOfSupply: "",

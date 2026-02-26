@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Loader2, Save, Search, X } from "lucide-react";
-import { COUNTRY_CONFIG, DEBIT_REASONS, type CountryCode, type DebitStatus, type DebitType } from "./countryConfig";
+import { COUNTRY_CONFIG, type CountryCode, type DebitStatus, type DebitType } from "./countryConfig";
 import type { PurchaseInvoice, DebitNoteRecord, SupplierOption } from "./store";
 import type { DebitNoteFormState } from "./types";
 import { formatMoney, parseNumber } from "./utils";
@@ -532,9 +532,12 @@ export default function DebitNoteEditor({
             <div className="mt-2.5 grid grid-cols-1 gap-2.5 md:grid-cols-2">
               <label className="text-xs font-semibold text-slate-600">
                 Reason
-                <select value={form.reason} onChange={(event) => onUpdateForm("reason", event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                  {DEBIT_REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
-                </select>
+                <input
+                  type="text"
+                  value={form.reason}
+                  onChange={(event) => onUpdateForm("reason", event.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                />
               </label>
               <div className="text-xs text-slate-600">
                 <p className="font-semibold">Audit Trail</p>
