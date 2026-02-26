@@ -456,6 +456,23 @@ create trigger trg_expenses_updated_at
 before update on public.expenses
 for each row execute procedure public.set_updated_at();
 
+create table if not exists public.expense_categories (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  name text not null,
+  normalized_name text not null,
+  is_active boolean not null default true,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists idx_expense_categories_org_id on public.expense_categories(organization_id);
+create unique index if not exists idx_expense_categories_org_name_unique
+  on public.expense_categories(organization_id, normalized_name);
+create trigger trg_expense_categories_updated_at
+before update on public.expense_categories
+for each row execute procedure public.set_updated_at();
+
 create table if not exists public.activity_logs (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
@@ -593,6 +610,25 @@ $$;
 
 grant execute on function public.consume_invite_code(text, uuid, public.organization_role) to authenticated;
 
+create or replace function public.dashboard_expense_summary(p_organization_id uuid)
+returns table(category text, total numeric)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    coalesce(nullif(trim(e.category), ''), 'Uncategorized') as category,
+    coalesce(sum(coalesce(e.amount, 0)), 0)::numeric as total
+  from public.expenses e
+  where e.organization_id = p_organization_id
+    and public.current_user_is_org_member(p_organization_id)
+  group by 1
+  order by total desc;
+$$;
+
+grant execute on function public.dashboard_expense_summary(uuid) to authenticated;
+
 create or replace function public.ensure_owner_membership(p_organization_id uuid)
 returns void
 language plpgsql
@@ -715,6 +751,7 @@ alter table public.debit_notes enable row level security;
 alter table public.debit_note_items enable row level security;
 alter table public.payments enable row level security;
 alter table public.expenses enable row level security;
+alter table public.expense_categories enable row level security;
 alter table public.activity_logs enable row level security;
 alter table public.credit_monitor_notifications enable row level security;
 
@@ -873,6 +910,12 @@ with check (public.current_user_is_org_member(organization_id));
 
 create policy "expenses_member_access"
 on public.expenses for all
+to authenticated
+using (public.current_user_is_org_member(organization_id))
+with check (public.current_user_is_org_member(organization_id));
+
+create policy "expense_categories_member_access"
+on public.expense_categories for all
 to authenticated
 using (public.current_user_is_org_member(organization_id))
 with check (public.current_user_is_org_member(organization_id));

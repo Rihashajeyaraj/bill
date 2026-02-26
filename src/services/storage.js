@@ -18,6 +18,7 @@ export const LS_KEYS = {
   purchases: "purchases",
   payments: "payments",
   expenses: "expenses",
+  expense_categories: "expense_categories",
   app_notifications: "app_notifications",
   credit_notifications: "credit_notifications",
   activity_logs: "activity_logs",

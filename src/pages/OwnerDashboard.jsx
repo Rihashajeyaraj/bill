@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowDownCircle,
   ArrowUpCircle,
@@ -13,6 +13,7 @@ import Card from "../components/Card";
 import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
 import { purchasesList, purchasesSyncFromRemote } from "../services/purchases.service";
 import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
+import { EXPENSES_CHANGED_EVENT, getDashboardExpenseSummary } from "../services/expenses.service";
 import { mapOpenBillsByCountry } from "../modules/paymentOut/store";
 import { fetchPartiesCount } from "../modules/parties/store";
 import { useOrganization } from "../context/OrganizationContext";
@@ -28,6 +29,7 @@ import {
   Cell
 } from "recharts";
 import { beginPageLoading, endPageLoading } from "../state/pageLoadingStore";
+import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../services/storage";
 
 function money(n) {
   const v = Number(n || 0);
@@ -62,30 +64,43 @@ export default function Dashboard() {
   const [invoices, setInvoices] = useState(() => invoicesList());
   const [purchases, setPurchases] = useState(() => purchasesList());
   const [payments, setPayments] = useState(() => paymentsList());
+  const [expenseCategorySummary, setExpenseCategorySummary] = useState([]);
   const [partyCounts, setPartyCounts] = useState({ total: 0, customers: 0, suppliers: 0 });
   const [donutTab, setDonutTab] = useState("income");
+
+  const refreshExpenseSummary = useCallback(async () => {
+    try {
+      const summary = await getDashboardExpenseSummary();
+      setExpenseCategorySummary(Array.isArray(summary) ? summary : []);
+    } catch {
+      setExpenseCategorySummary([]);
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
     async function syncDashboardData() {
       try {
-        const [syncedInvoices, syncedPurchases, syncedPayments, counts] = await Promise.all([
+        const [syncedInvoices, syncedPurchases, syncedPayments, counts, summary] = await Promise.all([
           invoicesSyncFromRemote(),
           purchasesSyncFromRemote(),
           paymentsSyncFromRemote(),
-          fetchPartiesCount()
+          fetchPartiesCount(),
+          getDashboardExpenseSummary()
         ]);
         if (!mounted) return;
         setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
         setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList());
         setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList());
         setPartyCounts(counts || { total: 0, customers: 0, suppliers: 0 });
+        setExpenseCategorySummary(Array.isArray(summary) ? summary : []);
       } catch {
         if (!mounted) return;
         setInvoices(invoicesList());
         setPurchases(purchasesList());
         setPayments(paymentsList());
         setPartyCounts({ total: 0, customers: 0, suppliers: 0 });
+        setExpenseCategorySummary([]);
       }
     }
     syncDashboardData();
@@ -94,12 +109,31 @@ export default function Dashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    function handleExpenseChange() {
+      void refreshExpenseSummary();
+    }
+
+    function handleStorage(event) {
+      if (!isOrganizationScopedStorageEventKey(LS_KEYS.expenses, event?.key)) return;
+      void refreshExpenseSummary();
+    }
+
+    window.addEventListener(EXPENSES_CHANGED_EVENT, handleExpenseChange);
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener(EXPENSES_CHANGED_EVENT, handleExpenseChange);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [refreshExpenseSummary]);
+
   const currencyPrefix = currency ? `${currency} ` : "";
   const currencyBadge = currency.slice(0, 3).toUpperCase();
 
   const totals = useMemo(() => {
     const sales = invoices.reduce((a, x) => a + Number(x?.totals?.grandTotal || 0), 0);
     const purchase = purchases.reduce((a, x) => a + Number(x?.totals?.grandTotal || 0), 0);
+    const totalExpense = expenseCategorySummary.reduce((sum, entry) => sum + Number(entry?.total || 0), 0);
     const payables = mapOpenBillsByCountry().reduce((sum, bill) => sum + Number(bill?.balanceDue || 0), 0);
 
     const received = payments.filter((p) => p.direction === "IN").reduce((a, x) => a + Number(x.amount || 0), 0);
@@ -150,9 +184,10 @@ export default function Dashboard() {
       overdueAmount: Math.max(0, overdueAmount),
       expenses: purchase,
       received,
-      paid
+      paid,
+      totalExpense: Math.max(0, totalExpense)
     };
-  }, [invoices, purchases, payments]);
+  }, [invoices, purchases, payments, expenseCategorySummary]);
 
   const chart = useMemo(() => {
     const months = buildMonthLabels();
@@ -177,13 +212,10 @@ export default function Dashboard() {
 
   const donutData = useMemo(() => {
     if (donutTab === "expense") {
-      return [
-        { name: "Rent", value: 42 },
-        { name: "Salaries", value: 28 },
-        { name: "Transport", value: 12 },
-        { name: "Utilities", value: 10 },
-        { name: "Misc", value: 8 }
-      ];
+      return expenseCategorySummary.map((entry) => ({
+        name: entry?.category || "Uncategorized",
+        value: Number(entry?.total || 0)
+      }));
     }
     return [
       { name: "Interest Income", value: 38 },
@@ -192,9 +224,10 @@ export default function Dashboard() {
       { name: "Commission Income", value: 17 },
       { name: "Bad debts recovery", value: 12 }
     ];
-  }, [donutTab]);
+  }, [donutTab, expenseCategorySummary]);
 
   const donutColors = ["#ff6b6b", "#f6c453", "#4caf50", "#8e8e93", "#3b82f6"];
+  const isExpenseDonutEmpty = donutTab === "expense" && donutData.length === 0;
 
   return (
     <div className="dashboard-theme max-w-6xl">
@@ -358,28 +391,38 @@ export default function Dashboard() {
           <div className="mt-4 h-[180px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie
-                  data={donutData}
-                  dataKey="value"
-                  innerRadius={55}
-                  outerRadius={85}
-                  paddingAngle={2}
-                >
-                  {donutData.map((entry, idx) => (
-                    <Cell key={entry.name} fill={donutColors[idx % donutColors.length]} />
-                  ))}
-                </Pie>
+                {isExpenseDonutEmpty ? (
+                  <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" fill="#64748b" fontSize={14}>
+                    No Expense Data
+                  </text>
+                ) : (
+                  <Pie
+                    data={donutData}
+                    dataKey="value"
+                    innerRadius={55}
+                    outerRadius={85}
+                    paddingAngle={2}
+                  >
+                    {donutData.map((entry, idx) => (
+                      <Cell key={entry.name} fill={donutColors[idx % donutColors.length]} />
+                    ))}
+                  </Pie>
+                )}
               </PieChart>
             </ResponsiveContainer>
           </div>
 
           <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
-            {donutData.map((item, idx) => (
-              <span key={item.name} className="inline-flex items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ background: donutColors[idx % donutColors.length] }} />
-                {item.name}
-              </span>
-            ))}
+            {isExpenseDonutEmpty ? (
+              <span>No Expense Data</span>
+            ) : (
+              donutData.map((item, idx) => (
+                <span key={item.name} className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: donutColors[idx % donutColors.length] }} />
+                  {item.name}
+                </span>
+              ))
+            )}
           </div>
         </Card>
       </div>
@@ -429,7 +472,7 @@ export default function Dashboard() {
           </div>
           <div>
             <p className="text-xs text-slate-500">Expense</p>
-            <p className="text-sm font-semibold text-slate-700">{currencyPrefix}{money(totals.paid)}</p>
+            <p className="text-sm font-semibold text-slate-700">{currencyPrefix}{money(totals.totalExpense)}</p>
           </div>
         </Card>
       </div>
