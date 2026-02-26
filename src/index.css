@@ -6,8 +6,17 @@ html, body {
   height: 100%;
 }
 
+body, #root {
+  min-height: 100%;
+}
+
+html {
+  font-size: var(--font-size-base, 16px);
+}
+
 body {
   margin: 0;
+  overflow-x: hidden;
   background: var(--bg, #f6faf8);
   color: var(--text, #14221d);
   font-family: var(--app-font-family, "Inter", "Helvetica Neue", Arial, sans-serif);
@@ -68,6 +77,27 @@ body {
 
 * {
   -webkit-tap-highlight-color: transparent;
+}
+
+.theme-root,
+.app-shell,
+.app-main {
+  min-width: 0;
+}
+
+.theme-root img {
+  max-width: 100%;
+}
+
+.theme-root .overflow-x-auto,
+.theme-root .overflow-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 1023px) {
+  .app-main {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom)) !important;
+  }
 }
 
 @layer components {

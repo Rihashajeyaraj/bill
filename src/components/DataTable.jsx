@@ -4,12 +4,12 @@ import Card from "./Card";
 export default function DataTable({ columns, rows, emptyText = "No data" }) {
   return (
     <Card className="overflow-hidden">
-      <div className="overflow-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50">
+      <div className="overflow-x-auto">
+        <table className="app-table min-w-[640px] w-full text-left text-sm">
+          <thead>
             <tr>
               {columns.map((c) => (
-                <th key={c.key} className="px-4 py-3 font-semibold text-slate-700 whitespace-nowrap">
+                <th key={c.key} className="whitespace-nowrap font-semibold">
                   {c.header}
                 </th>
               ))}
@@ -18,15 +18,15 @@ export default function DataTable({ columns, rows, emptyText = "No data" }) {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td className="px-4 py-6 text-slate-500" colSpan={columns.length}>
+                <td colSpan={columns.length}>
                   {emptyText}
                 </td>
               </tr>
             ) : (
               rows.map((r, idx) => (
-                <tr key={r.id || idx} className="border-t border-slate-100 hover:bg-slate-50/60">
+                <tr key={r.id || idx}>
                   {columns.map((c) => (
-                    <td key={c.key} className="px-4 py-3 text-slate-700 whitespace-nowrap">
+                    <td key={c.key} className="whitespace-nowrap">
                       {typeof c.render === "function" ? c.render(r) : r[c.key]}
                     </td>
                   ))}

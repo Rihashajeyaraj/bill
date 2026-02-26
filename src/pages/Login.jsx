@@ -220,7 +220,7 @@ export default function Login() {
                 <>
                   <label className="block">
                     <span className="auth-label text-xs font-semibold">Email</span>
-                    <div className="mt-2 relative">
+                    <div className="auth-input-wrap mt-2 relative">
                       <Mail className="auth-input-icon absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2" />
                       <input
                         value={loginForm.email}
@@ -233,7 +233,7 @@ export default function Login() {
 
                   <label className="block">
                     <span className="auth-label text-xs font-semibold">Password</span>
-                    <div className="mt-2 relative">
+                    <div className="auth-input-wrap mt-2 relative">
                       <LockKeyhole className="auth-input-icon absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2" />
                       <input
                         value={loginForm.password}
@@ -268,7 +268,7 @@ export default function Login() {
                 <>
                   <label className="block">
                     <span className="auth-label text-xs font-semibold">Full Name (optional)</span>
-                    <div className="mt-2 relative">
+                    <div className="auth-input-wrap mt-2 relative">
                       <User className="auth-input-icon absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2" />
                       <input
                         value={signupForm.name}
@@ -281,7 +281,7 @@ export default function Login() {
 
                   <label className="block">
                     <span className="auth-label text-xs font-semibold">Email</span>
-                    <div className="mt-2 relative">
+                    <div className="auth-input-wrap mt-2 relative">
                       <Mail className="auth-input-icon absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2" />
                       <input
                         value={signupForm.email}
@@ -294,7 +294,7 @@ export default function Login() {
 
                   <label className="block">
                     <span className="auth-label text-xs font-semibold">Password</span>
-                    <div className="mt-2 relative">
+                    <div className="auth-input-wrap mt-2 relative">
                       <LockKeyhole className="auth-input-icon absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2" />
                       <input
                         value={signupForm.password}
@@ -308,7 +308,7 @@ export default function Login() {
 
                   <label className="block">
                     <span className="auth-label text-xs font-semibold">Confirm Password</span>
-                    <div className="mt-2 relative">
+                    <div className="auth-input-wrap mt-2 relative">
                       <LockKeyhole className="auth-input-icon absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2" />
                       <input
                         value={signupForm.confirmPassword}

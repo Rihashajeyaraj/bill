@@ -2,119 +2,113 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { THEME_PRESETS, findThemePresetById } from "../components/theme/themePresets";
 import { LS_KEYS } from "../services/storage";
 import { companyGetProfile, ORGANIZATION_UPDATED_EVENT } from "../services/company.service";
-import {
-  applyFontToDocument,
-  applyThemeOverridesToDocument,
-  applyThemeToDocument,
-  buildThemeConfig,
-  normalizeThemeOverrides,
-  readStoredFontFamily,
-  readStoredThemeId,
-  resolveThemePreset,
-  themeModeFromPreset
-} from "../theme/runtimeTheme";
 import { APP_FONT_OPTIONS, resolveAppFont } from "../theme/fontPresets";
+import {
+  THEME_APPEARANCE_PRESETS,
+  applyThemeAppearanceToDocument,
+  buildThemeConfig,
+  normalizeThemeAppearance,
+  normalizeThemeOverrides,
+  readStoredThemeAppearance,
+  resolveThemePreset
+} from "../theme/runtimeTheme";
 
 const ThemeContext = createContext(null);
 
 const SUPPORTED_THEME_IDS = THEME_PRESETS.map((preset) => preset.id);
-const DEFAULT_THEME_ID = "focus-mint";
-
-function isSupportedTheme(themeId) {
-  return SUPPORTED_THEME_IDS.includes(themeId);
-}
 
 function normalizeThemeId(themeId) {
   if (!themeId || typeof themeId !== "string") return null;
-  return isSupportedTheme(themeId) ? themeId : null;
+  return SUPPORTED_THEME_IDS.includes(themeId) ? themeId : null;
 }
 
-function getThemeMode(themeId) {
-  return themeModeFromPreset(resolveThemePreset(themeId));
+function extractProfileThemeAppearance() {
+  const settings = companyGetProfile()?.settings || {};
+  const themeConfig =
+    settings.theme_config && typeof settings.theme_config === "object" ? settings.theme_config : null;
+  const legacyTheme = settings.theme && typeof settings.theme === "object" ? settings.theme : null;
+
+  if (!themeConfig && !legacyTheme) return null;
+
+  const legacyMode = String(legacyTheme?.mode || "").trim().toLowerCase() === "dark" ? "dark" : "light";
+  return normalizeThemeAppearance({
+    ...(themeConfig || {}),
+    mode: themeConfig?.mode || legacyMode,
+    primaryColor: themeConfig?.primaryColor || legacyTheme?.primaryColor,
+    accentColor: themeConfig?.accentColor || legacyTheme?.accentColor,
+    fontFamily: themeConfig?.fontFamily || APP_FONT_OPTIONS[0]
+  });
 }
 
-function readInitialThemeId() {
-  if (typeof window === "undefined") return DEFAULT_THEME_ID;
-  const stored = normalizeThemeId(readStoredThemeId());
-  return stored || DEFAULT_THEME_ID;
-}
-
-function readStoredThemeOverrides() {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(LS_KEYS.theme_overrides);
-    if (!raw) return null;
-    return normalizeThemeOverrides(JSON.parse(raw));
-  } catch {
-    return null;
-  }
-}
-
-function readProfileThemeOverrides() {
-  return normalizeThemeOverrides(companyGetProfile()?.settings?.theme || null);
+function mergeAndNormalize(prevState, patch) {
+  const nextPatch = typeof patch === "function" ? patch(prevState) : patch;
+  return normalizeThemeAppearance({ ...(prevState || {}), ...(nextPatch || {}) });
 }
 
 export function ThemeProvider({ children }) {
-  const [theme, setThemeState] = useState(readInitialThemeId);
-  const [fontFamily, setFontFamilyState] = useState(readStoredFontFamily);
-  const [themeOverrides, setThemeOverridesState] = useState(
-    () => readStoredThemeOverrides() || readProfileThemeOverrides()
-  );
+  const [themeAppearance, setThemeAppearanceState] = useState(() => readStoredThemeAppearance());
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mode = getThemeMode(theme);
-    localStorage.setItem(LS_KEYS.theme_preset, theme);
-    localStorage.setItem(LS_KEYS.theme_mode, mode);
-    applyThemeToDocument(theme);
-    applyThemeOverridesToDocument(themeOverrides);
-  }, [theme, themeOverrides]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(LS_KEYS.app_font_family, fontFamily);
-    applyFontToDocument(fontFamily);
-  }, [fontFamily]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!themeOverrides) {
-      localStorage.removeItem(LS_KEYS.theme_overrides);
-      return;
-    }
-    localStorage.setItem(LS_KEYS.theme_overrides, JSON.stringify(themeOverrides));
-  }, [themeOverrides]);
+  const setThemeConfig = useCallback((patch) => {
+    setThemeAppearanceState((prev) => mergeAndNormalize(prev, patch));
+  }, []);
 
   const setTheme = useCallback((themeId) => {
     const nextTheme = normalizeThemeId(themeId);
     if (!nextTheme) return;
-    setThemeState(nextTheme);
-  }, []);
+    const preset = resolveThemePreset(nextTheme);
+    setThemeConfig((prev) => ({
+      ...prev,
+      themePresetId: preset.id,
+      mode: preset.mode === "Dark" ? "dark" : "light",
+      primaryColor: preset.primaryColor,
+      accentColor: preset.accentColor
+    }));
+  }, [setThemeConfig]);
 
   const setThemeOverrides = useCallback((overrides) => {
     const normalized = normalizeThemeOverrides(overrides);
-    setThemeOverridesState(normalized);
-  }, []);
+    if (!normalized) return;
+    setThemeConfig(normalized);
+  }, [setThemeConfig]);
 
   const setFont = useCallback((fontName) => {
-    const nextFont = resolveAppFont(fontName);
-    setFontFamilyState(nextFont);
-  }, []);
+    setThemeConfig({ fontFamily: resolveAppFont(fontName) });
+  }, [setThemeConfig]);
 
   const toggleTheme = useCallback(() => {
-    setThemeState((prevTheme) => (getThemeMode(prevTheme) === "dark" ? "focus-mint" : "task-ink"));
-  }, []);
+    setThemeConfig((prev) => ({ mode: prev.mode === "dark" ? "light" : "dark" }));
+  }, [setThemeConfig]);
+
+  const applyAppearancePreset = useCallback((presetId) => {
+    const preset = THEME_APPEARANCE_PRESETS.find((entry) => entry.id === presetId);
+    if (!preset) return;
+    setThemeConfig(preset);
+  }, [setThemeConfig]);
 
   useEffect(() => {
+    const normalized = normalizeThemeAppearance(themeAppearance);
+    applyThemeAppearanceToDocument(normalized);
+
+    if (typeof window !== "undefined") {
+      localStorage.setItem(LS_KEYS.theme_config, JSON.stringify(normalized));
+      localStorage.setItem(LS_KEYS.theme_preset, normalized.themePresetId);
+      localStorage.setItem(LS_KEYS.theme_mode, normalized.mode);
+      localStorage.setItem(LS_KEYS.theme_overrides, JSON.stringify({
+        mode: normalized.mode,
+        primaryColor: normalized.primaryColor,
+        accentColor: normalized.accentColor
+      }));
+      localStorage.setItem(LS_KEYS.app_font_family, normalized.fontFamily);
+    }
+  }, [themeAppearance]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
     function hydrateFromOrganizationProfile() {
-      const profileTheme = readProfileThemeOverrides();
+      const profileTheme = extractProfileThemeAppearance();
       if (!profileTheme) return;
-      setThemeOverridesState(profileTheme);
-      setThemeState((prevTheme) => {
-        const currentMode = getThemeMode(prevTheme);
-        if (currentMode === profileTheme.mode) return prevTheme;
-        return profileTheme.mode === "dark" ? "task-ink" : "focus-mint";
-      });
+      setThemeAppearanceState(profileTheme);
     }
 
     hydrateFromOrganizationProfile();
@@ -122,28 +116,39 @@ export function ThemeProvider({ children }) {
     return () => window.removeEventListener(ORGANIZATION_UPDATED_EVENT, hydrateFromOrganizationProfile);
   }, []);
 
-  const value = useMemo(
-    () => ({
-      theme,
-      currentTheme: theme,
-      themeMode: getThemeMode(theme),
-      isDark: getThemeMode(theme) === "dark",
-      themeConfig: buildThemeConfig(theme),
+  const value = useMemo(() => {
+    const themePresetId = themeAppearance.themePresetId;
+    const themeMode = themeAppearance.mode;
+    const currentTheme = themePresetId;
+    const themePreset = findThemePresetById(themePresetId);
+    return {
+      theme: themePresetId,
+      currentTheme,
+      themePresetId,
+      themePreset,
+      themeMode,
+      isDark: themeMode === "dark",
+      themeConfig: buildThemeConfig(themePresetId),
+      themeAppearance,
       themes: THEME_PRESETS.filter((preset) => SUPPORTED_THEME_IDS.includes(preset.id)),
-      fontFamily,
-      font: fontFamily,
-      setFont,
+      fontFamily: themeAppearance.fontFamily,
+      font: themeAppearance.fontFamily,
       fontOptions: APP_FONT_OPTIONS,
+      themeOverrides: {
+        mode: themeAppearance.mode,
+        primaryColor: themeAppearance.primaryColor,
+        accentColor: themeAppearance.accentColor
+      },
+      appearancePresets: THEME_APPEARANCE_PRESETS,
       setTheme,
-      themeOverrides,
+      setThemePreset: setTheme,
       setThemeOverrides,
+      setThemeConfig,
+      setFont,
       toggleTheme,
-      themePresetId: theme,
-      themePreset: findThemePresetById(theme),
-      setThemePreset: setTheme
-    }),
-    [theme, setTheme, themeOverrides, setThemeOverrides, toggleTheme, fontFamily, setFont]
-  );
+      applyAppearancePreset
+    };
+  }, [themeAppearance, setTheme, setThemeOverrides, setThemeConfig, setFont, toggleTheme, applyAppearancePreset]);
 
   return (
     <ThemeContext.Provider value={value}>

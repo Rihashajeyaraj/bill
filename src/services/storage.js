@@ -7,6 +7,7 @@ export const LS_KEYS = {
   theme_mode: "theme_mode",
   theme_preset: "theme_preset",
   theme_overrides: "theme_overrides",
+  theme_config: "theme_config",
   app_font_family: "app_font_family",
   company_profile: "company_profile",
   companyProfileCompleted: "companyProfileCompleted",

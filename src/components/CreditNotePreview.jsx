@@ -226,7 +226,9 @@ function amountInWords(total, currency) {
 export default function CreditNotePreview({ templateId, styleConfig, noteData }) {
   const variant = VARIANTS[templateId] || VARIANTS.standard;
   const { primaryColor, bgColor, fontFamily, logoUrl, logoPosition } = styleConfig || {};
-  const font = `${fontFamily || "Inter"}, "Helvetica Neue", Arial, sans-serif`;
+  const font = fontFamily
+    ? `"${fontFamily}", "Helvetica Neue", Arial, sans-serif`
+    : "var(--invoice-font-family, var(--app-font-family))";
   const title = noteData.title || "Credit Note";
   const logoPos = logoPosition || "left";
   const headerLayout =
@@ -245,8 +247,11 @@ export default function CreditNotePreview({ templateId, styleConfig, noteData })
 
   return (
     <div
-      className={clsx("credit-note-preview rounded-3xl border border-slate-100 shadow-soft", variant.padding)}
-      style={{ backgroundColor: bgColor || "#ffffff", fontFamily: font }}
+      className={clsx("invoice-template-scope credit-note-preview app-invoice-preview rounded-3xl border shadow-soft", variant.padding)}
+      style={{
+        backgroundColor: bgColor || "var(--card)",
+        "--invoice-font-family": font
+      }}
     >
       <div className={clsx(headerLayout, variant.header)}>
         {logoPos === "center" ? (
@@ -309,7 +314,7 @@ export default function CreditNotePreview({ templateId, styleConfig, noteData })
 
       <div className={clsx("mt-4", variant.divider)} />
 
-      <div className="mt-4 grid grid-cols-2 gap-6">
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
         <div>
           <p className={clsx("uppercase tracking-widest text-slate-400", variant.label)}>Seller</p>
           <p className={clsx("mt-2 font-semibold text-slate-900", variant.value)}>{seller.name || "-"}</p>
@@ -341,7 +346,7 @@ export default function CreditNotePreview({ templateId, styleConfig, noteData })
 
       <div className={clsx("mt-5", variant.divider)} />
 
-      <div className="mt-4 grid grid-cols-2 gap-6">
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
         <div>
           <p className={clsx("uppercase tracking-widest text-slate-400", variant.label)}>Reference Invoice</p>
           <p className={clsx("mt-2 text-slate-600", variant.value)}>
@@ -401,7 +406,7 @@ export default function CreditNotePreview({ templateId, styleConfig, noteData })
 
       <div className={clsx("mt-5", variant.divider)} />
 
-      <div className="mt-4 grid grid-cols-2 gap-6">
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
         <div>
           <p className={clsx("text-slate-500", variant.label)}>Amount in Words</p>
           <p className={clsx("mt-2 text-slate-600", variant.value)}>{totalWords}</p>

@@ -20,7 +20,6 @@ import {
   companySaveProfileRemote,
   companyUpdateProfile
 } from "../services/company.service";
-import { useTheme } from "../context/ThemeContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { UI } from "../theme/tokens";
 import { APP_FONT_OPTIONS } from "../theme/fontPresets";
@@ -158,7 +157,6 @@ function computePreviewTotals(preview) {
 
 export default function InvoiceTemplateSetup() {
   const nav = useNavigate();
-  const { setFont, fontFamily } = useTheme();
   const { profile: organizationProfile = {}, country = "India" } = useOrganization();
   const company = organizationProfile;
   const companyName = company?.companyName || FALLBACK_COMPANY;
@@ -227,14 +225,6 @@ export default function InvoiceTemplateSetup() {
       setConfig((prev) => ({ ...prev, templateId: countryTemplates[0].id }));
     }
   }, [countryTemplates, config.templateId]);
-
-  useEffect(() => {
-    if (!fontFamily) return;
-    setConfig((prev) => {
-      if (prev.fontFamily === fontFamily) return prev;
-      return { ...prev, fontFamily };
-    });
-  }, [fontFamily]);
 
   const demoInvoice = useMemo(() => computePreviewTotals(preview), [preview]);
 
@@ -329,7 +319,7 @@ export default function InvoiceTemplateSetup() {
                 {countryConfig.taxType}
               </span>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-3">
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               {countryTemplates.map((option) => {
                 const selected = config.templateId === option.id;
                 const hint =
@@ -426,7 +416,7 @@ export default function InvoiceTemplateSetup() {
 
           <div className="mt-5">
             <p className="text-sm font-semibold text-slate-900">Invoice Colors</p>
-            <div className="mt-3 grid grid-cols-2 gap-3">
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block">
                 <span className="text-xs text-slate-500">Background</span>
                 <input
@@ -455,7 +445,6 @@ export default function InvoiceTemplateSetup() {
               onChange={(e) => {
                 const nextFont = e.target.value;
                 updateConfig({ fontFamily: nextFont });
-                setFont(nextFont);
               }}
               className="mt-3 w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
               style={{ "--tw-ring-color": UI.COLORS.ring }}

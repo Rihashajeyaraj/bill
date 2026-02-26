@@ -46,6 +46,15 @@ import { isOwnerRole, normalizeRoleLabel } from "../services/roles";
 import { uid } from "../services/storage";
 import { UI } from "../theme/tokens";
 import { APP_FONT_OPTIONS } from "../theme/fontPresets";
+import {
+  FONT_SIZE_DEFAULT,
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  RADIUS_STYLE_OPTIONS,
+  SIDEBAR_STYLE_OPTIONS,
+  THEME_APPEARANCE_PRESETS,
+  UI_DENSITY_OPTIONS
+} from "../theme/runtimeTheme";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 import {
   DEFAULT_TEMPLATE_CONFIG,
@@ -152,6 +161,38 @@ const DEFAULT_ROLE_PERMISSIONS = {
   Accounter: { create: true, edit: true, delete: false, reports: true, approvals: false },
   Staff: { create: true, edit: false, delete: false, reports: false, approvals: false }
 };
+
+const RADIUS_LABELS = {
+  rounded: "Rounded",
+  "soft-rounded": "Soft Rounded",
+  square: "Square"
+};
+
+const DENSITY_LABELS = {
+  compact: "Compact",
+  comfortable: "Comfortable",
+  spacious: "Spacious"
+};
+
+const SIDEBAR_STYLE_LABELS = {
+  solid: "Solid",
+  glass: "Glass Blur",
+  gradient: "Gradient"
+};
+
+function normalizeThemeFontSizePx(value) {
+  const legacy = {
+    compact: 14,
+    default: 16,
+    large: 18
+  };
+  const key = String(value || "").trim().toLowerCase();
+  const parsed = Object.prototype.hasOwnProperty.call(legacy, key)
+    ? legacy[key]
+    : Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(parsed)) return FONT_SIZE_DEFAULT;
+  return Math.round(Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, parsed)));
+}
 
 function getCountryMeta(country) {
   if (COUNTRY_META[country]) return COUNTRY_META[country];
@@ -281,11 +322,40 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
   };
 
   const themeStored = stored.theme || {};
+  const themeConfigStored =
+    stored.theme_config && typeof stored.theme_config === "object" ? stored.theme_config : {};
+  const inferredPreset =
+    findThemePresetById(themeConfigStored.themePresetId) ||
+    findThemePresetBySettings({
+      mode: themeStored.mode || "Light",
+      invoiceTheme: themeStored.invoiceTheme || "Classic",
+      primaryColor: themeStored.primaryColor,
+      accentColor: themeStored.accentColor
+    }) ||
+    THEME_PRESETS[0];
+  const modeFromStored = String(themeConfigStored.mode || themeStored.mode || inferredPreset?.mode || "Light")
+    .trim()
+    .toLowerCase() === "dark"
+    ? "Dark"
+    : "Light";
+  const modeMatchedPreset =
+    inferredPreset?.mode === modeFromStored
+      ? inferredPreset
+      : findThemePresetById(modeFromStored === "Dark" ? "task-ink" : "focus-mint") || inferredPreset;
+  const themeFont = APP_FONT_OPTIONS.includes(themeConfigStored.fontFamily)
+    ? themeConfigStored.fontFamily
+    : APP_FONT_OPTIONS[0];
   const theme = {
-    mode: themeStored.mode || "Light",
-    primaryColor: themeStored.primaryColor || UI.COLORS.deepRed,
-    accentColor: themeStored.accentColor || UI.COLORS.blush,
-    invoiceTheme: themeStored.invoiceTheme || "Classic"
+    mode: modeFromStored,
+    primaryColor: themeConfigStored.primaryColor || themeStored.primaryColor || modeMatchedPreset?.primaryColor || "#0F766E",
+    accentColor: themeConfigStored.accentColor || themeStored.accentColor || modeMatchedPreset?.accentColor || "#14B8A6",
+    invoiceTheme: themeStored.invoiceTheme || modeMatchedPreset?.invoiceTheme || "Classic",
+    themePresetId: modeMatchedPreset?.id || "focus-mint",
+    fontFamily: themeFont,
+    fontSize: normalizeThemeFontSizePx(themeConfigStored.fontSize),
+    radiusStyle: RADIUS_STYLE_OPTIONS.includes(themeConfigStored.radiusStyle) ? themeConfigStored.radiusStyle : "soft-rounded",
+    density: UI_DENSITY_OPTIONS.includes(themeConfigStored.density) ? themeConfigStored.density : "comfortable",
+    sidebarStyle: SIDEBAR_STYLE_OPTIONS.includes(themeConfigStored.sidebarStyle) ? themeConfigStored.sidebarStyle : "solid"
   };
   const templateStored = stored.invoiceTemplate || {};
   const templateConfig = getInvoiceTemplateConfig();
@@ -351,8 +421,21 @@ function mapSettingsToProfile(settings) {
     currencies: settings.localization.currencies
   });
   const primaryCurrency = normalizedCurrencies[0] || "";
+  const normalizedThemeMode = String(settings.theme?.mode || "Light").trim().toLowerCase() === "dark" ? "dark" : "light";
+  const normalizedThemeConfig = {
+    themePresetId: settings.theme?.themePresetId || "focus-mint",
+    mode: normalizedThemeMode,
+    primaryColor: settings.theme?.primaryColor,
+    accentColor: settings.theme?.accentColor,
+    fontFamily: settings.theme?.fontFamily || APP_FONT_OPTIONS[0],
+    fontSize: normalizeThemeFontSizePx(settings.theme?.fontSize),
+    radiusStyle: settings.theme?.radiusStyle || "soft-rounded",
+    density: settings.theme?.density || "comfortable",
+    sidebarStyle: settings.theme?.sidebarStyle || "solid"
+  };
   const normalizedSettings = {
     ...settings,
+    theme_config: normalizedThemeConfig,
     localization: {
       ...settings.localization,
       currency: primaryCurrency,
@@ -608,6 +691,22 @@ function validateTheme(theme) {
   if (!/^#[0-9a-f]{6}$/i.test(String(theme?.accentColor || ""))) {
     errors.accentColor = "Accent color must be a valid hex code.";
   }
+  if (!APP_FONT_OPTIONS.includes(theme?.fontFamily)) {
+    errors.fontFamily = "Select a valid font family.";
+  }
+  const fontSizeValue = Number(theme?.fontSize);
+  if (!Number.isFinite(fontSizeValue) || fontSizeValue < FONT_SIZE_MIN || fontSizeValue > FONT_SIZE_MAX) {
+    errors.fontSize = `Font size must be between ${FONT_SIZE_MIN}px and ${FONT_SIZE_MAX}px.`;
+  }
+  if (!RADIUS_STYLE_OPTIONS.includes(theme?.radiusStyle)) {
+    errors.radiusStyle = "Select a valid button style.";
+  }
+  if (!UI_DENSITY_OPTIONS.includes(theme?.density)) {
+    errors.density = "Select a valid density option.";
+  }
+  if (!SIDEBAR_STYLE_OPTIONS.includes(theme?.sidebarStyle)) {
+    errors.sidebarStyle = "Select a valid sidebar style.";
+  }
   return errors;
 }
 
@@ -621,7 +720,14 @@ function validateInvoiceTemplate(config) {
 export default function CompanySettings() {
   const navigate = useNavigate();
   const toast = useToast();
-  const { setTheme, themePresetId, setFont, fontFamily, setThemeOverrides } = useTheme();
+  const {
+    setTheme,
+    themePresetId,
+    setFont,
+    fontFamily,
+    setThemeOverrides,
+    setThemeConfig
+  } = useTheme();
   const { profile: organizationProfile } = useOrganization();
   const currentProfile = organizationProfile || companyGetProfile();
   const currentUser = authGetUser();
@@ -651,21 +757,21 @@ export default function CompanySettings() {
   useEffect(() => {
     if (!fontFamily) return;
     setSettings((prev) => {
-      if (prev?.invoiceTemplate?.fontFamily === fontFamily) return prev;
+      if (prev?.theme?.fontFamily === fontFamily) return prev;
       return {
         ...prev,
-        invoiceTemplate: {
-          ...prev.invoiceTemplate,
+        theme: {
+          ...prev.theme,
           fontFamily
         }
       };
     });
     setSavedSettings((prev) => {
-      if (prev?.invoiceTemplate?.fontFamily === fontFamily) return prev;
+      if (prev?.theme?.fontFamily === fontFamily) return prev;
       return {
         ...prev,
-        invoiceTemplate: {
-          ...prev.invoiceTemplate,
+        theme: {
+          ...prev.theme,
           fontFamily
         }
       };
@@ -706,6 +812,7 @@ export default function CompanySettings() {
   const hasUnsaved = useMemo(() => Object.values(dirtyMap).some(Boolean), [dirtyMap]);
   const activeThemePreset = useMemo(
     () =>
+      findThemePresetById(settings.theme?.themePresetId) ||
       findThemePresetById(themePresetId) ||
       findThemePresetBySettings(settings.theme) ||
       THEME_PRESETS[0],
@@ -714,14 +821,41 @@ export default function CompanySettings() {
 
   useEffect(() => {
     if (!settings?.theme) return;
-    const fallbackTheme = settings.theme.mode === "Dark" ? "task-ink" : "focus-mint";
-    setTheme(fallbackTheme);
+    const mode = String(settings.theme.mode || "Light").toLowerCase() === "dark" ? "dark" : "light";
+    const fallbackTheme = mode === "dark" ? "task-ink" : "focus-mint";
+    const selectedPreset = findThemePresetById(settings.theme.themePresetId);
+    const selectedPresetMode = selectedPreset?.mode === "Dark" ? "dark" : "light";
+    const resolvedThemeId =
+      selectedPreset && selectedPresetMode === mode ? selectedPreset.id : fallbackTheme;
+    setTheme(resolvedThemeId);
     setThemeOverrides({
-      mode: settings.theme.mode,
+      mode,
       primaryColor: settings.theme.primaryColor,
       accentColor: settings.theme.accentColor
     });
-  }, [settings.theme?.mode, settings.theme?.primaryColor, settings.theme?.accentColor, setTheme, setThemeOverrides]);
+    setThemeConfig({
+      themePresetId: resolvedThemeId,
+      mode,
+      fontFamily: settings.theme.fontFamily,
+      fontSize: settings.theme.fontSize,
+      radiusStyle: settings.theme.radiusStyle,
+      density: settings.theme.density,
+      sidebarStyle: settings.theme.sidebarStyle
+    });
+  }, [
+    settings.theme?.mode,
+    settings.theme?.themePresetId,
+    settings.theme?.primaryColor,
+    settings.theme?.accentColor,
+    settings.theme?.fontFamily,
+    settings.theme?.fontSize,
+    settings.theme?.radiusStyle,
+    settings.theme?.density,
+    settings.theme?.sidebarStyle,
+    setTheme,
+    setThemeOverrides,
+    setThemeConfig
+  ]);
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
@@ -956,12 +1090,26 @@ export default function CompanySettings() {
       }
 
       if (section === "theme") {
-        const fallbackTheme = nextSettings.theme.mode === "Dark" ? "task-ink" : "focus-mint";
-        setTheme(fallbackTheme);
+        const mode = String(nextSettings.theme.mode || "Light").toLowerCase() === "dark" ? "dark" : "light";
+        const fallbackTheme = mode === "dark" ? "task-ink" : "focus-mint";
+        const selectedPreset = findThemePresetById(nextSettings.theme.themePresetId);
+        const selectedPresetMode = selectedPreset?.mode === "Dark" ? "dark" : "light";
+        const resolvedThemeId =
+          selectedPreset && selectedPresetMode === mode ? selectedPreset.id : fallbackTheme;
+        setTheme(resolvedThemeId);
         setThemeOverrides({
-          mode: nextSettings.theme.mode,
+          mode,
           primaryColor: nextSettings.theme.primaryColor,
           accentColor: nextSettings.theme.accentColor
+        });
+        setThemeConfig({
+          themePresetId: resolvedThemeId,
+          mode,
+          fontFamily: nextSettings.theme.fontFamily,
+          fontSize: nextSettings.theme.fontSize,
+          radiusStyle: nextSettings.theme.radiusStyle,
+          density: nextSettings.theme.density,
+          sidebarStyle: nextSettings.theme.sidebarStyle
         });
       }
 
@@ -992,12 +1140,26 @@ export default function CompanySettings() {
     }
     if (section === "theme") {
       const savedTheme = savedSettings.theme || {};
-      const fallbackTheme = savedTheme.mode === "Dark" ? "task-ink" : "focus-mint";
-      setTheme(fallbackTheme);
+      const mode = String(savedTheme.mode || "Light").toLowerCase() === "dark" ? "dark" : "light";
+      const fallbackTheme = mode === "dark" ? "task-ink" : "focus-mint";
+      const selectedPreset = findThemePresetById(savedTheme.themePresetId);
+      const selectedPresetMode = selectedPreset?.mode === "Dark" ? "dark" : "light";
+      const resolvedThemeId =
+        selectedPreset && selectedPresetMode === mode ? selectedPreset.id : fallbackTheme;
+      setTheme(resolvedThemeId);
       setThemeOverrides({
-        mode: savedTheme.mode,
+        mode,
         primaryColor: savedTheme.primaryColor,
         accentColor: savedTheme.accentColor
+      });
+      setThemeConfig({
+        themePresetId: resolvedThemeId,
+        mode,
+        fontFamily: savedTheme.fontFamily,
+        fontSize: savedTheme.fontSize,
+        radiusStyle: savedTheme.radiusStyle,
+        density: savedTheme.density,
+        sidebarStyle: savedTheme.sidebarStyle
       });
     }
   }
@@ -1882,6 +2044,46 @@ export default function CompanySettings() {
                     </button>
                   </SectionHeader>
 
+                  <div className="mt-5">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Theme Presets</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {THEME_APPEARANCE_PRESETS.map((preset) => (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => {
+                            const presetTheme = findThemePresetById(preset.themePresetId) || THEME_PRESETS[0];
+                            setTheme(preset.themePresetId);
+                            setThemeConfig(preset);
+                            setFont(preset.fontFamily);
+                            updateSection("theme", {
+                              mode: preset.mode === "dark" ? "Dark" : "Light",
+                              primaryColor: preset.primaryColor,
+                              accentColor: preset.accentColor,
+                              invoiceTheme: presetTheme?.invoiceTheme || settings.theme.invoiceTheme,
+                              themePresetId: preset.themePresetId,
+                              fontFamily: preset.fontFamily,
+                              fontSize: preset.fontSize,
+                              radiusStyle: preset.radiusStyle,
+                              density: preset.density,
+                              sidebarStyle: preset.sidebarStyle
+                            });
+                          }}
+                          className={clsx(
+                            "rounded-full border px-3 py-2 text-xs font-semibold transition",
+                            settings.theme.themePresetId === preset.themePresetId &&
+                              settings.theme.primaryColor === preset.primaryColor &&
+                              settings.theme.accentColor === preset.accentColor
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                          )}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
                     <FormField label="Theme Mode">
                       <div className="flex items-center gap-2">
@@ -1889,7 +2091,12 @@ export default function CompanySettings() {
                           <button
                             key={mode}
                             type="button"
-                            onClick={() => updateSection("theme", { mode })}
+                            onClick={() =>
+                              updateSection("theme", {
+                                mode,
+                                themePresetId: mode === "Dark" ? "task-ink" : "focus-mint"
+                              })
+                            }
                             className={clsx(
                               "rounded-full border px-4 py-2 text-xs font-semibold",
                               settings.theme.mode === mode
@@ -1960,6 +2167,103 @@ export default function CompanySettings() {
                         <p className="mt-1 text-xs text-rose-600">{sectionErrors.accentColor}</p>
                       ) : null}
                     </FormField>
+
+                    <FormField label="Font Family">
+                      <select
+                        value={settings.theme.fontFamily}
+                        onChange={(event) => {
+                          const nextFont = event.target.value;
+                          updateSection("theme", { fontFamily: nextFont });
+                          setFont(nextFont);
+                        }}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                      >
+                        {APP_FONT_OPTIONS.map((font) => (
+                          <option key={font} value={font}>
+                            {font}
+                          </option>
+                        ))}
+                      </select>
+                      {sectionErrors.fontFamily ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.fontFamily}</p>
+                      ) : null}
+                    </FormField>
+
+                    <FormField label="Font Size">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={FONT_SIZE_MIN}
+                          max={FONT_SIZE_MAX}
+                          step={1}
+                          value={settings.theme.fontSize}
+                          onChange={(event) =>
+                            updateSection("theme", { fontSize: normalizeThemeFontSizePx(event.target.value) })
+                          }
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                        />
+                        <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                          px
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Enter any value from {FONT_SIZE_MIN}px to {FONT_SIZE_MAX}px (default {FONT_SIZE_DEFAULT}px).
+                      </p>
+                      {sectionErrors.fontSize ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.fontSize}</p>
+                      ) : null}
+                    </FormField>
+
+                    <FormField label="Button Style">
+                      <select
+                        value={settings.theme.radiusStyle}
+                        onChange={(event) => updateSection("theme", { radiusStyle: event.target.value })}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                      >
+                        {RADIUS_STYLE_OPTIONS.map((radiusStyle) => (
+                          <option key={radiusStyle} value={radiusStyle}>
+                            {RADIUS_LABELS[radiusStyle]}
+                          </option>
+                        ))}
+                      </select>
+                      {sectionErrors.radiusStyle ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.radiusStyle}</p>
+                      ) : null}
+                    </FormField>
+
+                    <FormField label="UI Density">
+                      <select
+                        value={settings.theme.density}
+                        onChange={(event) => updateSection("theme", { density: event.target.value })}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                      >
+                        {UI_DENSITY_OPTIONS.map((density) => (
+                          <option key={density} value={density}>
+                            {DENSITY_LABELS[density]}
+                          </option>
+                        ))}
+                      </select>
+                      {sectionErrors.density ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.density}</p>
+                      ) : null}
+                    </FormField>
+
+                    <FormField label="Sidebar Style">
+                      <select
+                        value={settings.theme.sidebarStyle}
+                        onChange={(event) => updateSection("theme", { sidebarStyle: event.target.value })}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                      >
+                        {SIDEBAR_STYLE_OPTIONS.map((sidebarStyle) => (
+                          <option key={sidebarStyle} value={sidebarStyle}>
+                            {SIDEBAR_STYLE_LABELS[sidebarStyle]}
+                          </option>
+                        ))}
+                      </select>
+                      {sectionErrors.sidebarStyle ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.sidebarStyle}</p>
+                      ) : null}
+                    </FormField>
                   </div>
 
                   <div className="mt-6 rounded-2xl border border-slate-200 p-4">
@@ -1990,6 +2294,9 @@ export default function CompanySettings() {
                           <p className="text-lg font-semibold">{settings.localization.currency} 48,900</p>
                         </div>
                       </div>
+                      <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 px-3 py-2 text-xs text-slate-600">
+                        Font: {settings.theme.fontFamily} | Size: {normalizeThemeFontSizePx(settings.theme.fontSize)}px | Density: {DENSITY_LABELS[settings.theme.density]}
+                      </div>
                     </div>
                   </div>
 
@@ -2007,11 +2314,13 @@ export default function CompanySettings() {
                     onClose={() => setThemeModalOpen(false)}
                     onApply={(preset) => {
                       setTheme(preset.id);
+                      const currentMode = String(preset.mode || "Light").toLowerCase() === "dark" ? "Dark" : "Light";
                       updateSection("theme", {
-                        mode: preset.mode,
+                        mode: currentMode,
                         primaryColor: preset.primaryColor,
                         accentColor: preset.accentColor,
-                        invoiceTheme: preset.invoiceTheme || settings.theme.invoiceTheme
+                        invoiceTheme: preset.invoiceTheme || settings.theme.invoiceTheme,
+                        themePresetId: preset.id
                       });
                       setThemeModalOpen(false);
                     }}
@@ -2051,7 +2360,6 @@ export default function CompanySettings() {
                         onChange={(event) => {
                           const nextFont = event.target.value;
                           updateSection("invoiceTemplate", { fontFamily: nextFont });
-                          setFont(nextFont);
                         }}
                         className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
                       >

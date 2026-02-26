@@ -15,6 +15,105 @@ const LEGACY_MODE_TO_THEME = {
   light: "focus-mint"
 };
 const APP_FONT_LINK_ID = "app-font-google-font";
+const LEGACY_FONT_SIZE_MAP = {
+  compact: 14,
+  default: 16,
+  large: 18
+};
+export const FONT_SIZE_MIN = 12;
+export const FONT_SIZE_MAX = 22;
+export const FONT_SIZE_DEFAULT = 16;
+export const RADIUS_STYLE_OPTIONS = ["rounded", "soft-rounded", "square"];
+export const UI_DENSITY_OPTIONS = ["compact", "comfortable", "spacious"];
+export const SIDEBAR_STYLE_OPTIONS = ["solid", "glass", "gradient"];
+
+export const THEME_APPEARANCE_PRESETS = [
+  {
+    id: "emerald-business",
+    label: "Emerald Business",
+    themePresetId: "focus-mint",
+    mode: "light",
+    primaryColor: "#0F766E",
+    accentColor: "#14B8A6",
+    fontFamily: "Inter",
+    fontSize: 16,
+    radiusStyle: "soft-rounded",
+    density: "comfortable",
+    sidebarStyle: "solid"
+  },
+  {
+    id: "royal-blue",
+    label: "Royal Blue",
+    themePresetId: "task-ink",
+    mode: "dark",
+    primaryColor: "#1D4ED8",
+    accentColor: "#38BDF8",
+    fontFamily: "Montserrat",
+    fontSize: 16,
+    radiusStyle: "rounded",
+    density: "comfortable",
+    sidebarStyle: "gradient"
+  },
+  {
+    id: "modern-minimal",
+    label: "Modern Minimal",
+    themePresetId: "focus-mint",
+    mode: "light",
+    primaryColor: "#334155",
+    accentColor: "#64748B",
+    fontFamily: "DM Sans",
+    fontSize: 14,
+    radiusStyle: "square",
+    density: "compact",
+    sidebarStyle: "glass"
+  },
+  {
+    id: "dark-professional",
+    label: "Dark Professional",
+    themePresetId: "task-ink",
+    mode: "dark",
+    primaryColor: "#0F172A",
+    accentColor: "#2563EB",
+    fontFamily: "Poppins",
+    fontSize: 16,
+    radiusStyle: "soft-rounded",
+    density: "comfortable",
+    sidebarStyle: "solid"
+  }
+];
+
+const RADIUS_STYLE_MAP = {
+  rounded: "18px",
+  "soft-rounded": "12px",
+  square: "4px"
+};
+
+const DENSITY_MAP = {
+  compact: {
+    controlY: "0.45rem",
+    controlX: "0.65rem",
+    tableY: "0.5rem",
+    tableX: "0.75rem",
+    sidebarY: "0.5rem",
+    sidebarX: "0.65rem"
+  },
+  comfortable: {
+    controlY: "0.6rem",
+    controlX: "0.8rem",
+    tableY: "0.75rem",
+    tableX: "1rem",
+    sidebarY: "0.625rem",
+    sidebarX: "0.75rem"
+  },
+  spacious: {
+    controlY: "0.78rem",
+    controlX: "1rem",
+    tableY: "0.95rem",
+    tableX: "1.1rem",
+    sidebarY: "0.8rem",
+    sidebarX: "0.95rem"
+  }
+};
 
 function normalizeHex(hex) {
   const value = String(hex || "").trim();
@@ -63,6 +162,32 @@ function alpha(hex, opacity) {
 
 function normalizeThemeMode(value) {
   return String(value || "").trim().toLowerCase() === "dark" ? "dark" : "light";
+}
+
+function normalizeFontSize(value) {
+  const legacyKey = String(value || "").trim().toLowerCase();
+  if (legacyKey && Object.prototype.hasOwnProperty.call(LEGACY_FONT_SIZE_MAP, legacyKey)) {
+    return LEGACY_FONT_SIZE_MAP[legacyKey];
+  }
+  const parsed = Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(parsed)) return FONT_SIZE_DEFAULT;
+  const clamped = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, parsed));
+  return Math.round(clamped);
+}
+
+function normalizeRadiusStyle(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return RADIUS_STYLE_OPTIONS.includes(key) ? key : "soft-rounded";
+}
+
+function normalizeDensity(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return UI_DENSITY_OPTIONS.includes(key) ? key : "comfortable";
+}
+
+function normalizeSidebarStyle(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return SIDEBAR_STYLE_OPTIONS.includes(key) ? key : "solid";
 }
 
 export function resolveThemePreset(themeId) {
@@ -167,13 +292,18 @@ export function buildThemeConfig(themeId) {
   };
 }
 
+function setPrimaryAccentVars(root, primary, accent) {
+  root.style.setProperty("--primary", primary);
+  root.style.setProperty("--accent", accent);
+  root.style.setProperty("--primary-color", primary);
+  root.style.setProperty("--accent-color", accent);
+}
+
 export function applyThemeToDocument(themeId) {
   if (typeof document === "undefined") return null;
   const config = buildThemeConfig(themeId);
   const root = document.documentElement;
   const vars = {
-    "--primary": config.primary,
-    "--accent": config.accent,
     "--bg": config.bg,
     "--card": config.card,
     "--text": config.text,
@@ -196,6 +326,7 @@ export function applyThemeToDocument(themeId) {
     "--surface-subtle": config.surfaceSubtle
   };
 
+  setPrimaryAccentVars(root, config.primary, config.accent);
   Object.entries(vars).forEach(([key, value]) => root.style.setProperty(key, value));
   root.style.colorScheme = config.mode;
   root.setAttribute("data-theme", config.id);
@@ -206,9 +337,9 @@ export function normalizeThemeOverrides(overrides = {}) {
   if (!overrides || typeof overrides !== "object") return null;
   const rawPrimary = String(overrides.primaryColor || "").trim();
   const rawAccent = String(overrides.accentColor || "").trim();
-  if (!rawPrimary && !rawAccent) return null;
-  const primaryColor = normalizeHex(rawPrimary || rawAccent);
-  const accentColor = normalizeHex(rawAccent || rawPrimary);
+  if (!rawPrimary && !rawAccent && !overrides.mode) return null;
+  const primaryColor = normalizeHex(rawPrimary || rawAccent || "#0F766E");
+  const accentColor = normalizeHex(rawAccent || rawPrimary || "#14B8A6");
   const mode = normalizeThemeMode(overrides.mode);
   return {
     mode,
@@ -231,8 +362,7 @@ export function applyThemeOverridesToDocument(overrides = null) {
   const sidebar = isDark ? mix("#0B1220", primary, 0.34) : mix("#102A20", primary, 0.58);
   const sidebarActiveBg = alpha(primary, isDark ? 0.34 : 0.22);
 
-  root.style.setProperty("--primary", primary);
-  root.style.setProperty("--accent", accent);
+  setPrimaryAccentVars(root, primary, accent);
   root.style.setProperty("--ring", ring);
   root.style.setProperty("--cream", cream);
   root.style.setProperty("--sidebar", sidebar);
@@ -252,10 +382,94 @@ export function applyFontToDocument(fontFamily) {
   return safeFont;
 }
 
+export function normalizeThemeAppearance(config = {}) {
+  const safeInput = config && typeof config === "object" ? config : {};
+  let preset = resolveThemePreset(safeInput.themePresetId || safeInput.themeId || readStoredThemeId());
+  const mode = normalizeThemeMode(safeInput.mode || themeModeFromPreset(preset));
+  if (themeModeFromPreset(preset) !== mode) {
+    preset = resolveThemePreset(mode === "dark" ? "task-ink" : "focus-mint");
+  }
+  return {
+    themePresetId: preset?.id || DEFAULT_THEME_PRESET_ID,
+    mode,
+    primaryColor: normalizeHex(safeInput.primaryColor || preset?.primaryColor || "#0F766E"),
+    accentColor: normalizeHex(safeInput.accentColor || preset?.accentColor || "#14B8A6"),
+    fontFamily: resolveAppFont(safeInput.fontFamily || readStoredFontFamily()),
+    fontSize: normalizeFontSize(safeInput.fontSize),
+    radiusStyle: normalizeRadiusStyle(safeInput.radiusStyle),
+    density: normalizeDensity(safeInput.density),
+    sidebarStyle: normalizeSidebarStyle(safeInput.sidebarStyle)
+  };
+}
+
+export function readStoredThemeAppearance() {
+  if (typeof window === "undefined") return normalizeThemeAppearance({});
+  try {
+    const raw = localStorage.getItem(LS_KEYS.theme_config);
+    if (raw) {
+      return normalizeThemeAppearance(JSON.parse(raw));
+    }
+  } catch {
+    // Fallback to legacy storage below.
+  }
+
+  const fallbackThemeId = readStoredThemeId();
+  const fallbackFont = readStoredFontFamily();
+  let fallbackOverrides = null;
+  try {
+    fallbackOverrides = normalizeThemeOverrides(JSON.parse(localStorage.getItem(LS_KEYS.theme_overrides) || "null"));
+  } catch {
+    fallbackOverrides = null;
+  }
+
+  return normalizeThemeAppearance({
+    themePresetId: fallbackThemeId,
+    fontFamily: fallbackFont,
+    mode: fallbackOverrides?.mode,
+    primaryColor: fallbackOverrides?.primaryColor,
+    accentColor: fallbackOverrides?.accentColor
+  });
+}
+
+export function applyThemeAppearanceToDocument(config = {}) {
+  if (typeof document === "undefined") return null;
+  const normalized = normalizeThemeAppearance(config);
+  const root = document.documentElement;
+  const density = DENSITY_MAP[normalized.density] || DENSITY_MAP.comfortable;
+  const fontSize = `${normalizeFontSize(normalized.fontSize)}px`;
+  const radius = RADIUS_STYLE_MAP[normalized.radiusStyle] || RADIUS_STYLE_MAP["soft-rounded"];
+
+  applyThemeToDocument(normalized.themePresetId);
+  applyThemeOverridesToDocument({
+    mode: normalized.mode,
+    primaryColor: normalized.primaryColor,
+    accentColor: normalized.accentColor
+  });
+  applyFontToDocument(normalized.fontFamily);
+
+  root.style.setProperty("--font-size-base", fontSize);
+  root.style.setProperty("--radius-style", radius);
+  root.style.setProperty("--control-padding-y", density.controlY);
+  root.style.setProperty("--control-padding-x", density.controlX);
+  root.style.setProperty("--table-cell-padding-y", density.tableY);
+  root.style.setProperty("--table-cell-padding-x", density.tableX);
+  root.style.setProperty("--sidebar-item-padding-y", density.sidebarY);
+  root.style.setProperty("--sidebar-item-padding-x", density.sidebarX);
+  root.style.setProperty("--primary-color", normalized.primaryColor);
+  root.style.setProperty("--accent-color", normalized.accentColor);
+
+  root.setAttribute("data-theme-mode", normalized.mode);
+  root.setAttribute("data-font-size", String(normalizeFontSize(normalized.fontSize)));
+  root.setAttribute("data-radius-style", normalized.radiusStyle);
+  root.setAttribute("data-density", normalized.density);
+  root.setAttribute("data-sidebar-style", normalized.sidebarStyle);
+  root.style.colorScheme = normalized.mode;
+
+  return normalized;
+}
+
 export function hydrateThemeFromStorage() {
-  const themeId = readStoredThemeId();
-  const fontFamily = readStoredFontFamily();
-  const theme = applyThemeToDocument(themeId);
-  const font = applyFontToDocument(fontFamily);
-  return { theme, font };
+  const appearance = readStoredThemeAppearance();
+  applyThemeAppearanceToDocument(appearance);
+  return { appearance };
 }

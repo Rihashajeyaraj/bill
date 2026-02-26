@@ -1,8 +1,8 @@
 export const COLORS = {
   cream: "var(--app-cream, #e3f2ea)",
-  softPink: "#bfe2d2",
-  blush: "#2e8d5a",
-  deepRed: "#1f6b45",
+  softPink: "var(--surface-soft, #e8f2ec)",
+  blush: "var(--accent-color, #14b8a6)",
+  deepRed: "var(--primary-color, #0f766e)",
 
   bg: "var(--bg-warm, #eef3ef)",
   card: "var(--app-card-bg, #ffffff)",

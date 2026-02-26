@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, ChevronDown, LogOut } from "lucide-react";
+import { Bell, ChevronDown, LogOut, Menu } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { authGetRole, authGetUser, authLogout } from "../services/auth.service";
 import { useOrganization } from "../context/OrganizationContext";
 import { useAppShell } from "../context/AppShellContext";
 
-export default function Topbar() {
+export default function Topbar({ onOpenSidebar }) {
   const nav = useNavigate();
   const user = authGetUser();
   const role = authGetRole();
@@ -83,26 +83,39 @@ export default function Topbar() {
 
   return (
     <header className="app-topbar sticky top-0 z-40 backdrop-blur">
-      <div className="px-5 py-4 flex items-center justify-between gap-3">
-        <div className="min-w-0 flex-1">
+      <div className="flex items-center justify-between gap-2 px-3 py-3 sm:gap-3 sm:px-4 sm:py-4 lg:px-5">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={onOpenSidebar}
+            className="app-topbar-user-btn inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl lg:hidden"
+            aria-label="Open navigation menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
           <div className="flex min-w-0 flex-col">
-            <p className="app-topbar-title truncate text-base font-semibold">{companyName || "My Shop"}</p>
-            <p className="app-topbar-subtitle text-xs">
-              {weekdayText} | {dateText} | {timeText}
+            <p className="app-topbar-title truncate text-sm font-semibold sm:text-base">{companyName || "My Shop"}</p>
+            <p className="app-topbar-subtitle truncate text-[11px] sm:text-xs">
+              <span className="hidden sm:inline">
+                {weekdayText} | {dateText} | {timeText}
+              </span>
+              <span className="sm:hidden">
+                {dateText} | {timeText}
+              </span>
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           <button
             type="button"
             onClick={() => nav("/app/notifications")}
-            className="relative rounded-2xl border border-slate-200 bg-white px-3 py-2 text-slate-700 shadow-soft hover:bg-slate-50"
+            className="app-topbar-user-btn relative inline-flex h-10 w-10 items-center justify-center rounded-2xl p-0 shadow-soft"
             aria-label="Open notifications"
           >
             <Bell className="h-4 w-4" />
             {unreadCount > 0 ? (
-              <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white">
+              <span className="app-topbar-notice absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold">
                 {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             ) : null}
@@ -111,7 +124,7 @@ export default function Topbar() {
           <div className="relative" ref={menuRef}>
             <button
               onClick={() => setMenu((v) => !v)}
-              className="app-topbar-user-btn rounded-2xl px-3 py-2 shadow-soft flex items-center gap-2"
+              className="app-topbar-user-btn flex items-center gap-2 rounded-2xl px-2 py-1.5 shadow-soft sm:px-3 sm:py-2"
             >
               <div className="app-topbar-user-avatar h-8 w-8 rounded-2xl flex items-center justify-center text-xs font-bold">
                 {company?.logoBase64 ? (
@@ -124,7 +137,7 @@ export default function Topbar() {
                   (companyName || user?.name || "U").slice(0, 1).toUpperCase()
                 )}
               </div>
-              <div className="hidden sm:block text-left">
+              <div className="hidden text-left sm:block">
                 <p className="app-topbar-title text-sm font-semibold leading-4">{user?.name || "User"}</p>
                 <p className="app-topbar-subtitle text-xs leading-4">{role}</p>
               </div>

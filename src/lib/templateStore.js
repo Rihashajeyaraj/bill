@@ -8,6 +8,7 @@ import {
   ssGet,
   ssSet
 } from "../services/storage";
+import { buildGoogleFontHref, resolveAppFont, toAppFontStack } from "../theme/fontPresets";
 
 export const DEFAULT_TEMPLATE_CONFIG = {
   templateId: "standard",
@@ -18,6 +19,7 @@ export const DEFAULT_TEMPLATE_CONFIG = {
   logoPosition: "left"
 };
 let runtimeTemplateConfig = { ...DEFAULT_TEMPLATE_CONFIG };
+const INVOICE_FONT_LINK_ID = "invoice-font-google-font";
 
 function isQuotaExceededError(error) {
   return (
@@ -29,7 +31,11 @@ function isQuotaExceededError(error) {
 }
 
 function normalizeTemplateConfig(config = {}) {
-  return { ...DEFAULT_TEMPLATE_CONFIG, ...(config || {}) };
+  const normalized = { ...DEFAULT_TEMPLATE_CONFIG, ...(config || {}) };
+  return {
+    ...normalized,
+    fontFamily: resolveAppFont(normalized.fontFamily)
+  };
 }
 
 function slimTemplateConfig(config = {}) {
@@ -37,11 +43,34 @@ function slimTemplateConfig(config = {}) {
   return { ...normalized, logoUrl: "" };
 }
 
+function ensureInvoiceFontLink(fontFamily) {
+  if (typeof document === "undefined") return;
+  const href = buildGoogleFontHref(fontFamily);
+  let link = document.getElementById(INVOICE_FONT_LINK_ID);
+  if (!link || String(link.tagName || "").toLowerCase() !== "link") {
+    link = document.createElement("link");
+    link.id = INVOICE_FONT_LINK_ID;
+    link.rel = "stylesheet";
+    document.head.appendChild(link);
+  }
+  if (link.getAttribute("href") !== href) {
+    link.setAttribute("href", href);
+  }
+}
+
+function applyInvoiceTemplateFont(config = {}) {
+  if (typeof document === "undefined") return;
+  const safeFont = resolveAppFont(config.fontFamily || DEFAULT_TEMPLATE_CONFIG.fontFamily);
+  document.documentElement.style.setProperty("--invoice-font-family", toAppFontStack(safeFont));
+  ensureInvoiceFontLink(safeFont);
+}
+
 export function getInvoiceTemplateConfig() {
   const sessionValue = ssGet(LS_KEYS.invoiceTemplateConfig, null);
   if (sessionValue && typeof sessionValue === "object") {
     const normalized = normalizeTemplateConfig(sessionValue);
     runtimeTemplateConfig = normalized;
+    applyInvoiceTemplateFont(normalized);
     return normalized;
   }
 
@@ -49,6 +78,7 @@ export function getInvoiceTemplateConfig() {
   if (scoped && typeof scoped === "object") {
     const normalized = normalizeTemplateConfig(scoped);
     runtimeTemplateConfig = normalized;
+    applyInvoiceTemplateFont(normalized);
     return normalized;
   }
 
@@ -56,6 +86,7 @@ export function getInvoiceTemplateConfig() {
   if (userScoped && typeof userScoped === "object") {
     const normalized = normalizeTemplateConfig(userScoped);
     runtimeTemplateConfig = normalized;
+    applyInvoiceTemplateFont(normalized);
     return normalized;
   }
 
@@ -63,15 +94,18 @@ export function getInvoiceTemplateConfig() {
   if (legacy && typeof legacy === "object") {
     const normalized = normalizeTemplateConfig(legacy);
     runtimeTemplateConfig = normalized;
+    applyInvoiceTemplateFont(normalized);
     return normalized;
   }
 
+  applyInvoiceTemplateFont(runtimeTemplateConfig);
   return runtimeTemplateConfig;
 }
 
 export function setInvoiceTemplateConfig(config) {
   const normalized = normalizeTemplateConfig(config);
   runtimeTemplateConfig = normalized;
+  applyInvoiceTemplateFont(normalized);
 
   try {
     ssSet(LS_KEYS.invoiceTemplateConfig, normalized);
@@ -82,6 +116,7 @@ export function setInvoiceTemplateConfig(config) {
     if (!isQuotaExceededError(error)) return normalized;
     const slim = slimTemplateConfig(normalized);
     runtimeTemplateConfig = slim;
+    applyInvoiceTemplateFont(slim);
     try {
       ssSet(LS_KEYS.invoiceTemplateConfig, slim);
       lsSetOrganizationScoped(LS_KEYS.invoiceTemplateConfig, slim);

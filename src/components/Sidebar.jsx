@@ -27,10 +27,11 @@ import { useOrganization } from "../context/OrganizationContext";
 const base = "app-sidebar-item";
 const active = "app-sidebar-item is-active";
 
-function Item({ to, icon: Icon, label, collapsed }) {
+function Item({ to, icon: Icon, label, collapsed, onNavigate }) {
   return (
     <NavLink
       to={to}
+      onClick={onNavigate}
       className={({ isActive }) =>
         clsx(
           "flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-colors",
@@ -48,7 +49,7 @@ function routeMatches(pathname, to) {
   return pathname === to || pathname.startsWith(`${to}/`);
 }
 
-export default function Sidebar({ collapsed, onToggle }) {
+export default function Sidebar({ collapsed, onToggle, onNavigate }) {
   const location = useLocation();
   const width = collapsed ? "w-[84px]" : "w-[260px]";
   const headerPadding = collapsed ? "px-2" : "px-4";
@@ -124,7 +125,7 @@ export default function Sidebar({ collapsed, onToggle }) {
 
   return (
     <aside
-      className={clsx("app-sidebar fixed left-0 top-0 z-50 h-screen", width)}
+      className={clsx("app-sidebar h-dvh lg:h-screen", width)}
     >
       <div className="h-full flex flex-col">
         <div className={clsx("app-sidebar-header flex items-center justify-between", headerPadding)}>
@@ -147,7 +148,7 @@ export default function Sidebar({ collapsed, onToggle }) {
           </div>
           <button
             onClick={onToggle}
-            className={clsx("app-sidebar-toggle flex items-center justify-center shrink-0", toggleSize)}
+            className={clsx("app-sidebar-toggle hidden items-center justify-center shrink-0 lg:flex", toggleSize)}
           >
             {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </button>
@@ -183,14 +184,14 @@ export default function Sidebar({ collapsed, onToggle }) {
                 {openGroups[it.key] && !collapsed ? (
                   <div className="mt-1 space-y-1 pl-4">
                     {it.children.map((child) => (
-                      <Item key={child.to} {...child} collapsed={false} />
+                      <Item key={child.to} {...child} collapsed={false} onNavigate={onNavigate} />
                     ))}
                   </div>
                 ) : null}
               </div>
             ) : (
               <div key={it.to} className="mb-1">
-                <Item {...it} collapsed={collapsed} />
+                <Item {...it} collapsed={collapsed} onNavigate={onNavigate} />
               </div>
             )
           )}
