@@ -1,7 +1,6 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped } from "../../services/storage";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW } from "./countryConfig";
 import type { CountryCode, CreditStatus, CreditType } from "./countryConfig";
-import { MOCK_CUSTOMERS, MOCK_INVOICES } from "./mockData";
 
 const CREDIT_NOTE_STORE_KEY = "creditNotesPremiumV1";
 const CREDIT_NOTE_SEQUENCE_KEY = "creditNotesPremiumSequenceV1";
@@ -420,21 +419,15 @@ export function mapInvoicesByCountry(country: CountryCode): CreditInvoice[] {
     })
     .filter(Boolean);
 
-  const fromMock = MOCK_INVOICES.filter((invoice) => invoice.country === country);
-
-  const merged = [...fromStorage, ...fromMock.filter((mock) => !fromStorage.some((stored) => stored.id === mock.id))];
-  return merged.sort((a, b) => (a.invoiceDate < b.invoiceDate ? 1 : -1));
+  return fromStorage.sort((a, b) => (a.invoiceDate < b.invoiceDate ? 1 : -1));
 }
 
 export function mapCustomersByCountry(country: CountryCode): CustomerOption[] {
   const parties = lsGetOrganizationScoped(LS_KEYS.parties, []);
-  const invoices = mapInvoicesByCountry(country);
 
   const fromParties = parties
     .map((party: any) => {
-      if (party?.type && String(party.type).toLowerCase() !== "customer") return null;
-      const mappedCountry = normalizeCountryCode(party.country);
-      if (mappedCountry && mappedCountry !== country) return null;
+      if (String(party?.type || "").toLowerCase() !== "customer") return null;
       return {
         id: party.id,
         name: party.name,
@@ -443,22 +436,13 @@ export function mapCustomersByCountry(country: CountryCode): CustomerOption[] {
         address: party.address || "",
         state: party.state || "",
         registrationNumber: party.gstin || party.trn || party.vatNo || "",
-        country
+        country: normalizeCountryCode(party.country) || country
       } satisfies CustomerOption;
     })
     .filter(Boolean) as CustomerOption[];
 
-  const fromInvoices = invoices.map((invoice) => ({
-    id: invoice.customerId,
-    name: invoice.customerName,
-    state: invoice.placeOfSupply || "",
-    country
-  }));
-
-  const fromMock = MOCK_CUSTOMERS.filter((customer) => customer.country === country);
-
   const byId = new Map<string, CustomerOption>();
-  [...fromParties, ...fromInvoices, ...fromMock].forEach((entry) => {
+  fromParties.forEach((entry) => {
     if (!entry?.id || !entry.name) return;
     const existing = byId.get(entry.id);
     byId.set(entry.id, { ...(existing || {}), ...entry });

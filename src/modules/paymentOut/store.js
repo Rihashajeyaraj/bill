@@ -224,14 +224,11 @@ export function listPaymentOutLedger(country) {
 export function mapSuppliersByCountry(country) {
   const target = normalizeCountry(country);
   const parties = ensureArray(lsGetOrganizationScoped(LS_KEYS.parties, []));
-  const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
 
   const fromParties = parties
     .map((party) => {
       const type = String(party?.type || "").toLowerCase();
-      if (type && type !== "supplier") return null;
-      const mapped = normalizeCountry(party.country);
-      if (mapped && target && mapped !== target) return null;
+      if (type !== "supplier") return null;
       return {
         id: party.id,
         name: party.name,
@@ -239,27 +236,13 @@ export function mapSuppliersByCountry(country) {
         phone: party.phone || "",
         address: party.address || "",
         state: party.state || "",
-        country: target || party.country || ""
-      };
-    })
-    .filter(Boolean);
-
-  const fromBills = purchases
-    .map((bill) => {
-      const mapped = normalizeCountry(bill?.country);
-      if (mapped && target && mapped !== target) return null;
-      return {
-        id: bill.partyId || bill.supplierId || bill.vendorId || bill.partyName || bill.supplierName,
-        name: bill.partyName || bill.supplierName || bill.vendorName || "Supplier",
-        phone: bill.phone || "",
-        address: bill.partyAddress || "",
-        country: mapped || target || bill.country || ""
+        country: normalizeCountry(party.country) || target || ""
       };
     })
     .filter(Boolean);
 
   const byId = new Map();
-  [...fromParties, ...fromBills].forEach((entry) => {
+  fromParties.forEach((entry) => {
     if (!entry?.id || !entry.name) return;
     const existing = byId.get(entry.id);
     byId.set(entry.id, { ...(existing || {}), ...entry });
