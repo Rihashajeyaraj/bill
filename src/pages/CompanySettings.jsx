@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   BadgeCheck,
@@ -41,9 +41,10 @@ import {
   settingsGetCompany,
   settingsPutCompany
 } from "../services/company.service";
-import { authGetRole, authGetUser } from "../services/auth.service";
+import { authGetRole, authGetToken, authGetUser } from "../services/auth.service";
 import { isOwnerRole, normalizeRoleLabel } from "../services/roles";
 import { uid } from "../services/storage";
+import { isSupabaseConfigured, supabase } from "../services/supabaseClient";
 import { UI } from "../theme/tokens";
 import { APP_FONT_OPTIONS } from "../theme/fontPresets";
 import {
@@ -730,7 +731,10 @@ export default function CompanySettings() {
   } = useTheme();
   const { profile: organizationProfile } = useOrganization();
   const currentProfile = organizationProfile || companyGetProfile();
-  const currentUser = authGetUser();
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authUser, setAuthUser] = useState(() => authGetUser());
+  const [authAccessToken, setAuthAccessToken] = useState(() => authGetToken());
+  const currentUser = authUser || authGetUser();
   const currentRole = authGetRole();
   const canManageUsers = isOwnerRole(currentRole);
   const canGenerateRegisterCodes = isOwnerRole(currentRole);
@@ -753,6 +757,52 @@ export default function CompanySettings() {
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [savingSection, setSavingSection] = useState("");
   useGlobalLoadingBridge(loadingSection, "company-settings");
+
+  useEffect(() => {
+    let active = true;
+    let subscription = null;
+
+    async function hydrateAuth() {
+      if (!isSupabaseConfigured || !supabase) {
+        if (!active) return;
+        setAuthUser(authGetUser());
+        setAuthAccessToken(authGetToken());
+        setAuthLoading(false);
+        return;
+      }
+
+      try {
+        const {
+          data: { session }
+        } = await supabase.auth.getSession();
+        if (!active) return;
+        setAuthUser(session?.user || authGetUser() || null);
+        setAuthAccessToken(session?.access_token || authGetToken() || "");
+      } catch {
+        if (!active) return;
+        setAuthUser(authGetUser() || null);
+        setAuthAccessToken(authGetToken() || "");
+      } finally {
+        if (active) setAuthLoading(false);
+      }
+    }
+
+    if (isSupabaseConfigured && supabase) {
+      const authListener = supabase.auth.onAuthStateChange((_event, session) => {
+        if (!active) return;
+        setAuthUser(session?.user || authGetUser() || null);
+        setAuthAccessToken(session?.access_token || authGetToken() || "");
+        setAuthLoading(false);
+      });
+      subscription = authListener?.data?.subscription || null;
+    }
+
+    void hydrateAuth();
+    return () => {
+      active = false;
+      subscription?.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (!fontFamily) return;
@@ -779,6 +829,7 @@ export default function CompanySettings() {
   }, [fontFamily]);
 
   useEffect(() => {
+    if (authLoading || !currentUser?.id) return undefined;
     let active = true;
     (async () => {
       setLoadingSection(true);
@@ -799,7 +850,7 @@ export default function CompanySettings() {
     return () => {
       active = false;
     };
-  }, [currentUser?.id, toast]);
+  }, [authLoading, currentUser?.id, toast]);
 
   const dirtyMap = useMemo(() => {
     return SECTION_ITEMS.reduce((acc, section) => {
@@ -1020,11 +1071,46 @@ export default function CompanySettings() {
     return {};
   }
 
+  async function ensureAuthContextForSave() {
+    if (authLoading) return null;
+
+    if (!isSupabaseConfigured || !supabase) {
+      const fallbackUser = authGetUser();
+      const fallbackToken = authAccessToken || authGetToken();
+      if (!fallbackUser?.id || !fallbackToken) return null;
+      setAuthUser(fallbackUser);
+      setAuthAccessToken(fallbackToken);
+      return { user: fallbackUser, accessToken: fallbackToken };
+    }
+
+    try {
+      const {
+        data: { session }
+      } = await supabase.auth.getSession();
+      const user = session?.user || authGetUser();
+      const accessToken = session?.access_token || authAccessToken || authGetToken();
+
+      if (!user?.id || !accessToken) return null;
+      setAuthUser(user);
+      setAuthAccessToken(accessToken);
+      return { user, accessToken };
+    } catch {
+      return null;
+    }
+  }
+
   async function handleSave(section) {
-    if (savingSection) return;
+    if (savingSection || authLoading) return;
 
     const logoError = String(errors?.profile?.logo || "").trim();
     if (section === "profile" && logoError) return;
+
+    const authContext = await ensureAuthContextForSave();
+    if (!authContext?.user?.id || !authContext?.accessToken) {
+      toast.error("Session expired", "Login required before organization setup.");
+      navigate("/login", { replace: true });
+      return;
+    }
 
     let nextSettings = settings;
     if (section === "invoiceTemplate") {
@@ -1064,13 +1150,16 @@ export default function CompanySettings() {
             userId,
             role: member.role,
             status: member.status
-          });
+          }, { accessToken: authContext.accessToken });
         }
       }
 
       const result = await settingsPutCompany(
         nextProfile,
-        section === "profile" && profileLogoFile ? { logoFile: profileLogoFile } : {}
+        {
+          ...(section === "profile" && profileLogoFile ? { logoFile: profileLogoFile } : {}),
+          accessToken: authContext.accessToken
+        }
       );
 
       const refreshedUsers =
@@ -1258,6 +1347,19 @@ export default function CompanySettings() {
   const activeMessage = sectionMessage[activeSection];
   const sectionErrors = errors[activeSection] || {};
   const activeMessageIsError = /failed|error|denied|unable/i.test(String(activeMessage || ""));
+  const saveBlocked = authLoading || !currentUser?.id || !!savingSection;
+
+  if (authLoading) {
+    return (
+      <div className="mx-auto max-w-[1320px] space-y-4 pb-24">
+        <SkeletonCard />
+      </div>
+    );
+  }
+
+  if (!currentUser?.id) {
+    return <Navigate to="/login" replace />;
+  }
 
   return (
     <div className="mx-auto max-w-[1320px] space-y-4 pb-24">
@@ -1276,7 +1378,7 @@ export default function CompanySettings() {
                 Create New Company
               </button>
             ) : null}
-            <GradientButton onClick={() => handleSave(activeSection)} disabled={!!savingSection}>
+            <GradientButton onClick={() => handleSave(activeSection)} disabled={saveBlocked}>
               {savingSection
                 ? "Saving..."
                 : activeSection === "profile"
@@ -1543,7 +1645,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
-                    disabled={!sectionDirty || !!savingSection}
+                    disabled={!sectionDirty || saveBlocked}
                     onSave={() => handleSave("profile")}
                     onCancel={() => handleCancel("profile")}
                   />
@@ -1657,7 +1759,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
-                    disabled={!sectionDirty || !!savingSection}
+                    disabled={!sectionDirty || saveBlocked}
                     onSave={() => handleSave("localization")}
                     onCancel={() => handleCancel("localization")}
                   />
@@ -1834,7 +1936,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
-                    disabled={!sectionDirty || !!savingSection}
+                    disabled={!sectionDirty || saveBlocked}
                     onSave={() => handleSave("tax")}
                     onCancel={() => handleCancel("tax")}
                   />
@@ -2023,7 +2125,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
-                    disabled={!sectionDirty || !!savingSection}
+                    disabled={!sectionDirty || saveBlocked}
                     onSave={() => handleSave("numbering")}
                     onCancel={() => handleCancel("numbering")}
                   />
@@ -2302,7 +2404,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
-                    disabled={!sectionDirty || !!savingSection}
+                    disabled={!sectionDirty || saveBlocked}
                     onSave={() => handleSave("theme")}
                     onCancel={() => handleCancel("theme")}
                   />
@@ -2420,7 +2522,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
-                    disabled={!sectionDirty || !!savingSection}
+                    disabled={!sectionDirty || saveBlocked}
                     onSave={() => handleSave("invoiceTemplate")}
                     onCancel={() => handleCancel("invoiceTemplate")}
                   />
@@ -2640,7 +2742,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
-                    disabled={!sectionDirty || !!savingSection}
+                    disabled={!sectionDirty || saveBlocked}
                     onSave={() => handleSave("users")}
                     onCancel={() => handleCancel("users")}
                   />
@@ -2716,7 +2818,7 @@ export default function CompanySettings() {
 
                   <ActionRow
                     dirty={sectionDirty}
-                    disabled={!sectionDirty || !!savingSection}
+                    disabled={!sectionDirty || saveBlocked}
                     onSave={() => handleSave("preferences")}
                     onCancel={() => handleCancel("preferences")}
                   />

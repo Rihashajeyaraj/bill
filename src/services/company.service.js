@@ -11,7 +11,11 @@ import {
   ssGet,
   ssSet
 } from "./storage";
-import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import {
+  createSupabaseClientWithAccessToken,
+  isSupabaseConfigured,
+  supabase
+} from "./supabaseClient";
 import { setInvoiceTemplateCompleted } from "../lib/templateStore";
 
 export const COUNTRIES = ["India", "Sri Lanka", "UAE", "USA", "United Kingdom", "Ireland"];
@@ -49,6 +53,11 @@ const DEFAULT_ROLE_PERMISSIONS = {
   Accounter: { create: true, edit: true, delete: false, reports: true, approvals: false },
   Staff: { create: true, edit: false, delete: false, reports: false, approvals: false }
 };
+
+function resolveSupabaseClient(accessToken = "") {
+  if (!isSupabaseConfigured || !supabase) return null;
+  return createSupabaseClientWithAccessToken(accessToken) || supabase;
+}
 
 function getCountryCode(countryName) {
   return COUNTRY_NAME_TO_CODE[countryName] || "IN";
@@ -189,9 +198,11 @@ async function uploadCompanyLogoToStorage({
   logoValue = "",
   logoFile = null,
   organizationId = "",
-  userId = ""
+  userId = "",
+  supabaseClient = null
 }) {
-  if (!isSupabaseConfigured || !supabase) {
+  const client = supabaseClient || supabase;
+  if (!isSupabaseConfigured || !client) {
     return { logoValue };
   }
 
@@ -205,7 +216,7 @@ async function uploadCompanyLogoToStorage({
 
   let lastError = "";
   for (const bucket of COMPANY_LOGO_BUCKET_CANDIDATES) {
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await client.storage
       .from(bucket)
       .upload(filePath, payload.blob, {
         upsert: true,
@@ -218,7 +229,7 @@ async function uploadCompanyLogoToStorage({
       continue;
     }
 
-    const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
+    const { data } = client.storage.from(bucket).getPublicUrl(filePath);
     const publicUrl = data?.publicUrl || "";
     if (publicUrl) return { logoValue: appendVersionQuery(publicUrl, version) };
     return { logoValue: appendVersionQuery(logoValue, version) };
@@ -385,8 +396,9 @@ function persistProfileLocal(profile, { completedStatus = true } = {}) {
   return toPersist;
 }
 
-async function upsertMembershipDirectly({ organizationId, userId, role }) {
-  const { error: memberError } = await supabase.from("organization_members").upsert(
+async function upsertMembershipDirectly({ organizationId, userId, role, supabaseClient = null }) {
+  const client = supabaseClient || supabase;
+  const { error: memberError } = await client.from("organization_members").upsert(
     {
       organization_id: organizationId,
       user_id: userId,
@@ -405,11 +417,12 @@ async function upsertMembershipDirectly({ organizationId, userId, role }) {
   if (memberError) throw new Error(memberError.message || "Failed to save organization membership");
 }
 
-async function getCurrentUserId() {
-  if (!isSupabaseConfigured || !supabase) return "";
+async function getCurrentUserId(supabaseClient = null) {
+  const client = supabaseClient || supabase;
+  if (!isSupabaseConfigured || !client) return "";
   const {
     data: { user }
-  } = await supabase.auth.getUser();
+  } = await client.auth.getUser();
   return user?.id || "";
 }
 
@@ -480,9 +493,10 @@ async function fetchOrganizationBundle(organizationId) {
   return { organization, taxProfile: taxProfile || null };
 }
 
-async function fetchCompanySettingsRow(organizationId) {
-  if (!isSupabaseConfigured || !supabase || !organizationId) return null;
-  const { data, error } = await supabase
+async function fetchCompanySettingsRow(organizationId, supabaseClient = null) {
+  const client = supabaseClient || supabase;
+  if (!isSupabaseConfigured || !client || !organizationId) return null;
+  const { data, error } = await client
     .from(COMPANY_SETTINGS_TABLE)
     .select("settings")
     .eq("organization_id", organizationId)
@@ -495,10 +509,11 @@ async function fetchCompanySettingsRow(organizationId) {
   return data?.settings && typeof data.settings === "object" ? data.settings : null;
 }
 
-async function upsertCompanySettingsRow({ organizationId, settings, updatedBy }) {
-  if (!isSupabaseConfigured || !supabase || !organizationId) return;
+async function upsertCompanySettingsRow({ organizationId, settings, updatedBy, supabaseClient = null }) {
+  const client = supabaseClient || supabase;
+  if (!isSupabaseConfigured || !client || !organizationId) return;
   const payload = settings && typeof settings === "object" ? settings : {};
-  const { error } = await supabase.from(COMPANY_SETTINGS_TABLE).upsert(
+  const { error } = await client.from(COMPANY_SETTINGS_TABLE).upsert(
     {
       organization_id: organizationId,
       settings: payload,
@@ -544,9 +559,10 @@ function toPositiveCounter(value, fallback = 1) {
   return Math.trunc(numeric);
 }
 
-async function fetchDocumentSequences(organizationId) {
-  if (!isSupabaseConfigured || !supabase || !organizationId) return null;
-  const { data, error } = await supabase
+async function fetchDocumentSequences(organizationId, supabaseClient = null) {
+  const client = supabaseClient || supabase;
+  if (!isSupabaseConfigured || !client || !organizationId) return null;
+  const { data, error } = await client
     .from("organization_document_sequences")
     .select("*")
     .eq("organization_id", organizationId)
@@ -559,8 +575,9 @@ async function fetchDocumentSequences(organizationId) {
   return mapDocumentSequencesRow(data);
 }
 
-async function upsertDocumentSequences(organizationId, numbering = {}) {
-  if (!isSupabaseConfigured || !supabase || !organizationId) return;
+async function upsertDocumentSequences(organizationId, numbering = {}, supabaseClient = null) {
+  const client = supabaseClient || supabase;
+  if (!isSupabaseConfigured || !client || !organizationId) return;
   const prefixes = numbering?.prefixes || {};
   const counters = numbering?.counters || {};
   const payload = {
@@ -581,7 +598,7 @@ async function upsertDocumentSequences(organizationId, numbering = {}) {
     updated_at: new Date().toISOString()
   };
 
-  const { error } = await supabase
+  const { error } = await client
     .from("organization_document_sequences")
     .upsert(payload, { onConflict: "organization_id" });
 
@@ -591,10 +608,11 @@ async function upsertDocumentSequences(organizationId, numbering = {}) {
   }
 }
 
-async function fetchOrganizationMembersDetailed(organizationId) {
-  if (!isSupabaseConfigured || !supabase || !organizationId) return [];
+async function fetchOrganizationMembersDetailed(organizationId, supabaseClient = null) {
+  const client = supabaseClient || supabase;
+  if (!isSupabaseConfigured || !client || !organizationId) return [];
 
-  const { data: members, error: memberError } = await supabase
+  const { data: members, error: memberError } = await client
     .from("organization_members")
     .select("id, user_id, role, status, joined_at, created_at")
     .eq("organization_id", organizationId)
@@ -608,7 +626,7 @@ async function fetchOrganizationMembersDetailed(organizationId) {
   const userIds = members.map((entry) => entry?.user_id).filter(Boolean);
   let profilesById = {};
   if (userIds.length) {
-    const { data: profiles } = await supabase
+    const { data: profiles } = await client
       .from("profiles")
       .select("id, full_name, email")
       .in("id", userIds);
@@ -733,6 +751,8 @@ export async function companyLoadMyOrganization(selectedOrganizationId = "") {
 export async function companySaveProfileRemote(profile, options = {}) {
   const forceCreate = !!options?.forceCreate;
   const logoFile = options?.logoFile || null;
+  const accessToken = String(options?.accessToken || "").trim();
+  const supabaseClient = resolveSupabaseClient(accessToken);
   const previous = forceCreate ? {} : companyGetProfile() || {};
   const countryData = normalizeProfileCountry({
     country: profile?.country || previous?.country || "",
@@ -751,7 +771,7 @@ export async function companySaveProfileRemote(profile, options = {}) {
     updated_at: new Date().toISOString()
   };
 
-  if (!isSupabaseConfigured || !supabase) {
+  if (!isSupabaseConfigured || !supabaseClient) {
     companySaveProfile(mergedProfile);
     const localOrganizationId = forceCreate
       ? `org_${Date.now().toString(16)}`
@@ -768,7 +788,7 @@ export async function companySaveProfileRemote(profile, options = {}) {
     return { profile: mergedProfile, organizationId: localOrganizationId, logoUrl: mergedProfile.logoBase64 };
   }
 
-  const userId = await getCurrentUserId();
+  const userId = await getCurrentUserId(supabaseClient);
   if (!userId) {
     throw new Error("Login required before organization setup");
   }
@@ -781,7 +801,8 @@ export async function companySaveProfileRemote(profile, options = {}) {
     logoValue: mergedProfile.logoBase64,
     logoFile,
     organizationId: targetOrganizationId,
-    userId
+    userId,
+    supabaseClient
   });
   if (uploadedLogo.warning) {
     warnings.push(uploadedLogo.warning);
@@ -794,7 +815,7 @@ export async function companySaveProfileRemote(profile, options = {}) {
   let organizationId = targetOrganizationId;
 
   if (existingOrgId) {
-    const { error } = await supabase.from("organizations").update(payload).eq("id", existingOrgId);
+    const { error } = await supabaseClient.from("organizations").update(payload).eq("id", existingOrgId);
     if (error?.code === "42501") {
       throw new Error(
         "Supabase RLS denied organization update. Run supabase/fix_organizations_rls.sql in SQL Editor."
@@ -803,7 +824,7 @@ export async function companySaveProfileRemote(profile, options = {}) {
     if (error) throw new Error(error.message || "Failed to update organization");
   } else {
     const generatedOrgId = payload.id || crypto.randomUUID();
-    const { error } = await supabase
+    const { error } = await supabaseClient
       .from("organizations")
       .insert({ ...payload, id: generatedOrgId, created_at: new Date().toISOString() });
 
@@ -820,11 +841,11 @@ export async function companySaveProfileRemote(profile, options = {}) {
 
   const ownerMode = isOwnerRole(authGetRole()) || toDbRole(authGetRole()) === "owner";
   if (ownerMode) {
-    const { error: ownerMembershipError } = await supabase.rpc("ensure_owner_membership", {
+    const { error: ownerMembershipError } = await supabaseClient.rpc("ensure_owner_membership", {
       p_organization_id: organizationId
     });
     if (ownerMembershipError?.code === "PGRST202") {
-      await upsertMembershipDirectly({ organizationId, userId, role: "owner" });
+      await upsertMembershipDirectly({ organizationId, userId, role: "owner", supabaseClient });
     } else if (ownerMembershipError) {
       throw new Error(
         ownerMembershipError?.message ||
@@ -833,11 +854,11 @@ export async function companySaveProfileRemote(profile, options = {}) {
     }
   } else {
     const memberRole = toDbRole(authGetRole());
-    await upsertMembershipDirectly({ organizationId, userId, role: memberRole });
+    await upsertMembershipDirectly({ organizationId, userId, role: memberRole, supabaseClient });
   }
 
   const taxPayload = mapProfileToTaxPayload(mergedProfile, organizationId);
-  const { error: taxError } = await supabase
+  const { error: taxError } = await supabaseClient
     .from("organization_tax_profiles")
     .upsert(taxPayload, { onConflict: "organization_id" });
 
@@ -847,9 +868,10 @@ export async function companySaveProfileRemote(profile, options = {}) {
     await upsertCompanySettingsRow({
       organizationId,
       settings: mergedProfile?.settings || {},
-      updatedBy: userId
+      updatedBy: userId,
+      supabaseClient
     });
-    await upsertDocumentSequences(organizationId, mergedProfile?.settings?.numbering || {});
+    await upsertDocumentSequences(organizationId, mergedProfile?.settings?.numbering || {}, supabaseClient);
   } catch (settingsError) {
     warnings.push(settingsError?.message || "Failed to sync company settings table.");
   }
@@ -875,21 +897,25 @@ export async function companySaveProfileRemote(profile, options = {}) {
   };
 }
 
-export async function organizationListUsers() {
+export async function organizationListUsers(options = {}) {
+  const accessToken = String(options?.accessToken || "").trim();
+  const supabaseClient = options?.supabaseClient || resolveSupabaseClient(accessToken);
   const organizationId = authGetOrganizationId();
   if (!organizationId) return [];
-  return fetchOrganizationMembersDetailed(organizationId);
+  return fetchOrganizationMembersDetailed(organizationId, supabaseClient);
 }
 
-export async function organizationUpdateUser({ userId, role, status }) {
+export async function organizationUpdateUser({ userId, role, status }, options = {}) {
   const organizationId = authGetOrganizationId();
+  const accessToken = String(options?.accessToken || "").trim();
+  const supabaseClient = options?.supabaseClient || resolveSupabaseClient(accessToken);
   if (!organizationId || !userId) {
     throw new Error("Organization and user are required.");
   }
   if (!isOwnerRole(authGetRole())) {
     throw new Error("Only Owner can change user roles.");
   }
-  if (!isSupabaseConfigured || !supabase) {
+  if (!isSupabaseConfigured || !supabaseClient) {
     return {
       userId,
       role: fromDbRole(toDbRole(role)),
@@ -903,7 +929,7 @@ export async function organizationUpdateUser({ userId, role, status }) {
   if (!Object.keys(payload).length) return null;
   payload.updated_at = new Date().toISOString();
 
-  const { data, error } = await supabase
+  const { data, error } = await supabaseClient
     .from("organization_members")
     .update(payload)
     .eq("organization_id", organizationId)
@@ -967,11 +993,13 @@ export async function settingsGetCompany() {
 
 export async function settingsPutCompany(profile, options = {}) {
   const result = await companySaveProfileRemote(profile, options);
+  const accessToken = String(options?.accessToken || "").trim();
+  const supabaseClient = resolveSupabaseClient(accessToken);
   const organizationId = result?.organizationId || authGetOrganizationId();
   const savedProfile = result?.profile || profile || {};
 
-  if (organizationId && isSupabaseConfigured && supabase) {
-    const actorUserId = authGetUser()?.id || (await getCurrentUserId()) || null;
+  if (organizationId && isSupabaseConfigured && supabaseClient) {
+    const actorUserId = authGetUser()?.id || (await getCurrentUserId(supabaseClient)) || null;
     const settingsPayload = savedProfile?.settings || {};
     await upsertCompanySettingsRow({
       organizationId,
@@ -982,12 +1010,13 @@ export async function settingsPutCompany(profile, options = {}) {
           roles: normalizeRolePermissions(settingsPayload?.users?.roles || {})
         }
       },
-      updatedBy: actorUserId
+      updatedBy: actorUserId,
+      supabaseClient
     });
-    await upsertDocumentSequences(organizationId, settingsPayload?.numbering || {});
+    await upsertDocumentSequences(organizationId, settingsPayload?.numbering || {}, supabaseClient);
   }
 
-  const users = await organizationListUsers().catch(() => []);
+  const users = await organizationListUsers({ accessToken, supabaseClient }).catch(() => []);
   const profileWithUsers = {
     ...savedProfile,
     settings: {

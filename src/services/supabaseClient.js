@@ -20,15 +20,33 @@ const sessionStorageAdapter = {
   }
 };
 
+const supabaseClientOptions = {
+  auth: {
+    storage: sessionStorageAdapter,
+    userStorage: sessionStorageAdapter,
+    storageKey: "sb-auth-tab-session",
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true
+  }
+};
+
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        storage: sessionStorageAdapter,
-        userStorage: sessionStorageAdapter,
-        storageKey: "sb-auth-tab-session",
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true
-      }
+      ...supabaseClientOptions
     })
   : null;
+
+export function createSupabaseClientWithAccessToken(accessToken = "") {
+  if (!isSupabaseConfigured || !supabaseUrl || !supabaseAnonKey) return null;
+  const token = String(accessToken || "").trim();
+  if (!token) return supabase;
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    ...supabaseClientOptions,
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    }
+  });
+}
