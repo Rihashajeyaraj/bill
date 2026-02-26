@@ -5,17 +5,15 @@ import {
   AlertTriangle,
   Wallet,
   Users,
-  Plus,
-  Minus,
   RotateCw
 } from "lucide-react";
 import Card from "../components/Card";
 import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
 import { purchasesList, purchasesSyncFromRemote } from "../services/purchases.service";
 import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
-import { EXPENSES_CHANGED_EVENT, getDashboardExpenseSummary } from "../services/expenses.service";
+import { EXPENSES_CHANGED_EVENT, expensesList, expensesSyncFromRemote } from "../services/expenses.service";
 import { mapOpenBillsByCountry } from "../modules/paymentOut/store";
-import { fetchPartiesCount } from "../modules/parties/store";
+import { listParties, syncPartiesFromRemote } from "../modules/parties/store";
 import { useOrganization } from "../context/OrganizationContext";
 import {
   ResponsiveContainer,
@@ -49,8 +47,71 @@ function buildMonthLabels() {
   return ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
 }
 
+function toLocalIsoDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function toIsoDate(value) {
+  if (!value) return "";
+  const raw = String(value);
+  if (raw.length >= 10 && raw[4] === "-" && raw[7] === "-") return raw.slice(0, 10);
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toISOString().slice(0, 10);
+}
+
+function dateInRange(dateValue, fromDate, toDate) {
+  const iso = toIsoDate(dateValue);
+  if (!iso) return false;
+  if (fromDate && iso < fromDate) return false;
+  if (toDate && iso > toDate) return false;
+  return true;
+}
+
+const COUNTRY_ALIAS = {
+  india: "india",
+  in: "india",
+  "sri lanka": "sri lanka",
+  lk: "sri lanka",
+  sl: "sri lanka",
+  uae: "uae",
+  ae: "uae",
+  usa: "usa",
+  us: "usa",
+  "united states": "usa",
+  uk: "uk",
+  gb: "uk",
+  "united kingdom": "uk",
+  ireland: "ireland",
+  ie: "ireland",
+  singapore: "singapore",
+  sg: "singapore"
+};
+
+function normalizeCountryKey(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return COUNTRY_ALIAS[key] || key;
+}
+
+function recordCountry(record) {
+  if (!record || typeof record !== "object") return "";
+  return record.country || record.countryCode || record?.metadata?.country || record?.companySnapshot?.country || "";
+}
+
+function countryMatches(recordValue, targetCountry) {
+  const target = normalizeCountryKey(targetCountry);
+  const source = normalizeCountryKey(recordValue);
+  if (!source) return true;
+  return source === target;
+}
+
 export default function Dashboard() {
-  const { currency = "INR" } = useOrganization();
+  const { currency = "INR", country = "India", countryCode = "IN" } = useOrganization();
+  const todayIso = toLocalIsoDate(new Date());
+  const monthStartIso = toLocalIsoDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 
   useEffect(() => {
     const token = beginPageLoading("dashboard");
@@ -64,22 +125,24 @@ export default function Dashboard() {
   const [invoices, setInvoices] = useState(() => invoicesList());
   const [purchases, setPurchases] = useState(() => purchasesList());
   const [payments, setPayments] = useState(() => paymentsList());
+  const [expenses, setExpenses] = useState(() => expensesList());
+  const [parties, setParties] = useState(() => listParties());
   const [paymentInPremium, setPaymentInPremium] = useState(() =>
     lsGetOrganizationScoped("paymentInPremiumV1", [])
   );
   const [paymentOutPremium, setPaymentOutPremium] = useState(() =>
     lsGetOrganizationScoped("paymentOutPremiumV1", [])
   );
-  const [expenseCategorySummary, setExpenseCategorySummary] = useState([]);
-  const [partyCounts, setPartyCounts] = useState({ total: 0, customers: 0, suppliers: 0 });
+  const [fromDate, setFromDate] = useState(monthStartIso);
+  const [toDate, setToDate] = useState(todayIso);
   const [donutTab, setDonutTab] = useState("income");
 
-  const refreshExpenseSummary = useCallback(async () => {
+  const refreshExpenses = useCallback(async () => {
     try {
-      const summary = await getDashboardExpenseSummary();
-      setExpenseCategorySummary(Array.isArray(summary) ? summary : []);
+      const synced = await expensesSyncFromRemote();
+      setExpenses(Array.isArray(synced) ? synced : expensesList());
     } catch {
-      setExpenseCategorySummary([]);
+      setExpenses(expensesList());
     }
   }, []);
 
@@ -87,30 +150,30 @@ export default function Dashboard() {
     let mounted = true;
     async function syncDashboardData() {
       try {
-        const [syncedInvoices, syncedPurchases, syncedPayments, counts, summary] = await Promise.all([
+        const [syncedInvoices, syncedPurchases, syncedPayments, syncedExpenses, syncedParties] = await Promise.all([
           invoicesSyncFromRemote(),
           purchasesSyncFromRemote(),
           paymentsSyncFromRemote(),
-          fetchPartiesCount(),
-          getDashboardExpenseSummary()
+          expensesSyncFromRemote(),
+          syncPartiesFromRemote(),
         ]);
         if (!mounted) return;
         setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
         setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList());
         setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList());
+        setExpenses(Array.isArray(syncedExpenses) ? syncedExpenses : expensesList());
+        setParties(Array.isArray(syncedParties) ? syncedParties : listParties());
         setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
         setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
-        setPartyCounts(counts || { total: 0, customers: 0, suppliers: 0 });
-        setExpenseCategorySummary(Array.isArray(summary) ? summary : []);
       } catch {
         if (!mounted) return;
         setInvoices(invoicesList());
         setPurchases(purchasesList());
         setPayments(paymentsList());
+        setExpenses(expensesList());
+        setParties(listParties());
         setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
         setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
-        setPartyCounts({ total: 0, customers: 0, suppliers: 0 });
-        setExpenseCategorySummary([]);
       }
     }
     syncDashboardData();
@@ -121,12 +184,29 @@ export default function Dashboard() {
 
   useEffect(() => {
     function handleExpenseChange() {
-      void refreshExpenseSummary();
+      void refreshExpenses();
     }
 
     function handleStorage(event) {
-      if (!isOrganizationScopedStorageEventKey(LS_KEYS.expenses, event?.key)) return;
-      void refreshExpenseSummary();
+      if (isOrganizationScopedStorageEventKey(LS_KEYS.expenses, event?.key)) {
+        void refreshExpenses();
+        return;
+      }
+      if (
+        isOrganizationScopedStorageEventKey(LS_KEYS.invoices, event?.key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.purchases, event?.key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.payments, event?.key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.parties, event?.key) ||
+        isOrganizationScopedStorageEventKey("paymentInPremiumV1", event?.key) ||
+        isOrganizationScopedStorageEventKey("paymentOutPremiumV1", event?.key)
+      ) {
+        setInvoices(invoicesList());
+        setPurchases(purchasesList());
+        setPayments(paymentsList());
+        setParties(listParties());
+        setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
+        setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
+      }
     }
 
     window.addEventListener(EXPENSES_CHANGED_EVENT, handleExpenseChange);
@@ -135,18 +215,106 @@ export default function Dashboard() {
       window.removeEventListener(EXPENSES_CHANGED_EVENT, handleExpenseChange);
       window.removeEventListener("storage", handleStorage);
     };
-  }, [refreshExpenseSummary]);
+  }, [refreshExpenses]);
 
   const currencyPrefix = currency ? `${currency} ` : "";
   const currencyBadge = currency.slice(0, 3).toUpperCase();
 
-  const totals = useMemo(() => {
-    const sales = invoices.reduce((a, x) => a + Number(x?.totals?.grandTotal || 0), 0);
-    const purchase = purchases.reduce((a, x) => a + Number(x?.totals?.grandTotal || 0), 0);
-    const totalExpense = expenseCategorySummary.reduce((sum, entry) => sum + Number(entry?.total || 0), 0);
-    const payables = mapOpenBillsByCountry().reduce((sum, bill) => sum + Number(bill?.balanceDue || 0), 0);
+  const filteredInvoices = useMemo(
+    () =>
+      invoices.filter(
+        (entry) =>
+          countryMatches(recordCountry(entry), country) &&
+          dateInRange(entry?.invoiceDate || entry?.date || entry?.created_at, fromDate, toDate)
+      ),
+    [invoices, country, fromDate, toDate]
+  );
 
-    const receivedLegacy = payments
+  const filteredPurchases = useMemo(
+    () =>
+      purchases.filter(
+        (entry) =>
+          countryMatches(recordCountry(entry), country) &&
+          dateInRange(entry?.billDate || entry?.invoiceDate || entry?.date || entry?.created_at, fromDate, toDate)
+      ),
+    [purchases, country, fromDate, toDate]
+  );
+
+  const filteredExpenses = useMemo(
+    () => expenses.filter((entry) => dateInRange(entry?.date || entry?.created_at, fromDate, toDate)),
+    [expenses, fromDate, toDate]
+  );
+
+  const filteredPaymentInPremium = useMemo(
+    () =>
+      (Array.isArray(paymentInPremium) ? paymentInPremium : []).filter(
+        (entry) =>
+          String(entry?.status || "").toLowerCase() !== "draft" &&
+          countryMatches(recordCountry(entry), country) &&
+          dateInRange(entry?.paymentDate || entry?.payment_date || entry?.created_at, fromDate, toDate)
+      ),
+    [paymentInPremium, country, fromDate, toDate]
+  );
+
+  const filteredPaymentOutPremium = useMemo(
+    () =>
+      (Array.isArray(paymentOutPremium) ? paymentOutPremium : []).filter(
+        (entry) =>
+          String(entry?.status || "").toLowerCase() !== "draft" &&
+          countryMatches(recordCountry(entry), country) &&
+          dateInRange(entry?.paymentDate || entry?.payment_date || entry?.created_at, fromDate, toDate)
+      ),
+    [paymentOutPremium, country, fromDate, toDate]
+  );
+
+  const filteredLegacyPayments = useMemo(
+    () =>
+      payments.filter(
+        (entry) =>
+          countryMatches(recordCountry(entry), country) &&
+          dateInRange(entry?.date || entry?.payment_date || entry?.created_at, fromDate, toDate)
+      ),
+    [payments, country, fromDate, toDate]
+  );
+
+  const partyCounts = useMemo(() => {
+    const scoped = parties.filter((party) => countryMatches(recordCountry(party), country));
+    let customers = 0;
+    let suppliers = 0;
+    scoped.forEach((party) => {
+      const type = String(party?.type || "").toLowerCase();
+      if (type === "supplier") suppliers += 1;
+      else customers += 1;
+    });
+    return { total: scoped.length, customers, suppliers };
+  }, [parties, country]);
+
+  const totals = useMemo(() => {
+    const sales = filteredInvoices.reduce(
+      (sum, entry) =>
+        sum +
+        Number(entry?.totals?.grandTotal ?? entry?.totals?.total ?? entry?.totals?.subTotal ?? entry?.grandTotal ?? 0),
+      0
+    );
+    const purchase = filteredPurchases.reduce(
+      (sum, entry) =>
+        sum +
+        Number(
+          entry?.totals?.grandTotal ??
+            entry?.totals?.finalTotal ??
+            entry?.totals?.total ??
+            entry?.totals?.subTotal ??
+            entry?.grandTotal ??
+            0
+        ),
+      0
+    );
+    const totalExpense = filteredExpenses.reduce(
+      (sum, entry) => sum + Number(entry?.amount ?? entry?.totalAmount ?? entry?.total ?? 0),
+      0
+    );
+
+    const receivedLegacy = filteredLegacyPayments
       .filter((entry) => {
         const direction = String(entry?.direction || "").toUpperCase();
         if (direction !== "IN") return false;
@@ -154,7 +322,7 @@ export default function Dashboard() {
         return !reference.startsWith("PI:");
       })
       .reduce((sum, entry) => sum + Number(entry?.amount || 0), 0);
-    const paidLegacy = payments
+    const paidLegacy = filteredLegacyPayments
       .filter((entry) => {
         const direction = String(entry?.direction || "").toUpperCase();
         if (direction !== "OUT") return false;
@@ -162,55 +330,57 @@ export default function Dashboard() {
         return !reference.startsWith("PO:");
       })
       .reduce((sum, entry) => sum + Number(entry?.amount || 0), 0);
-    const receivedPremium = (Array.isArray(paymentInPremium) ? paymentInPremium : [])
-      .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
+    const receivedPremium = filteredPaymentInPremium
       .reduce((sum, entry) => sum + Number(entry?.totals?.amountReceived || 0), 0);
-    const paidPremium = (Array.isArray(paymentOutPremium) ? paymentOutPremium : [])
-      .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
+    const paidPremium = filteredPaymentOutPremium
       .reduce((sum, entry) => sum + Number(entry?.totals?.amountPaid || 0), 0);
+
     const received = Math.max(0, receivedLegacy + receivedPremium);
     const paid = Math.max(0, paidLegacy + paidPremium);
-    const overdueCutoff = new Date();
-    overdueCutoff.setHours(0, 0, 0, 0);
-    overdueCutoff.setDate(overdueCutoff.getDate() - 30);
 
-    let remainingReceived = Math.max(0, received);
-    const sortedInvoices = [...invoices].sort((a, b) => {
-      const aTime = new Date(a?.invoiceDate || a?.date || a?.created_at || 0).getTime();
-      const bTime = new Date(b?.invoiceDate || b?.date || b?.created_at || 0).getTime();
-      return aTime - bTime;
-    });
+    const payables = mapOpenBillsByCountry(countryCode || country).reduce(
+      (sum, bill) => sum + Number(bill?.balanceDue || 0),
+      0
+    );
 
-    const overdueAmount = sortedInvoices.reduce((sum, invoice) => {
-      const status = String(invoice?.status || invoice?.paymentStatus || "").toLowerCase();
-      if (status === "paid") return sum;
+    const receivables = filteredInvoices.reduce((sum, invoice) => {
+      const balance = Number(
+        invoice?.totals?.balance ??
+          invoice?.remainingBalance ??
+          invoice?.balanceAmount ??
+          invoice?.totals?.grandTotal ??
+          invoice?.totals?.total ??
+          0
+      );
+      return sum + Math.max(0, balance);
+    }, 0);
 
-      const invoiceTotal = Math.max(
+    const overdueAmount = filteredInvoices.reduce((sum, invoice) => {
+      const balance = Math.max(
         0,
         Number(
           invoice?.totals?.balance ??
             invoice?.remainingBalance ??
+            invoice?.balanceAmount ??
             invoice?.totals?.grandTotal ??
             invoice?.totals?.total ??
             0
         )
       );
-      if (!invoiceTotal) return sum;
-
-      const applied = Math.min(invoiceTotal, remainingReceived);
-      remainingReceived = Math.max(0, remainingReceived - applied);
-      const outstanding = Math.max(0, invoiceTotal - applied);
-      if (!outstanding) return sum;
-
-      const invoiceDate = new Date(invoice?.invoiceDate || invoice?.date || invoice?.created_at || 0);
-      if (Number.isNaN(invoiceDate.getTime()) || invoiceDate >= overdueCutoff) return sum;
-
-      return sum + outstanding;
+      if (!balance) return sum;
+      const dueDate = toIsoDate(invoice?.dueDate || invoice?.invoiceDate || invoice?.date || invoice?.created_at);
+      if (!dueDate) return sum;
+      const overdueDays = Math.floor(
+        (new Date(`${todayIso}T00:00:00`).getTime() - new Date(`${dueDate}T00:00:00`).getTime()) /
+          (24 * 60 * 60 * 1000)
+      );
+      if (overdueDays <= 30) return sum;
+      return sum + balance;
     }, 0);
 
     return {
       totalSales: sales,
-      receivables: Math.max(0, sales - received),
+      receivables: Math.max(0, receivables),
       payables: Math.max(0, payables),
       cashBalance: Math.max(0, received - paid),
       overdueAmount: Math.max(0, overdueAmount),
@@ -219,20 +389,37 @@ export default function Dashboard() {
       paid,
       totalExpense: Math.max(0, totalExpense)
     };
-  }, [invoices, purchases, payments, expenseCategorySummary, paymentInPremium, paymentOutPremium]);
+  }, [
+    filteredInvoices,
+    filteredPurchases,
+    filteredExpenses,
+    filteredLegacyPayments,
+    filteredPaymentInPremium,
+    filteredPaymentOutPremium,
+    countryCode,
+    country,
+    todayIso
+  ]);
 
   const chart = useMemo(() => {
     const months = buildMonthLabels();
     const incomeMap = new Map();
     const expenseMap = new Map();
 
-    invoices.forEach((inv) => {
+    filteredInvoices.forEach((inv) => {
       const label = new Date(inv.invoiceDate || Date.now()).toLocaleString(undefined, { month: "short" });
-      incomeMap.set(label, (incomeMap.get(label) || 0) + Number(inv.totals?.grandTotal || 0));
+      incomeMap.set(
+        label,
+        (incomeMap.get(label) || 0) + Number(inv?.totals?.grandTotal ?? inv?.totals?.total ?? inv?.grandTotal ?? 0)
+      );
     });
-    purchases.forEach((bill) => {
+    filteredPurchases.forEach((bill) => {
       const label = new Date(bill.billDate || Date.now()).toLocaleString(undefined, { month: "short" });
-      expenseMap.set(label, (expenseMap.get(label) || 0) + Number(bill.totals?.grandTotal || 0));
+      expenseMap.set(
+        label,
+        (expenseMap.get(label) || 0) +
+          Number(bill?.totals?.grandTotal ?? bill?.totals?.finalTotal ?? bill?.totals?.total ?? bill?.grandTotal ?? 0)
+      );
     });
 
     return months.map((m) => ({
@@ -240,48 +427,74 @@ export default function Dashboard() {
       income: Math.round(incomeMap.get(m) || 0),
       expense: Math.round(expenseMap.get(m) || 0)
     }));
-  }, [invoices, purchases]);
+  }, [filteredInvoices, filteredPurchases]);
 
   const donutData = useMemo(() => {
     if (donutTab === "expense") {
-      return expenseCategorySummary.map((entry) => ({
-        name: entry?.category || "Uncategorized",
-        value: Number(entry?.total || 0)
-      }));
+      const bucket = new Map();
+      filteredExpenses.forEach((entry) => {
+        const name = String(entry?.category || "Uncategorized").trim() || "Uncategorized";
+        const value = Math.max(0, Number(entry?.amount ?? entry?.totalAmount ?? entry?.total ?? 0));
+        bucket.set(name, (bucket.get(name) || 0) + value);
+      });
+      return Array.from(bucket.entries())
+        .map(([name, value]) => ({ name, value }))
+        .filter((entry) => entry.value > 0)
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 5);
     }
-    return [
-      { name: "Interest Income", value: 38 },
-      { name: "Rental Income", value: 18 },
-      { name: "Sponsorship Income", value: 15 },
-      { name: "Commission Income", value: 17 },
-      { name: "Bad debts recovery", value: 12 }
-    ];
-  }, [donutTab, expenseCategorySummary]);
+    const incomeByParty = new Map();
+    filteredInvoices.forEach((entry) => {
+      const party = String(entry?.partyName || entry?.buyer?.name || "Customer").trim() || "Customer";
+      const value = Math.max(0, Number(entry?.totals?.grandTotal ?? entry?.totals?.total ?? entry?.grandTotal ?? 0));
+      incomeByParty.set(party, (incomeByParty.get(party) || 0) + value);
+    });
+    return Array.from(incomeByParty.entries())
+      .map(([name, value]) => ({ name, value }))
+      .filter((entry) => entry.value > 0)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
+  }, [donutTab, filteredExpenses, filteredInvoices]);
 
   const donutColors = ["#ff6b6b", "#f6c453", "#4caf50", "#8e8e93", "#3b82f6"];
-  const isExpenseDonutEmpty = donutTab === "expense" && donutData.length === 0;
+  const isDonutEmpty = donutData.length === 0;
 
   return (
     <div className="dashboard-theme max-w-6xl">
       <div className="rounded-2xl bg-slate-100 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold text-slate-700">Dashboard</h1>
+        <h1 className="text-lg font-semibold text-slate-700">Dashboard ({countryCode} {country})</h1>
         <div className="flex flex-wrap items-center gap-2">
           <input
             type="date"
+            value={fromDate}
+            onChange={(event) => {
+              const next = event.target.value;
+              setFromDate(next);
+              if (next && toDate && next > toDate) setToDate(next);
+            }}
+            max={toDate || undefined}
             className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 outline-none"
-            defaultValue="2023-04-01"
           />
           <input
             type="date"
+            value={toDate}
+            onChange={(event) => {
+              const next = event.target.value;
+              setToDate(next);
+              if (next && fromDate && next < fromDate) setFromDate(next);
+            }}
+            min={fromDate || undefined}
             className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 outline-none"
-            defaultValue="2024-03-31"
           />
-          <select className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 outline-none">
-            <option>This Fin Year</option>
-            <option>Last Fin Year</option>
-            <option>Custom</option>
-          </select>
-          <button className="h-8 w-8 rounded-xl border border-slate-200 bg-white flex items-center justify-center">
+          <button
+            type="button"
+            onClick={() => {
+              setFromDate(monthStartIso);
+              setToDate(todayIso);
+            }}
+            className="h-8 w-8 rounded-xl border border-slate-200 bg-white flex items-center justify-center"
+            title="Reset date range"
+          >
             <RotateCw className="h-4 w-4 text-slate-500" />
           </button>
         </div>
@@ -346,17 +559,7 @@ export default function Dashboard() {
         <Card className="p-4 min-w-0">
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-slate-700">Income vs Expense</p>
-            <div className="flex items-center gap-2">
-              <button className="h-7 w-7 rounded-md border border-slate-200 bg-white flex items-center justify-center">
-                <Plus className="h-4 w-4 text-slate-500" />
-              </button>
-              <button className="h-7 w-7 rounded-md border border-slate-200 bg-white flex items-center justify-center">
-                <Minus className="h-4 w-4 text-slate-500" />
-              </button>
-              <button className="h-7 w-7 rounded-md border border-slate-200 bg-white flex items-center justify-center">
-                <RotateCw className="h-4 w-4 text-slate-500" />
-              </button>
-            </div>
+            <p className="text-xs text-slate-500">Date-filtered totals</p>
           </div>
           <div className="mt-3 h-[clamp(240px,40vw,320px)] w-full rounded-xl border border-slate-200 bg-slate-50 pl-2 pr-1 pt-3 pb-2 sm:pl-3 sm:pr-2 sm:pt-4 sm:pb-3">
             <ResponsiveContainer width="100%" height="100%">
@@ -423,9 +626,9 @@ export default function Dashboard() {
           <div className="mt-4 h-[180px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                {isExpenseDonutEmpty ? (
+                {isDonutEmpty ? (
                   <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" fill="#64748b" fontSize={14}>
-                    No Expense Data
+                    No Data
                   </text>
                 ) : (
                   <Pie
@@ -445,8 +648,8 @@ export default function Dashboard() {
           </div>
 
           <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
-            {isExpenseDonutEmpty ? (
-              <span>No Expense Data</span>
+            {isDonutEmpty ? (
+              <span>No data in selected date range</span>
             ) : (
               donutData.map((item, idx) => (
                 <span key={item.name} className="inline-flex items-center gap-2">

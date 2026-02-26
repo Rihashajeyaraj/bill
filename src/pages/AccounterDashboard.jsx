@@ -3,7 +3,7 @@ import { ArrowDownCircle, ArrowUpCircle, FileClock, ReceiptIndianRupee, Users } 
 import Card from "../components/Card";
 import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
 import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
-import { fetchPartiesCount } from "../modules/parties/store";
+import { listParties, syncPartiesFromRemote } from "../modules/parties/store";
 import { useOrganization } from "../context/OrganizationContext";
 import { lsGetOrganizationScoped } from "../services/storage";
 
@@ -12,40 +12,77 @@ function money(n) {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+const COUNTRY_ALIAS = {
+  india: "india",
+  in: "india",
+  "sri lanka": "sri lanka",
+  lk: "sri lanka",
+  sl: "sri lanka",
+  uae: "uae",
+  ae: "uae",
+  usa: "usa",
+  us: "usa",
+  "united states": "usa",
+  uk: "uk",
+  gb: "uk",
+  "united kingdom": "uk",
+  ireland: "ireland",
+  ie: "ireland",
+  singapore: "singapore",
+  sg: "singapore"
+};
+
+function normalizeCountryKey(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return COUNTRY_ALIAS[key] || key;
+}
+
+function recordCountry(record) {
+  if (!record || typeof record !== "object") return "";
+  return record.country || record.countryCode || record?.metadata?.country || record?.companySnapshot?.country || "";
+}
+
+function countryMatches(recordValue, targetCountry) {
+  const target = normalizeCountryKey(targetCountry);
+  const source = normalizeCountryKey(recordValue);
+  if (!source) return true;
+  return source === target;
+}
+
 export default function AccounterDashboard() {
-  const { currency = "INR" } = useOrganization();
+  const { currency = "INR", country = "India", countryCode = "IN" } = useOrganization();
   const [invoices, setInvoices] = useState(() => invoicesList());
   const [payments, setPayments] = useState(() => paymentsList());
+  const [parties, setParties] = useState(() => listParties());
   const [paymentInPremium, setPaymentInPremium] = useState(() =>
     lsGetOrganizationScoped("paymentInPremiumV1", [])
   );
   const [paymentOutPremium, setPaymentOutPremium] = useState(() =>
     lsGetOrganizationScoped("paymentOutPremiumV1", [])
   );
-  const [partyCounts, setPartyCounts] = useState({ total: 0, customers: 0, suppliers: 0 });
 
   useEffect(() => {
     let mounted = true;
     async function syncDashboardData() {
       try {
-        const [syncedInvoices, syncedPayments, counts] = await Promise.all([
+        const [syncedInvoices, syncedPayments, syncedParties] = await Promise.all([
           invoicesSyncFromRemote(),
           paymentsSyncFromRemote(),
-          fetchPartiesCount()
+          syncPartiesFromRemote()
         ]);
         if (!mounted) return;
         setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
         setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList());
+        setParties(Array.isArray(syncedParties) ? syncedParties : listParties());
         setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
         setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
-        setPartyCounts(counts || { total: 0, customers: 0, suppliers: 0 });
       } catch {
         if (!mounted) return;
         setInvoices(invoicesList());
         setPayments(paymentsList());
+        setParties(listParties());
         setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
         setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
-        setPartyCounts({ total: 0, customers: 0, suppliers: 0 });
       }
     }
     syncDashboardData();
@@ -55,13 +92,36 @@ export default function AccounterDashboard() {
   }, []);
 
   const stats = useMemo(() => {
-    const totalInvoices = invoices.reduce((sum, invoice) => sum + Number(invoice?.totals?.grandTotal || 0), 0);
-    const pendingInvoices = invoices.filter((invoice) => {
+    const scopedInvoices = invoices.filter((invoice) => countryMatches(recordCountry(invoice), country));
+    const scopedPayments = payments.filter((entry) => countryMatches(recordCountry(entry), country));
+    const scopedPaymentIn = (Array.isArray(paymentInPremium) ? paymentInPremium : []).filter((entry) =>
+      countryMatches(recordCountry(entry), country)
+    );
+    const scopedPaymentOut = (Array.isArray(paymentOutPremium) ? paymentOutPremium : []).filter((entry) =>
+      countryMatches(recordCountry(entry), country)
+    );
+    const scopedParties = parties.filter((party) => countryMatches(recordCountry(party), country));
+
+    const totalInvoices = scopedInvoices.reduce(
+      (sum, invoice) =>
+        sum + Number(invoice?.totals?.grandTotal ?? invoice?.totals?.total ?? invoice?.grandTotal ?? 0),
+      0
+    );
+    const pendingInvoices = scopedInvoices.filter((invoice) => {
       const status = String(invoice?.status || invoice?.paymentStatus || "").toLowerCase();
-      return status !== "paid";
+      if (status === "draft" || status === "cancelled" || status === "canceled") return false;
+      const outstanding = Number(
+        invoice?.totals?.balance ??
+          invoice?.remainingBalance ??
+          invoice?.balanceAmount ??
+          invoice?.totals?.grandTotal ??
+          invoice?.totals?.total ??
+          0
+      );
+      return outstanding > 0;
     });
 
-    const incomingLegacy = payments
+    const incomingLegacy = scopedPayments
       .filter((entry) => {
         const direction = String(entry?.direction || "").toUpperCase();
         if (direction !== "IN") return false;
@@ -70,7 +130,7 @@ export default function AccounterDashboard() {
       })
       .reduce((sum, entry) => sum + Number(entry?.amount || 0), 0);
 
-    const outgoingLegacy = payments
+    const outgoingLegacy = scopedPayments
       .filter((entry) => {
         const direction = String(entry?.direction || "").toUpperCase();
         if (direction !== "OUT") return false;
@@ -79,11 +139,11 @@ export default function AccounterDashboard() {
       })
       .reduce((sum, entry) => sum + Number(entry?.amount || 0), 0);
 
-    const incomingPremium = (Array.isArray(paymentInPremium) ? paymentInPremium : [])
+    const incomingPremium = scopedPaymentIn
       .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
       .reduce((sum, entry) => sum + Number(entry?.totals?.amountReceived || 0), 0);
 
-    const outgoingPremium = (Array.isArray(paymentOutPremium) ? paymentOutPremium : [])
+    const outgoingPremium = scopedPaymentOut
       .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
       .reduce((sum, entry) => sum + Number(entry?.totals?.amountPaid || 0), 0);
 
@@ -91,25 +151,45 @@ export default function AccounterDashboard() {
     const outgoing = Math.max(0, outgoingLegacy + outgoingPremium);
 
     const pendingTotal = pendingInvoices.reduce(
-      (sum, invoice) => sum + Number(invoice?.totals?.balance || invoice?.totals?.grandTotal || 0),
+      (sum, invoice) =>
+        sum +
+        Number(
+          invoice?.totals?.balance ??
+            invoice?.remainingBalance ??
+            invoice?.balanceAmount ??
+            invoice?.totals?.grandTotal ??
+            invoice?.totals?.total ??
+            0
+        ),
       0
     );
+
+    let customers = 0;
+    let suppliers = 0;
+    scopedParties.forEach((party) => {
+      const type = String(party?.type || "").toLowerCase();
+      if (type === "supplier") suppliers += 1;
+      else customers += 1;
+    });
 
     return {
       totalInvoices,
       pendingCount: pendingInvoices.length,
       pendingTotal,
       incoming,
-      outgoing
+      outgoing,
+      partyTotal: scopedParties.length,
+      customers,
+      suppliers
     };
-  }, [invoices, payments, paymentInPremium, paymentOutPremium]);
+  }, [invoices, payments, paymentInPremium, paymentOutPremium, parties, country]);
 
   return (
     <div className="dashboard-theme max-w-6xl space-y-4">
       <div className="rounded-2xl bg-slate-100 px-4 py-3">
         <h1 className="text-lg font-semibold text-slate-800">Accounter Dashboard</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Track receivables, payables, and daily billing operations.
+          Track receivables, payables, and daily billing operations ({countryCode} {country}).
         </p>
       </div>
 
@@ -144,8 +224,8 @@ export default function AccounterDashboard() {
         <Card className="p-4 flex items-center justify-between gap-3">
           <div>
             <p className="text-xs text-slate-500">Parties</p>
-            <p className="mt-2 text-lg font-semibold text-slate-900">{partyCounts.total}</p>
-            <p className="text-xs text-slate-500">C {partyCounts.customers} | S {partyCounts.suppliers}</p>
+            <p className="mt-2 text-lg font-semibold text-slate-900">{stats.partyTotal}</p>
+            <p className="text-xs text-slate-500">C {stats.customers} | S {stats.suppliers}</p>
           </div>
           <Users className="h-6 w-6 text-indigo-600" />
         </Card>
