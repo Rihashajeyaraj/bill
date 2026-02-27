@@ -769,6 +769,7 @@ declare
   v_unit_price numeric;
   v_discount numeric;
   v_tax_rate numeric;
+  v_line_tax_inclusive boolean;
   v_taxable numeric;
   v_cgst numeric;
   v_sgst numeric;
@@ -881,6 +882,14 @@ begin
     v_unit_price := greatest(public.to_num(coalesce(v_line->>'rate', v_line->>'unit_price')), 0);
     v_discount := greatest(public.to_num(coalesce(v_line->>'discount', v_line->>'discountAmount')), 0);
     v_tax_rate := greatest(public.to_num(coalesce(v_line->>'tax', v_line->>'taxRate')), 0);
+    v_line_tax_inclusive := public.to_bool(
+      coalesce(
+        v_line->>'tax_inclusive',
+        v_line->>'taxInclusive',
+        case when upper(coalesce(v_line->>'priceTaxMode', '')) = 'WITH_TAX' then 'true' else 'false' end
+      ),
+      false
+    );
     v_taxable := greatest(public.to_num(coalesce(v_line->>'taxableAmount', v_line->>'net')), 0);
 
     if v_qty <= 0 then
@@ -888,8 +897,13 @@ begin
     end if;
 
     if v_taxable <= 0 then
-      v_taxable := round((v_qty * v_unit_price) - v_discount, 2);
-      if v_taxable < 0 then v_taxable := 0; end if;
+      if v_line_tax_inclusive and v_tax_rate > 0 then
+        v_line_total := round(greatest(0, (v_qty * v_unit_price) - v_discount), 2);
+        v_taxable := round((v_line_total / (1 + (v_tax_rate / 100)))::numeric, 2);
+      else
+        v_taxable := round((v_qty * v_unit_price) - v_discount, 2);
+        if v_taxable < 0 then v_taxable := 0; end if;
+      end if;
     end if;
 
     v_cgst := round(public.to_num(v_line->>'cgstAmount'), 2);

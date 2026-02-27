@@ -412,6 +412,13 @@ export async function invoicesCreate(invoice) {
           line_no: index + 1,
           item_id: looksLikeUuid(line?.itemId) ? line.itemId : null,
           manual_batch_id: looksLikeUuid(line?.selectedBatchId) ? line.selectedBatchId : null,
+          taxInclusive:
+            line?.taxInclusive === true ||
+            String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX",
+          priceTaxMode:
+            String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX"
+              ? "WITH_TAX"
+              : "WITHOUT_TAX",
           description: line?.itemName || line?.name || line?.description || `Line ${index + 1}`,
           hsn: line?.hsn || line?.hsnSac || null,
           qty: parseNumber(line?.qty ?? line?.quantity),

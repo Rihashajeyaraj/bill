@@ -428,6 +428,7 @@ export default function InvoiceCreate() {
         itemId: "",
         itemInput: "",
         selectedBatchId: "",
+        priceTaxMode: "WITHOUT_TAX",
         qty: 1,
         rate: 0,
         discount: 0,
@@ -450,6 +451,7 @@ export default function InvoiceCreate() {
         itemId: item.id,
         itemInput: formatItemSearchLabel(item),
         selectedBatchId: "",
+        priceTaxMode: item?.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX",
         qty: Number.isFinite(maxAssignable) ? Math.min(1, maxAssignable) : 1,
         rate: item.salesRate || item.price || 0,
         discount: 0,
@@ -571,11 +573,33 @@ export default function InvoiceCreate() {
       const rate = Number(l.rate || 0);
       const discount = Number(l.discount || 0);
       const taxRatePerLine = Number(l.tax || fallbackRate || 0);
+      const isTaxInclusive = String(l.priceTaxMode || "").toUpperCase() === "WITH_TAX";
 
-      const gross = qty * rate;
-      const net = Math.max(0, gross - discount);
-      const lineTax = net > 0 && taxRatePerLine > 0 ? round2((net * taxRatePerLine) / 100) : 0;
-      return { ...l, itemName: item?.name || "XXX", hsn: item?.hsn || item?.sac || "XX", gross, net, lineTax };
+      const gross = Math.max(0, qty * rate - discount);
+      let net = gross;
+      let lineTax = 0;
+      if (gross > 0 && taxRatePerLine > 0) {
+        if (isTaxInclusive) {
+          const divisor = 1 + taxRatePerLine / 100;
+          net = divisor > 0 ? round2(gross / divisor) : gross;
+          lineTax = round2(gross - net);
+        } else {
+          net = round2(gross);
+          lineTax = round2((net * taxRatePerLine) / 100);
+        }
+      } else {
+        net = round2(gross);
+      }
+
+      return {
+        ...l,
+        priceTaxMode: isTaxInclusive ? "WITH_TAX" : "WITHOUT_TAX",
+        itemName: item?.name || "XXX",
+        hsn: item?.hsn || item?.sac || "XX",
+        gross,
+        net,
+        lineTax
+      };
     });
 
     const subTotal = round2(enrichedBase.reduce((a, x) => a + x.net, 0));
@@ -831,6 +855,7 @@ export default function InvoiceCreate() {
       itemInput: formatItemSearchLabel(matchedItem),
       itemId: matchedItem.id,
       selectedBatchId: "",
+      priceTaxMode: matchedItem?.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX",
       qty: nextQty,
       rate: matchedItem?.salesRate || matchedItem?.price || 0,
       tax: matchedItem?.taxRate || 0
@@ -865,6 +890,7 @@ export default function InvoiceCreate() {
     updateLine(line.id, {
       selectedBatchId: selectedId,
       rate: suggestedRate > 0 ? suggestedRate : line.rate,
+      priceTaxMode: picked?.tax_inclusive ? "WITH_TAX" : line.priceTaxMode || "WITHOUT_TAX",
       qty: Number.isFinite(maxAssignable)
         ? Math.min(Math.max(0, Number(line.qty || 0)), maxAssignable)
         : line.qty
@@ -1027,10 +1053,51 @@ export default function InvoiceCreate() {
       alert("Add at least one line item before saving invoice.");
       return null;
     }
+    const productLineItems = validComputedLines
+      .map((line) => ({
+        line,
+        item: items.find((entry) => String(entry?.id || "") === String(line?.itemId || ""))
+      }))
+      .filter((entry) => entry?.item?.type === "Product" && entry?.item?.trackInventory);
+    const effectiveBatchMap = { ...itemBatchMap };
+
+    if (productLineItems.length) {
+      const missingBatchIds = Array.from(
+        new Set(
+          productLineItems
+            .map((entry) => String(entry.item.id || "").trim())
+            .filter((itemId) => itemId && !effectiveBatchMap[itemId])
+        )
+      );
+      if (missingBatchIds.length) {
+        const loaded = await Promise.all(
+          missingBatchIds.map(async (itemId) => {
+            try {
+              const result = await fetchItemStockHistory(itemId);
+              return { itemId, batches: Array.isArray(result?.batches) ? result.batches : [] };
+            } catch {
+              return { itemId, batches: [] };
+            }
+          })
+        );
+        setItemBatchMap((prev) => {
+          const next = { ...prev };
+          loaded.forEach((row) => {
+            next[row.itemId] = row.batches;
+            effectiveBatchMap[row.itemId] = row.batches;
+          });
+          return next;
+        });
+      }
+    }
+
     const missingBatchLine = validComputedLines.find((line) => {
       const item = items.find((entry) => String(entry?.id || "") === String(line?.itemId || ""));
       if (!item || item.type !== "Product" || !item.trackInventory) return false;
-      const openBatches = getOpenBatchRows(item.id);
+      const batchRows = effectiveBatchMap[item.id] || [];
+      const openBatches = (Array.isArray(batchRows) ? batchRows : []).filter(
+        (row) => Number(row?.qty_remaining || 0) > 0
+      );
       return openBatches.length > 0 && !String(line?.selectedBatchId || "").trim();
     });
     if (missingBatchLine) {
@@ -1779,13 +1846,32 @@ export default function InvoiceCreate() {
                       )
                     },
                     {
+                      key: "taxInclusive",
+                      header: "Tax Incl",
+                      render: (r) => (
+                        <select
+                          value={r.priceTaxMode || "WITHOUT_TAX"}
+                          onChange={(e) => updateLine(r.id, { priceTaxMode: e.target.value })}
+                          className="w-24 rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-xs outline-none"
+                        >
+                          <option value="WITHOUT_TAX">No</option>
+                          <option value="WITH_TAX">Yes</option>
+                        </select>
+                      )
+                    },
+                    {
                       key: "net",
                       header: "Net",
                       render: (r) => {
                         const qty = Number(r.qty || 0);
                         const rate = Number(r.rate || 0);
                         const discount = Number(r.discount || 0);
-                        return money(Math.max(0, qty * rate - discount));
+                        const taxRateValue = Number(r.tax || 0);
+                        const gross = Math.max(0, qty * rate - discount);
+                        if (String(r.priceTaxMode || "").toUpperCase() === "WITH_TAX") {
+                          return money(gross);
+                        }
+                        return money(round2(gross + (gross * taxRateValue) / 100));
                       }
                     },
                     {
