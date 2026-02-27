@@ -69,6 +69,15 @@ function parseRateInput(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parseBooleanLike(value) {
+  if (value === true || value === false) return value;
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (["true", "1", "yes", "y"].includes(normalized)) return true;
+  if (["false", "0", "no", "n"].includes(normalized)) return false;
+  return null;
+}
+
 function resolveCurrencySymbol(symbol, currencyCode) {
   if (symbol) return symbol;
   const normalized = String(currencyCode || "").trim().toUpperCase();
@@ -451,7 +460,7 @@ export default function InvoiceCreate() {
         itemId: item.id,
         itemInput: formatItemSearchLabel(item),
         selectedBatchId: "",
-        priceTaxMode: item?.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX",
+        priceTaxMode: getPreferredTaxModeForItem(item),
         qty: Number.isFinite(maxAssignable) ? Math.min(1, maxAssignable) : 1,
         rate: item.salesRate || item.price || 0,
         discount: 0,
@@ -825,6 +834,25 @@ export default function InvoiceCreate() {
       });
   }
 
+  function getPreferredTaxModeForItem(item) {
+    if (!item?.id) {
+      return item?.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX";
+    }
+    const openRows = getOpenBatchRows(item.id);
+    if (openRows.length) {
+      const latestRow = [...openRows].sort((a, b) => {
+        const da = new Date(a?.batch_date || a?.created_at || 0).getTime();
+        const db = new Date(b?.batch_date || b?.created_at || 0).getTime();
+        return db - da;
+      })[0];
+      const batchTaxInclusive = parseBooleanLike(latestRow?.tax_inclusive);
+      if (batchTaxInclusive !== null) {
+        return batchTaxInclusive ? "WITH_TAX" : "WITHOUT_TAX";
+      }
+    }
+    return item?.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX";
+  }
+
   function getBatchAvailableForLine(itemId, batchId, excludeLineId = "") {
     if (!itemId || !batchId) return 0;
     const rows = getOpenBatchRows(itemId);
@@ -855,7 +883,7 @@ export default function InvoiceCreate() {
       itemInput: formatItemSearchLabel(matchedItem),
       itemId: matchedItem.id,
       selectedBatchId: "",
-      priceTaxMode: matchedItem?.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX",
+      priceTaxMode: getPreferredTaxModeForItem(matchedItem),
       qty: nextQty,
       rate: matchedItem?.salesRate || matchedItem?.price || 0,
       tax: matchedItem?.taxRate || 0
@@ -875,11 +903,16 @@ export default function InvoiceCreate() {
     if (!line?.itemId) return;
     const selectedId = String(batchId || "");
     if (!selectedId) {
-      updateLine(line.id, { selectedBatchId: "" });
+      const matchedItem = items.find((item) => String(item?.id || "") === String(line.itemId || ""));
+      updateLine(line.id, {
+        selectedBatchId: "",
+        priceTaxMode: getPreferredTaxModeForItem(matchedItem)
+      });
       return;
     }
     const rows = getOpenBatchRows(line.itemId);
     const picked = rows.find((row) => String(row.batch_id) === selectedId);
+    const batchTaxInclusive = parseBooleanLike(picked?.tax_inclusive);
     const suggestedRate = Number(
       picked?.suggested_sale_rate ??
         picked?.metadata?.suggestedSaleRate ??
@@ -890,7 +923,13 @@ export default function InvoiceCreate() {
     updateLine(line.id, {
       selectedBatchId: selectedId,
       rate: suggestedRate > 0 ? suggestedRate : line.rate,
-      priceTaxMode: picked?.tax_inclusive ? "WITH_TAX" : line.priceTaxMode || "WITHOUT_TAX",
+      priceTaxMode:
+        batchTaxInclusive === null
+          ? line.priceTaxMode || "WITHOUT_TAX"
+          : batchTaxInclusive
+            ? "WITH_TAX"
+            : "WITHOUT_TAX",
+      tax: Number(picked?.tax_rate ?? line?.tax ?? 0),
       qty: Number.isFinite(maxAssignable)
         ? Math.min(Math.max(0, Number(line.qty || 0)), maxAssignable)
         : line.qty

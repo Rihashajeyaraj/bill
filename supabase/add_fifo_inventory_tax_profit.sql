@@ -657,6 +657,8 @@ begin
         update public.items i
         set purchase_price = v_unit_cost_excl,
             sale_price = case when v_suggested_sale_rate > 0 then v_suggested_sale_rate else i.sale_price end,
+            tax_rate = v_tax_rate,
+            tax_inclusive = v_tax_inclusive,
             updated_at = now()
         where i.organization_id = v_org_id
           and i.id = v_item_id;
@@ -1840,6 +1842,27 @@ begin
     perform public.refresh_item_current_stock(r.organization_id, r.item_id);
   end loop;
 end $$;
+
+-- Keep item tax mode defaults aligned with latest purchase batch.
+with latest_batch as (
+  select distinct on (b.organization_id, b.item_id)
+    b.organization_id,
+    b.item_id,
+    b.tax_inclusive,
+    b.tax_rate,
+    b.suggested_sale_rate
+  from public.stock_batches b
+  order by b.organization_id, b.item_id, b.batch_date desc, b.created_at desc, b.id desc
+)
+update public.items i
+set tax_inclusive = lb.tax_inclusive,
+    tax_rate = case when lb.tax_rate > 0 then lb.tax_rate else i.tax_rate end,
+    sale_price = case when lb.suggested_sale_rate > 0 then lb.suggested_sale_rate else i.sale_price end,
+    updated_at = now()
+from latest_batch lb
+where i.organization_id = lb.organization_id
+  and i.id = lb.item_id
+  and lower(i.item_type::text) = 'product';
 
 -- =========================
 -- RLS + policies
