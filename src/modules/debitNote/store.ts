@@ -10,11 +10,14 @@ const PAYMENT_OUT_PREMIUM_KEY = "paymentOutPremiumV1";
 
 export interface PurchaseInvoiceLine {
   id: string;
+  sourcePurchaseItemId?: string;
+  itemId?: string;
   itemName: string;
   quantity: number;
   rate: number;
   taxRate: number;
   hsnSac?: string;
+  amountAfterTax?: number;
 }
 
 export interface PurchaseInvoice {
@@ -42,6 +45,10 @@ export interface SupplierOption {
 
 export interface DebitLineDraft {
   id: string;
+  sourcePurchaseItemId?: string;
+  itemId?: string;
+  sourcePurchaseQty?: number;
+  sourcePurchaseAmountAfterTax?: number;
   itemName: string;
   quantity: number;
   rate: number;
@@ -271,6 +278,10 @@ function computeLines(
     return {
       ...line,
       id: line.id || `line_${index + 1}`,
+      sourcePurchaseItemId: line.sourcePurchaseItemId || line.id || `line_${index + 1}`,
+      itemId: line.itemId || "",
+      sourcePurchaseQty: Math.max(0, toNumber(line.sourcePurchaseQty)),
+      sourcePurchaseAmountAfterTax: Math.max(0, toNumber(line.sourcePurchaseAmountAfterTax)),
       quantity,
       rate,
       taxRate,
@@ -334,6 +345,99 @@ function computeTotals(
     pendingAmount: total,
     updatedPayable
   };
+}
+
+function normalizePurchaseLineSourceId(line: { sourcePurchaseItemId?: string; id?: string }) {
+  return String(line?.sourcePurchaseItemId || line?.id || "").trim();
+}
+
+function buildAppliedDebitQtyIndex(
+  notes: DebitNoteRecord[],
+  linkedPurchaseInvoiceId: string,
+  excludeNoteId?: string
+) {
+  const bySource = new Map<string, number>();
+  const byItem = new Map<string, number>();
+  notes
+    .filter((entry) => entry.status === "Applied")
+    .filter((entry) => String(entry.linkedPurchaseInvoiceId || "") === String(linkedPurchaseInvoiceId || ""))
+    .filter((entry) => String(entry.id || "") !== String(excludeNoteId || ""))
+    .forEach((entry) => {
+      (Array.isArray(entry.lines) ? entry.lines : []).forEach((line) => {
+        const qty = Math.max(0, toNumber((line as any)?.quantity));
+        if (qty <= 0) return;
+        const sourceId = normalizePurchaseLineSourceId(line as any);
+        if (sourceId) {
+          bySource.set(sourceId, (bySource.get(sourceId) || 0) + qty);
+        }
+        const itemId = String((line as any)?.itemId || "").trim();
+        if (itemId) {
+          byItem.set(itemId, (byItem.get(itemId) || 0) + qty);
+        }
+      });
+    });
+  return { bySource, byItem };
+}
+
+function validatePayloadLineLimits(
+  payload: SaveDebitNotePayload,
+  linkedInvoice: PurchaseInvoice,
+  existingNoteId: string | undefined,
+  allNotes: DebitNoteRecord[]
+) {
+  const sourceLineById = new Map<string, PurchaseInvoiceLine>();
+  const qtyByItem = new Map<string, number>();
+  (Array.isArray(linkedInvoice.lines) ? linkedInvoice.lines : []).forEach((line) => {
+    const sourceId = normalizePurchaseLineSourceId(line);
+    if (sourceId) {
+      sourceLineById.set(sourceId, line);
+    }
+    const itemId = String(line?.itemId || "").trim();
+    if (itemId) {
+      qtyByItem.set(itemId, (qtyByItem.get(itemId) || 0) + Math.max(0, toNumber(line.quantity)));
+    }
+  });
+  const { bySource, byItem } = buildAppliedDebitQtyIndex(
+    allNotes,
+    payload.linkedPurchaseInvoiceId,
+    existingNoteId
+  );
+
+  (Array.isArray(payload.lines) ? payload.lines : []).forEach((line, idx) => {
+    const requestedQty = Math.max(0, toNumber(line?.quantity));
+    if (requestedQty <= 0) return;
+
+    const sourceId = normalizePurchaseLineSourceId(line);
+    const sourceLine = sourceId ? sourceLineById.get(sourceId) : null;
+    if (sourceLine) {
+      const sourceQty = Math.max(0, toNumber(sourceLine.quantity));
+      const alreadyDebited = Math.max(0, toNumber(bySource.get(sourceId) || 0));
+      const availableQty = Math.max(0, sourceQty - alreadyDebited);
+      if (requestedQty > availableQty + 1e-6) {
+        throw new Error(
+          `Debit line ${idx + 1} quantity ${requestedQty} exceeds available ${availableQty} for the selected bill line.`
+        );
+      }
+      return;
+    }
+
+    const itemId = String(line?.itemId || "").trim();
+    if (itemId && qtyByItem.has(itemId)) {
+      const sourceQty = Math.max(0, toNumber(qtyByItem.get(itemId) || 0));
+      const alreadyDebited = Math.max(0, toNumber(byItem.get(itemId) || 0));
+      const availableQty = Math.max(0, sourceQty - alreadyDebited);
+      if (requestedQty > availableQty + 1e-6) {
+        throw new Error(
+          `Debit line ${idx + 1} quantity ${requestedQty} exceeds available ${availableQty} for this item.`
+        );
+      }
+      return;
+    }
+
+    throw new Error(
+      `Debit line ${idx + 1} is not linked to the selected bill. Add lines only from the linked bill.`
+    );
+  });
 }
 
 function buildHistory(
@@ -400,14 +504,33 @@ export function mapPurchaseInvoicesByCountry(country: CountryCode): PurchaseInvo
       if (mappedCountry && mappedCountry !== country) return null;
 
       const lines = Array.isArray(invoice?.lines)
-        ? invoice.lines.map((line: any, idx: number) => ({
-            id: line.id || `line_${idx + 1}`,
-            itemName: line.itemName || line.name || `Item ${idx + 1}`,
-            quantity: Math.max(0, toNumber(line.qty ?? line.quantity ?? 0)),
-            rate: Math.max(0, toNumber(line.rate)),
-            taxRate: Math.max(0, toNumber(line.tax ?? line.taxRate)),
-            hsnSac: line.hsn || line.sac || line.hsnSac || ""
-          }))
+        ? invoice.lines.map((line: any, idx: number) => {
+            const quantity = Math.max(0, toNumber(line.qty ?? line.quantity ?? 0));
+            const rate = Math.max(0, toNumber(line.rate));
+            const taxRate = Math.max(0, toNumber(line.tax ?? line.taxRate));
+            const amountAfterTax = Math.max(
+              0,
+              toNumber(
+                line.amount ??
+                  line.lineTotal ??
+                  line.total ??
+                  (toNumber(line.amountAfterTax) > 0
+                    ? toNumber(line.amountAfterTax)
+                    : quantity * rate * (1 + taxRate / 100))
+              )
+            );
+            return {
+              id: line.id || `line_${idx + 1}`,
+              sourcePurchaseItemId: line.id || `line_${idx + 1}`,
+              itemId: line.itemId || "",
+              itemName: line.itemName || line.name || `Item ${idx + 1}`,
+              quantity,
+              rate,
+              taxRate,
+              hsnSac: line.hsn || line.sac || line.hsnSac || "",
+              amountAfterTax
+            };
+          })
         : [];
 
       return {
@@ -497,6 +620,7 @@ export function saveDebitNote(payload: SaveDebitNotePayload): DebitNoteRecord {
   const previousStatus: DebitStatus = existing?.status || "Draft";
   const nextStatus = payload.desiredStatus;
   ensureTransition(previousStatus, nextStatus);
+  validatePayloadLineLimits(payload, linkedInvoice, existing?.id, list);
 
   const lines = computeLines(
     payload.lines,
@@ -504,10 +628,13 @@ export function saveDebitNote(payload: SaveDebitNotePayload): DebitNoteRecord {
     payload.priceAdjustmentAmount,
     payload.additionalChargesAmount
   );
+  const authoritativePayableBefore = toNumber(
+    linkedInvoice.remainingBalance ?? payload.payableBalanceBefore
+  );
   const totals = computeTotals(
     payload.country,
     lines,
-    payload.payableBalanceBefore,
+    authoritativePayableBefore,
     payload.debitType,
     payload.partialAmountCap,
     payload.taxAdjustmentAmount
@@ -540,11 +667,11 @@ export function saveDebitNote(payload: SaveDebitNotePayload): DebitNoteRecord {
     priceAdjustmentAmount: toNumber(payload.priceAdjustmentAmount),
     additionalChargesAmount: toNumber(payload.additionalChargesAmount),
     taxAdjustmentAmount: toNumber(payload.taxAdjustmentAmount),
-    payableBalanceBefore: toNumber(payload.payableBalanceBefore),
+    payableBalanceBefore: authoritativePayableBefore,
     payableBalanceAfter:
       nextStatus === "Applied"
-        ? toNumber(payload.payableBalanceBefore) + totals.total
-        : toNumber(payload.payableBalanceBefore),
+        ? authoritativePayableBefore + totals.total
+        : authoritativePayableBefore,
     lines,
     totals: {
       ...totals,

@@ -1397,41 +1397,45 @@ begin
     raise exception 'Access denied for organization %', p_organization_id;
   end if;
 
-  insert into public.stock_batches (
-    organization_id,
-    item_id,
-    purchase_bill_id,
-    purchase_bill_item_id,
-    batch_date,
-    source_document_no,
-    qty_purchased,
-    qty_remaining,
-    unit_cost_excl_tax,
-    unit_cost_incl_tax,
-    tax_rate,
-    tax_amount,
-    tax_inclusive,
-    metadata,
-    created_by
-  )
-  values (
-    p_organization_id,
-    p_item_id,
-    null,
-    null,
-    coalesce(p_return_date, current_date),
-    coalesce(nullif(trim(p_credit_note_no), ''), 'CREDIT_RETURN'),
-    p_qty,
-    p_qty,
-    coalesce(p_unit_cost_excl_tax, 0),
-    coalesce(p_unit_cost_incl_tax, coalesce(p_unit_cost_excl_tax, 0)),
-    0,
-    0,
-    false,
-    jsonb_build_object('source', 'credit_note_return', 'optionalRule', true),
-    auth.uid()
-  )
-  returning id into v_batch_id;
+  v_batch_id := null;
+
+  if p_adjustment_qty > 0 then
+    insert into public.stock_batches (
+      organization_id,
+      item_id,
+      purchase_bill_id,
+      purchase_bill_item_id,
+      batch_date,
+      source_document_no,
+      qty_purchased,
+      qty_remaining,
+      unit_cost_excl_tax,
+      unit_cost_incl_tax,
+      tax_rate,
+      tax_amount,
+      tax_inclusive,
+      metadata,
+      created_by
+    )
+    values (
+      p_organization_id,
+      p_item_id,
+      null,
+      null,
+      coalesce(p_adjustment_date, current_date),
+      'STOCK_ADJUSTMENT',
+      p_adjustment_qty,
+      p_adjustment_qty,
+      0,
+      0,
+      0,
+      0,
+      false,
+      jsonb_build_object('source', 'stock_adjustment'),
+      auth.uid()
+    )
+    returning id into v_batch_id;
+  end if;
 
   insert into public.stock_movements (
     organization_id,
@@ -1447,6 +1451,7 @@ begin
   values (
     p_organization_id,
     p_item_id,
+    v_batch_id,
     'ADJUST',
     coalesce(p_adjustment_date, current_date),
     p_adjustment_qty,
@@ -1730,6 +1735,9 @@ set search_path = public
 as $$
 declare
   v_id uuid;
+  v_batch_id uuid;
+  v_unit_cost_excl numeric := coalesce(p_unit_cost_excl_tax, 0);
+  v_unit_cost_incl numeric := coalesce(p_unit_cost_incl_tax, coalesce(p_unit_cost_excl_tax, 0));
 begin
   if p_organization_id is null or p_item_id is null then
     raise exception 'organization_id and item_id are required';
@@ -1741,9 +1749,46 @@ begin
     raise exception 'Access denied for organization %', p_organization_id;
   end if;
 
+  insert into public.stock_batches (
+    organization_id,
+    item_id,
+    purchase_bill_id,
+    purchase_bill_item_id,
+    batch_date,
+    source_document_no,
+    qty_purchased,
+    qty_remaining,
+    unit_cost_excl_tax,
+    unit_cost_incl_tax,
+    tax_rate,
+    tax_amount,
+    tax_inclusive,
+    metadata,
+    created_by
+  )
+  values (
+    p_organization_id,
+    p_item_id,
+    null,
+    null,
+    coalesce(p_return_date, current_date),
+    coalesce(nullif(trim(p_credit_note_no), ''), 'CREDIT_RETURN'),
+    p_qty,
+    p_qty,
+    v_unit_cost_excl,
+    v_unit_cost_incl,
+    0,
+    0,
+    false,
+    jsonb_build_object('source', 'credit_note_return', 'optionalRule', true),
+    auth.uid()
+  )
+  returning id into v_batch_id;
+
   insert into public.stock_movements (
     organization_id,
     item_id,
+    stock_batch_id,
     movement_type,
     movement_date,
     quantity_delta,
@@ -1761,11 +1806,11 @@ begin
     p_organization_id,
     p_item_id,
     v_batch_id,
-    'RETURN_IN',
+    'IN',
     coalesce(p_return_date, current_date),
     p_qty,
-    coalesce(p_unit_cost_excl_tax, 0),
-    coalesce(p_unit_cost_incl_tax, 0),
+    v_unit_cost_excl,
+    v_unit_cost_incl,
     'credit_notes',
     p_credit_note_id,
     p_credit_note_item_id,

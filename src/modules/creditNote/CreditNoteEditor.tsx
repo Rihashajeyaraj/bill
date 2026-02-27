@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Loader2, Save, Search, X } from "lucide-react";
-import { COUNTRY_CONFIG, type CountryCode, type CreditStatus, type CreditType } from "./countryConfig";
+import { COUNTRY_CONFIG, type CountryCode, type CreditStatus } from "./countryConfig";
 import type { CreditInvoice, CreditNoteRecord, CustomerOption } from "./store";
 import type { CreditNoteFormState } from "./types";
 import { formatMoney, parseNumber } from "./utils";
@@ -26,6 +26,8 @@ interface CreditNoteEditorProps {
   actorName: string;
   access: { roleType: "Admin" | "Staff"; canApply: boolean; canOverride: boolean };
   fieldErrors: Record<string, string>;
+  allocationByInvoiceItemId?: Record<string, Array<any>>;
+  allocationsLoading?: boolean;
   onBack: () => void;
   onUpdateForm: <K extends keyof CreditNoteFormState>(key: K, value: CreditNoteFormState[K]) => void;
   onApplyInvoice: (invoiceId: string) => void;
@@ -34,8 +36,6 @@ interface CreditNoteEditorProps {
   onRemoveLine: (id: string) => void;
   onPersist: (targetStatus: CreditStatus, options?: { email?: boolean; download?: boolean }) => void;
 }
-
-const CREDIT_TYPES: CreditType[] = ["Full Credit", "Partial Credit", "Discount Credit"];
 
 function normalizeInvoiceStatus(status: unknown) {
   return String(status || "")
@@ -76,6 +76,8 @@ export default function CreditNoteEditor({
   actorName,
   access,
   fieldErrors,
+  allocationByInvoiceItemId = {},
+  allocationsLoading = false,
   onBack,
   onUpdateForm,
   onApplyInvoice,
@@ -401,47 +403,27 @@ export default function CreditNoteEditor({
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
-            <p className="text-sm font-semibold text-slate-900">Section 2 - Credit Type</p>
-            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-              {CREDIT_TYPES.map((type) => (
-                <label
-                  key={type}
-                  className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${
-                    form.creditType === type ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-600"
-                  }`}
-                >
-                  <input type="radio" checked={form.creditType === type} onChange={() => onUpdateForm("creditType", type)} />
-                  {type}
-                </label>
-              ))}
-            </div>
+            <p className="text-sm font-semibold text-slate-900">Section 2 - How Credit Is Calculated</p>
             <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2">
-              {form.creditType === "Partial Credit" ? (
-                <label className="text-xs font-semibold text-slate-600">
-                  Partial Credit Amount
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-700">
+                <p className="font-semibold text-slate-900">Mode: Auto (Full Credit)</p>
+                <p className="mt-1">Credit amount is automatic from `Return Qty x Invoice Rate + Tax`.</p>
+                <p className="mt-1">Item, rate and tax come from the linked invoice and stay locked.</p>
+              </div>
+              <label className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700">
+                <span className="inline-flex items-center gap-2">
                   <input
-                    type="number"
-                    min={0}
-                    value={form.partialAmountCap}
-                    onChange={(event) => onUpdateForm("partialAmountCap", event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
+                    type="checkbox"
+                    checked={!!form.returnToStock}
+                    onChange={(event) => onUpdateForm("returnToStock", event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300"
                   />
-                  {fieldErrors.partialAmountCap ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.partialAmountCap}</span> : null}
-                </label>
-              ) : null}
-              {form.creditType === "Discount Credit" ? (
-                <label className="text-xs font-semibold text-slate-600">
-                  Discount %
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={form.discountPercent}
-                    onChange={(event) => onUpdateForm("discountPercent", event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
-                  />
-                </label>
-              ) : null}
+                  Return items to stock
+                </span>
+                <p className="mt-2 font-normal text-slate-500">
+                  Enable this only when customer physically returns goods.
+                </p>
+              </label>
             </div>
           </div>
 
@@ -449,9 +431,16 @@ export default function CreditNoteEditor({
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-slate-900">Section 3 - Items</p>
-                <p className="text-xs text-slate-500">Add or adjust line items in invoice-style cards.</p>
+                <p className="text-xs text-slate-500">
+                  {selectedInvoiceId ? "Linked invoice lines only. Quantity can be reduced but not increased." : "Add or adjust line items in invoice-style cards."}
+                </p>
               </div>
-              <button onClick={onAddLine} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+              <button
+                onClick={onAddLine}
+                disabled={!!selectedInvoiceId}
+                className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                title={selectedInvoiceId ? "Use linked invoice lines only." : "Add line"}
+              >
                 Add line
               </button>
             </div>
@@ -468,51 +457,88 @@ export default function CreditNoteEditor({
                   <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-4">
                     <label className="text-xs font-semibold text-slate-600 xl:col-span-2">
                       Item Name
-                      <input value={line.itemName} onChange={(event) => onUpdateLine(line.id, { itemName: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
-                    </label>
-                    {country === "IN" ? (
-                      <label className="text-xs font-semibold text-slate-600">
-                        HSN/SAC (optional)
-                        <input value={line.hsnSac || ""} onChange={(event) => onUpdateLine(line.id, { hsnSac: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
-                      </label>
-                    ) : null}
-                    <label className="text-xs font-semibold text-slate-600">
-                      Quantity
-                      <input type="number" min={0} value={line.quantity} onChange={(event) => onUpdateLine(line.id, { quantity: parseNumber(event.target.value) })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                      <input
+                        value={line.itemName}
+                        readOnly
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700"
+                      />
                     </label>
                     <label className="text-xs font-semibold text-slate-600">
-                      Rate
-                      <input type="number" min={0} value={line.rate} onChange={(event) => onUpdateLine(line.id, { rate: parseNumber(event.target.value) })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600">
-                      {cfg.taxLabel} %
-                      <input type="number" min={0} value={line.taxRate} onChange={(event) => onUpdateLine(line.id, { taxRate: parseNumber(event.target.value) })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600">
-                      Credit Value Type
-                      <div className="mt-1 inline-flex w-full rounded-xl border border-slate-200 bg-white p-1">
-                        <button type="button" onClick={() => onUpdateLine(line.id, { creditType: "Percentage" })} className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold ${line.creditType === "Percentage" ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"}`}>%</button>
-                        <button type="button" onClick={() => onUpdateLine(line.id, { creditType: "Fixed" })} className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold ${line.creditType === "Fixed" ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"}`}>Amount</button>
-                      </div>
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600">
-                      Credit Value
+                      Return Qty
                       <input
                         type="number"
                         min={0}
-                        value={line.creditValue}
-                        onChange={(event) => onUpdateLine(line.id, { creditValue: parseNumber(event.target.value) })}
+                        max={parseNumber((line as any).sourceInvoiceQty) > 0 ? parseNumber((line as any).sourceInvoiceQty) : undefined}
+                        value={line.quantity}
+                        onChange={(event) => {
+                          const sourceQty = Math.max(0, parseNumber((line as any).sourceInvoiceQty));
+                          const nextQtyRaw = Math.max(0, parseNumber(event.target.value));
+                          const nextQty = sourceQty > 0 ? Math.min(nextQtyRaw, sourceQty) : nextQtyRaw;
+                          onUpdateLine(line.id, {
+                            quantity: nextQty,
+                            creditType: "Percentage",
+                            creditValue: 0
+                          });
+                        }}
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                       />
-                      {line.validationMessage ? <p className="mt-1 text-[11px] text-rose-600">{line.validationMessage}</p> : null}
+                      {parseNumber((line as any).sourceInvoiceQty) > 0 ? (
+                        <p className="mt-1 text-[11px] text-slate-500">Invoice qty: {parseNumber((line as any).sourceInvoiceQty)}</p>
+                      ) : null}
+                    </label>
+                    <label className="text-xs font-semibold text-slate-600">
+                      Invoice Rate
+                      <input
+                        type="number"
+                        min={0}
+                        value={line.rate}
+                        readOnly
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700"
+                      />
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Tax in price: {String((line as any).priceTaxMode || "").toUpperCase() === "WITH_TAX" ? "Yes" : "No"}
+                      </p>
+                    </label>
+                    <label className="text-xs font-semibold text-slate-600">
+                      {cfg.taxLabel} %
+                      <input
+                        type="number"
+                        min={0}
+                        value={line.taxRate}
+                        readOnly
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700"
+                      />
                     </label>
                   </div>
+                  {allocationsLoading ? (
+                    <p className="mt-2 text-[11px] text-slate-500">Loading batch details...</p>
+                  ) : null}
+                  {!allocationsLoading &&
+                  Array.isArray(
+                    allocationByInvoiceItemId[String((line as any).sourceInvoiceItemId || line.id || "")]
+                  ) &&
+                  allocationByInvoiceItemId[String((line as any).sourceInvoiceItemId || line.id || "")].length ? (
+                    <div className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600">
+                      <p className="font-semibold text-slate-700">Sold Batch Details</p>
+                      <div className="mt-1 space-y-1">
+                        {allocationByInvoiceItemId[
+                          String((line as any).sourceInvoiceItemId || line.id || "")
+                        ]
+                          .slice(0, 4)
+                          .map((row: any, idx: number) => (
+                            <p key={`${line.id}-alloc-${idx}`}>
+                              {row?.batch_document_no || "BATCH"} | Qty {parseNumber(row?.allocated_qty)} | Cost {formatMoney(parseNumber(row?.unit_cost_excl_tax), country)}
+                            </p>
+                          ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Base Amount</p><p className="font-semibold text-slate-900">{formatMoney(line.baseAmount, country)}</p></div>
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Tax Amount</p><p className="font-semibold text-slate-900">{formatMoney(line.taxAmount, country)}</p></div>
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">After Tax</p><p className="font-semibold text-slate-900">{formatMoney(line.amountAfterTax, country)}</p></div>
-                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Credit Applied</p><p className="font-semibold text-amber-700">{formatMoney(line.creditApplied, country)}</p></div>
-                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Final Total</p><p className="font-semibold text-emerald-700">{formatMoney(line.creditAmount, country)}</p></div>
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Credit Amount</p><p className="font-semibold text-emerald-700">{formatMoney(line.creditAmount, country)}</p></div>
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Mode</p><p className="font-semibold text-slate-900">Auto</p></div>
                   </div>
                 </div>
               ))}

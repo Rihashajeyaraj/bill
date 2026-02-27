@@ -9,11 +9,16 @@ const PAYMENT_IN_PREMIUM_KEY = "paymentInPremiumV1";
 
 export interface CreditInvoiceLine {
   id: string;
+  sourceInvoiceItemId?: string;
+  itemId?: string;
+  priceTaxMode?: "WITH_TAX" | "WITHOUT_TAX";
+  taxInclusive?: boolean;
   itemName: string;
   quantity: number;
   rate: number;
   taxRate: number;
   hsnSac?: string;
+  amountAfterTax?: number;
 }
 
 export interface CreditInvoice {
@@ -43,6 +48,12 @@ export interface CustomerOption {
 
 export interface CreditLineDraft {
   id: string;
+  sourceInvoiceItemId?: string;
+  itemId?: string;
+  sourceInvoiceQty?: number;
+  sourceInvoiceAmountAfterTax?: number;
+  priceTaxMode?: "WITH_TAX" | "WITHOUT_TAX";
+  taxInclusive?: boolean;
   itemName: string;
   quantity: number;
   rate: number;
@@ -259,11 +270,30 @@ function computeLines(
     const quantity = Math.max(0, toNumber(line.quantity));
     const rate = Math.max(0, toNumber(line.rate));
     const taxRate = Math.max(0, toNumber(line.taxRate));
+    const priceTaxMode =
+      String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX" ||
+      line.taxInclusive === true
+        ? "WITH_TAX"
+        : "WITHOUT_TAX";
+    const taxInclusive = priceTaxMode === "WITH_TAX";
     const creditType = line.creditType === "Fixed" ? "Fixed" : "Percentage";
     const creditValue = Math.max(0, toNumber(line.creditValue));
-    const baseCents = toCents(quantity * rate);
-    const taxCents = Math.round((baseCents * taxRate) / 100);
-    const afterTaxCents = baseCents + taxCents;
+    const grossCents = toCents(quantity * rate);
+    let baseCents = grossCents;
+    let taxCents = 0;
+    let afterTaxCents = grossCents;
+    if (taxRate > 0) {
+      if (taxInclusive) {
+        const divisor = 1 + taxRate / 100;
+        baseCents = divisor > 0 ? Math.round(grossCents / divisor) : grossCents;
+        taxCents = grossCents - baseCents;
+        afterTaxCents = grossCents;
+      } else {
+        baseCents = grossCents;
+        taxCents = Math.round((baseCents * taxRate) / 100);
+        afterTaxCents = baseCents + taxCents;
+      }
+    }
     const requestedCreditCents =
       creditType === "Percentage"
         ? Math.round((afterTaxCents * creditValue) / 100)
@@ -278,6 +308,12 @@ function computeLines(
     return {
       ...line,
       id: line.id || `line_${index + 1}`,
+      sourceInvoiceItemId: line.sourceInvoiceItemId || line.id || `line_${index + 1}`,
+      itemId: line.itemId || "",
+      sourceInvoiceQty: Math.max(0, toNumber(line.sourceInvoiceQty)),
+      sourceInvoiceAmountAfterTax: Math.max(0, toNumber(line.sourceInvoiceAmountAfterTax)),
+      priceTaxMode,
+      taxInclusive,
       quantity,
       rate,
       taxRate,
@@ -326,6 +362,151 @@ function computeTotals(
   };
 }
 
+function normalizeLineSourceId(line: { sourceInvoiceItemId?: string; id?: string; itemId?: string }) {
+  return String(line?.sourceInvoiceItemId || line?.id || "").trim();
+}
+
+function buildAppliedCreditQtyIndex(
+  notes: CreditNoteRecord[],
+  linkedInvoiceId: string,
+  excludeNoteId?: string
+) {
+  const bySource = new Map<string, number>();
+  const byItem = new Map<string, number>();
+
+  notes
+    .filter((entry) => entry.status === "Applied")
+    .filter((entry) => String(entry.linkedInvoiceId || "") === String(linkedInvoiceId || ""))
+    .filter((entry) => String(entry.id || "") !== String(excludeNoteId || ""))
+    .forEach((entry) => {
+      (Array.isArray(entry.lines) ? entry.lines : []).forEach((line) => {
+        const qty = Math.max(0, toNumber((line as any)?.quantity));
+        if (qty <= 0) return;
+        const sourceId = normalizeLineSourceId(line as any);
+        if (sourceId) {
+          bySource.set(sourceId, (bySource.get(sourceId) || 0) + qty);
+        }
+        const itemId = String((line as any)?.itemId || "").trim();
+        if (itemId) {
+          byItem.set(itemId, (byItem.get(itemId) || 0) + qty);
+        }
+      });
+    });
+
+  return { bySource, byItem };
+}
+
+function validatePayloadLineLimits(
+  payload: SaveCreditNotePayload,
+  linkedInvoice: CreditInvoice,
+  existingNoteId: string | undefined,
+  allNotes: CreditNoteRecord[]
+) {
+  const invoiceLineBySource = new Map<string, CreditInvoiceLine>();
+  const invoiceQtyByItem = new Map<string, number>();
+  (Array.isArray(linkedInvoice.lines) ? linkedInvoice.lines : []).forEach((line) => {
+    const sourceId = normalizeLineSourceId(line);
+    if (sourceId) {
+      invoiceLineBySource.set(sourceId, line);
+    }
+    const itemId = String(line?.itemId || "").trim();
+    if (itemId) {
+      const qty = Math.max(0, toNumber(line?.quantity));
+      invoiceQtyByItem.set(itemId, (invoiceQtyByItem.get(itemId) || 0) + qty);
+    }
+  });
+
+  const { bySource, byItem } = buildAppliedCreditQtyIndex(
+    allNotes,
+    payload.linkedInvoiceId,
+    existingNoteId
+  );
+
+  (Array.isArray(payload.lines) ? payload.lines : []).forEach((line, idx) => {
+    const requestedQty = Math.max(0, toNumber(line?.quantity));
+    if (requestedQty <= 0) return;
+
+    const sourceId = normalizeLineSourceId(line);
+    const sourceLine = sourceId ? invoiceLineBySource.get(sourceId) : null;
+    if (sourceLine) {
+      const sourceQty = Math.max(0, toNumber(sourceLine.quantity));
+      const alreadyCredited = Math.max(0, toNumber(bySource.get(sourceId) || 0));
+      const availableQty = Math.max(0, sourceQty - alreadyCredited);
+      if (requestedQty > availableQty + 1e-6) {
+        throw new Error(
+          `Credit line ${idx + 1} quantity ${requestedQty} exceeds available ${availableQty} for invoice line ${idx + 1}.`
+        );
+      }
+      return;
+    }
+
+    const itemId = String(line?.itemId || "").trim();
+    if (itemId && invoiceQtyByItem.has(itemId)) {
+      const sourceQty = Math.max(0, toNumber(invoiceQtyByItem.get(itemId) || 0));
+      const alreadyCredited = Math.max(0, toNumber(byItem.get(itemId) || 0));
+      const availableQty = Math.max(0, sourceQty - alreadyCredited);
+      if (requestedQty > availableQty + 1e-6) {
+        throw new Error(
+          `Credit line ${idx + 1} quantity ${requestedQty} exceeds available ${availableQty} for this item.`
+        );
+      }
+      return;
+    }
+
+    throw new Error(
+      `Credit line ${idx + 1} is not linked to the selected invoice. Add lines only from the linked invoice.`
+    );
+  });
+}
+
+function buildItemQtyMap(lines: Array<Partial<CreditLineComputed>> | null | undefined) {
+  const map = new Map<string, number>();
+  (Array.isArray(lines) ? lines : []).forEach((line) => {
+    const itemId = String((line as any)?.itemId || "").trim();
+    if (!itemId) return;
+    const qty = Math.max(0, toNumber((line as any)?.quantity));
+    if (qty <= 0) return;
+    map.set(itemId, (map.get(itemId) || 0) + qty);
+  });
+  return map;
+}
+
+function applyLocalReturnStockDelta(previousNote: CreditNoteRecord | undefined, nextNote: CreditNoteRecord) {
+  const prevEligible = !!previousNote && previousNote.status === "Applied" && !!previousNote.returnToStock;
+  const nextEligible = nextNote.status === "Applied" && !!nextNote.returnToStock;
+  const previousQtyByItem = prevEligible ? buildItemQtyMap(previousNote?.lines) : new Map<string, number>();
+  const nextQtyByItem = nextEligible ? buildItemQtyMap(nextNote?.lines) : new Map<string, number>();
+  const allItemIds = new Set<string>([
+    ...Array.from(previousQtyByItem.keys()),
+    ...Array.from(nextQtyByItem.keys())
+  ]);
+  if (!allItemIds.size) return;
+
+  const items = lsGetOrganizationScoped(LS_KEYS.items, []);
+  if (!Array.isArray(items) || !items.length) return;
+
+  const nextItems = items.map((item: any) => {
+    const itemId = String(item?.id || "").trim();
+    if (!itemId || !allItemIds.has(itemId)) return item;
+    const previousQty = previousQtyByItem.get(itemId) || 0;
+    const nextQty = nextQtyByItem.get(itemId) || 0;
+    const delta = nextQty - previousQty;
+    if (!delta) return item;
+    const nextCurrentStock = Math.max(0, toNumber(item?.currentStock ?? item?.stockQty) + delta);
+    const nextStockQty = Math.max(0, toNumber(item?.stockQty ?? item?.currentStock) + delta);
+    return {
+      ...item,
+      currentStock: nextCurrentStock,
+      stockQty: nextStockQty,
+      metadata: {
+        ...(item?.metadata && typeof item.metadata === "object" ? item.metadata : {}),
+        currentStock: nextCurrentStock
+      }
+    };
+  });
+  lsSetOrganizationScoped(LS_KEYS.items, nextItems);
+}
+
 function buildHistory(
   previous: CreditNoteRecord | undefined,
   status: CreditStatus,
@@ -365,14 +546,63 @@ export function mapInvoicesByCountry(country: CountryCode): CreditInvoice[] {
       const mappedCountry = normalizeCountryCode(invoice?.country) || null;
       if (mappedCountry && mappedCountry !== country) return null;
       const lines = Array.isArray(invoice?.lines)
-        ? invoice.lines.map((line: any, idx: number) => ({
-            id: line.id || `line_${idx + 1}`,
-            itemName: line.itemName || line.name || `Item ${idx + 1}`,
-            quantity: Math.max(0, toNumber(line.qty ?? line.quantity ?? 0)),
-            rate: Math.max(0, toNumber(line.rate)),
-            taxRate: Math.max(0, toNumber(line.tax ?? line.taxRate)),
-            hsnSac: line.hsn || line.sac || line.hsnSac || ""
-          }))
+        ? invoice.lines.map((line: any, idx: number) => {
+            const quantity = Math.max(0, toNumber(line.qty ?? line.quantity ?? 0));
+            const rate = Math.max(0, toNumber(line.rate));
+            const taxRate = Math.max(0, toNumber(line.tax ?? line.taxRate));
+            const explicitPriceTaxMode = String(
+              line.priceTaxMode ?? line.price_tax_mode ?? ""
+            )
+              .trim()
+              .toUpperCase();
+            const explicitTaxInclusive =
+              line.taxInclusive === true || line.tax_inclusive === true;
+            const inferredTaxInclusiveFromTotal =
+              taxRate > 0
+                ? Math.abs(
+                    toNumber(line.amount ?? line.lineTotal ?? line.total) - quantity * rate
+                  ) <= 0.05
+                : false;
+            const taxInclusive =
+              explicitTaxInclusive ||
+              explicitPriceTaxMode === "WITH_TAX" ||
+              (explicitPriceTaxMode !== "WITHOUT_TAX" && inferredTaxInclusiveFromTotal);
+            const priceTaxMode = taxInclusive ? "WITH_TAX" : "WITHOUT_TAX";
+            const taxableAmount = toNumber(line.taxableAmount ?? line.net);
+            const lineTax = toNumber(
+              line.lineTax ??
+                toNumber(line.cgstAmount) +
+                  toNumber(line.sgstAmount) +
+                  toNumber(line.igstAmount) +
+                  toNumber(line.vatAmount)
+            );
+            const amountAfterTax = Math.max(
+              0,
+              toNumber(
+                line.amount ??
+                  line.lineTotal ??
+                  line.total ??
+                  (taxableAmount > 0 || lineTax > 0
+                    ? taxableAmount + lineTax
+                    : taxInclusive
+                      ? quantity * rate
+                      : quantity * rate * (1 + taxRate / 100))
+              )
+            );
+            return {
+              id: line.id || `line_${idx + 1}`,
+              sourceInvoiceItemId: line.id || `line_${idx + 1}`,
+              itemId: line.itemId || "",
+              priceTaxMode,
+              taxInclusive,
+              itemName: line.itemName || line.name || `Item ${idx + 1}`,
+              quantity,
+              rate,
+              taxRate,
+              hsnSac: line.hsn || line.sac || line.hsnSac || "",
+              amountAfterTax
+            };
+          })
         : [];
 
       return {
@@ -475,6 +705,7 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
   const previousStatus: CreditStatus = existing?.status || "Draft";
   const nextStatus = payload.desiredStatus;
   ensureTransition(previousStatus, nextStatus);
+  validatePayloadLineLimits(payload, linkedInvoice, existing?.id, list);
 
   const lines = computeLines(
     payload.lines,
@@ -482,7 +713,20 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
     payload.discountPercent,
     payload.priceAdjustmentAmount
   );
-  const totals = computeTotals(payload.country, lines, payload.invoiceBalanceBefore, payload.partialAmountCap);
+  const authoritativeBalanceBefore = toNumber(
+    linkedInvoice.balanceAmount ?? linkedInvoice.remainingBalance ?? payload.invoiceBalanceBefore
+  );
+  const totals = computeTotals(
+    payload.country,
+    lines,
+    authoritativeBalanceBefore,
+    payload.partialAmountCap
+  );
+  if (totals.total > authoritativeBalanceBefore + 0.01) {
+    throw new Error(
+      `Credit amount ${totals.total.toFixed(2)} exceeds invoice balance ${authoritativeBalanceBefore.toFixed(2)}.`
+    );
+  }
   const creditNoteNo = existing?.creditNoteNo || nextCreditNoteNumber(payload.country);
   const id = existing?.id || `crn_${Date.now().toString(16)}`;
 
@@ -511,10 +755,10 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
     discountPercent: toNumber(payload.discountPercent),
     partialAmountCap: toNumber(payload.partialAmountCap),
     priceAdjustmentAmount: toNumber(payload.priceAdjustmentAmount),
-    invoiceBalanceBefore: toNumber(payload.invoiceBalanceBefore),
+    invoiceBalanceBefore: authoritativeBalanceBefore,
     invoiceBalanceAfter: Math.max(
       0,
-      toNumber(payload.invoiceBalanceBefore) - (nextStatus === "Applied" ? totals.total : 0)
+      authoritativeBalanceBefore - (nextStatus === "Applied" ? totals.total : 0)
     ),
     lines,
     totals: {
@@ -532,6 +776,7 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
 
   const nextList = existing ? list.map((entry) => (entry.id === existing.id ? note : entry)) : [note, ...list];
   setAllNotes(nextList);
+  applyLocalReturnStockDelta(existing, note);
   return note;
 }
 

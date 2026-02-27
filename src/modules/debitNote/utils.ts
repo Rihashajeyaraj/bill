@@ -52,6 +52,10 @@ export function defaultForm(country: CountryCode, company: any): DebitNoteFormSt
 export function draftLinesFromInvoice(invoice: PurchaseInvoice): DebitLineDraft[] {
   return invoice.lines.map((line) => ({
     id: line.id,
+    sourcePurchaseItemId: line.sourcePurchaseItemId || line.id,
+    itemId: line.itemId || "",
+    sourcePurchaseQty: Math.max(0, line.quantity),
+    sourcePurchaseAmountAfterTax: Math.max(0, parseNumber(line.amountAfterTax)),
     itemName: line.itemName,
     quantity: Math.max(0, line.quantity),
     rate: Math.max(0, line.rate),
@@ -85,6 +89,12 @@ export function formFromNote(note: DebitNoteRecord): DebitNoteFormState {
     taxAdjustmentAmount: String(note.taxAdjustmentAmount || ""),
     lines: note.lines.map((line) => ({
       id: line.id,
+      sourcePurchaseItemId: (line as any).sourcePurchaseItemId || line.id,
+      itemId: (line as any).itemId || "",
+      sourcePurchaseQty: parseNumber((line as any).sourcePurchaseQty ?? line.quantity),
+      sourcePurchaseAmountAfterTax: parseNumber(
+        (line as any).sourcePurchaseAmountAfterTax ?? (line as any).amountAfterTax
+      ),
       itemName: line.itemName,
       quantity: line.quantity,
       rate: line.rate,

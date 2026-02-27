@@ -328,6 +328,8 @@ export default function DebitNotePremium() {
   }
 
   function addLine() {
+    if (!form) return;
+    if (form.linkedPurchaseInvoiceId) return;
     setForm((prev) =>
       prev
         ? {

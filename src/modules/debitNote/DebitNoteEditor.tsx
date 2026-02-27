@@ -454,9 +454,16 @@ export default function DebitNoteEditor({
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-slate-900">Section 3 - Items</p>
-                <p className="text-xs text-slate-500">Add or adjust line items in invoice-style cards.</p>
+                <p className="text-xs text-slate-500">
+                  {form.linkedPurchaseInvoiceId ? "Linked bill lines only. Quantity can be reduced but not increased." : "Add or adjust line items in invoice-style cards."}
+                </p>
               </div>
-              <button onClick={onAddLine} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+              <button
+                onClick={onAddLine}
+                disabled={!!form.linkedPurchaseInvoiceId}
+                className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                title={form.linkedPurchaseInvoiceId ? "Use linked bill lines only." : "Add line"}
+              >
                 Add line
               </button>
             </div>
@@ -483,7 +490,17 @@ export default function DebitNoteEditor({
                     ) : null}
                     <label className="text-xs font-semibold text-slate-600">
                       Quantity
-                      <input type="number" min={0} value={line.quantity} onChange={(event) => onUpdateLine(line.id, { quantity: parseNumber(event.target.value) })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                      <input
+                        type="number"
+                        min={0}
+                        max={parseNumber((line as any).sourcePurchaseQty) > 0 ? parseNumber((line as any).sourcePurchaseQty) : undefined}
+                        value={line.quantity}
+                        onChange={(event) => onUpdateLine(line.id, { quantity: parseNumber(event.target.value) })}
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                      />
+                      {parseNumber((line as any).sourcePurchaseQty) > 0 ? (
+                        <p className="mt-1 text-[11px] text-slate-500">Bill qty: {parseNumber((line as any).sourcePurchaseQty)}</p>
+                      ) : null}
                     </label>
                     <label className="text-xs font-semibold text-slate-600">
                       Rate

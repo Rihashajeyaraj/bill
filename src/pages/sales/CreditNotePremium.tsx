@@ -32,6 +32,7 @@ import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesSyncFromRemote } from "../../services/invoices.service";
 import { creditNotesSaveRemote } from "../../services/creditNotes.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
+import { fetchInvoiceAllocationDetails } from "../../services/inventory.service";
 import EmptyState from "../../components/EmptyState";
 import GradientButton from "../../components/GradientButton";
 import { UI } from "../../theme/tokens";
@@ -100,6 +101,8 @@ export default function CreditNotePremium() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [allocationByInvoiceItemId, setAllocationByInvoiceItemId] = useState<Record<string, any[]>>({});
+  const [allocationsLoading, setAllocationsLoading] = useState(false);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<CreditStatus | "">("");
@@ -170,12 +173,20 @@ export default function CreditNotePremium() {
       const base = prev || defaultForm(country, company);
       return {
         ...base,
+        creditType: "Full Credit",
+        discountPercent: "",
+        partialAmountCap: "",
+        priceAdjustmentAmount: "",
         linkedInvoiceId: invoice.id,
         customerId: invoice.customerId,
         customerInput: invoice.customerName,
         placeOfSupply: invoice.placeOfSupply || base.placeOfSupply,
         taxRate: invoice.lines[0]?.taxRate || base.taxRate,
-        lines: draftLinesFromInvoice(invoice)
+        lines: draftLinesFromInvoice(invoice).map((line) => ({
+          ...line,
+          creditType: "Percentage",
+          creditValue: 0
+        }))
       };
     });
     setDirty(false);
@@ -187,6 +198,39 @@ export default function CreditNotePremium() {
     next.delete("invoiceId");
     setSearchParams(next, { replace: true });
   }, [country, prefillInvoiceId, invoices, company, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const linkedInvoiceId = String(form?.linkedInvoiceId || "").trim();
+    if (!linkedInvoiceId) {
+      setAllocationByInvoiceItemId({});
+      setAllocationsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setAllocationsLoading(true);
+    fetchInvoiceAllocationDetails(linkedInvoiceId)
+      .then((rows) => {
+        if (cancelled) return;
+        const grouped: Record<string, any[]> = {};
+        (Array.isArray(rows) ? rows : []).forEach((row) => {
+          const key = String(row?.invoice_item_id || "").trim();
+          if (!key) return;
+          if (!grouped[key]) grouped[key] = [];
+          grouped[key].push(row);
+        });
+        setAllocationByInvoiceItemId(grouped);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAllocationByInvoiceItemId({});
+      })
+      .finally(() => {
+        if (!cancelled) setAllocationsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form?.linkedInvoiceId]);
 
   const filteredNotes = useMemo(
     () =>
@@ -224,7 +268,13 @@ export default function CreditNotePremium() {
   function startCreate() {
     if (!country || !allowed) return;
     setEditorLoading(true);
-    setForm(defaultForm(country, company));
+    setForm({
+      ...defaultForm(country, company),
+      creditType: "Full Credit",
+      discountPercent: "",
+      partialAmountCap: "",
+      priceAdjustmentAmount: ""
+    });
     setActiveNote(null);
     setFieldErrors({});
     setErrorMessage("");
@@ -239,7 +289,19 @@ export default function CreditNotePremium() {
     if (!note || !country || note.country !== country) return;
     if (mode === "edit" && note.status === "Applied") return;
     setEditorLoading(true);
-    setForm(formFromNote(note));
+    const hydrated = formFromNote(note);
+    setForm({
+      ...hydrated,
+      creditType: "Full Credit",
+      discountPercent: "",
+      partialAmountCap: "",
+      priceAdjustmentAmount: "",
+      lines: (hydrated.lines || []).map((line) => ({
+        ...line,
+        creditType: "Percentage",
+        creditValue: 0
+      }))
+    });
     setActiveNote(note);
     setDirty(false);
     setFieldErrors({});
@@ -279,16 +341,54 @@ export default function CreditNotePremium() {
     }
     const invoice = invoices.find((entry) => entry.id === invoiceId);
     if (!invoice) return;
-    setForm((prev) => (prev ? { ...prev, linkedInvoiceId: invoiceId, customerId: invoice.customerId, customerInput: invoice.customerName, placeOfSupply: invoice.placeOfSupply || prev.placeOfSupply, taxRate: invoice.lines[0]?.taxRate || prev.taxRate, lines: draftLinesFromInvoice(invoice) } : prev));
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            creditType: "Full Credit",
+            discountPercent: "",
+            partialAmountCap: "",
+            priceAdjustmentAmount: "",
+            linkedInvoiceId: invoiceId,
+            customerId: invoice.customerId,
+            customerInput: invoice.customerName,
+            placeOfSupply: invoice.placeOfSupply || prev.placeOfSupply,
+            taxRate: invoice.lines[0]?.taxRate || prev.taxRate,
+            lines: draftLinesFromInvoice(invoice).map((line) => ({
+              ...line,
+              creditType: "Percentage",
+              creditValue: 0
+            }))
+          }
+        : prev
+    );
     setDirty(true);
   }
 
   function updateLine(id: string, patch: any) {
-    setForm((prev) => (prev ? { ...prev, lines: prev.lines.map((line) => (line.id === id ? { ...line, ...patch } : line)) } : prev));
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            lines: prev.lines.map((line) =>
+              line.id === id
+                ? {
+                    ...line,
+                    ...patch,
+                    creditType: "Percentage",
+                    creditValue: 0
+                  }
+                : line
+            )
+          }
+        : prev
+    );
     setDirty(true);
   }
 
   function addLine() {
+    if (!form) return;
+    if (form.linkedInvoiceId) return;
     setForm((prev) => (prev ? { ...prev, lines: [...prev.lines, { id: `line_${Date.now().toString(16)}`, itemName: "", quantity: 1, rate: 0, taxRate: prev.taxRate, hsnSac: "", creditType: "Percentage", creditValue: 0 }] } : prev));
     setDirty(true);
   }
@@ -305,7 +405,6 @@ export default function CreditNotePremium() {
     if (!form.customerId) errors.customerId = "Customer is required.";
     if (!form.linkedInvoiceId) errors.linkedInvoiceId = "Linked invoice is mandatory.";
     if ((totals as any).detailed?.some((line: any) => line.validationMessage)) errors.lines = "Credit cannot exceed amount after tax.";
-    if (form.creditType === "Partial Credit" && parseNumber(form.partialAmountCap) <= 0) errors.partialAmountCap = "Partial credit amount is required.";
     if (!form.lines.length) errors.lines = "At least one line item is required.";
     if (totals.total <= 0) errors.totals = "Total credit must be greater than zero.";
     if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Admin can apply credits.";
@@ -333,7 +432,7 @@ export default function CreditNotePremium() {
         linkedInvoiceNo: selectedInvoice?.invoiceNo || "",
         linkedInvoiceDate: selectedInvoice?.invoiceDate || "",
         reason: form.reason,
-        creditType: form.creditType,
+        creditType: "Full Credit",
         desiredStatus: targetStatus,
         taxRate: form.taxRate,
         placeOfSupply: form.placeOfSupply,
@@ -343,11 +442,15 @@ export default function CreditNotePremium() {
         internalNotes: form.internalNotes,
         customerNotes: form.customerNotes,
         returnToStock: form.returnToStock,
-        discountPercent: parseNumber(form.discountPercent),
-        partialAmountCap: parseNumber(form.partialAmountCap),
-        priceAdjustmentAmount: parseNumber(form.priceAdjustmentAmount),
+        discountPercent: 0,
+        partialAmountCap: 0,
+        priceAdjustmentAmount: 0,
         invoiceBalanceBefore: selectedInvoice?.remainingBalance || 0,
-        lines: form.lines,
+        lines: (form.lines || []).map((line) => ({
+          ...line,
+          creditType: "Percentage",
+          creditValue: 0
+        })),
         actor: actorName
       });
 
@@ -358,6 +461,22 @@ export default function CreditNotePremium() {
       setRefreshKey((prev) => prev + 1);
       setActiveNote(saved);
       setForm(formFromNote(saved));
+      setForm((prev) =>
+        prev
+          ? {
+              ...prev,
+              creditType: "Full Credit",
+              discountPercent: "",
+              partialAmountCap: "",
+              priceAdjustmentAmount: "",
+              lines: (prev.lines || []).map((line) => ({
+                ...line,
+                creditType: "Percentage",
+                creditValue: 0
+              }))
+            }
+          : prev
+      );
       setDirty(false);
       setViewMode("edit");
       setSuccessMessage(`${saved.creditNoteNo} saved as ${saved.status}.`);
@@ -447,10 +566,12 @@ export default function CreditNotePremium() {
                   invoices={invoices}
                   selectedInvoice={selectedInvoice}
                   totals={totals as any}
-                  actorName={actorName}
-                  access={access}
-                  fieldErrors={fieldErrors}
-                  onBack={backToList}
+                actorName={actorName}
+                access={access}
+                fieldErrors={fieldErrors}
+                allocationByInvoiceItemId={allocationByInvoiceItemId}
+                allocationsLoading={allocationsLoading}
+                onBack={backToList}
                   onUpdateForm={updateForm}
                   onApplyInvoice={applyInvoice}
                   onUpdateLine={updateLine}
