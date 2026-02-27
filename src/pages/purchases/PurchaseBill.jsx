@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Plus, Save, Search, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import FormField from "../../components/FormField";
 import { useToast } from "../../context/ToastContext";
 import { listParties, syncPartiesFromRemote } from "../../modules/parties/store";
-import { listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
+import { computeItemStock, listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
 import {
   fetchSupplierAddress,
   purchasesCreate
@@ -20,7 +21,6 @@ import { outstandingBySupplier, savePaymentOut } from "../../modules/paymentOut/
 const TAX_RATES = [0, 5, 12, 18, 28];
 const DEFAULT_UNITS = ["pcs", "kg", "box", "ltr", "set", "hr"];
 const BLOCKED_UNITS = ["job"];
-const ITEM_DATALIST_ID = "purchase-item-options";
 const UNIT_DATALIST_ID = "purchase-unit-options";
 
 function normalizeUnit(unit) {
@@ -31,6 +31,47 @@ function normalizeUnit(unit) {
 
 function normalizeItemName(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function getItemSearchIdentifier(item) {
+  const itemCode = String(item?.itemCode || "").trim();
+  if (itemCode) return itemCode;
+  return String(item?.id || "").trim();
+}
+
+function formatItemSearchLabel(item) {
+  const identifier = getItemSearchIdentifier(item);
+  const name = String(item?.name || "").trim();
+  if (identifier && name) return `${identifier} | ${name}`;
+  return name || identifier;
+}
+
+function findItemBySearchInput(items, value) {
+  const normalizedValue = normalizeItemName(value);
+  if (!normalizedValue) return null;
+  return (
+    items.find((item) => {
+      const name = normalizeItemName(item?.name);
+      const itemCode = normalizeItemName(item?.itemCode);
+      const id = normalizeItemName(item?.id);
+      const label = normalizeItemName(formatItemSearchLabel(item));
+      return (
+        normalizedValue === name ||
+        normalizedValue === itemCode ||
+        normalizedValue === id ||
+        normalizedValue === label
+      );
+    }) || null
+  );
+}
+
+function itemMatchesSearchQuery(item, query) {
+  const normalizedQuery = normalizeItemName(query);
+  if (!normalizedQuery) return true;
+  const name = normalizeItemName(item?.name);
+  const itemCode = normalizeItemName(item?.itemCode);
+  const id = normalizeItemName(item?.id);
+  return name.includes(normalizedQuery) || itemCode.includes(normalizedQuery) || id.includes(normalizedQuery);
 }
 
 function normalizePhoneForLookup(value) {
@@ -74,21 +115,18 @@ function generateBillNumber() {
   return `PB-${yy}${mm}${dd}-${rnd}`;
 }
 
-function createLine(items) {
-  const item = items.find((entry) => entry?.type === "Product") || items[0];
-  const purchaseRate = Number(
-    item?.purchaseRate ?? item?.metadata?.purchasePrice ?? item?.price ?? 0
-  );
+function createLine() {
   return {
     id: `line_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-    itemId: item?.id || "",
-    itemCode: item?.itemCode || "",
-    itemName: item?.name || "",
+    itemId: "",
+    itemCode: "",
+    itemName: "",
+    itemInput: "",
     qty: 1,
-    unit: normalizeUnit(item?.unit),
-    rate: purchaseRate,
+    unit: "pcs",
+    rate: 0,
     priceTaxMode: "WITHOUT_TAX",
-    tax: item?.taxRate || 0
+    tax: 0
   };
 }
 
@@ -113,7 +151,9 @@ export default function PurchaseBill() {
   const [supplierAddress, setSupplierAddress] = useState("");
   const [autoBillNumber, setAutoBillNumber] = useState(() => generateBillNumber());
   const [billDate, setBillDate] = useState(new Date().toISOString().slice(0, 10));
-  const [lines, setLines] = useState(() => [createLine([])]);
+  const [lines, setLines] = useState(() => [createLine()]);
+  const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
+  const [lineItemPopover, setLineItemPopover] = useState({ top: 0, left: 0, width: 280 });
   const [roundOffEnabled, setRoundOffEnabled] = useState(false);
   const [roundOffValue, setRoundOffValue] = useState("0");
   const [markAsPaid, setMarkAsPaid] = useState(false);
@@ -137,6 +177,18 @@ export default function PurchaseBill() {
       ),
     [items]
   );
+  const stockByItemId = useMemo(() => {
+    const map = new Map();
+    items.forEach((item) => {
+      if (item?.type !== "Product" || !item?.trackInventory) return;
+      map.set(item.id, {
+        itemId: item.id,
+        itemName: item.name || "Item",
+        ...computeItemStock(item)
+      });
+    });
+    return map;
+  }, [items]);
 
   useEffect(() => {
     let mounted = true;
@@ -150,19 +202,13 @@ export default function PurchaseBill() {
         if (!mounted) return;
         const nextSuppliers = listParties().filter((entry) => entry.type === "Supplier");
         const nextItems = listItems();
-        const nextPurchasableItems = nextItems.filter(
-          (item) =>
-            item &&
-            item.status !== "Inactive" &&
-            (item.type === "Product" || item.type === "Service")
-        );
         setSuppliers(nextSuppliers);
         setItems(nextItems);
         setPartyId((prev) => prev || "");
         setLines((prev) => {
-          if (!prev.length) return [createLine(nextPurchasableItems)];
+          if (!prev.length) return [createLine()];
           const hasSelectedItem = prev.some((line) => !!line.itemId || !!line.itemName);
-          return hasSelectedItem ? prev : [createLine(nextPurchasableItems)];
+          return hasSelectedItem ? prev : [createLine()];
         });
       } catch (error) {
         toast.error("Failed to load suppliers/items", error?.message || "Using local cached data.");
@@ -246,6 +292,17 @@ export default function PurchaseBill() {
     }
   }, [markAsPaid, paymentType]);
 
+  useEffect(() => {
+    if (!activeLineItemSearchId) return undefined;
+    const closePopover = () => setActiveLineItemSearchId("");
+    window.addEventListener("scroll", closePopover, true);
+    window.addEventListener("resize", closePopover);
+    return () => {
+      window.removeEventListener("scroll", closePopover, true);
+      window.removeEventListener("resize", closePopover);
+    };
+  }, [activeLineItemSearchId]);
+
   const unitOptions = useMemo(() => {
     const itemUnits = items
       .map((item) => normalizeUnit(item.unit))
@@ -287,32 +344,77 @@ export default function PurchaseBill() {
     );
   }
 
-  function handleItemInput(id, inputValue) {
-    const normalizedInput = String(inputValue || "").trim().toLowerCase();
-    const match = purchasableItems.find(
-      (item) => String(item?.name || "").trim().toLowerCase() === normalizedInput
+  function selectLineItem(line, item) {
+    if (!line || !item) return;
+    const purchaseRate = Number(
+      item?.purchaseRate ?? item?.metadata?.purchasePrice ?? item?.price ?? 0
     );
+    updateLine(line.id, {
+      itemInput: formatItemSearchLabel(item),
+      itemName: item.name,
+      itemId: item.id,
+      itemCode: item.itemCode || "",
+      unit: normalizeUnit(item.unit || line.unit),
+      rate: purchaseRate,
+      tax: item.taxRate ?? line.tax
+    });
+  }
+
+  function handleItemInput(id, inputValue) {
+    const match = findItemBySearchInput(purchasableItems, inputValue);
     updateLine(id, (line) => {
       if (!match) {
-        return { ...line, itemName: inputValue, itemId: "", itemCode: "" };
+        return { ...line, itemInput: inputValue, itemName: inputValue, itemId: "", itemCode: "" };
       }
-      const purchaseRate = Number(
-        match?.purchaseRate ?? match?.metadata?.purchasePrice ?? match?.price ?? 0
-      );
       return {
         ...line,
+        itemInput: formatItemSearchLabel(match),
         itemName: match.name,
         itemId: match.id,
         itemCode: match.itemCode || "",
         unit: normalizeUnit(match.unit || line.unit),
-        rate: purchaseRate,
+        rate: Number(match?.purchaseRate ?? match?.metadata?.purchasePrice ?? match?.price ?? 0),
         tax: match.taxRate ?? line.tax
       };
     });
   }
 
+  function updateLineItemPopoverPosition(inputElement) {
+    if (!inputElement) return;
+    const rect = inputElement.getBoundingClientRect();
+    const width = Math.max(240, Math.round(rect.width));
+    const viewportWidth =
+      window.innerWidth || document.documentElement.clientWidth || Math.round(rect.width) || 320;
+    const left = Math.max(8, Math.min(rect.left, viewportWidth - width - 8));
+    setLineItemPopover({
+      top: Math.round(rect.bottom + 6),
+      left: Math.round(left),
+      width
+    });
+  }
+
+  function getLineItemSearchResults(line) {
+    const query = normalizeItemName(line?.itemInput);
+    const matched = query
+      ? purchasableItems.filter((item) => itemMatchesSearchQuery(item, query))
+      : purchasableItems;
+    const selected = purchasableItems.find((item) => String(item.id) === String(line?.itemId || ""));
+    if (!selected) return matched.slice(0, 8);
+    if (matched.some((item) => String(item.id) === String(selected.id))) return matched.slice(0, 8);
+    return [selected, ...matched].slice(0, 8);
+  }
+
+  const activeLineForSearch = useMemo(
+    () => lines.find((line) => String(line?.id || "") === String(activeLineItemSearchId || "")) || null,
+    [lines, activeLineItemSearchId]
+  );
+  const activeLineSearchResults = useMemo(() => {
+    if (!activeLineForSearch) return [];
+    return getLineItemSearchResults(activeLineForSearch);
+  }, [activeLineForSearch, purchasableItems]);
+
   function addLine() {
-    setLines((prev) => [...prev, createLine(purchasableItems)]);
+    setLines((prev) => [...prev, createLine()]);
   }
 
   function removeLine(id) {
@@ -472,6 +574,11 @@ export default function PurchaseBill() {
         .filter((item) => item?.name)
         .map((item) => [normalizeItemName(item.name), item])
     );
+    const itemsByCode = new Map(
+      items
+        .filter((item) => item?.itemCode)
+        .map((item) => [normalizeItemName(item.itemCode), item])
+    );
     const ensureItemCode = async (item) => {
       if (!item || item.itemCode) return item;
       const savedId = await upsertItemRemote(
@@ -488,6 +595,9 @@ export default function PurchaseBill() {
       if (refreshed.name) {
         itemsByName.set(normalizeItemName(refreshed.name), refreshed);
       }
+      if (refreshed.itemCode) {
+        itemsByCode.set(normalizeItemName(refreshed.itemCode), refreshed);
+      }
       return refreshed;
     };
 
@@ -497,30 +607,43 @@ export default function PurchaseBill() {
         nextLines.push({
           ...line,
           itemName: line.itemName || matched?.name || "",
-          itemCode: line.itemCode || matched?.itemCode || ""
+          itemCode: line.itemCode || matched?.itemCode || "",
+          itemInput: formatItemSearchLabel(
+            matched || {
+              id: line.itemId || "",
+              itemCode: line.itemCode || "",
+              name: line.itemName || ""
+            }
+          )
         });
         continue;
       }
 
-      const typedName = String(line.itemName || "").trim();
-      if (!typedName) {
-        nextLines.push({ ...line, itemId: "", itemCode: "" });
+      const typedInput = String(line.itemInput || line.itemName || "").trim();
+      if (!typedInput) {
+        nextLines.push({ ...line, itemId: "", itemCode: "", itemInput: "" });
         continue;
       }
 
-      const normalizedName = normalizeItemName(typedName);
-      const existing = await ensureItemCode(itemsByName.get(normalizedName));
+      const directMatch =
+        findItemBySearchInput(items, typedInput) ||
+        itemsByCode.get(normalizeItemName(typedInput)) ||
+        itemsByName.get(normalizeItemName(typedInput));
+      const existing = await ensureItemCode(directMatch);
       if (existing) {
         nextLines.push({
           ...line,
           itemId: existing.id,
           itemCode: existing.itemCode || "",
           itemName: existing.name,
+          itemInput: formatItemSearchLabel(existing),
           unit: normalizeUnit(existing.unit || line.unit)
         });
         continue;
       }
 
+      const typedName = typedInput;
+      const normalizedName = normalizeItemName(typedName);
       const createdId = await upsertItemRemote(
         {
           name: typedName,
@@ -546,6 +669,9 @@ export default function PurchaseBill() {
       if (created) {
         itemsById.set(String(created.id), created);
         itemsByName.set(normalizedName, created);
+        if (created.itemCode) {
+          itemsByCode.set(normalizeItemName(created.itemCode), created);
+        }
       }
 
       nextLines.push({
@@ -553,6 +679,7 @@ export default function PurchaseBill() {
         itemId: created?.id || createdId || "",
         itemCode: created?.itemCode || "",
         itemName: created?.name || typedName,
+        itemInput: formatItemSearchLabel(created || { id: createdId || "", itemCode: "", name: typedName }),
         unit: normalizeUnit(created?.unit || line.unit)
       });
     }
@@ -602,6 +729,13 @@ export default function PurchaseBill() {
             itemId: resolved.itemId || "",
             itemCode: resolved.itemCode || "",
             itemName: resolved.itemName || "",
+            itemInput:
+              resolved.itemInput ||
+              formatItemSearchLabel({
+                id: resolved.itemId || "",
+                itemCode: resolved.itemCode || "",
+                name: resolved.itemName || ""
+              }),
             unit: normalizeUnit(resolved.unit),
             rate: Number(resolved.rate || 0),
             tax: Number(resolved.tax || 0)
@@ -925,7 +1059,7 @@ export default function PurchaseBill() {
           </button>
         </div>
 
-        <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">
+        <div className="relative mt-4 overflow-x-auto overflow-y-visible rounded-2xl border border-slate-100">
           <table className="min-w-[820px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
@@ -950,13 +1084,26 @@ export default function PurchaseBill() {
                 <tr key={line.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                   <td className="px-3 py-3 text-slate-500">{index + 1}</td>
                   <td className="px-3 py-3">
-                    <input
-                      list={ITEM_DATALIST_ID}
-                      value={line.itemName || ""}
-                      onChange={(e) => handleItemInput(line.id, e.target.value)}
-                      className="w-full min-w-[220px] rounded-xl border border-slate-100 bg-white px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
-                      placeholder="Select or type item"
-                    />
+                    <div className="min-w-[220px]">
+                      <input
+                        value={line.itemInput || line.itemName || ""}
+                        onFocus={(event) => {
+                          setActiveLineItemSearchId(line.id);
+                          updateLineItemPopoverPosition(event.currentTarget);
+                        }}
+                        onBlur={() => {
+                          window.setTimeout(() => {
+                            setActiveLineItemSearchId((current) => (current === line.id ? "" : current));
+                          }, 120);
+                        }}
+                        onChange={(e) => {
+                          handleItemInput(line.id, e.target.value);
+                          updateLineItemPopoverPosition(e.currentTarget);
+                        }}
+                        className="w-full rounded-xl border border-slate-100 bg-white px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                        placeholder="Search by product ID or name"
+                      />
+                    </div>
                     <p className="mt-1 text-[11px] text-slate-500">{line.itemCode ? `Code: ${line.itemCode}` : "No code"}</p>
                   </td>
                   <td className="px-3 py-3">
@@ -1017,13 +1164,52 @@ export default function PurchaseBill() {
               ))}
             </tbody>
           </table>
-          <datalist id={ITEM_DATALIST_ID}>
-            {purchasableItems.map((item) => (
-              <option key={item.id} value={item.name}>
-                {item.type}
-              </option>
-            ))}
-          </datalist>
+          {activeLineForSearch &&
+          activeLineItemSearchId &&
+          normalizeItemName(activeLineForSearch.itemInput || activeLineForSearch.itemName).length
+            ? createPortal(
+                <div
+                  className="fixed z-[130] rounded-xl border border-slate-100 bg-white p-1.5 shadow-soft"
+                  style={{
+                    top: `${lineItemPopover.top}px`,
+                    left: `${lineItemPopover.left}px`,
+                    width: `${lineItemPopover.width}px`
+                  }}
+                >
+                  {activeLineSearchResults.length ? (
+                    activeLineSearchResults.map((item) => {
+                      const stockInfo = stockByItemId.get(item.id);
+                      const remainingText = stockInfo ? `Remaining: ${stockInfo.available}` : "Service / Not tracked";
+                      const remainingClass = stockInfo
+                        ? Number(stockInfo.available || 0) <= 0
+                          ? "text-rose-600"
+                          : "text-slate-500"
+                        : "text-slate-400";
+                      return (
+                        <button
+                          key={`purchase-line-floating-${activeLineForSearch.id}-${item.id}`}
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            selectLineItem(activeLineForSearch, item);
+                            setActiveLineItemSearchId("");
+                          }}
+                          className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span>{formatItemSearchLabel(item)}</span>
+                            <span className={`text-[11px] font-semibold ${remainingClass}`}>{remainingText}</span>
+                          </div>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="px-2 py-1.5 text-xs text-slate-500">No items found</div>
+                  )}
+                </div>,
+                document.body
+              )
+            : null}
           <datalist id={UNIT_DATALIST_ID}>
             {unitOptions.map((unit) => (
               <option key={unit} value={unit} />

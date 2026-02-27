@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Plus, Printer, Save, Search } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
 
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
@@ -88,6 +89,51 @@ function customerAddressSummary(customer) {
     .join(", ");
 }
 
+function normalizeItemSearchText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getItemSearchIdentifier(item) {
+  const itemCode = String(item?.itemCode || "").trim();
+  if (itemCode) return itemCode;
+  return String(item?.id || "").trim();
+}
+
+function formatItemSearchLabel(item) {
+  const identifier = getItemSearchIdentifier(item);
+  const name = String(item?.name || "").trim();
+  if (identifier && name) return `${identifier} | ${name}`;
+  return name || identifier;
+}
+
+function itemMatchesSearchQuery(item, query) {
+  const normalizedQuery = normalizeItemSearchText(query);
+  if (!normalizedQuery) return true;
+  const name = normalizeItemSearchText(item?.name);
+  const itemCode = normalizeItemSearchText(item?.itemCode);
+  const id = normalizeItemSearchText(item?.id);
+  return name.includes(normalizedQuery) || itemCode.includes(normalizedQuery) || id.includes(normalizedQuery);
+}
+
+function findItemBySearchInput(items, value) {
+  const normalizedValue = normalizeItemSearchText(value);
+  if (!normalizedValue) return null;
+  return (
+    items.find((item) => {
+      const name = normalizeItemSearchText(item?.name);
+      const itemCode = normalizeItemSearchText(item?.itemCode);
+      const id = normalizeItemSearchText(item?.id);
+      const label = normalizeItemSearchText(formatItemSearchLabel(item));
+      return (
+        normalizedValue === name ||
+        normalizedValue === itemCode ||
+        normalizedValue === id ||
+        normalizedValue === label
+      );
+    }) || null
+  );
+}
+
 function isValidDateParts(year, month, day) {
   const candidate = new Date(Date.UTC(year, month - 1, day));
   return (
@@ -159,6 +205,8 @@ export default function InvoiceCreate() {
   const [customerSearchPhone, setCustomerSearchPhone] = useState("");
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerSearchError, setCustomerSearchError] = useState("");
+  const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
+  const [lineItemPopover, setLineItemPopover] = useState({ top: 0, left: 0, width: 280 });
 
   const [lines, setLines] = useState([]);
   const [lastSavedInvoiceId, setLastSavedInvoiceId] = useState("");
@@ -279,6 +327,17 @@ export default function InvoiceCreate() {
   }, [paymentMode, paymentModes]);
 
   useEffect(() => {
+    if (!activeLineItemSearchId) return undefined;
+    const closePopover = () => setActiveLineItemSearchId("");
+    window.addEventListener("scroll", closePopover, true);
+    window.addEventListener("resize", closePopover);
+    return () => {
+      window.removeEventListener("scroll", closePopover, true);
+      window.removeEventListener("resize", closePopover);
+    };
+  }, [activeLineItemSearchId]);
+
+  useEffect(() => {
     if (!markAsPaid) {
       setPaidAmount("");
       setReferenceNo("");
@@ -319,6 +378,7 @@ export default function InvoiceCreate() {
       {
         id: `l_${Date.now()}`,
         itemId: "",
+        itemInput: "",
         qty: 1,
         rate: 0,
         discount: 0,
@@ -339,6 +399,7 @@ export default function InvoiceCreate() {
       const nextLine = {
         id: `l_${Date.now()}`,
         itemId: item.id,
+        itemInput: formatItemSearchLabel(item),
         qty: Number.isFinite(maxAssignable) ? Math.min(1, maxAssignable) : 1,
         rate: item.salesRate || item.price || 0,
         discount: 0,
@@ -457,10 +518,11 @@ export default function InvoiceCreate() {
   }
 
   const computed = useMemo(() => {
-    const hasAnyLineTax = lines.some((line) => Number(line?.tax || 0) > 0);
+    const selectedLines = lines.filter((line) => line?.itemId);
+    const hasAnyLineTax = selectedLines.some((line) => Number(line?.tax || 0) > 0);
     const fallbackRate = hasAnyLineTax ? 0 : Number(taxRate || 0);
 
-    const enrichedBase = lines.map((l) => {
+    const enrichedBase = selectedLines.map((l) => {
       const item = items.find((it) => it.id === l.itemId);
       const qty = Number(l.qty || 0);
       const rate = Number(l.rate || 0);
@@ -584,13 +646,29 @@ export default function InvoiceCreate() {
       .slice(0, 8);
   }, [customers, customerLookupQuery]);
 
+  const availableLineItems = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          item &&
+          item.status !== "Inactive" &&
+          (item.type === "Product" || item.type === "Service")
+      ),
+    [items]
+  );
+
   const filteredItems = useMemo(() => {
-    const query = itemSearch.trim().toLowerCase();
-    if (!query) return items;
-    const startsWith = items.filter((item) => item.name?.toLowerCase().startsWith(query));
+    const query = normalizeItemSearchText(itemSearch);
+    if (!query) return availableLineItems;
+    const startsWith = availableLineItems.filter((item) => {
+      const name = normalizeItemSearchText(item?.name);
+      const itemCode = normalizeItemSearchText(item?.itemCode);
+      const id = normalizeItemSearchText(item?.id);
+      return name.startsWith(query) || itemCode.startsWith(query) || id.startsWith(query);
+    });
     if (startsWith.length) return startsWith;
-    return items.filter((item) => item.name?.toLowerCase().includes(query));
-  }, [items, itemSearch]);
+    return availableLineItems.filter((item) => itemMatchesSearchQuery(item, query));
+  }, [availableLineItems, itemSearch]);
 
   const stockByItemId = useMemo(() => {
     const map = new Map();
@@ -643,12 +721,69 @@ export default function InvoiceCreate() {
 
   const hasStockErrors = stockValidationIssues.length > 0;
 
-  function getItemOptions(currentId) {
-    const selected = items.find((item) => item.id === currentId);
-    if (!selected) return filteredItems;
-    if (filteredItems.some((item) => item.id === currentId)) return filteredItems;
-    return [selected, ...filteredItems];
+  function selectLineItem(line, matchedItem) {
+    if (!matchedItem || !line) return;
+    const maxAssignable = getMaxAssignableQty(matchedItem.id, line.id);
+    if (Number.isFinite(maxAssignable) && maxAssignable <= 0) {
+      alert(`Out of stock: ${matchedItem.name}.`);
+      return;
+    }
+    const nextQtyRaw = Number(line.qty || 0);
+    const normalizedQty = Number.isFinite(nextQtyRaw) && nextQtyRaw > 0 ? nextQtyRaw : 1;
+    const nextQty = Number.isFinite(maxAssignable)
+      ? Math.min(normalizedQty, maxAssignable)
+      : normalizedQty;
+    updateLine(line.id, {
+      itemInput: formatItemSearchLabel(matchedItem),
+      itemId: matchedItem.id,
+      qty: nextQty,
+      rate: matchedItem?.salesRate || matchedItem?.price || 0,
+      tax: matchedItem?.taxRate || 0
+    });
   }
+
+  function handleLineItemInput(line, inputValue) {
+    const matchedItem = findItemBySearchInput(availableLineItems, inputValue);
+    if (!matchedItem) {
+      updateLine(line.id, { itemInput: inputValue, itemId: "" });
+      return;
+    }
+    selectLineItem(line, matchedItem);
+  }
+
+  function updateLineItemPopoverPosition(inputElement) {
+    if (!inputElement) return;
+    const rect = inputElement.getBoundingClientRect();
+    const width = Math.max(260, Math.round(rect.width));
+    const viewportWidth =
+      window.innerWidth || document.documentElement.clientWidth || Math.round(rect.width) || 320;
+    const left = Math.max(8, Math.min(rect.left, viewportWidth - width - 8));
+    setLineItemPopover({
+      top: Math.round(rect.bottom + 6),
+      left: Math.round(left),
+      width
+    });
+  }
+
+  function getLineItemSearchResults(line) {
+    const query = normalizeItemSearchText(line?.itemInput);
+    const matched = query
+      ? availableLineItems.filter((item) => itemMatchesSearchQuery(item, query))
+      : availableLineItems;
+    const selected = availableLineItems.find((item) => String(item.id) === String(line?.itemId || ""));
+    if (!selected) return matched.slice(0, 8);
+    if (matched.some((item) => String(item.id) === String(selected.id))) return matched.slice(0, 8);
+    return [selected, ...matched].slice(0, 8);
+  }
+
+  const activeLineForSearch = useMemo(
+    () => lines.find((line) => String(line?.id || "") === String(activeLineItemSearchId || "")) || null,
+    [lines, activeLineItemSearchId]
+  );
+  const activeLineSearchResults = useMemo(() => {
+    if (!activeLineForSearch) return [];
+    return getLineItemSearchResults(activeLineForSearch);
+  }, [activeLineForSearch, availableLineItems]);
 
   const invoicePreviewData = useMemo(() => {
     const subTotal = Number(computed.subTotal || 0);
@@ -711,7 +846,7 @@ export default function InvoiceCreate() {
             totalTax,
             warning: ""
           },
-      items: computed.enriched.map((line) => {
+      items: computed.enriched.filter((line) => line?.itemId).map((line) => {
         const lineNet = Number(line.net || 0);
         const lineTaxAmount = Number(line.lineTax || 0);
         const resolvedLineRate = lineNet > 0 ? round2((lineTaxAmount / lineNet) * 100) : 0;
@@ -763,11 +898,12 @@ export default function InvoiceCreate() {
   ]);
 
   async function saveInvoice({ silent = false } = {}) {
+    const validComputedLines = computed.enriched.filter((line) => line?.itemId);
     if (!partyId) {
       alert("Select customer before saving invoice.");
       return null;
     }
-    if (!computed.enriched.length) {
+    if (!validComputedLines.length) {
       alert("Add at least one line item before saving invoice.");
       return null;
     }
@@ -840,7 +976,7 @@ export default function InvoiceCreate() {
       companySnapshot: company,
       seller,
       buyer,
-      lines: computed.enriched,
+      lines: validComputedLines,
       totals: {
         subTotal: computed.subTotal,
         tax: isIndiaOrg
@@ -998,11 +1134,12 @@ export default function InvoiceCreate() {
   }
 
   async function handleSaveAndPrint() {
+    const validComputedLines = computed.enriched.filter((line) => line?.itemId);
     if (!partyId) {
       alert("Select customer before saving and printing.");
       return;
     }
-    if (!computed.enriched.length) {
+    if (!validComputedLines.length) {
       alert("Add at least one line item before saving and printing.");
       return;
     }
@@ -1332,7 +1469,7 @@ export default function InvoiceCreate() {
                     onChange={(e) => setItemSearch(e.target.value)}
                     className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none focus:ring-4"
                     style={{ "--tw-ring-color": UI.COLORS.ring }}
-                    placeholder="Search items..."
+                    placeholder="Search by product ID or name..."
                   />
                   {itemSearch.trim().length ? (
                     <div className="absolute z-10 mt-2 w-full rounded-2xl border border-slate-100 bg-white shadow-soft p-2 max-h-52 overflow-auto">
@@ -1354,7 +1491,7 @@ export default function InvoiceCreate() {
                               className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <div className="flex items-center justify-between gap-2">
-                                <span>{item.name}</span>
+                                <span>{formatItemSearchLabel(item)}</span>
                                 {stockInfo ? (
                                   <span className={`text-xs font-semibold ${outOfStock ? "text-rose-600" : "text-slate-500"}`}>
                                     Remaining: {stockInfo.available}
@@ -1380,45 +1517,30 @@ export default function InvoiceCreate() {
                     {
                       key: "itemId",
                       header: "Item",
-                      render: (r) => (
-                        <select
-                          value={r.itemId}
-                          onChange={(e) => {
-                            const it = items.find((x) => x.id === e.target.value);
-                            if (!it) {
-                              updateLine(r.id, { itemId: e.target.value });
-                              return;
-                            }
-                            const maxAssignable = getMaxAssignableQty(it.id, r.id);
-                            if (Number.isFinite(maxAssignable) && maxAssignable <= 0) {
-                              alert(`Out of stock: ${it.name}.`);
-                              return;
-                            }
-                            const nextQtyRaw = Number(r.qty || 0);
-                            const normalizedQty = Number.isFinite(nextQtyRaw) && nextQtyRaw > 0 ? nextQtyRaw : 1;
-                            const nextQty = Number.isFinite(maxAssignable)
-                              ? Math.min(normalizedQty, maxAssignable)
-                              : normalizedQty;
-                            updateLine(r.id, {
-                              itemId: e.target.value,
-                              qty: nextQty,
-                              rate: it?.salesRate || it?.price || 0,
-                              tax: it?.taxRate || 0
-                            });
-                          }}
-                          className="rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-sm outline-none"
-                        >
-                          {getItemOptions(r.itemId).map((it) => (
-                            <option key={it.id} value={it.id}>
-                              {(() => {
-                                const stockInfo = stockByItemId.get(it.id);
-                                if (!stockInfo) return it.name;
-                                return `${it.name} (Stock: ${stockInfo.available})`;
-                              })()}
-                            </option>
-                          ))}
-                        </select>
-                      )
+                      render: (r) => {
+                        return (
+                          <div className="min-w-[250px]">
+                            <input
+                              value={r.itemInput || ""}
+                              onFocus={(event) => {
+                                setActiveLineItemSearchId(r.id);
+                                updateLineItemPopoverPosition(event.currentTarget);
+                              }}
+                              onBlur={() => {
+                                window.setTimeout(() => {
+                                  setActiveLineItemSearchId((current) => (current === r.id ? "" : current));
+                                }, 120);
+                              }}
+                              onChange={(e) => {
+                                handleLineItemInput(r, e.target.value);
+                                updateLineItemPopoverPosition(e.currentTarget);
+                              }}
+                              className="w-full rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-sm outline-none"
+                              placeholder="Search by product ID or name"
+                            />
+                          </div>
+                        );
+                      }
                     },
                     {
                       key: "qty",
@@ -1483,7 +1605,16 @@ export default function InvoiceCreate() {
                         />
                       )
                     },
-                    { key: "net", header: "Net", render: (r) => money(r.net) },
+                    {
+                      key: "net",
+                      header: "Net",
+                      render: (r) => {
+                        const qty = Number(r.qty || 0);
+                        const rate = Number(r.rate || 0);
+                        const discount = Number(r.discount || 0);
+                        return money(Math.max(0, qty * rate - discount));
+                      }
+                    },
                     {
                       key: "rm",
                       header: "",
@@ -1497,9 +1628,60 @@ export default function InvoiceCreate() {
                       )
                     }
                   ]}
-                  rows={computed.enriched}
+                  rows={lines}
+                  allowOverflow
                   emptyText="Add items to invoice"
                 />
+                {activeLineForSearch &&
+                activeLineItemSearchId &&
+                normalizeItemSearchText(activeLineForSearch.itemInput).length
+                  ? createPortal(
+                      <div
+                        className="fixed z-[130] rounded-xl border border-slate-100 bg-white p-1.5 shadow-soft"
+                        style={{
+                          top: `${lineItemPopover.top}px`,
+                          left: `${lineItemPopover.left}px`,
+                          width: `${lineItemPopover.width}px`
+                        }}
+                      >
+                        {activeLineSearchResults.length ? (
+                          activeLineSearchResults.map((item) => {
+                            const stockInfo = stockByItemId.get(item.id);
+                            const maxAssignable = getMaxAssignableQty(item.id, activeLineForSearch.id);
+                            const outOfStock = Number.isFinite(maxAssignable) && maxAssignable <= 0;
+                            return (
+                              <button
+                                key={`invoice-line-floating-${activeLineForSearch.id}-${item.id}`}
+                                type="button"
+                                disabled={outOfStock}
+                                onMouseDown={(event) => {
+                                  event.preventDefault();
+                                  if (outOfStock) return;
+                                  selectLineItem(activeLineForSearch, item);
+                                  setActiveLineItemSearchId("");
+                                }}
+                                className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span>{formatItemSearchLabel(item)}</span>
+                                  {stockInfo ? (
+                                    <span className={`text-[11px] font-semibold ${outOfStock ? "text-rose-600" : "text-slate-500"}`}>
+                                      Remaining: {stockInfo.available}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-400">Service / Not tracked</span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })
+                        ) : (
+                          <div className="px-2 py-1.5 text-xs text-slate-500">No items found</div>
+                        )}
+                      </div>,
+                      document.body
+                    )
+                  : null}
                 {hasStockErrors ? (
                   <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                     {stockValidationIssues.slice(0, 3).map((issue) => (
