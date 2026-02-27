@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Loader2, Save, Search, X } from "lucide-react";
-import { COUNTRY_CONFIG, type CountryCode, type DebitStatus, type DebitType } from "./countryConfig";
+import { COUNTRY_CONFIG, type CountryCode, type DebitStatus } from "./countryConfig";
 import type { PurchaseInvoice, DebitNoteRecord, SupplierOption } from "./store";
 import type { DebitNoteFormState } from "./types";
 import { formatMoney, parseNumber } from "./utils";
@@ -26,6 +26,7 @@ interface DebitNoteEditorProps {
   actorName: string;
   access: { roleType: "Admin" | "Staff"; canApply: boolean; canOverride: boolean };
   fieldErrors: Record<string, string>;
+  savingStatus?: DebitStatus | null;
   onBack: () => void;
   onUpdateForm: <K extends keyof DebitNoteFormState>(key: K, value: DebitNoteFormState[K]) => void;
   onApplyInvoice: (invoiceId: string) => void;
@@ -34,14 +35,6 @@ interface DebitNoteEditorProps {
   onRemoveLine: (id: string) => void;
   onPersist: (targetStatus: DebitStatus, options?: { email?: boolean; download?: boolean }) => void;
 }
-
-const DEBIT_TYPES: DebitType[] = [
-  "Full Debit",
-  "Partial Debit",
-  "Price Increase",
-  "Quantity Shortage",
-  "Additional Charges"
-];
 
 function normalizePhoneForLookup(value: unknown) {
   let digits = String(value || "").replace(/\D/g, "");
@@ -70,6 +63,7 @@ export default function DebitNoteEditor({
   actorName,
   access,
   fieldErrors,
+  savingStatus = null,
   onBack,
   onUpdateForm,
   onApplyInvoice,
@@ -390,63 +384,18 @@ export default function DebitNoteEditor({
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
-            <p className="text-sm font-semibold text-slate-900">Section 2 - Debit Type</p>
-            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-              {DEBIT_TYPES.map((type) => (
-                <label
-                  key={type}
-                  className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${
-                    form.debitType === type ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-600"
-                  }`}
-                >
-                  <input type="radio" checked={form.debitType === type} onChange={() => onUpdateForm("debitType", type)} />
-                  {type}
-                </label>
-              ))}
-            </div>
+            <p className="text-sm font-semibold text-slate-900">Section 2 - How Debit Is Calculated</p>
             <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2">
-              {form.debitType === "Partial Debit" ? (
-                <label className="text-xs font-semibold text-slate-600">
-                  Partial Debit Amount
-                  <input
-                    type="number"
-                    min={0}
-                    value={form.partialAmountCap}
-                    onChange={(event) => onUpdateForm("partialAmountCap", event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
-                  />
-                  {fieldErrors.partialAmountCap ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.partialAmountCap}</span> : null}
-                </label>
-              ) : null}
-              {form.debitType === "Price Increase" ? (
-                <label className="text-xs font-semibold text-slate-600">
-                  Price Increase Amount
-                  <input
-                    type="number"
-                    min={0}
-                    value={form.priceAdjustmentAmount}
-                    onChange={(event) => onUpdateForm("priceAdjustmentAmount", event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
-                  />
-                </label>
-              ) : null}
-              {form.debitType === "Additional Charges" ? (
-                <label className="text-xs font-semibold text-slate-600">
-                  Additional Charges Amount
-                  <input
-                    type="number"
-                    min={0}
-                    value={form.additionalChargesAmount}
-                    onChange={(event) => onUpdateForm("additionalChargesAmount", event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
-                  />
-                </label>
-              ) : null}
-              {form.debitType === "Quantity Shortage" ? (
-                <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                  Update line quantities to reflect shortage before issuing the debit note.
-                </p>
-              ) : null}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-700">
+                <p className="font-semibold text-slate-900">Mode: Auto (Full Debit)</p>
+                <p className="mt-1">Debit amount is automatic from `Qty x Bill Rate + Tax`.</p>
+                <p className="mt-1">Item, rate and tax come from linked purchase bill and stay locked.</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600">
+                <p className="font-semibold text-slate-700">Use case</p>
+                <p className="mt-1">Use Debit Note when supplier payable must reduce (return, discount, or rate correction).</p>
+                <p className="mt-1">For physical stock return to supplier, first do Purchase Return/stock update, then apply debit note.</p>
+              </div>
             </div>
           </div>
 
@@ -480,14 +429,12 @@ export default function DebitNoteEditor({
                   <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-4">
                     <label className="text-xs font-semibold text-slate-600 xl:col-span-2">
                       Item Name
-                      <input value={line.itemName} onChange={(event) => onUpdateLine(line.id, { itemName: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
+                      <input
+                        value={line.itemName}
+                        readOnly
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700"
+                      />
                     </label>
-                    {country === "IN" ? (
-                      <label className="text-xs font-semibold text-slate-600">
-                        HSN/SAC (optional)
-                        <input value={line.hsnSac || ""} onChange={(event) => onUpdateLine(line.id, { hsnSac: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
-                      </label>
-                    ) : null}
                     <label className="text-xs font-semibold text-slate-600">
                       Quantity
                       <input
@@ -495,7 +442,16 @@ export default function DebitNoteEditor({
                         min={0}
                         max={parseNumber((line as any).sourcePurchaseQty) > 0 ? parseNumber((line as any).sourcePurchaseQty) : undefined}
                         value={line.quantity}
-                        onChange={(event) => onUpdateLine(line.id, { quantity: parseNumber(event.target.value) })}
+                        onChange={(event) => {
+                          const sourceQty = Math.max(0, parseNumber((line as any).sourcePurchaseQty));
+                          const nextQtyRaw = Math.max(0, parseNumber(event.target.value));
+                          const nextQty = sourceQty > 0 ? Math.min(nextQtyRaw, sourceQty) : nextQtyRaw;
+                          onUpdateLine(line.id, {
+                            quantity: nextQty,
+                            debitValueType: "Percentage",
+                            debitValue: 0
+                          });
+                        }}
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                       />
                       {parseNumber((line as any).sourcePurchaseQty) > 0 ? (
@@ -503,38 +459,35 @@ export default function DebitNoteEditor({
                       ) : null}
                     </label>
                     <label className="text-xs font-semibold text-slate-600">
-                      Rate
-                      <input type="number" min={0} value={line.rate} onChange={(event) => onUpdateLine(line.id, { rate: parseNumber(event.target.value) })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600">
-                      {cfg.taxLabel} %
-                      <input type="number" min={0} value={line.taxRate} onChange={(event) => onUpdateLine(line.id, { taxRate: parseNumber(event.target.value) })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" />
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600">
-                      Debit Value Type
-                      <div className="mt-1 inline-flex w-full rounded-xl border border-slate-200 bg-white p-1">
-                        <button type="button" onClick={() => onUpdateLine(line.id, { debitValueType: "Percentage" })} className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold ${line.debitValueType === "Percentage" ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"}`}>%</button>
-                        <button type="button" onClick={() => onUpdateLine(line.id, { debitValueType: "Fixed" })} className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold ${line.debitValueType === "Fixed" ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"}`}>Amount</button>
-                      </div>
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600">
-                      Debit Value
+                      Bill Rate
                       <input
                         type="number"
                         min={0}
-                        value={line.debitValue}
-                        onChange={(event) => onUpdateLine(line.id, { debitValue: parseNumber(event.target.value) })}
-                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                        value={line.rate}
+                        readOnly
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700"
                       />
-                      {line.validationMessage ? <p className="mt-1 text-[11px] text-rose-600">{line.validationMessage}</p> : null}
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Tax in price: {String((line as any).priceTaxMode || "").toUpperCase() === "WITH_TAX" ? "Yes" : "No"}
+                      </p>
+                    </label>
+                    <label className="text-xs font-semibold text-slate-600">
+                      {cfg.taxLabel} %
+                      <input
+                        type="number"
+                        min={0}
+                        value={line.taxRate}
+                        readOnly
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700"
+                      />
                     </label>
                   </div>
                   <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Base Amount</p><p className="font-semibold text-slate-900">{formatMoney(line.baseAmount, country)}</p></div>
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Tax Amount</p><p className="font-semibold text-slate-900">{formatMoney(line.taxAmount, country)}</p></div>
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">After Tax</p><p className="font-semibold text-slate-900">{formatMoney(line.amountAfterTax, country)}</p></div>
-                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Debit Charge</p><p className="font-semibold text-amber-700">{formatMoney(line.debitCharge, country)}</p></div>
-                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Final Total</p><p className="font-semibold text-emerald-700">{formatMoney(line.debitAmount, country)}</p></div>
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Debit Amount</p><p className="font-semibold text-emerald-700">{formatMoney(line.debitAmount, country)}</p></div>
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"><p className="text-slate-500">Mode</p><p className="font-semibold text-slate-900">Auto</p></div>
                   </div>
                 </div>
               ))}
@@ -638,13 +591,36 @@ export default function DebitNoteEditor({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {!isReadOnly ? (
-              <button
-                onClick={() => onPersist("Draft")}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
-              >
-                <Save className="h-4 w-4" />
-                Save
-              </button>
+              <>
+                <button
+                  onClick={() => onPersist("Draft")}
+                  disabled={!!savingStatus}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingStatus === "Draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {savingStatus === "Draft" ? "Saving..." : "Save Draft"}
+                </button>
+                <button
+                  onClick={() => onPersist("Issued")}
+                  disabled={!!savingStatus || activeNote?.status === "Applied"}
+                  className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingStatus === "Issued" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {savingStatus === "Issued" ? "Issuing..." : "Issue"}
+                </button>
+                <button
+                  onClick={() => onPersist("Applied")}
+                  disabled={
+                    !!savingStatus ||
+                    !access.canApply ||
+                    ((activeNote?.status || "Draft") !== "Issued" && (activeNote?.status || "Draft") !== "Applied")
+                  }
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingStatus === "Applied" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {savingStatus === "Applied" ? "Applying..." : "Apply"}
+                </button>
+              </>
             ) : null}
           </div>
         </div>

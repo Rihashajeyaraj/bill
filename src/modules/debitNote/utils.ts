@@ -56,6 +56,13 @@ export function draftLinesFromInvoice(invoice: PurchaseInvoice): DebitLineDraft[
     itemId: line.itemId || "",
     sourcePurchaseQty: Math.max(0, line.quantity),
     sourcePurchaseAmountAfterTax: Math.max(0, parseNumber(line.amountAfterTax)),
+    priceTaxMode:
+      String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX"
+        ? "WITH_TAX"
+        : "WITHOUT_TAX",
+    taxInclusive:
+      line.taxInclusive === true ||
+      String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX",
     itemName: line.itemName,
     quantity: Math.max(0, line.quantity),
     rate: Math.max(0, line.rate),
@@ -95,6 +102,13 @@ export function formFromNote(note: DebitNoteRecord): DebitNoteFormState {
       sourcePurchaseAmountAfterTax: parseNumber(
         (line as any).sourcePurchaseAmountAfterTax ?? (line as any).amountAfterTax
       ),
+      priceTaxMode:
+        String((line as any).priceTaxMode || "").toUpperCase() === "WITH_TAX"
+          ? "WITH_TAX"
+          : "WITHOUT_TAX",
+      taxInclusive:
+        (line as any).taxInclusive === true ||
+        String((line as any).priceTaxMode || "").toUpperCase() === "WITH_TAX",
       itemName: line.itemName,
       quantity: line.quantity,
       rate: line.rate,
@@ -125,12 +139,29 @@ export function computeEditorTotals(
     const quantity = Math.max(0, parseNumber(line.quantity));
     const rate = Math.max(0, parseNumber(line.rate));
     const taxRate = Math.max(0, parseNumber(line.taxRate));
+    const taxInclusive =
+      line.taxInclusive === true ||
+      String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX";
+    const priceTaxMode = taxInclusive ? "WITH_TAX" : "WITHOUT_TAX";
     const valueType = line.debitValueType === "Fixed" ? "Fixed" : "Percentage";
     const rawDebitValue = parseNumber(line.debitValue);
     const debitValue = Math.max(0, rawDebitValue);
-    const baseCents = toCents(quantity * rate);
-    const taxCents = Math.round((baseCents * taxRate) / 100);
-    const amountAfterTaxCents = baseCents + taxCents;
+    const grossCents = toCents(quantity * rate);
+    let baseCents = grossCents;
+    let taxCents = 0;
+    let amountAfterTaxCents = grossCents;
+    if (taxRate > 0) {
+      if (taxInclusive) {
+        const divisor = 1 + taxRate / 100;
+        baseCents = divisor > 0 ? Math.round(grossCents / divisor) : grossCents;
+        taxCents = grossCents - baseCents;
+        amountAfterTaxCents = grossCents;
+      } else {
+        baseCents = grossCents;
+        taxCents = Math.round((baseCents * taxRate) / 100);
+        amountAfterTaxCents = baseCents + taxCents;
+      }
+    }
     const debitChargeCents =
       valueType === "Percentage"
         ? Math.round((amountAfterTaxCents * debitValue) / 100)
@@ -144,6 +175,8 @@ export function computeEditorTotals(
       quantity,
       rate,
       taxRate,
+      priceTaxMode,
+      taxInclusive,
       debitValueType: valueType,
       debitValue,
       baseAmount: fromCents(baseCents),
@@ -174,7 +207,7 @@ export function computeEditorTotals(
     subtotal,
     taxTotal,
     total,
-    updatedPayable: Math.max(0, payableBalance + total),
+    updatedPayable: Math.max(0, payableBalance - total),
     cgst: country === "IN" && sameState ? taxTotal / 2 : 0,
     sgst: country === "IN" && sameState ? taxTotal / 2 : 0,
     igst: country === "IN" && !sameState ? taxTotal : 0

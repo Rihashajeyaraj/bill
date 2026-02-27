@@ -112,6 +112,7 @@ export default function DebitNotePremium() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [savingStatus, setSavingStatus] = useState<DebitStatus | null>(null);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<DebitStatus | "">("");
@@ -197,12 +198,21 @@ export default function DebitNotePremium() {
       const base = prev || defaultForm(country, company);
       return {
         ...base,
+        debitType: "Full Debit",
+        partialAmountCap: "",
+        priceAdjustmentAmount: "",
+        additionalChargesAmount: "",
+        taxAdjustmentAmount: "",
         linkedPurchaseInvoiceId: bill.id,
         supplierId: bill.supplierId,
         supplierInput: bill.supplierName,
         placeOfSupply: bill.placeOfSupply || base.placeOfSupply,
         taxRate: bill.lines[0]?.taxRate || base.taxRate,
-        lines: draftLinesFromInvoice(bill)
+        lines: draftLinesFromInvoice(bill).map((line) => ({
+          ...line,
+          debitValueType: "Percentage",
+          debitValue: 0
+        }))
       };
     });
     setDirty(false);
@@ -251,7 +261,14 @@ export default function DebitNotePremium() {
   function startCreate() {
     if (!country || !allowed) return;
     setEditorLoading(true);
-    setForm(defaultForm(country, company));
+    setForm({
+      ...defaultForm(country, company),
+      debitType: "Full Debit",
+      partialAmountCap: "",
+      priceAdjustmentAmount: "",
+      additionalChargesAmount: "",
+      taxAdjustmentAmount: ""
+    });
     setActiveNote(null);
     setFieldErrors({});
     setErrorMessage("");
@@ -266,7 +283,20 @@ export default function DebitNotePremium() {
     if (!note || !country || note.country !== country) return;
     if (mode === "edit" && note.status === "Applied") return;
     setEditorLoading(true);
-    setForm(formFromNote(note));
+    const hydrated = formFromNote(note);
+    setForm({
+      ...hydrated,
+      debitType: "Full Debit",
+      partialAmountCap: "",
+      priceAdjustmentAmount: "",
+      additionalChargesAmount: "",
+      taxAdjustmentAmount: "",
+      lines: (hydrated.lines || []).map((line) => ({
+        ...line,
+        debitValueType: "Percentage",
+        debitValue: 0
+      }))
+    });
     setActiveNote(note);
     setDirty(false);
     setFieldErrors({});
@@ -310,12 +340,21 @@ export default function DebitNotePremium() {
       prev
         ? {
             ...prev,
+            debitType: "Full Debit",
+            partialAmountCap: "",
+            priceAdjustmentAmount: "",
+            additionalChargesAmount: "",
+            taxAdjustmentAmount: "",
             linkedPurchaseInvoiceId: invoiceId,
             supplierId: invoice.supplierId,
             supplierInput: invoice.supplierName,
             placeOfSupply: invoice.placeOfSupply || prev.placeOfSupply,
             taxRate: invoice.lines[0]?.taxRate || prev.taxRate,
-            lines: draftLinesFromInvoice(invoice)
+            lines: draftLinesFromInvoice(invoice).map((line) => ({
+              ...line,
+              debitValueType: "Percentage",
+              debitValue: 0
+            }))
           }
         : prev
     );
@@ -323,7 +362,23 @@ export default function DebitNotePremium() {
   }
 
   function updateLine(id: string, patch: any) {
-    setForm((prev) => (prev ? { ...prev, lines: prev.lines.map((line) => (line.id === id ? { ...line, ...patch } : line)) } : prev));
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            lines: prev.lines.map((line) =>
+              line.id === id
+                ? {
+                    ...line,
+                    ...patch,
+                    debitValueType: "Percentage",
+                    debitValue: 0
+                  }
+                : line
+            )
+          }
+        : prev
+    );
     setDirty(true);
   }
 
@@ -366,13 +421,13 @@ export default function DebitNotePremium() {
     if (!form.supplierId) errors.supplierId = "Supplier is required.";
     if (!form.linkedPurchaseInvoiceId) errors.linkedPurchaseInvoiceId = "Linked purchase invoice is mandatory.";
     if (!form.lines.length) errors.lines = "At least one line item is required.";
-    if (form.debitType === "Partial Debit" && parseNumber(form.partialAmountCap) <= 0) errors.partialAmountCap = "Partial debit amount is required.";
-    if (form.debitType === "Price Increase" && parseNumber(form.priceAdjustmentAmount) <= 0) errors.priceAdjustmentAmount = "Price increase amount is required.";
-    if (form.debitType === "Additional Charges" && parseNumber(form.additionalChargesAmount) <= 0) errors.additionalChargesAmount = "Additional charges amount is required.";
     if ((totals as any).detailed?.some((line: any) => line.validationMessage)) errors.lines = "Debit amount cannot be negative.";
     if (totals.total <= 0) errors.totals = "Total debit must be greater than zero.";
     if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Admin can apply debits.";
-    if (targetStatus === "Applied" && activeNote?.status === "Draft") errors.workflow = "Issue before apply.";
+    const currentStatus = activeNote?.status || "Draft";
+    if (targetStatus === "Applied" && currentStatus !== "Issued" && currentStatus !== "Applied") {
+      errors.workflow = "Issue before apply.";
+    }
 
     setFieldErrors(errors);
     if (Object.keys(errors).length) {
@@ -385,7 +440,9 @@ export default function DebitNotePremium() {
 
   async function persist(targetStatus: DebitStatus, options?: { email?: boolean; download?: boolean }) {
     if (!form || !country) return;
+    if (savingStatus) return;
     if (!validate(targetStatus)) return;
+    setSavingStatus(targetStatus);
     try {
       const saved = saveDebitNote({
         id: form.id,
@@ -397,7 +454,7 @@ export default function DebitNotePremium() {
         linkedPurchaseInvoiceNo: selectedInvoice?.invoiceNo || "",
         linkedPurchaseInvoiceDate: selectedInvoice?.invoiceDate || "",
         reason: form.reason,
-        debitType: form.debitType,
+        debitType: "Full Debit",
         desiredStatus: targetStatus,
         taxRate: form.taxRate,
         placeOfSupply: form.placeOfSupply,
@@ -406,12 +463,16 @@ export default function DebitNotePremium() {
         salesTaxState: form.salesTaxState,
         internalNotes: form.internalNotes,
         supplierNotes: form.supplierNotes,
-        partialAmountCap: parseNumber(form.partialAmountCap),
-        priceAdjustmentAmount: parseNumber(form.priceAdjustmentAmount),
-        additionalChargesAmount: parseNumber(form.additionalChargesAmount),
-        taxAdjustmentAmount: parseNumber(form.taxAdjustmentAmount),
+        partialAmountCap: 0,
+        priceAdjustmentAmount: 0,
+        additionalChargesAmount: 0,
+        taxAdjustmentAmount: 0,
         payableBalanceBefore: selectedInvoice?.remainingBalance || 0,
-        lines: form.lines,
+        lines: (form.lines || []).map((line) => ({
+          ...line,
+          debitValueType: "Percentage",
+          debitValue: 0
+        })),
         actor: actorName
       });
 
@@ -422,12 +483,31 @@ export default function DebitNotePremium() {
       setRefreshKey((prev) => prev + 1);
       setActiveNote(saved);
       setForm(formFromNote(saved));
+      setForm((prev) =>
+        prev
+          ? {
+              ...prev,
+              debitType: "Full Debit",
+              partialAmountCap: "",
+              priceAdjustmentAmount: "",
+              additionalChargesAmount: "",
+              taxAdjustmentAmount: "",
+              lines: (prev.lines || []).map((line) => ({
+                ...line,
+                debitValueType: "Percentage",
+                debitValue: 0
+              }))
+            }
+          : prev
+      );
       setDirty(false);
       setViewMode("edit");
       setSuccessMessage(`${saved.debitNoteNo} saved as ${saved.status}.`);
       setErrorMessage("");
     } catch (error: any) {
       setErrorMessage(error?.message || "Unable to save debit note.");
+    } finally {
+      setSavingStatus(null);
     }
   }
 
@@ -514,6 +594,7 @@ export default function DebitNotePremium() {
                   actorName={actorName}
                   access={access}
                   fieldErrors={fieldErrors}
+                  savingStatus={savingStatus}
                   onBack={backToList}
                   onUpdateForm={updateForm}
                   onApplyInvoice={applyInvoice}

@@ -48,7 +48,7 @@ export const COUNTRY_CONFIG: Record<CountryCode, CountryConfig> = {
     hsnSacRequired: false,
     legalWording: "Issued as a tax debit note under Sri Lanka VAT regulations.",
     addressFormat: "Street, City, Postal Code, Sri Lanka",
-    legalFooter: "This document increases payable against the referenced purchase invoice."
+    legalFooter: "This document reduces payable against the referenced purchase invoice."
   },
   IN: {
     code: "IN",

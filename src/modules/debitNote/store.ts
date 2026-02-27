@@ -12,6 +12,8 @@ export interface PurchaseInvoiceLine {
   id: string;
   sourcePurchaseItemId?: string;
   itemId?: string;
+  priceTaxMode?: "WITH_TAX" | "WITHOUT_TAX";
+  taxInclusive?: boolean;
   itemName: string;
   quantity: number;
   rate: number;
@@ -49,6 +51,8 @@ export interface DebitLineDraft {
   itemId?: string;
   sourcePurchaseQty?: number;
   sourcePurchaseAmountAfterTax?: number;
+  priceTaxMode?: "WITH_TAX" | "WITHOUT_TAX";
+  taxInclusive?: boolean;
   itemName: string;
   quantity: number;
   rate: number;
@@ -262,12 +266,31 @@ function computeLines(
     const quantity = Math.max(0, toNumber(line.quantity));
     const rate = Math.max(0, toNumber(line.rate));
     const taxRate = Math.max(0, toNumber(line.taxRate));
+    const priceTaxMode =
+      String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX" ||
+      line.taxInclusive === true
+        ? "WITH_TAX"
+        : "WITHOUT_TAX";
+    const taxInclusive = priceTaxMode === "WITH_TAX";
     const valueType = line.debitValueType === "Fixed" ? "Fixed" : "Percentage";
     const rawDebitValue = toNumber(line.debitValue);
     const debitValue = Math.max(0, rawDebitValue);
-    const baseCents = toCents(quantity * rate);
-    const taxCents = Math.round((baseCents * taxRate) / 100);
-    const amountAfterTaxCents = baseCents + taxCents;
+    const grossCents = toCents(quantity * rate);
+    let baseCents = grossCents;
+    let taxCents = 0;
+    let amountAfterTaxCents = grossCents;
+    if (taxRate > 0) {
+      if (taxInclusive) {
+        const divisor = 1 + taxRate / 100;
+        baseCents = divisor > 0 ? Math.round(grossCents / divisor) : grossCents;
+        taxCents = grossCents - baseCents;
+        amountAfterTaxCents = grossCents;
+      } else {
+        baseCents = grossCents;
+        taxCents = Math.round((baseCents * taxRate) / 100);
+        amountAfterTaxCents = baseCents + taxCents;
+      }
+    }
     const debitChargeCents =
       valueType === "Percentage"
         ? Math.round((amountAfterTaxCents * debitValue) / 100)
@@ -282,6 +305,8 @@ function computeLines(
       itemId: line.itemId || "",
       sourcePurchaseQty: Math.max(0, toNumber(line.sourcePurchaseQty)),
       sourcePurchaseAmountAfterTax: Math.max(0, toNumber(line.sourcePurchaseAmountAfterTax)),
+      priceTaxMode,
+      taxInclusive,
       quantity,
       rate,
       taxRate,
@@ -320,7 +345,7 @@ function computeTotals(
     total = Math.min(total, cap);
   }
 
-  const updatedPayable = Math.max(0, toNumber(payableBalanceBefore) + total);
+  const updatedPayable = Math.max(0, toNumber(payableBalanceBefore) - total);
   const cfg = COUNTRY_CONFIG[country];
   if (cfg.taxModel !== "GST" || country !== "IN") {
     return {
@@ -508,6 +533,32 @@ export function mapPurchaseInvoicesByCountry(country: CountryCode): PurchaseInvo
             const quantity = Math.max(0, toNumber(line.qty ?? line.quantity ?? 0));
             const rate = Math.max(0, toNumber(line.rate));
             const taxRate = Math.max(0, toNumber(line.tax ?? line.taxRate));
+            const explicitPriceTaxMode = String(
+              line.priceTaxMode ?? line.price_tax_mode ?? ""
+            )
+              .trim()
+              .toUpperCase();
+            const explicitTaxInclusive =
+              line.taxInclusive === true || line.tax_inclusive === true;
+            const inferredTaxInclusiveFromTotal =
+              taxRate > 0
+                ? Math.abs(
+                    toNumber(line.amount ?? line.lineTotal ?? line.total) - quantity * rate
+                  ) <= 0.05
+                : false;
+            const taxInclusive =
+              explicitTaxInclusive ||
+              explicitPriceTaxMode === "WITH_TAX" ||
+              (explicitPriceTaxMode !== "WITHOUT_TAX" && inferredTaxInclusiveFromTotal);
+            const priceTaxMode = taxInclusive ? "WITH_TAX" : "WITHOUT_TAX";
+            const taxableAmount = toNumber(line.taxableAmount ?? line.net);
+            const lineTax = toNumber(
+              line.lineTax ??
+                toNumber(line.cgstAmount) +
+                  toNumber(line.sgstAmount) +
+                  toNumber(line.igstAmount) +
+                  toNumber(line.vatAmount)
+            );
             const amountAfterTax = Math.max(
               0,
               toNumber(
@@ -516,13 +567,19 @@ export function mapPurchaseInvoicesByCountry(country: CountryCode): PurchaseInvo
                   line.total ??
                   (toNumber(line.amountAfterTax) > 0
                     ? toNumber(line.amountAfterTax)
-                    : quantity * rate * (1 + taxRate / 100))
+                    : taxableAmount > 0 || lineTax > 0
+                      ? taxableAmount + lineTax
+                      : taxInclusive
+                        ? quantity * rate
+                        : quantity * rate * (1 + taxRate / 100))
               )
             );
             return {
               id: line.id || `line_${idx + 1}`,
               sourcePurchaseItemId: line.id || `line_${idx + 1}`,
               itemId: line.itemId || "",
+              priceTaxMode,
+              taxInclusive,
               itemName: line.itemName || line.name || `Item ${idx + 1}`,
               quantity,
               rate,
@@ -555,7 +612,7 @@ export function mapPurchaseInvoicesByCountry(country: CountryCode): PurchaseInvo
           const hasLinkedActivity = paymentApplied > 0 || debitApplied > 0;
           return Math.max(
             0,
-            hasLinkedActivity ? billTotal + debitApplied - paymentApplied : storedBalance
+            hasLinkedActivity ? billTotal - debitApplied - paymentApplied : storedBalance
           );
         })(),
         placeOfSupply: invoice.placeOfSupply || invoice.state || "",
@@ -670,7 +727,7 @@ export function saveDebitNote(payload: SaveDebitNotePayload): DebitNoteRecord {
     payableBalanceBefore: authoritativePayableBefore,
     payableBalanceAfter:
       nextStatus === "Applied"
-        ? authoritativePayableBefore + totals.total
+        ? Math.max(0, authoritativePayableBefore - totals.total)
         : authoritativePayableBefore,
     lines,
     totals: {
