@@ -101,6 +101,7 @@ export default function CreditNotePremium() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [savingStatus, setSavingStatus] = useState<CreditStatus | null>(null);
   const [allocationByInvoiceItemId, setAllocationByInvoiceItemId] = useState<Record<string, any[]>>({});
   const [allocationsLoading, setAllocationsLoading] = useState(false);
 
@@ -408,7 +409,10 @@ export default function CreditNotePremium() {
     if (!form.lines.length) errors.lines = "At least one line item is required.";
     if (totals.total <= 0) errors.totals = "Total credit must be greater than zero.";
     if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Admin can apply credits.";
-    if (targetStatus === "Applied" && activeNote?.status === "Draft") errors.workflow = "Issue before apply.";
+    const currentStatus = activeNote?.status || "Draft";
+    if (targetStatus === "Applied" && currentStatus !== "Issued" && currentStatus !== "Applied") {
+      errors.workflow = "Issue before apply.";
+    }
     setFieldErrors(errors);
     if (Object.keys(errors).length) {
       setErrorMessage(Object.values(errors)[0] || "Please fix the highlighted fields before saving.");
@@ -420,7 +424,9 @@ export default function CreditNotePremium() {
 
   async function persist(targetStatus: CreditStatus, options?: { email?: boolean; download?: boolean }) {
     if (!form || !country) return;
+    if (savingStatus) return;
     if (!validate(targetStatus)) return;
+    setSavingStatus(targetStatus);
     try {
       const saved = saveCreditNote({
         id: form.id,
@@ -483,6 +489,8 @@ export default function CreditNotePremium() {
       setErrorMessage("");
     } catch (error: any) {
       setErrorMessage(error?.message || "Unable to save credit note.");
+    } finally {
+      setSavingStatus(null);
     }
   }
 
@@ -557,20 +565,21 @@ export default function CreditNotePremium() {
               {editorLoading ? (
                 <CreditNoteSkeleton />
               ) : (
-              <CreditNoteEditor
-                country={country}
-                readOnly={viewMode === "view"}
-                form={form}
+                <CreditNoteEditor
+                  country={country}
+                  readOnly={viewMode === "view"}
+                  form={form}
                   activeNote={activeNote}
                   customers={customers}
                   invoices={invoices}
                   selectedInvoice={selectedInvoice}
                   totals={totals as any}
-                actorName={actorName}
-                access={access}
-                fieldErrors={fieldErrors}
-                allocationByInvoiceItemId={allocationByInvoiceItemId}
-                allocationsLoading={allocationsLoading}
+                  actorName={actorName}
+                  access={access}
+                  fieldErrors={fieldErrors}
+                  savingStatus={savingStatus}
+                  allocationByInvoiceItemId={allocationByInvoiceItemId}
+                  allocationsLoading={allocationsLoading}
                 onBack={backToList}
                   onUpdateForm={updateForm}
                   onApplyInvoice={applyInvoice}

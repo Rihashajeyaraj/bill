@@ -26,6 +26,7 @@ interface CreditNoteEditorProps {
   actorName: string;
   access: { roleType: "Admin" | "Staff"; canApply: boolean; canOverride: boolean };
   fieldErrors: Record<string, string>;
+  savingStatus?: CreditStatus | null;
   allocationByInvoiceItemId?: Record<string, Array<any>>;
   allocationsLoading?: boolean;
   onBack: () => void;
@@ -76,6 +77,7 @@ export default function CreditNoteEditor({
   actorName,
   access,
   fieldErrors,
+  savingStatus = null,
   allocationByInvoiceItemId = {},
   allocationsLoading = false,
   onBack,
@@ -423,6 +425,12 @@ export default function CreditNoteEditor({
                 <p className="mt-2 font-normal text-slate-500">
                   Enable this only when customer physically returns goods.
                 </p>
+                <p className="mt-1 font-normal text-slate-500">
+                  If unchecked: financial credit only, stock not changed.
+                </p>
+                <p className="mt-1 font-normal text-slate-500">
+                  If goods must be sent back to supplier, use Purchase Debit Note after this credit note.
+                </p>
               </label>
             </div>
           </div>
@@ -631,13 +639,36 @@ export default function CreditNoteEditor({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {!isReadOnly ? (
-              <button
-                onClick={() => onPersist("Draft")}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
-              >
-                <Save className="h-4 w-4" />
-                Save
-              </button>
+              <>
+                <button
+                  onClick={() => onPersist("Draft")}
+                  disabled={!!savingStatus}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingStatus === "Draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {savingStatus === "Draft" ? "Saving..." : "Save Draft"}
+                </button>
+                <button
+                  onClick={() => onPersist("Issued")}
+                  disabled={!!savingStatus || activeNote?.status === "Applied"}
+                  className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingStatus === "Issued" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {savingStatus === "Issued" ? "Issuing..." : "Issue"}
+                </button>
+                <button
+                  onClick={() => onPersist("Applied")}
+                  disabled={
+                    !!savingStatus ||
+                    !access.canApply ||
+                    ((activeNote?.status || "Draft") !== "Issued" && (activeNote?.status || "Draft") !== "Applied")
+                  }
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingStatus === "Applied" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {savingStatus === "Applied" ? "Applying..." : "Apply"}
+                </button>
+              </>
             ) : null}
           </div>
         </div>
