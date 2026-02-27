@@ -32,3 +32,19 @@ export function isAccounterRole(value) {
 export function isStaffRole(value) {
   return normalizeRoleLabel(value) === ROLE_LABELS.staff;
 }
+
+export function canApplyApprovals(value) {
+  return isOwnerRole(value) || isAccounterRole(value);
+}
+
+export function canViewReports(value) {
+  return canApplyApprovals(value);
+}
+
+export function canAccessSettings(value) {
+  return isOwnerRole(value);
+}
+
+export function roleTypeLabel(value) {
+  return canApplyApprovals(value) ? "Admin" : "Staff";
+}

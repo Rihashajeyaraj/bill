@@ -16,6 +16,7 @@ import EmptyState from "../../components/EmptyState";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import { authGetRole, authGetUser } from "../../services/auth.service";
+import { canApplyApprovals } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
 import { syncPaymentOutRemote } from "../../services/payments.service";
@@ -74,6 +75,7 @@ export default function PaymentOutPremium() {
   } = useOrganization();
   const user = authGetUser();
   const role = authGetRole();
+  const canApplyPayments = canApplyApprovals(role);
   const actorName = user?.name || user?.email || "System User";
 
   const [panelMode, setPanelMode] = useState("list");
@@ -427,6 +429,10 @@ export default function PaymentOutPremium() {
   }
 
   async function persist(status) {
+    if (status === "Applied" && !canApplyPayments) {
+      window.alert("Only Owner or Accounter can apply payment to bills.");
+      return;
+    }
     if (!form.supplierId) {
       window.alert("Select a supplier before saving.");
       return;
@@ -945,6 +951,9 @@ export default function PaymentOutPremium() {
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
                     <p className="text-slate-500">Approval Role</p>
                     <p className="font-semibold text-slate-700">{role}</p>
+                    {!canApplyPayments ? (
+                      <p className="mt-1 text-amber-700">Apply to bills is disabled for Staff.</p>
+                    ) : null}
                   </div>
                 </div>
               </FlowCard>
@@ -1011,7 +1020,8 @@ export default function PaymentOutPremium() {
               <button
                 type="button"
                 onClick={() => persist("Applied")}
-                className={`${ACTION_BAR_BASE} border border-emerald-200 bg-emerald-50 text-emerald-700`}
+                disabled={!canApplyPayments}
+                className={`${ACTION_BAR_BASE} border border-emerald-200 bg-emerald-50 text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50`}
               >
                 <Wallet className="h-3.5 w-3.5" />
                 Apply to Bills

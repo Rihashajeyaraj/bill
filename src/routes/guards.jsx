@@ -4,6 +4,7 @@ import { authGetOrganizationId, authGetRole, authGetToken } from "../services/au
 import { companyIsCompleted } from "../services/company.service";
 import { invoiceTemplateIsCompleted } from "../lib/templateStore";
 import { isOwnerRole } from "../services/roles";
+import { canAccessPathForRole } from "../services/accessControl";
 
 export function AuthGuard() {
   const loc = useLocation();
@@ -43,11 +44,22 @@ export function SetupGuard() {
   return <Outlet />;
 }
 
+export function AppRouteAccessGuard() {
+  const role = authGetRole();
+  const loc = useLocation();
+
+  if (!canAccessPathForRole(role, loc.pathname)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <Outlet />;
+}
+
 export function InvoiceTemplateGuard() {
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
 
-  if (!isOwnerRole(role)) return <Outlet />;
+  if (!isOwnerRole(role)) return <Navigate to="/dashboard" replace />;
   if (!setupComplete) return <Navigate to="/company-setup" replace />;
 
   return <Outlet />;

@@ -7,7 +7,8 @@ import { ToastProvider, useToast } from "./ToastContext";
 import { PageLoadingProvider } from "./PageLoadingContext";
 import { OrganizationProvider } from "./OrganizationContext";
 import { useSessionTimeout } from "../hooks/useSessionTimeout";
-import { authGetToken, authLogout } from "../services/auth.service";
+import { authGetRole, authGetToken, authLogout } from "../services/auth.service";
+import { canAccessPathForRole } from "../services/accessControl";
 import CommandPalette from "../components/shell/CommandPalette";
 import NotificationCenter from "../components/shell/NotificationCenter";
 import { useAppShell } from "./AppShellContext";
@@ -59,10 +60,16 @@ function SessionAndShellLayer({ children }) {
           const key = nextEvent.key.toLowerCase();
           if (key === "d") navigateTo("/dashboard");
           if (key === "n") navigateTo("/app/notifications");
-          if (key === "r") navigateTo("/app/reports");
+          if (key === "r") {
+            if (canAccessPathForRole(authGetRole(), "/app/reports")) navigateTo("/app/reports");
+            else toast.warning("Permission denied", "Reports are available for Owner or Accounter.");
+          }
           if (key === "p") navigateTo("/app/parties");
           if (key === "i") navigateTo("/app/items");
-          if (key === "s") navigateTo("/app/company-settings");
+          if (key === "s") {
+            if (canAccessPathForRole(authGetRole(), "/app/company-settings")) navigateTo("/app/company-settings");
+            else toast.warning("Permission denied", "Settings are available only for Owner.");
+          }
           window.removeEventListener("keydown", listener);
         };
 
@@ -72,7 +79,7 @@ function SessionAndShellLayer({ children }) {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [toggleTheme, navigateTo]);
+  }, [toggleTheme, navigateTo, toast]);
 
   useEffect(() => {
     const originalAlert = window.alert;

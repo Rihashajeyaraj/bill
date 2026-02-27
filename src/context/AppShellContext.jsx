@@ -4,6 +4,7 @@ import { APP_NAV_ITEMS } from "../config/navigation";
 import { authGetRole } from "../services/auth.service";
 import { companyIsCompleted } from "../services/company.service";
 import { isOwnerRole } from "../services/roles";
+import { canAccessPathForRole } from "../services/accessControl";
 import {
   ensureActivitySeed,
   listActivities,
@@ -134,14 +135,17 @@ export function AppShellProvider({ children }) {
 
   const commandItems = useMemo(
     () =>
-      APP_NAV_ITEMS.filter((item) => showCompanySetup || item.to !== "/app/company-setup").map((item) => ({
-        id: item.to,
-        title: item.label,
-        subtitle: item.section,
-        keywords: `${item.label} ${item.section} ${item.shortcut || ""}`,
-        to: item.to
-      })),
-    [showCompanySetup]
+      APP_NAV_ITEMS
+        .filter((item) => showCompanySetup || item.to !== "/app/company-setup")
+        .filter((item) => canAccessPathForRole(role, item.to))
+        .map((item) => ({
+          id: item.to,
+          title: item.label,
+          subtitle: item.section,
+          keywords: `${item.label} ${item.section} ${item.shortcut || ""}`,
+          to: item.to
+        })),
+    [showCompanySetup, role]
   );
 
   const unreadCount = useMemo(

@@ -21,7 +21,7 @@ import {
 import clsx from "clsx";
 import { companyIsCompleted } from "../services/company.service";
 import { authGetRole } from "../services/auth.service";
-import { isOwnerRole } from "../services/roles";
+import { canAccessSettings, canViewReports, isOwnerRole } from "../services/roles";
 import { useOrganization } from "../context/OrganizationContext";
 
 const base = "app-sidebar-item";
@@ -57,6 +57,8 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
   const { profile: company = {} } = useOrganization();
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
+  const canOpenSettings = canAccessSettings(role);
+  const canOpenReports = canViewReports(role);
   const showCompanySetup = isOwnerRole(role) && !setupComplete;
   const adjustmentsActive = routeMatches(location.pathname, "/app/sales/credit-note") ||
     routeMatches(location.pathname, "/app/purchase/debit-note");
@@ -109,8 +111,8 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
         ]
       },
       { to: "/app/purchase/expense", icon: Wallet, label: "Expense" },
-      { to: "/app/reports", icon: BarChart3, label: "Reports" },
-      { to: "/app/company-settings", icon: Settings, label: "Settings" }
+      ...(canOpenReports ? [{ to: "/app/reports", icon: BarChart3, label: "Reports" }] : []),
+      ...(canOpenSettings ? [{ to: "/app/company-settings", icon: Settings, label: "Settings" }] : [])
     ];
     if (showCompanySetup) {
       const insertAt = baseItems.findIndex((item) => item.to === "/app/company-settings");
@@ -121,7 +123,7 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
       });
     }
     return baseItems;
-  }, [showCompanySetup]);
+  }, [showCompanySetup, canOpenReports, canOpenSettings]);
 
   return (
     <aside
@@ -205,7 +207,9 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
                 <p className="app-sidebar-tip-copy mt-1 text-xs">
                   {showCompanySetup
                     ? "Complete Company Setup to unlock the dashboard."
-                    : "Edit company details in Settings -> Company Profile."}
+                    : canOpenSettings
+                      ? "Edit company details in Settings -> Company Profile."
+                      : "Ask Owner to update company settings and access permissions."}
                 </p>
               </>
             ) : (

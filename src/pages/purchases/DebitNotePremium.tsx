@@ -28,6 +28,7 @@ import { computeEditorTotals, defaultForm, draftLinesFromInvoice, formFromNote, 
 import { exportDebitNoteSummaryPdf, exportDebitNotesCsv, exportSingleDebitNotePdf } from "../../modules/debitNote/pdf";
 import type { DebitNoteFormState } from "../../modules/debitNote/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
+import { canApplyApprovals, roleTypeLabel } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
 import { debitNotesSaveRemote } from "../../services/debitNotes.service";
@@ -40,29 +41,15 @@ import { useGlobalLoadingBridge } from "../../hooks/useGlobalLoadingBridge";
 type ViewMode = "list" | "create" | "edit" | "view";
 
 function roleAccess(role: string, user: any) {
-  const normalized = String(role || "").toLowerCase();
-  const isAdmin =
-    normalized.includes("owner") ||
-    normalized.includes("manager") ||
-    normalized.includes("accounter") ||
-    normalized.includes("accountant") ||
-    normalized.includes("admin");
-  if (isAdmin) {
-    return {
-      roleType: "Admin" as const,
-      canApply: true,
-      canOverride: true,
-      allowedCountries: COUNTRY_OPTIONS.map((country) => country.code)
-    };
-  }
+  const canApply = canApplyApprovals(role);
   const configured = Array.isArray(user?.allowedCountries)
     ? user.allowedCountries.filter((entry: string) => entry in COUNTRY_CONFIG)
     : [];
   return {
-    roleType: "Staff" as const,
-    canApply: false,
-    canOverride: false,
-    allowedCountries: configured.length ? configured : (["IN", "SL", "AE"] as CountryCode[])
+    roleType: roleTypeLabel(role) as "Admin" | "Staff",
+    canApply,
+    canOverride: canApply,
+    allowedCountries: canApply ? COUNTRY_OPTIONS.map((country) => country.code) : configured.length ? configured : (["IN", "SL", "AE"] as CountryCode[])
   };
 }
 
@@ -423,7 +410,7 @@ export default function DebitNotePremium() {
     if (!form.lines.length) errors.lines = "At least one line item is required.";
     if ((totals as any).detailed?.some((line: any) => line.validationMessage)) errors.lines = "Debit amount cannot be negative.";
     if (totals.total <= 0) errors.totals = "Total debit must be greater than zero.";
-    if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Admin can apply debits.";
+    if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Owner or Accounter can apply debits.";
     const currentStatus = activeNote?.status || "Draft";
     if (targetStatus === "Applied" && currentStatus !== "Issued" && currentStatus !== "Applied") {
       errors.workflow = "Issue before apply.";

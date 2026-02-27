@@ -282,7 +282,7 @@ export function mapOpenBillsByCountry(country) {
       const hasLinkedActivity = paymentApplied > 0 || debitApplied > 0;
       const balanceDue = Math.max(
         0,
-        hasLinkedActivity ? billAmount + debitApplied - paymentApplied : storedBalance
+        hasLinkedActivity ? billAmount - debitApplied - paymentApplied : storedBalance
       );
       if (balanceDue <= 0) return null;
       return {

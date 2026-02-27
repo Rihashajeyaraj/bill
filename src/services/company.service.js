@@ -50,7 +50,7 @@ const LOGO_MIME_TO_EXTENSION = {
 
 const DEFAULT_ROLE_PERMISSIONS = {
   Owner: { create: true, edit: true, delete: true, reports: true, approvals: true },
-  Accounter: { create: true, edit: true, delete: false, reports: true, approvals: false },
+  Accounter: { create: true, edit: true, delete: false, reports: true, approvals: true },
   Staff: { create: true, edit: false, delete: false, reports: false, approvals: false }
 };
 

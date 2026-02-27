@@ -18,6 +18,7 @@ import { allocationsFromInvoices, computeEditorTotals, defaultForm, formFromReco
 import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf } from "../../modules/paymentIn/pdf";
 import type { PaymentInFormState } from "../../modules/paymentIn/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
+import { canApplyApprovals, roleTypeLabel } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesSyncFromRemote } from "../../services/invoices.service";
 import { syncPaymentInRemote } from "../../services/payments.service";
@@ -36,16 +37,13 @@ type PanelMode = "feed" | "flow";
 type FlowMode = "create" | "edit" | "view";
 
 function roleAccess(role: string, user: any) {
-  const normalized = String(role || "").toLowerCase();
-  const isAdmin =
-    normalized.includes("owner") ||
-    normalized.includes("manager") ||
-    normalized.includes("accounter") ||
-    normalized.includes("accountant") ||
-    normalized.includes("admin");
-  if (isAdmin) return { roleType: "Admin" as const, canApply: true, allowedCountries: COUNTRY_OPTIONS.map((entry) => entry.code) };
+  const canApply = canApplyApprovals(role);
   const configured = Array.isArray(user?.allowedCountries) ? user.allowedCountries.filter((entry: string) => entry in COUNTRY_CONFIG) : [];
-  return { roleType: "Staff" as const, canApply: false, allowedCountries: configured.length ? configured : (["IN", "SL", "AE"] as CountryCode[]) };
+  return {
+    roleType: roleTypeLabel(role) as "Admin" | "Staff",
+    canApply,
+    allowedCountries: canApply ? COUNTRY_OPTIONS.map((entry) => entry.code) : configured.length ? configured : (["IN", "SL", "AE"] as CountryCode[])
+  };
 }
 
 function canReopenWithinWindow(record: PaymentInRecord | null) {
@@ -426,7 +424,7 @@ export default function PaymentInPremium() {
     if ((form.paymentMode === "Bank Transfer" || form.paymentMode === "Card" || form.paymentMode === "UPI" || form.paymentMode === "Online Gateway") && !form.transactionId.trim()) errors.transactionId = "Transaction ID is required.";
     if (form.allocations.some((line) => parseNumber(line.applyAmount) > line.balanceDue)) errors.allocations = "Apply amount cannot exceed invoice balance due.";
     if (amountApplied > amountReceived) errors.allocations = "Applied amount cannot exceed amount received.";
-    if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Admin can apply to invoices.";
+    if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Owner or Accounter can apply to invoices.";
 
     setFieldErrors(errors);
     if (Object.keys(errors).length) {
