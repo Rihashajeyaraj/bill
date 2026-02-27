@@ -21,6 +21,16 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
+function isMissingRpcError(error) {
+  const code = String(error?.code || "").toUpperCase();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "PGRST202" ||
+    message.includes("could not find the function") ||
+    message.includes("post_purchase_bill_fifo")
+  );
+}
+
 function normalizeAddressParts(parts) {
   return parts
     .map((part) => String(part || "").trim())
@@ -224,7 +234,12 @@ export async function purchasesSyncFromRemote() {
       itemName: line?.description || "",
       qty: parseNumber(line?.qty),
       rate: parseNumber(line?.unit_price),
+      saleRate: parseNumber(line?.metadata?.suggestedSaleRate),
       tax: parseNumber(line?.tax_rate),
+      taxableAmount: parseNumber(line?.taxable_amount),
+      taxAmount: parseNumber(line?.tax_amount),
+      taxInclusive: !!line?.tax_inclusive,
+      priceTaxMode: line?.tax_inclusive ? "WITH_TAX" : "WITHOUT_TAX",
       cgstAmount: parseNumber(line?.cgst_amount),
       sgstAmount: parseNumber(line?.sgst_amount),
       igstAmount: parseNumber(line?.igst_amount),
@@ -286,68 +301,120 @@ export async function purchasesCreate(bill) {
     const organizationId = authGetOrganizationId();
     if (organizationId) {
       const supplierId = looksLikeUuid(bill?.partyId) ? bill.partyId : null;
-
-      const { data: billRow, error: billError } = await supabase
-        .from("purchase_bills")
-        .insert({
-          organization_id: organizationId,
-          bill_no: bill?.billNumber || `BILL-${Date.now()}`,
-          bill_date: bill?.billDate || now.slice(0, 10),
-          due_date: bill?.dueDate || bill?.billDate || now.slice(0, 10),
-          supplier_id: supplierId,
-          subtotal: parseNumber(totals?.subTotal),
-          tax_total: parseNumber(totals?.taxTotal),
-          grand_total: parseNumber(totals?.grandTotal),
-          status: "issued",
-          metadata: {
-            country: bill?.country || "",
-            partyName: bill?.partyName || "",
-            createdByName: actorName,
-            partyAddress: bill?.partyAddress || "",
-            phone: bill?.phone || "",
-            paymentType: bill?.paymentType || "",
-            taxMode: bill?.taxMode || "",
-            supplyType: bill?.supplyType || null,
-            tax: bill?.totals?.tax || null,
-            taxBreakup: bill?.totals?.taxBreakup || null,
-            taxRate: parseNumber(bill?.totals?.taxRate),
-            roundOff: parseNumber(totals?.roundOff),
-            totalQty: parseNumber(totals?.totalQty)
-          },
-          created_by: actorUserId
-        })
-        .select("*")
-        .single();
-
-      if (billError) {
-        throw new Error(normalizeSupabaseError(billError, "Failed to create purchase bill"));
-      }
-
-      id = billRow?.id || id;
-
-      if (lines.length) {
-        const remoteLines = lines.map((line, index) => ({
-          bill_id: id,
+      const postingPayload = {
+        organization_id: organizationId,
+        bill_no: bill?.billNumber || `BILL-${Date.now()}`,
+        bill_date: bill?.billDate || now.slice(0, 10),
+        due_date: bill?.dueDate || bill?.billDate || now.slice(0, 10),
+        supplier_id: supplierId,
+        country: bill?.country || "",
+        party_name: bill?.partyName || "",
+        party_address: bill?.partyAddress || "",
+        phone: bill?.phone || "",
+        payment_type: bill?.paymentType || "",
+        tax_mode: bill?.taxMode || "",
+        supply_type: bill?.supplyType || "",
+        created_by_name: actorName,
+        lines: lines.map((line, index) => ({
+          line_no: index + 1,
           item_id: looksLikeUuid(line?.itemId) ? line.itemId : null,
           item_code: line?.itemCode || null,
+          item_name: line?.itemName || `Line ${index + 1}`,
           description: line?.itemName || `Line ${index + 1}`,
           qty: parseNumber(line?.qty),
-          unit_price: parseNumber(line?.rate),
-          tax_rate: parseNumber(line?.tax),
-          cgst_amount: parseNumber(line?.cgstAmount),
-          sgst_amount: parseNumber(line?.sgstAmount),
-          igst_amount: parseNumber(line?.igstAmount),
-          vat_amount: parseNumber(line?.vatAmount ?? line?.lineTax),
-          line_total: parseNumber(line?.amount)
-        }));
-        let linesInsert = await supabase.from("purchase_bill_items").insert(remoteLines);
-        if (linesInsert.error?.code === "42703") {
-          const legacyLines = remoteLines.map(({ item_code, ...line }) => line);
-          linesInsert = await supabase.from("purchase_bill_items").insert(legacyLines);
+          rate: parseNumber(line?.rate),
+          suggested_sale_rate: parseNumber(line?.saleRate),
+          tax: parseNumber(line?.tax),
+          taxInclusive:
+            line?.taxInclusive === true ||
+            String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX",
+          priceTaxMode:
+            String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX"
+              ? "WITH_TAX"
+              : "WITHOUT_TAX"
+        }))
+      };
+
+      const { data: postedBill, error: postError } = await supabase.rpc("post_purchase_bill_fifo", {
+        p_payload: postingPayload
+      });
+
+      if (!postError && postedBill?.bill_id) {
+        id = postedBill.bill_id;
+      } else {
+        if (postError && !isMissingRpcError(postError)) {
+          throw new Error(normalizeSupabaseError(postError, "Failed to post purchase bill"));
         }
-        const linesError = linesInsert.error;
-        if (linesError) {
-          throw new Error(normalizeSupabaseError(linesError, "Failed to save purchase bill items"));
+
+        const { data: billRow, error: billError } = await supabase
+          .from("purchase_bills")
+          .insert({
+            organization_id: organizationId,
+            bill_no: bill?.billNumber || `BILL-${Date.now()}`,
+            bill_date: bill?.billDate || now.slice(0, 10),
+            due_date: bill?.dueDate || bill?.billDate || now.slice(0, 10),
+            supplier_id: supplierId,
+            subtotal: parseNumber(totals?.subTotal),
+            tax_total: parseNumber(totals?.taxTotal),
+            grand_total: parseNumber(totals?.grandTotal),
+            status: "issued",
+            metadata: {
+              country: bill?.country || "",
+              partyName: bill?.partyName || "",
+              createdByName: actorName,
+              partyAddress: bill?.partyAddress || "",
+              phone: bill?.phone || "",
+              paymentType: bill?.paymentType || "",
+              taxMode: bill?.taxMode || "",
+              supplyType: bill?.supplyType || null,
+              tax: bill?.totals?.tax || null,
+              taxBreakup: bill?.totals?.taxBreakup || null,
+              taxRate: parseNumber(bill?.totals?.taxRate),
+              roundOff: parseNumber(totals?.roundOff),
+              totalQty: parseNumber(totals?.totalQty)
+            },
+            created_by: actorUserId
+          })
+          .select("*")
+          .single();
+
+        if (billError) {
+          throw new Error(normalizeSupabaseError(billError, "Failed to create purchase bill"));
+        }
+
+        id = billRow?.id || id;
+
+        if (lines.length) {
+          const remoteLines = lines.map((line, index) => ({
+            bill_id: id,
+            item_id: looksLikeUuid(line?.itemId) ? line.itemId : null,
+            item_code: line?.itemCode || null,
+            description: line?.itemName || `Line ${index + 1}`,
+            qty: parseNumber(line?.qty),
+            unit_price: parseNumber(line?.rate),
+            tax_rate: parseNumber(line?.tax),
+            taxable_amount: parseNumber(line?.lineSubTotal),
+            tax_amount: parseNumber(line?.lineTax),
+            tax_inclusive:
+              line?.taxInclusive === true ||
+              String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX",
+            cgst_amount: parseNumber(line?.cgstAmount),
+            sgst_amount: parseNumber(line?.sgstAmount),
+            igst_amount: parseNumber(line?.igstAmount),
+            vat_amount: parseNumber(line?.vatAmount ?? line?.lineTax),
+            line_total: parseNumber(line?.amount)
+          }));
+          let linesInsert = await supabase.from("purchase_bill_items").insert(remoteLines);
+          if (linesInsert.error?.code === "42703") {
+            const legacyLines = remoteLines.map(
+              ({ item_code, taxable_amount, tax_amount, tax_inclusive, suggested_sale_rate, ...line }) => line
+            );
+            linesInsert = await supabase.from("purchase_bill_items").insert(legacyLines);
+          }
+          const linesError = linesInsert.error;
+          if (linesError) {
+            throw new Error(normalizeSupabaseError(linesError, "Failed to save purchase bill items"));
+          }
         }
       }
     }
@@ -382,7 +449,15 @@ export async function purchasesCreate(bill) {
       qty: parseNumber(line?.qty),
       itemCode: line?.itemCode || "",
       rate: parseNumber(line?.rate),
+      saleRate: parseNumber(line?.saleRate),
       tax: parseNumber(line?.tax),
+      taxInclusive:
+        line?.taxInclusive === true ||
+        String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX",
+      priceTaxMode:
+        String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX"
+          ? "WITH_TAX"
+          : "WITHOUT_TAX",
       lineSubTotal: parseNumber(line?.lineSubTotal),
       lineTax: parseNumber(line?.lineTax),
       cgstAmount: parseNumber(line?.cgstAmount),

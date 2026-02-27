@@ -178,6 +178,8 @@ function normalizeItem(raw) {
     type === "Product"
       ? metadata?.trackStock ?? metadata?.trackInventory ?? true
       : false;
+  const openingStock = parseNumber(metadata?.openingStock ?? metadata?.openingQty ?? raw?.stockQty);
+  const currentStock = parseNumber(metadata?.currentStock ?? raw?.currentStock ?? openingStock);
 
   return {
     id: raw?.id || uid("itm_"),
@@ -194,7 +196,8 @@ function normalizeItem(raw) {
     taxInclusive,
     status,
     trackInventory,
-    openingStock: parseNumber(metadata?.openingStock ?? metadata?.openingQty ?? raw?.stockQty),
+    openingStock,
+    currentStock,
     openingStockValue: parseNumber(metadata?.openingStockValue),
     lowStockAlert: parseNumber(metadata?.lowStockQty ?? metadata?.lowStockAlert),
     category: metadata?.category || raw?.category || "",
@@ -209,6 +212,7 @@ function normalizeItem(raw) {
 function mapRemoteItem(row) {
   const type = String(row?.item_type || "").toLowerCase() === "service" ? "Service" : "Product";
   const openingStock = parseNumber(row?.opening_stock);
+  const currentStock = parseNumber(row?.current_stock);
   const purchasePrice = parseNumber(row?.purchase_price);
 
   return normalizeItem({
@@ -228,7 +232,8 @@ function mapRemoteItem(row) {
     lowStockAlert: parseNumber(row?.reorder_level),
     sku: row?.sku || "",
     price: parseNumber(row?.sale_price),
-    stockQty: openingStock,
+    stockQty: currentStock,
+    currentStock,
     metadata: {
       purchasePrice,
       taxInclusive: !!row?.tax_inclusive,
@@ -237,6 +242,8 @@ function mapRemoteItem(row) {
       trackStock: type === "Product",
       openingStock,
       openingQty: openingStock,
+      currentStock,
+      stockSource: "db_current_stock",
       lowStockQty: parseNumber(row?.reorder_level)
     },
     created_at: row?.created_at,
@@ -907,6 +914,15 @@ export function computeItemUsage(item) {
 
 export function computeItemStock(item) {
   if (!item.trackInventory) return { available: 0, availableRaw: 0, lowStock: false };
+
+  const stockSource = String(item?.metadata?.stockSource || "").trim().toLowerCase();
+  if (stockSource === "db_current_stock") {
+    const availableRaw = parseNumber(item?.currentStock ?? item?.metadata?.currentStock);
+    const available = Math.max(0, parseNumber(availableRaw));
+    const lowStockAlert = parseNumber(item.lowStockAlert);
+    const lowStock = lowStockAlert > 0 && available <= lowStockAlert;
+    return { available, availableRaw, lowStock };
+  }
 
   let availableRaw = parseNumber(item.openingStock);
   const invoices = ensureArray(lsGetOrganizationScoped(LS_KEYS.invoices, [])).filter(

@@ -17,6 +17,7 @@ import { calculateTaxes } from "../../services/tax";
 import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
 import { authGetUser } from "../../services/auth.service";
 import { syncPaymentInRemote } from "../../services/payments.service";
+import { fetchItemStockHistory } from "../../services/inventory.service";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus, listParties, syncPartiesFromRemote } from "../../modules/parties/store";
@@ -207,6 +208,7 @@ export default function InvoiceCreate() {
   const [customerSearchError, setCustomerSearchError] = useState("");
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
   const [lineItemPopover, setLineItemPopover] = useState({ top: 0, left: 0, width: 280 });
+  const [itemBatchMap, setItemBatchMap] = useState({});
 
   const [lines, setLines] = useState([]);
   const [lastSavedInvoiceId, setLastSavedInvoiceId] = useState("");
@@ -227,6 +229,14 @@ export default function InvoiceCreate() {
   const customerCountry = String(party?.country || "").trim();
   const companyState = company?.address?.state || "";
   const customerState = party?.state || "";
+  const allowNegativeStock = useMemo(() => {
+    const raw =
+      company?.settings?.inventory?.allowNegativeStock ??
+      company?.settings?.preferences?.allowNegativeStock ??
+      company?.settings?.allowNegativeStock ??
+      company?.settings?.allow_negative_stock;
+    return raw === true || String(raw || "").toLowerCase() === "true";
+  }, [company]);
   const paymentCountryCode = useMemo(
     () => resolvePaymentCountryCode(country, countryCode),
     [country, countryCode]
@@ -338,6 +348,44 @@ export default function InvoiceCreate() {
   }, [activeLineItemSearchId]);
 
   useEffect(() => {
+    const uniqueItemIds = Array.from(
+      new Set(lines.map((line) => String(line?.itemId || "").trim()).filter(Boolean))
+    );
+    if (!uniqueItemIds.length) return;
+
+    let cancelled = false;
+    const missingIds = uniqueItemIds.filter((itemId) => !itemBatchMap[itemId]);
+    if (!missingIds.length) return;
+
+    Promise.all(
+      missingIds.map(async (itemId) => {
+        try {
+          const result = await fetchItemStockHistory(itemId);
+          return {
+            itemId,
+            batches: Array.isArray(result?.batches) ? result.batches : []
+          };
+        } catch {
+          return { itemId, batches: [] };
+        }
+      })
+    ).then((rows) => {
+      if (cancelled) return;
+      setItemBatchMap((prev) => {
+        const next = { ...prev };
+        rows.forEach((row) => {
+          next[row.itemId] = row.batches;
+        });
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [itemBatchMap, lines]);
+
+  useEffect(() => {
     if (!markAsPaid) {
       setPaidAmount("");
       setReferenceNo("");
@@ -379,6 +427,7 @@ export default function InvoiceCreate() {
         id: `l_${Date.now()}`,
         itemId: "",
         itemInput: "",
+        selectedBatchId: "",
         qty: 1,
         rate: 0,
         discount: 0,
@@ -390,7 +439,7 @@ export default function InvoiceCreate() {
   function addLineWithItem(item) {
     if (!item) return;
     const maxAssignable = getMaxAssignableQty(item.id);
-    if (Number.isFinite(maxAssignable) && maxAssignable <= 0) {
+    if (!allowNegativeStock && Number.isFinite(maxAssignable) && maxAssignable <= 0) {
       alert(`Out of stock: ${item.name}.`);
       return;
     }
@@ -400,6 +449,7 @@ export default function InvoiceCreate() {
         id: `l_${Date.now()}`,
         itemId: item.id,
         itemInput: formatItemSearchLabel(item),
+        selectedBatchId: "",
         qty: Number.isFinite(maxAssignable) ? Math.min(1, maxAssignable) : 1,
         rate: item.salesRate || item.price || 0,
         discount: 0,
@@ -418,19 +468,12 @@ export default function InvoiceCreate() {
         if (x.id !== id) return x;
         const next = { ...x, ...patch };
         const parsedQty = Number(next.qty);
-        if (next.itemId && Number.isFinite(parsedQty) && parsedQty >= 0) {
-          const stockInfo = stockByItemId.get(next.itemId);
-          const maxAssignable = stockInfo
-            ? Math.max(
-                0,
-                Number(stockInfo.available || 0) -
-                  p.reduce((sum, line) => {
-                    if (String(line?.id || "") === String(id)) return sum;
-                    if (String(line?.itemId || "") !== String(next.itemId || "")) return sum;
-                    return sum + Math.max(0, Number(line?.qty || 0));
-                  }, 0)
-              )
-            : Number.POSITIVE_INFINITY;
+        if (!allowNegativeStock && next.itemId && Number.isFinite(parsedQty) && parsedQty >= 0) {
+          const maxAssignable = getMaxAssignableQty(
+            next.itemId,
+            id,
+            next.selectedBatchId || ""
+          );
           if (Number.isFinite(maxAssignable) && parsedQty > maxAssignable) {
             next.qty = maxAssignable;
           }
@@ -683,7 +726,11 @@ export default function InvoiceCreate() {
     return map;
   }, [items]);
 
-  function getMaxAssignableQty(itemId, excludeLineId = "") {
+  function getMaxAssignableQty(itemId, excludeLineId = "", preferredBatchId = "") {
+    if (allowNegativeStock) return Number.POSITIVE_INFINITY;
+    if (preferredBatchId) {
+      return getBatchAvailableForLine(itemId, preferredBatchId, excludeLineId);
+    }
     const stockInfo = stockByItemId.get(itemId);
     if (!stockInfo) return Number.POSITIVE_INFINITY;
     const reservedQty = lines.reduce((sum, line) => {
@@ -695,36 +742,83 @@ export default function InvoiceCreate() {
   }
 
   const stockValidationIssues = useMemo(() => {
-    const requestedByItem = new Map();
+    if (allowNegativeStock) return [];
+    const issues = [];
     computed.enriched.forEach((line) => {
       if (!line?.itemId) return;
       const qty = Math.max(0, Number(line?.qty || 0));
       if (!qty) return;
-      requestedByItem.set(line.itemId, (requestedByItem.get(line.itemId) || 0) + qty);
-    });
-
-    const issues = [];
-    requestedByItem.forEach((requested, itemId) => {
-      const stockInfo = stockByItemId.get(itemId);
+      const stockInfo = stockByItemId.get(line.itemId);
       if (!stockInfo) return;
-      if (requested > stockInfo.available) {
+      if (line?.selectedBatchId) {
+        const available = getBatchAvailableForLine(line.itemId, line.selectedBatchId, line.id);
+        if (qty > available) {
+          issues.push({
+            itemId: line.itemId,
+            itemName: stockInfo.itemName,
+            available,
+            requested: qty
+          });
+        }
+        return;
+      }
+      const totalAvailable = getMaxAssignableQty(line.itemId, line.id, "");
+      if (qty > totalAvailable) {
         issues.push({
-          itemId,
+          itemId: line.itemId,
           itemName: stockInfo.itemName,
-          available: stockInfo.available,
-          requested
+          available: totalAvailable,
+          requested: qty
         });
       }
     });
     return issues;
-  }, [computed.enriched, stockByItemId]);
+  }, [allowNegativeStock, computed.enriched, stockByItemId, lines]);
 
   const hasStockErrors = stockValidationIssues.length > 0;
+
+  function formatBatchHint(itemId) {
+    const rows = Array.isArray(itemBatchMap[itemId]) ? itemBatchMap[itemId] : [];
+    const openRows = rows.filter((row) => Number(row?.qty_remaining || 0) > 0);
+    if (!openRows.length) return "No open purchase batch found.";
+    const parts = openRows.slice(0, 3).map((row) => {
+      const qty = Number(row?.qty_remaining || 0);
+      const cost = Number(row?.unit_cost_excl_tax || 0);
+      return `${qty} @ ${money(cost)}`;
+    });
+    const extra = openRows.length > 3 ? ` +${openRows.length - 3} more` : "";
+    return `FIFO open batches: ${parts.join(" | ")}${extra}`;
+  }
+
+  function getOpenBatchRows(itemId) {
+    const rows = Array.isArray(itemBatchMap[itemId]) ? itemBatchMap[itemId] : [];
+    return rows
+      .filter((row) => Number(row?.qty_remaining || 0) > 0)
+      .sort((a, b) => {
+        const da = new Date(a?.batch_date || 0).getTime();
+        const db = new Date(b?.batch_date || 0).getTime();
+        return da - db;
+      });
+  }
+
+  function getBatchAvailableForLine(itemId, batchId, excludeLineId = "") {
+    if (!itemId || !batchId) return 0;
+    const rows = getOpenBatchRows(itemId);
+    const target = rows.find((row) => String(row.batch_id) === String(batchId));
+    if (!target) return 0;
+    const reserved = lines.reduce((sum, line) => {
+      if (excludeLineId && String(line?.id || "") === String(excludeLineId)) return sum;
+      if (String(line?.itemId || "") !== String(itemId || "")) return sum;
+      if (String(line?.selectedBatchId || "") !== String(batchId || "")) return sum;
+      return sum + Math.max(0, Number(line?.qty || 0));
+    }, 0);
+    return Math.max(0, Number(target?.qty_remaining || 0) - reserved);
+  }
 
   function selectLineItem(line, matchedItem) {
     if (!matchedItem || !line) return;
     const maxAssignable = getMaxAssignableQty(matchedItem.id, line.id);
-    if (Number.isFinite(maxAssignable) && maxAssignable <= 0) {
+    if (!allowNegativeStock && Number.isFinite(maxAssignable) && maxAssignable <= 0) {
       alert(`Out of stock: ${matchedItem.name}.`);
       return;
     }
@@ -736,6 +830,7 @@ export default function InvoiceCreate() {
     updateLine(line.id, {
       itemInput: formatItemSearchLabel(matchedItem),
       itemId: matchedItem.id,
+      selectedBatchId: "",
       qty: nextQty,
       rate: matchedItem?.salesRate || matchedItem?.price || 0,
       tax: matchedItem?.taxRate || 0
@@ -745,10 +840,35 @@ export default function InvoiceCreate() {
   function handleLineItemInput(line, inputValue) {
     const matchedItem = findItemBySearchInput(availableLineItems, inputValue);
     if (!matchedItem) {
-      updateLine(line.id, { itemInput: inputValue, itemId: "" });
+      updateLine(line.id, { itemInput: inputValue, itemId: "", selectedBatchId: "" });
       return;
     }
     selectLineItem(line, matchedItem);
+  }
+
+  function handleLineBatchChange(line, batchId) {
+    if (!line?.itemId) return;
+    const selectedId = String(batchId || "");
+    if (!selectedId) {
+      updateLine(line.id, { selectedBatchId: "" });
+      return;
+    }
+    const rows = getOpenBatchRows(line.itemId);
+    const picked = rows.find((row) => String(row.batch_id) === selectedId);
+    const suggestedRate = Number(
+      picked?.suggested_sale_rate ??
+        picked?.metadata?.suggestedSaleRate ??
+        line?.rate ??
+        0
+    );
+    const maxAssignable = getMaxAssignableQty(line.itemId, line.id, selectedId);
+    updateLine(line.id, {
+      selectedBatchId: selectedId,
+      rate: suggestedRate > 0 ? suggestedRate : line.rate,
+      qty: Number.isFinite(maxAssignable)
+        ? Math.min(Math.max(0, Number(line.qty || 0)), maxAssignable)
+        : line.qty
+    });
   }
 
   function updateLineItemPopoverPosition(inputElement) {
@@ -907,7 +1027,17 @@ export default function InvoiceCreate() {
       alert("Add at least one line item before saving invoice.");
       return null;
     }
-    if (stockValidationIssues.length) {
+    const missingBatchLine = validComputedLines.find((line) => {
+      const item = items.find((entry) => String(entry?.id || "") === String(line?.itemId || ""));
+      if (!item || item.type !== "Product" || !item.trackInventory) return false;
+      const openBatches = getOpenBatchRows(item.id);
+      return openBatches.length > 0 && !String(line?.selectedBatchId || "").trim();
+    });
+    if (missingBatchLine) {
+      alert(`Please select batch for ${missingBatchLine.itemName || "selected item"} before saving.`);
+      return null;
+    }
+    if (!allowNegativeStock && stockValidationIssues.length) {
       const issue = stockValidationIssues[0];
       alert(
         `Insufficient stock for ${issue.itemName}. Available ${issue.available}, requested ${issue.requested}.`
@@ -1538,7 +1668,46 @@ export default function InvoiceCreate() {
                               className="w-full rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-sm outline-none"
                               placeholder="Search by product ID or name"
                             />
+                            {r.itemId ? (
+                              <p className="mt-1 text-[10px] text-slate-500">{formatBatchHint(r.itemId)}</p>
+                            ) : null}
                           </div>
+                        );
+                      }
+                    },
+                    {
+                      key: "batch",
+                      header: "Batch",
+                      render: (r) => {
+                        if (!r.itemId) {
+                          return <span className="text-xs text-slate-400">Select item</span>;
+                        }
+                        const batchRows = getOpenBatchRows(r.itemId);
+                        if (!batchRows.length) {
+                          return <span className="text-xs text-slate-400">No open batch</span>;
+                        }
+                        return (
+                          <select
+                            value={r.selectedBatchId || ""}
+                            onChange={(e) => handleLineBatchChange(r, e.target.value)}
+                            className="w-44 rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-xs outline-none"
+                          >
+                            <option value="">Select batch</option>
+                            {batchRows.map((row) => {
+                              const batchId = String(row.batch_id || "");
+                              const qty = Number(row.qty_remaining || 0);
+                              const cost = Number(row.unit_cost_excl_tax || 0);
+                              const suggested = Number(
+                                row?.suggested_sale_rate ?? row?.metadata?.suggestedSaleRate ?? 0
+                              );
+                              const label = `${String(row.source_document_no || "BATCH").slice(0, 14)} | ${qty} @ ${money(cost)}${suggested > 0 ? ` | Sell ${money(suggested)}` : ""}`;
+                              return (
+                                <option key={`${r.id}-${batchId}`} value={batchId}>
+                                  {label}
+                                </option>
+                              );
+                            })}
+                          </select>
                         );
                       }
                     },
@@ -1560,7 +1729,11 @@ export default function InvoiceCreate() {
                               return;
                             }
                             if (r.itemId) {
-                              const maxAssignable = getMaxAssignableQty(r.itemId, r.id);
+                              const maxAssignable = getMaxAssignableQty(
+                                r.itemId,
+                                r.id,
+                                r.selectedBatchId || ""
+                              );
                               if (Number.isFinite(maxAssignable) && parsed > maxAssignable) {
                                 updateLine(r.id, { qty: maxAssignable });
                                 return;
@@ -1662,15 +1835,20 @@ export default function InvoiceCreate() {
                                 }}
                                 className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
-                                <div className="flex items-center justify-between gap-2">
-                                  <span>{formatItemSearchLabel(item)}</span>
-                                  {stockInfo ? (
-                                    <span className={`text-[11px] font-semibold ${outOfStock ? "text-rose-600" : "text-slate-500"}`}>
-                                      Remaining: {stockInfo.available}
-                                    </span>
-                                  ) : (
-                                    <span className="text-[11px] text-slate-400">Service / Not tracked</span>
-                                  )}
+                                <div className="flex flex-col gap-0.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span>{formatItemSearchLabel(item)}</span>
+                                    {stockInfo ? (
+                                      <span className={`text-[11px] font-semibold ${outOfStock ? "text-rose-600" : "text-slate-500"}`}>
+                                        Remaining: {stockInfo.available}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[11px] text-slate-400">Service / Not tracked</span>
+                                    )}
+                                  </div>
+                                  {item?.type === "Product" ? (
+                                    <span className="text-[10px] text-slate-500">{formatBatchHint(item.id)}</span>
+                                  ) : null}
                                 </div>
                               </button>
                             );

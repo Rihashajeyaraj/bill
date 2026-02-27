@@ -72,8 +72,8 @@ verify("India missing party state falls back and warns", () => {
   });
 
   assert.equal(result.taxMode, "GST");
-  assert.equal(result.supplyType, "INTRA");
-  assert.equal(result.warning, "State missing, please select state");
+  assert.equal(result.supplyType, "INTER");
+  assert.equal(result.warning, "State missing, assuming IGST");
   assert.equal(result.totalTax, 180);
   assert.equal(result.grandTotal, 1180);
 });

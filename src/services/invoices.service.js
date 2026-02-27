@@ -29,6 +29,16 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
+function isMissingRpcError(error) {
+  const code = String(error?.code || "").toUpperCase();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "PGRST202" ||
+    message.includes("could not find the function") ||
+    message.includes("post_invoice_fifo")
+  );
+}
+
 function deriveInvoiceStatus(grandTotal, balanceAmount) {
   const grand = Math.max(0, parseNumber(grandTotal));
   const balance = Math.max(0, parseNumber(balanceAmount));
@@ -72,6 +82,9 @@ function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
       parseNumber(line?.vat_amount) +
       parseNumber(line?.cess_amount),
     net: parseNumber(line?.taxable_amount),
+    cogsAmount: parseNumber(line?.cogs_amount),
+    cogsUnitCost: parseNumber(line?.cogs_unit_cost),
+    grossProfitAmount: parseNumber(line?.gross_profit_amount),
     amount: parseNumber(line?.line_total),
     hsn: line?.hsn_sac || ""
   }));
@@ -381,33 +394,82 @@ export async function invoicesCreate(invoice) {
         created_by: actorUserId
       };
 
-      const { data: header, error: headerError } = await supabase
-        .from("invoices")
-        .upsert(remotePayload, { onConflict: "organization_id,invoice_no" })
-        .select("*")
-        .single();
+      const postingPayload = {
+        organization_id: organizationId,
+        invoice_no: remotePayload.invoice_no,
+        invoice_date: remotePayload.invoice_date,
+        due_date: remotePayload.due_date,
+        party_id: remotePayload.party_id,
+        place_of_supply_state: remotePayload.place_of_supply_state,
+        currency_code: remotePayload.currency_code,
+        country: invoice?.country || "",
+        tax_mode: invoice?.taxMode || tax?.type || "",
+        supply_type: invoice?.supplyType || tax?.supplyType || taxBreakup?.supplyType || null,
+        party_name: invoice?.partyName || "",
+        created_by_name: actorName,
+        round_off: summary.roundOff,
+        lines: lines.map((line, index) => ({
+          line_no: index + 1,
+          item_id: looksLikeUuid(line?.itemId) ? line.itemId : null,
+          manual_batch_id: looksLikeUuid(line?.selectedBatchId) ? line.selectedBatchId : null,
+          description: line?.itemName || line?.name || line?.description || `Line ${index + 1}`,
+          hsn: line?.hsn || line?.hsnSac || null,
+          qty: parseNumber(line?.qty ?? line?.quantity),
+          unit: line?.unit || null,
+          rate: parseNumber(line?.rate ?? line?.unitPrice),
+          discount: parseNumber(line?.discountAmount ?? line?.discount),
+          discountPercent: parseNumber(line?.discountPercent),
+          tax: parseNumber(line?.taxRate ?? line?.tax),
+          taxableAmount: parseNumber(
+            line?.taxableAmount ?? line?.net ?? parseNumber(line?.qty) * parseNumber(line?.rate)
+          ),
+          cgstAmount: parseNumber(line?.cgstAmount),
+          sgstAmount: parseNumber(line?.sgstAmount),
+          igstAmount: parseNumber(line?.igstAmount),
+          vatAmount: parseNumber(line?.vatAmount),
+          cessAmount: parseNumber(line?.cessAmount)
+        }))
+      };
 
-      if (headerError) {
-        throw new Error(normalizeSupabaseError(headerError, "Failed to save invoice"));
-      }
+      const { data: postedInvoice, error: postError } = await supabase.rpc("post_invoice_fifo", {
+        p_payload: postingPayload
+      });
 
-      id = header?.id || id;
+      if (!postError && postedInvoice?.invoice_id) {
+        id = postedInvoice.invoice_id;
+      } else {
+        if (postError && !isMissingRpcError(postError)) {
+          throw new Error(normalizeSupabaseError(postError, "Failed to post invoice"));
+        }
 
-      const { error: deleteLinesError } = await supabase
-        .from("invoice_items")
-        .delete()
-        .eq("invoice_id", id);
-      if (deleteLinesError) {
-        throw new Error(
-          normalizeSupabaseError(deleteLinesError, "Failed to refresh invoice line items")
-        );
-      }
+        const { data: header, error: headerError } = await supabase
+          .from("invoices")
+          .upsert(remotePayload, { onConflict: "organization_id,invoice_no" })
+          .select("*")
+          .single();
 
-      const remoteLines = buildRemoteLines(id, lines);
-      if (remoteLines.length) {
-        const { error: linesError } = await supabase.from("invoice_items").insert(remoteLines);
-        if (linesError) {
-          throw new Error(normalizeSupabaseError(linesError, "Failed to save invoice line items"));
+        if (headerError) {
+          throw new Error(normalizeSupabaseError(headerError, "Failed to save invoice"));
+        }
+
+        id = header?.id || id;
+
+        const { error: deleteLinesError } = await supabase
+          .from("invoice_items")
+          .delete()
+          .eq("invoice_id", id);
+        if (deleteLinesError) {
+          throw new Error(
+            normalizeSupabaseError(deleteLinesError, "Failed to refresh invoice line items")
+          );
+        }
+
+        const remoteLines = buildRemoteLines(id, lines);
+        if (remoteLines.length) {
+          const { error: linesError } = await supabase.from("invoice_items").insert(remoteLines);
+          if (linesError) {
+            throw new Error(normalizeSupabaseError(linesError, "Failed to save invoice line items"));
+          }
         }
       }
     }

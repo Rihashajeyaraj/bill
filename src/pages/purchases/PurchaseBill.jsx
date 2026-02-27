@@ -125,6 +125,7 @@ function createLine() {
     qty: 1,
     unit: "pcs",
     rate: 0,
+    saleRate: 0,
     priceTaxMode: "WITHOUT_TAX",
     tax: 0
   };
@@ -356,7 +357,9 @@ export default function PurchaseBill() {
       itemCode: item.itemCode || "",
       unit: normalizeUnit(item.unit || line.unit),
       rate: purchaseRate,
-      tax: item.taxRate ?? line.tax
+      saleRate: Number(item?.salesRate ?? item?.price ?? 0),
+      tax: item.taxRate ?? line.tax,
+      priceTaxMode: item?.taxInclusive ? "WITH_TAX" : line.priceTaxMode || "WITHOUT_TAX"
     });
   }
 
@@ -374,7 +377,9 @@ export default function PurchaseBill() {
         itemCode: match.itemCode || "",
         unit: normalizeUnit(match.unit || line.unit),
         rate: Number(match?.purchaseRate ?? match?.metadata?.purchasePrice ?? match?.price ?? 0),
-        tax: match.taxRate ?? line.tax
+        saleRate: Number(match?.salesRate ?? match?.price ?? 0),
+        tax: match.taxRate ?? line.tax,
+        priceTaxMode: match?.taxInclusive ? "WITH_TAX" : line.priceTaxMode || "WITHOUT_TAX"
       };
     });
   }
@@ -412,6 +417,15 @@ export default function PurchaseBill() {
     if (!activeLineForSearch) return [];
     return getLineItemSearchResults(activeLineForSearch);
   }, [activeLineForSearch, purchasableItems]);
+
+  function getLineItemDefaults(line) {
+    if (!line?.itemId) return null;
+    const item = purchasableItems.find((entry) => String(entry.id) === String(line.itemId));
+    if (!item) return null;
+    const defaultRate = Number(item?.purchaseRate ?? item?.metadata?.purchasePrice ?? item?.price ?? 0);
+    const defaultTaxMode = item?.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX";
+    return { defaultRate, defaultTaxMode, item };
+  }
 
   function addLine() {
     setLines((prev) => [...prev, createLine()]);
@@ -649,7 +663,7 @@ export default function PurchaseBill() {
           name: typedName,
           type: "Product",
           unit: normalizeUnit(line.unit),
-          salesRate: Number(line.rate || 0),
+          salesRate: Number(line.saleRate || line.rate || 0),
           purchaseRate: Number(line.rate || 0),
           taxRate: Number(line.tax || 0),
           taxInclusive: line.priceTaxMode === "WITH_TAX",
@@ -738,6 +752,7 @@ export default function PurchaseBill() {
               }),
             unit: normalizeUnit(resolved.unit),
             rate: Number(resolved.rate || 0),
+            saleRate: Number(resolved.saleRate || 0),
             tax: Number(resolved.tax || 0)
           };
         })
@@ -1068,7 +1083,9 @@ export default function PurchaseBill() {
                 <th className="px-3 py-3 font-semibold">Qty</th>
                 <th className="px-3 py-3 font-semibold">Unit</th>
                 <th className="px-3 py-3 font-semibold">Rate</th>
+                <th className="px-3 py-3 font-semibold">Sell Rate</th>
                 <th className="px-3 py-3 font-semibold">Tax %</th>
+                <th className="px-3 py-3 font-semibold">Tax Inclusive</th>
                 <th className="px-3 py-3 font-semibold text-right">Amount</th>
                 <th className="px-3 py-3 font-semibold text-right"></th>
               </tr>
@@ -1076,7 +1093,7 @@ export default function PurchaseBill() {
             <tbody>
               {loading ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
                     Loading items...
                   </td>
                 </tr>
@@ -1126,13 +1143,50 @@ export default function PurchaseBill() {
                     />
                   </td>
                   <td className="px-3 py-3">
-                    <input
-                      type="number"
-                      min="0"
-                      value={line.rate}
-                      onChange={(e) => updateLine(line.id, { rate: e.target.value })}
-                      className="w-28 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
-                    />
+                    <div>
+                      <input
+                        type="number"
+                        min="0"
+                        value={line.rate}
+                        onChange={(e) => updateLine(line.id, { rate: e.target.value })}
+                        className="w-28 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      />
+                      {(() => {
+                        const defaults = getLineItemDefaults(line);
+                        if (!defaults) return null;
+                        const changed = Number(line.rate || 0) !== Number(defaults.defaultRate || 0);
+                        return (
+                          <p className={`mt-1 text-[11px] ${changed ? "text-amber-700" : "text-slate-500"}`}>
+                            Last purchase: {money(defaults.defaultRate)} (
+                            {defaults.defaultTaxMode === "WITH_TAX" ? "Tax Incl" : "Tax Excl"})
+                            {changed ? " - changed, new FIFO batch will use this rate." : ""}
+                          </p>
+                        );
+                      })()}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div>
+                      <input
+                        type="number"
+                        min="0"
+                        value={line.saleRate ?? ""}
+                        onChange={(e) => updateLine(line.id, { saleRate: e.target.value })}
+                        className="w-28 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      />
+                      {(() => {
+                        const defaults = getLineItemDefaults(line);
+                        if (!defaults) return null;
+                        const defaultSaleRate = Number(defaults.item?.salesRate ?? defaults.item?.price ?? 0);
+                        const changed = Number(line.saleRate || 0) !== Number(defaultSaleRate || 0);
+                        return (
+                          <p className={`mt-1 text-[11px] ${changed ? "text-amber-700" : "text-slate-500"}`}>
+                            Default sell: {money(defaultSaleRate)}
+                            {changed ? " - this batch will suggest new sell rate." : ""}
+                          </p>
+                        );
+                      })()}
+                    </div>
                   </td>
                   <td className="px-3 py-3">
                     <select
@@ -1145,6 +1199,16 @@ export default function PurchaseBill() {
                           {rate}%
                         </option>
                       ))}
+                    </select>
+                  </td>
+                  <td className="px-3 py-3">
+                    <select
+                      value={line.priceTaxMode || "WITHOUT_TAX"}
+                      onChange={(e) => updateLine(line.id, { priceTaxMode: e.target.value })}
+                      className="w-28 rounded-xl border border-slate-100 bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="WITHOUT_TAX">No</option>
+                      <option value="WITH_TAX">Yes</option>
                     </select>
                   </td>
                   <td className="px-3 py-3 text-right font-semibold text-slate-900">
@@ -1196,9 +1260,15 @@ export default function PurchaseBill() {
                           }}
                           className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <span>{formatItemSearchLabel(item)}</span>
-                            <span className={`text-[11px] font-semibold ${remainingClass}`}>{remainingText}</span>
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span>{formatItemSearchLabel(item)}</span>
+                              <span className={`text-[11px] font-semibold ${remainingClass}`}>{remainingText}</span>
+                            </div>
+                            <span className="text-[10px] text-slate-500">
+                              Last purchase: {money(item?.purchaseRate ?? item?.metadata?.purchasePrice ?? item?.price ?? 0)} (
+                              {item?.taxInclusive ? "Tax Incl" : "Tax Excl"})
+                            </span>
                           </div>
                         </button>
                       );
