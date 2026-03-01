@@ -272,7 +272,7 @@ export default function CreditNotePremium() {
     setLoading(true);
     const timer = window.setTimeout(() => setLoading(false), 220);
     return () => window.clearTimeout(timer);
-  }, [country, refreshKey]);
+  }, [country]);
 
   useEffect(() => {
     if (!dirty) return;

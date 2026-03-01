@@ -216,7 +216,7 @@ export default function DebitNotePremium() {
     setLoading(true);
     const timer = window.setTimeout(() => setLoading(false), 220);
     return () => window.clearTimeout(timer);
-  }, [country, refreshKey]);
+  }, [country]);
 
   useEffect(() => {
     if (!country) return;
