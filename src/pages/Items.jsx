@@ -32,6 +32,7 @@ export default function Items() {
   const toast = useToast();
   const { country = "India", currency = "" } = useOrganization();
 
+  const [pageView, setPageView] = useState("items");
   const [tab, setTab] = useState("Product");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Active");
@@ -259,6 +260,12 @@ export default function Items() {
     };
   }, []);
 
+  useEffect(() => {
+    if (pageView !== "items") {
+      setActionMenu(null);
+    }
+  }, [pageView]);
+
   function openCreate() {
     setActiveItem({ type: tab });
     setModalMode("create");
@@ -368,6 +375,12 @@ export default function Items() {
   }
 
   function applyReturnAction(returnRow, action, extra = {}) {
+    const existing = returnActionsByRef.get(returnRow.returnRef) || null;
+    const existingAction = String(existing?.action || "").trim().toUpperCase();
+    if (existingAction && existingAction !== "PENDING") {
+      toast.error("Status locked", "This return status is already finalized and cannot be changed.");
+      return;
+    }
     try {
       saveItemReturnAction({
         returnRef: returnRow.returnRef,
@@ -418,19 +431,13 @@ export default function Items() {
       return;
     }
 
-    applyReturnAction(
-      { ...returnRow, purchaseBillId, purchaseBillNo },
-      "RETURN_TO_SUPPLIER",
-      {
-        notes: "Opened Debit Note from non-reusable returns panel."
-      }
-    );
     const params = new URLSearchParams();
     params.set("billId", purchaseBillId);
     if (returnRow.itemId) params.set("itemId", returnRow.itemId);
     if (returnRow.returnedQty > 0) params.set("qty", String(returnRow.returnedQty));
     params.set("reason", "Customer return to supplier");
     if (returnRow.sourceBatchId) params.set("batchId", returnRow.sourceBatchId);
+    params.set("returnRef", String(returnRow.returnRef || ""));
     navigate(`/app/purchase/debit-note?${params.toString()}`);
   }
 
@@ -463,138 +470,62 @@ export default function Items() {
     <div className="mx-auto max-w-[1360px] space-y-4 pb-24">
       <PageHeader
         title="Items"
-        subtitle="Products and services with tax and inventory controls"
+        subtitle={
+          pageView === "items"
+            ? "Products and services with tax and inventory controls"
+            : "Customer returns management"
+        }
         right={
           <div className="flex flex-wrap items-center gap-2">
             <Tabs
-              value={tab}
-              onChange={setTab}
+              value={pageView}
+              onChange={setPageView}
               tabs={[
-                { label: "Products", value: "Product" },
-                { label: "Services", value: "Service" }
+                { label: "Items", value: "items" },
+                { label: "Returns", value: "returns" }
               ]}
             />
-            <button
-              type="button"
-              onClick={openCreate}
-              className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-slate-800"
-            >
-              <Plus className="h-4 w-4" />
-              {tab === "Service" ? "Add Service" : "Add Product"}
-            </button>
+            {pageView === "items" ? (
+              <>
+                <Tabs
+                  value={tab}
+                  onChange={setTab}
+                  tabs={[
+                    { label: "Products", value: "Product" },
+                    { label: "Services", value: "Service" }
+                  ]}
+                />
+                <button
+                  type="button"
+                  onClick={openCreate}
+                  className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-slate-800"
+                >
+                  <Plus className="h-4 w-4" />
+                  {tab === "Service" ? "Add Service" : "Add Product"}
+                </button>
+              </>
+            ) : null}
           </div>
         }
       />
+      {pageView === "items" ? (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
+              <p className="text-xs font-semibold text-slate-500">Total {tab}s</p>
+              <p className="mt-2 text-2xl font-bold text-slate-900">{summary.total}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
+              <p className="text-xs font-semibold text-slate-500">Active Items</p>
+              <p className="mt-2 text-2xl font-bold text-emerald-600">{summary.active}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
+              <p className="text-xs font-semibold text-slate-500">Low Stock Alerts</p>
+              <p className="mt-2 text-2xl font-bold text-rose-600">{summary.lowStock}</p>
+            </div>
+          </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
-          <p className="text-xs font-semibold text-slate-500">Total {tab}s</p>
-          <p className="mt-2 text-2xl font-bold text-slate-900">{summary.total}</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
-          <p className="text-xs font-semibold text-slate-500">Active Items</p>
-          <p className="mt-2 text-2xl font-bold text-emerald-600">{summary.active}</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
-          <p className="text-xs font-semibold text-slate-500">Low Stock Alerts</p>
-          <p className="mt-2 text-2xl font-bold text-rose-600">{summary.lowStock}</p>
-        </div>
-      </div>
-
-      <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
-        <div className="border-b border-slate-100 px-4 py-4">
-          <p className="text-sm font-semibold text-slate-900">Returns (Non-Reusable)</p>
-          <p className="text-xs text-slate-500">
-            Customer-returned items that are not reusable. Manage supplier return, resale, or loss.
-          </p>
-        </div>
-        <div className="relative overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-4 py-3 font-semibold text-slate-700">Item</th>
-                <th className="px-4 py-3 font-semibold text-slate-700">Original Bill</th>
-                <th className="px-4 py-3 font-semibold text-slate-700">Batch / Purchase Bill</th>
-                <th className="px-4 py-3 font-semibold text-slate-700 text-right">Purchase Rate</th>
-                <th className="px-4 py-3 font-semibold text-slate-700 text-right">Selling Rate</th>
-                <th className="px-4 py-3 font-semibold text-slate-700 text-right">Returned Qty</th>
-                <th className="px-4 py-3 font-semibold text-slate-700">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {nonReusableReturns.length ? (
-                nonReusableReturns.map((entry) => (
-                  <tr key={entry.returnRef} className="border-t border-slate-100">
-                    <td className="px-4 py-3">
-                      <p className="font-semibold text-slate-900">{entry.itemName}</p>
-                      <p className="text-xs text-slate-500">
-                        Return {entry.creditNoteNo || "-"} | {entry.returnDate || "-"}
-                      </p>
-                    </td>
-                    <td className="px-4 py-3 text-slate-700">{entry.originalBillNo || "-"}</td>
-                    <td className="px-4 py-3 text-xs text-slate-700">
-                      <p>Batch: {entry.sourceBatchId || "-"}</p>
-                      <p>Purchase Bill: {entry.purchaseBillNo || "-"}</p>
-                      <p>ID: {entry.purchaseBillId || "-"}</p>
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-700">
-                      {formatMoney(entry.purchaseRate, currency)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-700">
-                      {formatMoney(entry.sellingRate, currency)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-700">{entry.returnedQty}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleReturnToSupplier(entry)}
-                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                        >
-                          Return to Supplier
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleResellAction(entry)}
-                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                        >
-                          Resell
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            applyReturnAction(entry, "LOSS", {
-                              notes: "Marked as inventory loss from Items returns panel."
-                            })
-                          }
-                          className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100"
-                        >
-                          Mark as Loss
-                        </button>
-                        <span className="text-[11px] font-semibold text-slate-500">
-                          {entry.action?.action
-                            ? entry.action.action === "RESELL"
-                              ? `Resold (${entry.action.resellCustomerName || "-"})`
-                              : entry.action.action.replaceAll("_", " ")
-                            : "Pending"}
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-xs text-slate-500">
-                    No non-reusable customer returns found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
+          <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
         <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-semibold text-slate-900">Item Library</p>
@@ -755,6 +686,110 @@ export default function Items() {
           </table>
         </div>
       </div>
+        </>
+      ) : (
+        <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
+          <div className="border-b border-slate-100 px-4 py-4">
+            <p className="text-sm font-semibold text-slate-900">Returns (Non-Reusable)</p>
+            <p className="text-xs text-slate-500">
+              Customer-returned items that are not reusable. Manage supplier return, resale, or loss.
+            </p>
+          </div>
+          <div className="relative overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-4 py-3 font-semibold text-slate-700">Item</th>
+                  <th className="px-4 py-3 font-semibold text-slate-700">Original Bill</th>
+                  <th className="px-4 py-3 font-semibold text-slate-700">Batch / Purchase Bill</th>
+                  <th className="px-4 py-3 font-semibold text-slate-700 text-right">Purchase Rate</th>
+                  <th className="px-4 py-3 font-semibold text-slate-700 text-right">Selling Rate</th>
+                  <th className="px-4 py-3 font-semibold text-slate-700 text-right">Returned Qty</th>
+                  <th className="px-4 py-3 font-semibold text-slate-700">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {nonReusableReturns.length ? (
+                  nonReusableReturns.map((entry) => (
+                    (() => {
+                      const actionCode = String(entry.action?.action || "").trim().toUpperCase();
+                      const locked = !!actionCode && actionCode !== "PENDING";
+                      return (
+                    <tr key={entry.returnRef} className="border-t border-slate-100">
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-slate-900">{entry.itemName}</p>
+                        <p className="text-xs text-slate-500">
+                          Return {entry.creditNoteNo || "-"} | {entry.returnDate || "-"}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">{entry.originalBillNo || "-"}</td>
+                      <td className="px-4 py-3 text-xs text-slate-700">
+                        <p>Batch: {entry.sourceBatchId || "-"}</p>
+                        <p>Purchase Bill: {entry.purchaseBillNo || "-"}</p>
+                        <p>ID: {entry.purchaseBillId || "-"}</p>
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-700">
+                        {formatMoney(entry.purchaseRate, currency)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-700">
+                        {formatMoney(entry.sellingRate, currency)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-700">{entry.returnedQty}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleReturnToSupplier(entry)}
+                            disabled={locked}
+                            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Return to Supplier
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleResellAction(entry)}
+                            disabled={locked}
+                            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Resell
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              applyReturnAction(entry, "LOSS", {
+                                notes: "Marked as inventory loss from Items returns panel."
+                              })
+                            }
+                            disabled={locked}
+                            className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Mark as Loss
+                          </button>
+                          <span className="text-[11px] font-semibold text-slate-500">
+                            {entry.action?.action
+                              ? entry.action.action === "RESELL"
+                                ? `Resold (${entry.action.resellCustomerName || "-"})`
+                                : entry.action.action.replaceAll("_", " ")
+                              : "Pending"}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                      );
+                    })()
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-6 text-center text-xs text-slate-500">
+                      No non-reusable customer returns found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <ItemFormModal
         open={modalOpen}

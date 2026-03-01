@@ -32,6 +32,7 @@ import { canApplyApprovals, roleTypeLabel } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
 import { debitNotesSaveRemote } from "../../services/debitNotes.service";
+import { saveItemReturnAction } from "../../services/itemReturns.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
 import EmptyState from "../../components/EmptyState";
 import GradientButton from "../../components/GradientButton";
@@ -100,6 +101,7 @@ export default function DebitNotePremium() {
   const [successMessage, setSuccessMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [savingStatus, setSavingStatus] = useState<DebitStatus | null>(null);
+  const [linkedReturnRef, setLinkedReturnRef] = useState("");
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<DebitStatus | "">("");
@@ -133,6 +135,7 @@ export default function DebitNotePremium() {
   const prefillItemId = searchParams.get("itemId") || "";
   const prefillQty = parseNumber(searchParams.get("qty") || 0);
   const prefillReason = searchParams.get("reason") || "";
+  const prefillReturnRef = searchParams.get("returnRef") || "";
 
   const appliedCount = useMemo(() => notes.filter((note) => note.status === "Applied").length, [notes]);
   const pendingCount = useMemo(() => notes.filter((note) => note.status !== "Applied").length, [notes]);
@@ -184,6 +187,7 @@ export default function DebitNotePremium() {
 
     setViewMode("create");
     setActiveNote(null);
+    setLinkedReturnRef(prefillReturnRef || "");
     setForm((prev) => {
       const base = prev || defaultForm(country, company);
       const invoiceLines = draftLinesFromInvoice(bill).map((line) => ({
@@ -229,8 +233,9 @@ export default function DebitNotePremium() {
     next.delete("qty");
     next.delete("reason");
     next.delete("batchId");
+    next.delete("returnRef");
     setSearchParams(next, { replace: true });
-  }, [country, prefillBillId, prefillItemId, prefillQty, prefillReason, invoices, company, searchParams, setSearchParams]);
+  }, [country, prefillBillId, prefillItemId, prefillQty, prefillReason, prefillReturnRef, invoices, company, searchParams, setSearchParams]);
 
   const filteredNotes = useMemo(
     () =>
@@ -277,6 +282,7 @@ export default function DebitNotePremium() {
       taxAdjustmentAmount: ""
     });
     setActiveNote(null);
+    setLinkedReturnRef("");
     setFieldErrors({});
     setErrorMessage("");
     setSuccessMessage("");
@@ -290,6 +296,7 @@ export default function DebitNotePremium() {
     if (!note || !country || note.country !== country) return;
     if (mode === "edit" && note.status === "Applied") return;
     setEditorLoading(true);
+    setLinkedReturnRef("");
     const hydrated = formFromNote(note);
     setForm({
       ...hydrated,
@@ -484,6 +491,15 @@ export default function DebitNotePremium() {
       });
 
       await debitNotesSaveRemote(saved);
+
+      if (linkedReturnRef && saved?.status !== "Draft") {
+        saveItemReturnAction({
+          returnRef: linkedReturnRef,
+          action: "RETURN_TO_SUPPLIER",
+          supplierId: saved?.supplierId || "",
+          notes: `Linked debit note ${saved.debitNoteNo || ""}`.trim()
+        });
+      }
 
       if (options?.download) exportSingleDebitNotePdf(saved);
       if (options?.email) window.alert(`Email queued for ${saved.debitNoteNo}.`);
