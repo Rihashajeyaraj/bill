@@ -171,6 +171,24 @@ function normalizeRolePermissions(value) {
   return next;
 }
 
+function sanitizeSettingsPayload(settings) {
+  const source = settings && typeof settings === "object" ? settings : {};
+  const preferences =
+    source.preferences && typeof source.preferences === "object" ? source.preferences : null;
+  if (!preferences || !Object.prototype.hasOwnProperty.call(preferences, "api")) {
+    return { settings: source, changed: false };
+  }
+  const nextPreferences = { ...preferences };
+  delete nextPreferences.api;
+  return {
+    settings: {
+      ...source,
+      preferences: nextPreferences
+    },
+    changed: true
+  };
+}
+
 function normalizeMemberStatus(value) {
   return String(value || "").trim().toLowerCase() === "inactive" ? "Inactive" : "Active";
 }
@@ -497,10 +515,12 @@ export function companyGetProfile() {
 
 export function companySaveProfile(profile) {
   const normalizedCountry = normalizeProfileCountry(profile || {});
+  const { settings: sanitizedSettings } = sanitizeSettingsPayload(profile?.settings || {});
   const normalizedProfile = {
     ...(profile || {}),
     country: normalizedCountry.country,
-    countryCode: normalizedCountry.countryCode
+    countryCode: normalizedCountry.countryCode,
+    settings: sanitizedSettings
   };
   const savedProfile = persistProfileLocal(normalizedProfile, { completedStatus: true });
   emitOrganizationUpdated(normalizedProfile);
@@ -511,10 +531,12 @@ export function companyUpdateProfile(partial) {
   const prev = companyGetProfile() || {};
   const merged = { ...prev, ...partial, updated_at: new Date().toISOString() };
   const normalizedCountry = normalizeProfileCountry(merged);
+  const { settings: sanitizedSettings } = sanitizeSettingsPayload(merged?.settings || {});
   const next = {
     ...merged,
     country: normalizedCountry.country,
-    countryCode: normalizedCountry.countryCode
+    countryCode: normalizedCountry.countryCode,
+    settings: sanitizedSettings
   };
   const savedProfile = persistProfileLocal(next, { completedStatus: companyIsCompleted() });
   emitOrganizationUpdated(next);
@@ -778,10 +800,11 @@ function withMergedSettings(baseProfile, settingsPatch = null, sequencePatch = n
       roles: normalizeRolePermissions(merged.users.roles)
     };
   }
+  const { settings: sanitizedSettings } = sanitizeSettingsPayload(merged);
 
   return {
     ...base,
-    settings: merged
+    settings: sanitizedSettings
   };
 }
 
@@ -805,15 +828,41 @@ export async function companyLoadMyOrganization(selectedOrganizationId = "") {
   const taxProfile = bundle.taxProfile;
   let profile = mapOrganizationToProfile(organization, taxProfile);
   if (!profile) return companyGetProfile();
+  let settingsRow = null;
 
   try {
-    const [settingsRow, sequenceSettings] = await Promise.all([
+    const [fetchedSettingsRow, sequenceSettings] = await Promise.all([
       fetchCompanySettingsRow(activeOrganizationId),
       fetchDocumentSequences(activeOrganizationId)
     ]);
+    settingsRow = fetchedSettingsRow;
     profile = withMergedSettings(profile, settingsRow, sequenceSettings);
   } catch {
     // Use organization payload as fallback when optional settings tables/functions are unavailable.
+  }
+
+  const deprecatedInOrgSettings = sanitizeSettingsPayload(organization?.settings || {}).changed;
+  const deprecatedInSettingsRow = sanitizeSettingsPayload(settingsRow || {}).changed;
+  if (deprecatedInOrgSettings || deprecatedInSettingsRow) {
+    try {
+      const cleanedSettings =
+        profile?.settings && typeof profile.settings === "object" ? profile.settings : {};
+      await upsertCompanySettingsRow({
+        organizationId: activeOrganizationId,
+        settings: cleanedSettings,
+        updatedBy: userId || null,
+        supabaseClient: supabase
+      });
+      await supabase
+        .from("organizations")
+        .update({
+          settings: cleanedSettings,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", activeOrganizationId);
+    } catch {
+      // Keep load flow resilient; cleanup will retry on next load.
+    }
   }
 
   const { data: membership } = await supabase
@@ -867,6 +916,8 @@ export async function companySaveProfileRemote(profile, options = {}) {
     currency: profile?.currencies?.[0] || profile?.currency || previous?.currency || "INR",
     updated_at: new Date().toISOString()
   };
+  const { settings: sanitizedSettings } = sanitizeSettingsPayload(mergedProfile?.settings || {});
+  mergedProfile.settings = sanitizedSettings;
 
   if (!isSupabaseConfigured || !supabaseClient) {
     companySaveProfile(mergedProfile);
@@ -1052,7 +1103,15 @@ export async function organizationUpdateUser({ userId, role, status }, options =
 }
 
 export async function settingsGetCompany() {
-  const profile = await companyLoadMyOrganization().catch(() => companyGetProfile()) || companyGetProfile() || {};
+  const loadedProfile =
+    (await companyLoadMyOrganization().catch(() => companyGetProfile())) || companyGetProfile() || {};
+  const initialSanitize = sanitizeSettingsPayload(loadedProfile?.settings || {});
+  const profile = initialSanitize.changed
+    ? { ...loadedProfile, settings: initialSanitize.settings }
+    : loadedProfile;
+  if (initialSanitize.changed) {
+    companySaveProfile(profile);
+  }
   const organizationId = authGetOrganizationId();
   if (!organizationId || !isSupabaseConfigured || !supabase) {
     return {
@@ -1081,6 +1140,28 @@ export async function settingsGetCompany() {
         }
       }
     };
+    const mergedSanitize = sanitizeSettingsPayload(mergedProfile?.settings || {});
+    if (mergedSanitize.changed) {
+      mergedProfile = { ...mergedProfile, settings: mergedSanitize.settings };
+      const actorUserId = authGetUser()?.id || null;
+      try {
+        await upsertCompanySettingsRow({
+          organizationId,
+          settings: mergedProfile.settings,
+          updatedBy: actorUserId,
+          supabaseClient: supabase
+        });
+        await supabase
+          .from("organizations")
+          .update({
+            settings: mergedProfile.settings,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", organizationId);
+      } catch {
+        // Non-blocking cleanup retry on next settings load.
+      }
+    }
     companySaveProfile(mergedProfile);
     return { profile: mergedProfile, users };
   } catch (error) {
@@ -1097,7 +1178,7 @@ export async function settingsPutCompany(profile, options = {}) {
 
   if (organizationId && isSupabaseConfigured && supabaseClient) {
     const actorUserId = authGetUser()?.id || (await getCurrentUserId(supabaseClient)) || null;
-    const settingsPayload = savedProfile?.settings || {};
+    const settingsPayload = sanitizeSettingsPayload(savedProfile?.settings || {}).settings;
     await upsertCompanySettingsRow({
       organizationId,
       settings: {

@@ -137,16 +137,6 @@ const TIMEZONES = [
 const DATE_FORMATS = ["DD MMM YYYY", "DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"];
 const NUMBER_FORMATS = ["1,23,456.78", "123,456.78", "123.456,78"];
 const MAX_CURRENCIES = 3;
-const API_PROVIDER_OPTIONS = ["OpenAI", "Azure OpenAI", "Anthropic", "Google", "Custom"];
-const API_MODEL_OPTIONS = [
-  "gpt-4o",
-  "gpt-4.1",
-  "gpt-4.1-mini",
-  "gpt-4o-mini",
-  "claude-3-5-sonnet",
-  "gemini-1.5-pro"
-];
-const API_STATUS_OPTIONS = ["Sandbox", "Production"];
 const COUNTRY_META = {
   India: { currency: "INR", code: "IN", gstDefault: 18 },
   "Sri Lanka": { currency: "LKR", code: "LK", vatDefault: 18 },
@@ -214,16 +204,6 @@ function getCountryMeta(country) {
 
 function normalizeCurrencyCode(value) {
   return typeof value === "string" ? value.trim().toUpperCase() : "";
-}
-
-function normalizeApiProvider(value) {
-  const next = String(value || "").trim();
-  return API_PROVIDER_OPTIONS.includes(next) ? next : "OpenAI";
-}
-
-function normalizeApiStatus(value) {
-  const next = String(value || "").trim();
-  return API_STATUS_OPTIONS.includes(next) ? next : "Sandbox";
 }
 
 function uniqueCurrencyList(values) {
@@ -416,22 +396,11 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
     members
   };
 
-  const apiStored =
-    stored.preferences?.api && typeof stored.preferences.api === "object"
-      ? stored.preferences.api
-      : {};
   const preferences = {
     auditTrail: stored.preferences?.auditTrail ?? true,
     approvals: stored.preferences?.approvals ?? true,
     stockTracking: stored.preferences?.stockTracking ?? true,
-    multiCurrency: stored.preferences?.multiCurrency ?? false,
-    api: {
-      enabled: apiStored.enabled ?? false,
-      provider: normalizeApiProvider(apiStored.provider),
-      model: String(apiStored.model || "gpt-4o-mini").trim(),
-      status: normalizeApiStatus(apiStored.status),
-      baseUrl: String(apiStored.baseUrl || "").trim()
-    }
+    multiCurrency: stored.preferences?.multiCurrency ?? false
   };
   const effectiveCurrencies = preferences.multiCurrency
     ? localization.currencies
@@ -487,15 +456,7 @@ function mapSettingsToProfile(settings) {
     },
     preferences: {
       ...(settings.preferences || {}),
-      multiCurrency: settings?.preferences?.multiCurrency === true,
-      api: {
-        ...(settings?.preferences?.api || {}),
-        enabled: settings?.preferences?.api?.enabled === true,
-        provider: normalizeApiProvider(settings?.preferences?.api?.provider),
-        model: String(settings?.preferences?.api?.model || "gpt-4o-mini").trim(),
-        status: normalizeApiStatus(settings?.preferences?.api?.status),
-        baseUrl: String(settings?.preferences?.api?.baseUrl || "").trim()
-      }
+      multiCurrency: settings?.preferences?.multiCurrency === true
     },
     invoice_template_selected: true
   };
@@ -748,28 +709,6 @@ function validateNumbering(numbering) {
       errors[`counter_${key}`] = "Counter must be 1 or greater.";
     }
   });
-  return errors;
-}
-
-function validatePreferences(settings) {
-  const errors = {};
-  const preferences = settings?.preferences || {};
-  const api = preferences?.api || {};
-  const baseUrl = String(api?.baseUrl || "").trim();
-
-  if (api?.enabled) {
-    if (!String(api?.provider || "").trim()) {
-      errors.apiProvider = "API provider is required when API integration is enabled.";
-    }
-    if (!String(api?.model || "").trim()) {
-      errors.apiModel = "API model is required when API integration is enabled.";
-    }
-  }
-
-  if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
-    errors.apiBaseUrl = "API base URL must start with http:// or https://";
-  }
-
   return errors;
 }
 
@@ -1151,7 +1090,7 @@ export default function CompanySettings() {
     if (section === "numbering") return validateNumbering(nextSettings.numbering);
     if (section === "theme") return validateTheme(nextSettings.theme);
     if (section === "invoiceTemplate") return validateInvoiceTemplate(nextSettings.invoiceTemplate);
-    if (section === "preferences") return validatePreferences(nextSettings);
+    if (section === "preferences") return {};
     if (section === "users" && !canManageUsers) {
       return { users: "Only Owner can change roles and permissions." };
     }
@@ -2911,117 +2850,6 @@ export default function CompanySettings() {
                         })
                       }
                     />
-                  </div>
-
-                  <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">API Configuration</p>
-                        <p className="text-xs text-slate-500">
-                          Select provider/model and keep status clear for production readiness.
-                        </p>
-                      </div>
-                      <Badge tone={settings.preferences.api?.enabled ? "success" : "neutral"}>
-                        {settings.preferences.api?.enabled ? "Enabled" : "Disabled"}
-                      </Badge>
-                    </div>
-                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                      <SwitchRow
-                        label="Enable API Integration"
-                        description="Use configured external API provider."
-                        checked={!!settings.preferences.api?.enabled}
-                        onChange={(value) =>
-                          updateSection("preferences", {
-                            api: { ...(settings.preferences.api || {}), enabled: value }
-                          })
-                        }
-                      />
-                      <FormField label="Status">
-                        <select
-                          value={normalizeApiStatus(settings.preferences.api?.status)}
-                          onChange={(event) =>
-                            updateSection("preferences", {
-                              api: {
-                                ...(settings.preferences.api || {}),
-                                status: normalizeApiStatus(event.target.value)
-                              }
-                            })
-                          }
-                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                        >
-                          {API_STATUS_OPTIONS.map((status) => (
-                            <option key={status} value={status}>
-                              {status}
-                            </option>
-                          ))}
-                        </select>
-                      </FormField>
-                      <FormField label="Provider">
-                        <select
-                          value={normalizeApiProvider(settings.preferences.api?.provider)}
-                          onChange={(event) =>
-                            updateSection("preferences", {
-                              api: {
-                                ...(settings.preferences.api || {}),
-                                provider: normalizeApiProvider(event.target.value)
-                              }
-                            })
-                          }
-                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                        >
-                          {API_PROVIDER_OPTIONS.map((provider) => (
-                            <option key={provider} value={provider}>
-                              {provider}
-                            </option>
-                          ))}
-                        </select>
-                        {sectionErrors.apiProvider ? (
-                          <p className="mt-1 text-xs text-rose-600">{sectionErrors.apiProvider}</p>
-                        ) : null}
-                      </FormField>
-                      <FormField label="Model">
-                        <input
-                          list="api-model-options"
-                          value={settings.preferences.api?.model || ""}
-                          onChange={(event) =>
-                            updateSection("preferences", {
-                              api: {
-                                ...(settings.preferences.api || {}),
-                                model: event.target.value
-                              }
-                            })
-                          }
-                          className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
-                          placeholder="gpt-4o-mini"
-                        />
-                        <datalist id="api-model-options">
-                          {API_MODEL_OPTIONS.map((model) => (
-                            <option key={model} value={model} />
-                          ))}
-                        </datalist>
-                        {sectionErrors.apiModel ? (
-                          <p className="mt-1 text-xs text-rose-600">{sectionErrors.apiModel}</p>
-                        ) : null}
-                      </FormField>
-                      <FormField label="Base URL (optional)">
-                        <input
-                          value={settings.preferences.api?.baseUrl || ""}
-                          onChange={(event) =>
-                            updateSection("preferences", {
-                              api: {
-                                ...(settings.preferences.api || {}),
-                                baseUrl: event.target.value
-                              }
-                            })
-                          }
-                          className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
-                          placeholder="https://api.example.com/v1"
-                        />
-                        {sectionErrors.apiBaseUrl ? (
-                          <p className="mt-1 text-xs text-rose-600">{sectionErrors.apiBaseUrl}</p>
-                        ) : null}
-                      </FormField>
-                    </div>
                   </div>
 
                   <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4">
