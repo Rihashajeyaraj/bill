@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { LockKeyhole, Mail, ReceiptIndianRupee, User, ShieldCheck } from "lucide-react";
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import Card from "../components/Card";
@@ -14,6 +14,7 @@ import { invoiceTemplateIsCompleted } from "../lib/templateStore";
 
 export default function Login() {
   const nav = useNavigate();
+  const location = useLocation();
   const [mode, setMode] = useState("login");
   const isLogin = mode === "login";
 
@@ -35,6 +36,47 @@ export default function Login() {
   const [notice, setNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const usingSupabase = useMemo(() => authUsingSupabase(), []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || "");
+    const modeParam = String(params.get("mode") || "")
+      .trim()
+      .toLowerCase();
+    const inviteName = String(params.get("name") || "").trim();
+    const inviteEmail = String(params.get("email") || "").trim();
+    const inviteCode = String(params.get("registerCode") || params.get("register_code") || "")
+      .trim()
+      .toUpperCase();
+    const inviteRoleRaw = String(params.get("role") || "")
+      .trim()
+      .toLowerCase();
+
+    let inviteRole = "";
+    if (inviteRoleRaw === "owner") inviteRole = ROLE_LABELS.owner;
+    else if (inviteRoleRaw === "accounter" || inviteRoleRaw === "accountant") {
+      inviteRole = ROLE_LABELS.accounter;
+    } else if (inviteRoleRaw === "staff") {
+      inviteRole = ROLE_LABELS.staff;
+    }
+
+    const hasInvitePayload = Boolean(
+      modeParam === "signup" || inviteName || inviteEmail || inviteCode || inviteRole
+    );
+    if (!hasInvitePayload) return;
+
+    setMode("signup");
+    setErr("");
+    if (inviteCode) {
+      setNotice("Invite link detected. Complete signup to join organization.");
+    }
+    setSignupForm((prev) => ({
+      ...prev,
+      name: inviteName || prev.name,
+      email: inviteEmail || prev.email,
+      role: inviteRole || prev.role,
+      registerCode: inviteCode || prev.registerCode
+    }));
+  }, [location.search]);
 
   function switchMode(next, nextNotice = "") {
     setMode(next);

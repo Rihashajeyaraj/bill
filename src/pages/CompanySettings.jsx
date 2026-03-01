@@ -61,6 +61,7 @@ import {
   UI_DENSITY_OPTIONS
 } from "../theme/runtimeTheme";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
+import { buildRegisterInviteLink, sendRegisterInviteEmail } from "../services/invite.service";
 import {
   DEFAULT_TEMPLATE_CONFIG,
   getInvoiceTemplateConfig,
@@ -791,6 +792,7 @@ export default function CompanySettings() {
   const [generatedCode, setGeneratedCode] = useState(null);
   const [activeCodes, setActiveCodes] = useState([]);
   const [codeBusy, setCodeBusy] = useState(false);
+  const [inviteBusy, setInviteBusy] = useState(false);
   const [codeMessage, setCodeMessage] = useState("");
   const [codeError, setCodeError] = useState("");
   const [profileLogoFile, setProfileLogoFile] = useState(null);
@@ -1351,13 +1353,80 @@ export default function CompanySettings() {
     }));
   }
 
-  function handleInvite() {
-    if (!invite.email.trim()) return;
-    toast.info(
-      "Use register code",
-      "Direct invite is not yet wired to auth email flow. Share register code from this section."
-    );
-    setInvite({ name: "", email: "", role: "Staff" });
+  async function handleInvite() {
+    if (!canManageUsers || inviteBusy) return;
+    const safeEmail = String(invite.email || "").trim().toLowerCase();
+    const safeName = String(invite.name || "").trim();
+    const safeRole = normalizeRoleLabel(invite.role);
+
+    if (!safeEmail) {
+      toast.warning("Invite email required", "Enter a valid user email.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(safeEmail)) {
+      toast.warning("Invalid email", "Enter a valid email address.");
+      return;
+    }
+    if (safeRole === "Owner") {
+      toast.warning("Invalid role", "Invite User supports Accounter or Staff roles.");
+      return;
+    }
+    if (!isSupabaseConfigured || !supabase) {
+      toast.warning("Supabase required", "Configure Supabase before sending invite emails.");
+      return;
+    }
+
+    setInviteBusy(true);
+    setCodeError("");
+    setCodeMessage("");
+
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+    const organizationName = String(settings?.profile?.companyName || currentProfile?.companyName || "BillJoy").trim();
+
+    try {
+      const created = await organizationGenerateCode({
+        targetRole: safeRole,
+        maxUses: 1,
+        expiresInDays: 14
+      });
+
+      const registerCode = String(created?.code || "").trim().toUpperCase();
+      if (!registerCode) {
+        throw new Error("Unable to generate register code.");
+      }
+
+      const registerLink = buildRegisterInviteLink({
+        baseUrl,
+        email: safeEmail,
+        role: safeRole,
+        registerCode,
+        name: safeName
+      });
+
+      await sendRegisterInviteEmail({
+        email: safeEmail,
+        name: safeName,
+        role: safeRole,
+        organizationName,
+        registerCode,
+        link: registerLink
+      });
+
+      setGeneratedCode(created);
+      const list = await organizationListActiveCodes(6);
+      setActiveCodes(list);
+      setCodeMessage("Invite sent successfully.");
+      setCodeError("");
+      toast.success("Invite sent", `Registration link sent to ${safeEmail}.`);
+      setInvite({ name: "", email: "", role: "Staff" });
+    } catch (error) {
+      const message = error?.message || "Failed to send invite.";
+      setCodeError(message);
+      setCodeMessage("");
+      toast.error("Invite failed", message);
+    } finally {
+      setInviteBusy(false);
+    }
   }
 
   async function handleGenerateRegisterCode() {
@@ -2873,22 +2942,26 @@ export default function CompanySettings() {
                               onChange={(event) => setInvite((prev) => ({ ...prev, role: event.target.value }))}
                               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                             >
-                              {roleColumns.map((role) => (
+                              {roleColumns
+                                .filter((role) => role !== "Owner")
+                                .map((role) => (
                                 <option key={role} value={role}>
                                   {role}
                                 </option>
-                              ))}
+                                ))}
                             </select>
                             <button
                               type="button"
-                              disabled={!canManageUsers}
+                              disabled={!canManageUsers || inviteBusy}
                               onClick={handleInvite}
                               className={clsx(
                                 "rounded-full px-4 py-2 text-xs font-semibold text-white",
-                                canManageUsers ? "bg-slate-900 hover:bg-slate-800" : "bg-slate-400"
+                                canManageUsers && !inviteBusy
+                                  ? "bg-slate-900 hover:bg-slate-800"
+                                  : "bg-slate-400"
                               )}
                             >
-                              Send Invite
+                              {inviteBusy ? "Sending..." : "Send Invite"}
                             </button>
                           </div>
                         </div>

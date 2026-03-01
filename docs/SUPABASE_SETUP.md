@@ -70,3 +70,77 @@ npm install
 npm run dev
 ```
 
+## 6. Register Invite Email (Edge Function + Gmail)
+
+This project now includes:
+
+`supabase/functions/send-register-invite/index.ts`
+
+It sends register-link emails from **Company Settings -> Users & Roles -> Invite User**.
+
+### 6.1 Gmail requirements
+
+1. Enable 2-Step Verification on your Google account.
+2. Create an App Password in Google Account security settings.
+3. Use that App Password as `SMTP_PASS` (not your normal Gmail login password).
+
+### 6.2 Set function secrets
+
+After linking your Supabase project:
+
+```bash
+supabase secrets set \
+SMTP_HOST=smtp.gmail.com \
+SMTP_PORT=465 \
+SMTP_SECURE=tls \
+SMTP_AUTH_METHOD=login \
+SMTP_USER=yourgmail@gmail.com \
+SMTP_PASS="your-16-char-app-password" \
+INVITE_FROM_EMAIL="BillJoy <yourgmail@gmail.com>" \
+APP_BASE_URL="https://your-app-domain.com"
+```
+
+`APP_BASE_URL` should be the URL where your frontend is hosted (the function builds `/login?...` links from this).
+
+### 6.3 Deploy edge function
+
+```bash
+supabase functions deploy send-register-invite
+```
+
+### 6.4 Call API from external app/server
+
+Use JWT auth:
+
+1. Get user access token (owner account):
+
+```bash
+curl -X POST "https://YOUR_PROJECT_REF.supabase.co/auth/v1/token?grant_type=password" \
+  -H "apikey: YOUR_ANON_OR_PUBLISHABLE_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "OWNER_EMAIL",
+    "password": "OWNER_PASSWORD"
+  }'
+```
+
+2. Call function with `Authorization: Bearer <access_token>`:
+
+```bash
+curl -X POST "https://YOUR_PROJECT_REF.supabase.co/functions/v1/send-register-invite" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer USER_ACCESS_TOKEN_JWT" \
+  -d '{
+    "organization_id": "86bbfbaa-3ade-48c9-a2f2-ff1c57374a52",
+    "email": "vinthushan1121@gmail.com",
+    "first_name": "vinthu",
+    "last_name": "",
+    "role": "Staff",
+    "organization_name": "Twite AI Technologies Pvt Ltd",
+    "register_code": "BJ-W1MG-1T83ST",
+    "link": "http://localhost:5173/login?mode=signup&email=vinthushan1121%40gmail.com&role=Staff&registerCode=BJ-W1MG-1T83ST&name=vinthu"
+  }'
+```
+
+Do not pass `sb_publishable_...` or `sb_secret_...` in Authorization.
+
