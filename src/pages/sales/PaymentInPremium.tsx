@@ -191,7 +191,7 @@ export default function PaymentInPremium() {
     setLoading(true);
     const timer = window.setTimeout(() => setLoading(false), 180);
     return () => window.clearTimeout(timer);
-  }, [country, refreshKey]);
+  }, [country]);
 
   useEffect(() => {
     if (!dirty) return;
