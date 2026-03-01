@@ -30,6 +30,48 @@ export async function fetchInvoiceAllocationDetails(invoiceId) {
   return Array.isArray(data) ? data : [];
 }
 
+export async function fetchPurchaseBillByBatchId(batchId) {
+  if (!batchId || !isSupabaseConfigured || !supabase) {
+    return null;
+  }
+  const organizationId = authGetOrganizationId();
+  if (!organizationId) return null;
+
+  const { data: batchRow, error: batchError } = await supabase
+    .from("stock_batches")
+    .select("id,purchase_bill_id,source_document_no")
+    .eq("organization_id", organizationId)
+    .eq("id", batchId)
+    .maybeSingle();
+
+  if (batchError) {
+    throw new Error(normalizeSupabaseError(batchError, "Failed to resolve purchase bill from batch"));
+  }
+  const purchaseBillId = String(batchRow?.purchase_bill_id || "").trim();
+  if (!purchaseBillId) {
+    return {
+      purchaseBillId: "",
+      purchaseBillNo: String(batchRow?.source_document_no || "").trim()
+    };
+  }
+
+  const { data: billRow, error: billError } = await supabase
+    .from("purchase_bills")
+    .select("id,bill_no")
+    .eq("organization_id", organizationId)
+    .eq("id", purchaseBillId)
+    .maybeSingle();
+
+  if (billError) {
+    throw new Error(normalizeSupabaseError(billError, "Failed to load purchase bill details"));
+  }
+
+  return {
+    purchaseBillId: String(billRow?.id || purchaseBillId),
+    purchaseBillNo: String(billRow?.bill_no || batchRow?.source_document_no || "").trim()
+  };
+}
+
 export async function fetchItemStockHistory(itemId) {
   if (!itemId || !isSupabaseConfigured || !supabase) {
     return { history: [], batches: [] };
@@ -116,4 +158,3 @@ export async function fetchInvoiceProfitDetails(invoiceId) {
     items: Array.isArray(itemResult.data) ? itemResult.data : []
   };
 }
-

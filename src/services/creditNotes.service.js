@@ -236,7 +236,8 @@ async function validateCreditNoteRemoteLimits({
 async function applyCreditNoteReturnToStock({
   organizationId,
   header,
-  noteLines
+  noteLines,
+  note
 }) {
   const sourceId = header?.id;
   if (!sourceId || !Array.isArray(noteLines) || !noteLines.length) return;
@@ -255,100 +256,187 @@ async function applyCreditNoteReturnToStock({
     return;
   }
 
-  const itemIds = Array.from(
-    new Set(
-      noteLines
-        .map((line) => String(line?.item_id || "").trim())
-        .filter(Boolean)
-    )
-  );
-  if (!itemIds.length) return;
+  const metadataLines = Array.isArray(note?.lines) ? note.lines : [];
+  const lineMetaBySourceId = new Map();
+  const lineMetaByItemId = new Map();
+  metadataLines.forEach((entry) => {
+    const sourceInvoiceItemId = String(entry?.sourceInvoiceItemId || "").trim();
+    const itemId = String(entry?.itemId || "").trim();
+    if (sourceInvoiceItemId) lineMetaBySourceId.set(sourceInvoiceItemId, entry);
+    if (itemId && !lineMetaByItemId.has(itemId)) lineMetaByItemId.set(itemId, entry);
+  });
 
-  const { data: itemRows, error: itemError } = await supabase
-    .from("items")
-    .select("id,purchase_price")
-    .eq("organization_id", organizationId)
-    .in("id", itemIds);
-  if (itemError) {
-    throw new Error(normalizeSupabaseError(itemError, "Failed to load item costs for stock return"));
+  const reusableLines = [];
+  noteLines.forEach((line) => {
+    const sourceInvoiceItemId = String(line?.source_invoice_item_id || "").trim();
+    const itemId = String(line?.item_id || "").trim();
+    const lineMeta = lineMetaBySourceId.get(sourceInvoiceItemId) || lineMetaByItemId.get(itemId) || null;
+    const returnCondition = String(lineMeta?.returnCondition || "").trim().toUpperCase();
+    if (returnCondition !== "REUSABLE") return;
+    reusableLines.push({
+      ...line,
+      sourceInvoiceItemId,
+      lineMeta
+    });
+  });
+
+  if (!reusableLines.length) return;
+
+  if (!header?.related_invoice_id) {
+    throw new Error("Linked invoice is required for stock return.");
   }
-  const purchaseCostByItem = new Map(
-    (Array.isArray(itemRows) ? itemRows : []).map((row) => [String(row?.id || ""), parseNumber(row?.purchase_price)])
-  );
 
-  const invoiceItemCostById = new Map();
-  if (header?.related_invoice_id) {
-    const { data: invoiceItems, error: invoiceItemError } = await supabase
-      .from("invoice_items")
-      .select("id,item_id,cogs_unit_cost")
-      .eq("invoice_id", header.related_invoice_id);
-    if (invoiceItemError) {
-      throw new Error(normalizeSupabaseError(invoiceItemError, "Failed to load invoice cost details for stock return"));
+  const { data: allocationRows, error: allocationError } = await supabase
+    .from("stock_batch_allocations")
+    .select(
+      "id,invoice_item_id,stock_batch_id,allocation_order,allocated_qty,unit_cost_excl_tax,unit_cost_incl_tax"
+    )
+    .eq("organization_id", organizationId)
+    .eq("invoice_id", header.related_invoice_id)
+    .order("allocation_order", { ascending: true });
+  if (allocationError) {
+    throw new Error(
+      normalizeSupabaseError(allocationError, "Failed to load invoice batch allocations for return")
+    );
+  }
+
+  const allocationsBySource = new Map();
+  const batchIds = new Set();
+  (Array.isArray(allocationRows) ? allocationRows : []).forEach((row) => {
+    const sourceInvoiceItemId = String(row?.invoice_item_id || "").trim();
+    if (!sourceInvoiceItemId) return;
+    if (!allocationsBySource.has(sourceInvoiceItemId)) allocationsBySource.set(sourceInvoiceItemId, []);
+    allocationsBySource.get(sourceInvoiceItemId).push(row);
+    const batchId = String(row?.stock_batch_id || "").trim();
+    if (batchId) batchIds.add(batchId);
+  });
+
+  const batchQtyById = new Map();
+  if (batchIds.size) {
+    const { data: batchRows, error: batchRowsError } = await supabase
+      .from("stock_batches")
+      .select("id,qty_remaining")
+      .eq("organization_id", organizationId)
+      .in("id", Array.from(batchIds));
+    if (batchRowsError) {
+      throw new Error(normalizeSupabaseError(batchRowsError, "Failed to load stock batch balances"));
     }
-    (Array.isArray(invoiceItems) ? invoiceItems : []).forEach((row) => {
-      invoiceItemCostById.set(String(row?.id || ""), parseNumber(row?.cogs_unit_cost));
+    (Array.isArray(batchRows) ? batchRows : []).forEach((row) => {
+      batchQtyById.set(String(row?.id || ""), Math.max(0, parseNumber(row?.qty_remaining)));
     });
   }
 
-  for (const line of noteLines) {
+  const { data: existingReturnRows, error: existingReturnError } = await supabase
+    .from("stock_movements")
+    .select("stock_batch_id,quantity_delta,metadata")
+    .eq("organization_id", organizationId)
+    .eq("source_table", "credit_notes")
+    .eq("movement_type", "RETURN_IN");
+  if (existingReturnError) {
+    throw new Error(
+      normalizeSupabaseError(existingReturnError, "Failed to validate previous returned stock quantities")
+    );
+  }
+
+  const returnedQtyBySourceBatch = new Map();
+  (Array.isArray(existingReturnRows) ? existingReturnRows : []).forEach((row) => {
+    const metadata = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+    const sourceInvoiceItemId = String(metadata?.sourceInvoiceItemId || "").trim();
+    const batchId = String(row?.stock_batch_id || "").trim();
+    if (!sourceInvoiceItemId || !batchId) return;
+    const key = `${sourceInvoiceItemId}::${batchId}`;
+    returnedQtyBySourceBatch.set(
+      key,
+      (returnedQtyBySourceBatch.get(key) || 0) + Math.max(0, parseNumber(row?.quantity_delta))
+    );
+  });
+
+  for (const line of reusableLines) {
     const itemId = String(line?.item_id || "").trim();
     const qty = Math.max(0, parseNumber(line?.qty));
+    const sourceInvoiceItemId = String(line?.sourceInvoiceItemId || "").trim();
     if (!itemId || qty <= 0) continue;
-    const sourceInvoiceItemId = String(line?.source_invoice_item_id || "").trim();
-    const sourceCost = sourceInvoiceItemId ? parseNumber(invoiceItemCostById.get(sourceInvoiceItemId)) : 0;
-    const unitCostExcl = sourceCost > 0 ? sourceCost : parseNumber(purchaseCostByItem.get(itemId));
-    const unitCostIncl = unitCostExcl;
-
-    const { data: batchRow, error: batchError } = await supabase
-      .from("stock_batches")
-      .insert({
-        organization_id: organizationId,
-        item_id: itemId,
-        purchase_bill_id: null,
-        purchase_bill_item_id: null,
-        batch_date: header?.credit_note_date || new Date().toISOString().slice(0, 10),
-        source_document_no: header?.credit_note_no || "CREDIT_RETURN",
-        qty_purchased: qty,
-        qty_remaining: qty,
-        unit_cost_excl_tax: unitCostExcl,
-        unit_cost_incl_tax: unitCostIncl,
-        tax_rate: 0,
-        tax_amount: 0,
-        tax_inclusive: false,
-        metadata: {
-          source: "credit_note_return",
-          creditNoteId: header?.id || null,
-          creditNoteItemId: line?.id || null
-        },
-        created_by: authGetUser()?.id || null
-      })
-      .select("id")
-      .single();
-    if (batchError) {
-      throw new Error(normalizeSupabaseError(batchError, "Failed to create stock return batch"));
+    if (!sourceInvoiceItemId) {
+      throw new Error(`Reusable return for item ${itemId} must be linked to source invoice line.`);
     }
 
-    const { error: movementError } = await supabase.from("stock_movements").insert({
-      organization_id: organizationId,
-      item_id: itemId,
-      stock_batch_id: batchRow?.id || null,
-      movement_type: "IN",
-      movement_date: header?.credit_note_date || new Date().toISOString().slice(0, 10),
-      quantity_delta: qty,
-      unit_cost_excl_tax: unitCostExcl,
-      unit_cost_incl_tax: unitCostIncl,
-      source_table: "credit_notes",
-      source_id: header?.id || null,
-      source_item_id: line?.id || null,
-      source_document_no: header?.credit_note_no || "",
-      notes: "Credit note return in",
-      metadata: {
-        source: "credit_note_return"
-      },
-      created_by: authGetUser()?.id || null
-    });
-    if (movementError) {
-      throw new Error(normalizeSupabaseError(movementError, "Failed to create stock return movement"));
+    const sourceAllocations = allocationsBySource.get(sourceInvoiceItemId) || [];
+    if (!sourceAllocations.length) {
+      throw new Error(
+        `No source batch allocation found for reusable return line linked to invoice item ${sourceInvoiceItemId}.`
+      );
+    }
+
+    let remainingQty = qty;
+    for (const allocation of sourceAllocations) {
+      if (remainingQty <= 1e-6) break;
+      const batchId = String(allocation?.stock_batch_id || "").trim();
+      if (!batchId) continue;
+      const allocatedQty = Math.max(0, parseNumber(allocation?.allocated_qty));
+      const returnedKey = `${sourceInvoiceItemId}::${batchId}`;
+      const alreadyReturnedQty = Math.max(0, parseNumber(returnedQtyBySourceBatch.get(returnedKey) || 0));
+      const availableQty = Math.max(0, allocatedQty - alreadyReturnedQty);
+      if (availableQty <= 1e-6) continue;
+
+      const putBackQty = Math.min(remainingQty, availableQty);
+      const currentBatchQty = Math.max(0, parseNumber(batchQtyById.get(batchId) || 0));
+      const nextBatchQty = currentBatchQty + putBackQty;
+
+      const { error: batchUpdateError } = await supabase
+        .from("stock_batches")
+        .update({
+          qty_remaining: nextBatchQty
+        })
+        .eq("organization_id", organizationId)
+        .eq("id", batchId);
+      if (batchUpdateError) {
+        throw new Error(normalizeSupabaseError(batchUpdateError, "Failed to update original stock batch"));
+      }
+
+      const unitCostExcl = Math.max(
+        0,
+        parseNumber(allocation?.unit_cost_excl_tax || line?.lineMeta?.purchaseRate || 0)
+      );
+      const unitCostIncl = Math.max(
+        0,
+        parseNumber(allocation?.unit_cost_incl_tax || unitCostExcl)
+      );
+
+      const { error: movementError } = await supabase.from("stock_movements").insert({
+        organization_id: organizationId,
+        item_id: itemId,
+        stock_batch_id: batchId,
+        movement_type: "RETURN_IN",
+        movement_date: header?.credit_note_date || new Date().toISOString().slice(0, 10),
+        quantity_delta: putBackQty,
+        unit_cost_excl_tax: unitCostExcl,
+        unit_cost_incl_tax: unitCostIncl,
+        source_table: "credit_notes",
+        source_id: header?.id || null,
+        source_item_id: line?.id || null,
+        source_document_no: header?.credit_note_no || "",
+        notes: "Credit note reusable return to original batch",
+        metadata: {
+          source: "credit_note_return",
+          sourceInvoiceItemId,
+          allocationId: allocation?.id || null,
+          returnCondition: "REUSABLE"
+        },
+        created_by: authGetUser()?.id || null
+      });
+      if (movementError) {
+        throw new Error(normalizeSupabaseError(movementError, "Failed to record stock return movement"));
+      }
+
+      batchQtyById.set(batchId, nextBatchQty);
+      returnedQtyBySourceBatch.set(returnedKey, alreadyReturnedQty + putBackQty);
+      remainingQty -= putBackQty;
+    }
+
+    if (remainingQty > 1e-6) {
+      throw new Error(
+        `Could not map full reusable return quantity (${qty}) back to original batches for invoice item ${sourceInvoiceItemId}.`
+      );
     }
   }
 }
@@ -358,7 +446,9 @@ function updateStock(lines) {
   if (!items.length || !Array.isArray(lines)) return;
   const byId = lines.reduce((acc, line) => {
     if (!line.itemId) return acc;
-    const qty = Number(line.qty || 0);
+    const returnCondition = String(line?.returnCondition || "").trim().toUpperCase();
+    if (returnCondition !== "REUSABLE") return acc;
+    const qty = Number(line.qty ?? line.quantity ?? 0);
     if (!qty) return acc;
     acc[line.itemId] = (acc[line.itemId] || 0) + qty;
     return acc;
@@ -406,8 +496,19 @@ export async function creditNotesSyncFromRemote() {
       country: metadata?.country || "",
       totals: {
         tax: parseNumber(row?.tax_total),
-        grandTotal: parseNumber(row?.grand_total)
+        grandTotal: parseNumber(row?.grand_total),
+        total: parseNumber(row?.grand_total),
+        maxRefundTotal: parseNumber(metadata?.maxRefundTotal ?? row?.grand_total),
+        refundMode:
+          metadata?.refundMode === "PARTIAL" || metadata?.refundMode === "NONE"
+            ? metadata.refundMode
+            : "FULL"
       },
+      refundMode:
+        metadata?.refundMode === "PARTIAL" || metadata?.refundMode === "NONE"
+          ? metadata.refundMode
+          : "FULL",
+      partialRefundAmount: parseNumber(metadata?.partialRefundAmount),
       lines: Array.isArray(metadata?.lines) ? metadata.lines : [],
       created_at: row?.created_at || new Date().toISOString()
     };
@@ -478,6 +579,10 @@ export async function creditNotesSaveRemote(note) {
       country: note?.country || "",
       customerName: note?.customerName || note?.partyName || "",
       referenceInvoiceNo: note?.linkedInvoiceNo || note?.referenceInvoiceNo || "",
+      refundMode:
+        note?.refundMode === "PARTIAL" || note?.refundMode === "NONE" ? note.refundMode : "FULL",
+      partialRefundAmount: parseNumber(note?.partialRefundAmount),
+      maxRefundTotal: parseNumber(totals?.maxRefundTotal ?? totals?.total ?? totals?.grandTotal),
       lines: Array.isArray(note?.lines) ? note.lines : []
     },
     created_by: actorUserId
@@ -512,7 +617,7 @@ export async function creditNotesSaveRemote(note) {
       qty: parseNumber(line?.qty ?? line?.quantity),
       unit_price: parseNumber(line?.rate ?? line?.unitPrice),
       tax_rate: parseNumber(line?.taxRate ?? line?.tax),
-      line_total: parseNumber(line?.creditAmount ?? line?.amountAfterTax ?? line?.amount)
+      line_total: parseNumber(line?.amountAfterTax ?? line?.creditAmount ?? line?.amount)
     }));
     let insertResult = await supabase
       .from("credit_note_items")
@@ -531,11 +636,12 @@ export async function creditNotesSaveRemote(note) {
     insertedLineRows = Array.isArray(insertResult.data) ? insertResult.data : [];
   }
 
-  if (status === "applied" && note?.returnToStock) {
+  if (status === "applied") {
     await applyCreditNoteReturnToStock({
       organizationId,
       header,
-      noteLines: insertedLineRows
+      noteLines: insertedLineRows,
+      note
     });
   }
 
@@ -547,7 +653,9 @@ export function creditNotesCreate(note) {
   const next = { ...note, id, created_at: new Date().toISOString() };
   setAll([next, ...getAll()]);
 
-  if (note.returnToStock) updateStock(note.lines || []);
+  if (String(note?.status || "").trim().toLowerCase() === "applied") {
+    updateStock(note.lines || []);
+  }
 
   void creditNotesSaveRemote(next);
 

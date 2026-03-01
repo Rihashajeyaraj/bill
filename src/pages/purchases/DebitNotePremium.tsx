@@ -130,6 +130,9 @@ export default function DebitNotePremium() {
   );
   const allowed = !country || access.allowedCountries.includes(country);
   const prefillBillId = searchParams.get("billId") || "";
+  const prefillItemId = searchParams.get("itemId") || "";
+  const prefillQty = parseNumber(searchParams.get("qty") || 0);
+  const prefillReason = searchParams.get("reason") || "";
 
   const appliedCount = useMemo(() => notes.filter((note) => note.status === "Applied").length, [notes]);
   const pendingCount = useMemo(() => notes.filter((note) => note.status !== "Applied").length, [notes]);
@@ -183,6 +186,22 @@ export default function DebitNotePremium() {
     setActiveNote(null);
     setForm((prev) => {
       const base = prev || defaultForm(country, company);
+      const invoiceLines = draftLinesFromInvoice(bill).map((line) => ({
+        ...line,
+        debitValueType: "Percentage",
+        debitValue: 0
+      }));
+      let filteredLines = invoiceLines;
+      if (prefillItemId) {
+        const matched = invoiceLines.filter((line) => String(line?.itemId || "") === String(prefillItemId));
+        filteredLines = matched.length ? matched : invoiceLines;
+      }
+      if (prefillQty > 0 && filteredLines.length === 1) {
+        filteredLines = filteredLines.map((line) => ({
+          ...line,
+          quantity: Math.min(Math.max(0, parseNumber(line.sourcePurchaseQty)), prefillQty)
+        }));
+      }
       return {
         ...base,
         debitType: "Full Debit",
@@ -193,13 +212,10 @@ export default function DebitNotePremium() {
         linkedPurchaseInvoiceId: bill.id,
         supplierId: bill.supplierId,
         supplierInput: bill.supplierName,
+        reason: prefillReason || base.reason,
         placeOfSupply: bill.placeOfSupply || base.placeOfSupply,
         taxRate: bill.lines[0]?.taxRate || base.taxRate,
-        lines: draftLinesFromInvoice(bill).map((line) => ({
-          ...line,
-          debitValueType: "Percentage",
-          debitValue: 0
-        }))
+        lines: filteredLines
       };
     });
     setDirty(false);
@@ -209,8 +225,12 @@ export default function DebitNotePremium() {
 
     const next = new URLSearchParams(searchParams);
     next.delete("billId");
+    next.delete("itemId");
+    next.delete("qty");
+    next.delete("reason");
+    next.delete("batchId");
     setSearchParams(next, { replace: true });
-  }, [country, prefillBillId, invoices, company, searchParams, setSearchParams]);
+  }, [country, prefillBillId, prefillItemId, prefillQty, prefillReason, invoices, company, searchParams, setSearchParams]);
 
   const filteredNotes = useMemo(
     () =>

@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { BarChart3, Clock3, Eye, FileSpreadsheet, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Tabs from "../components/Tabs";
 import Badge from "../components/Badge";
 import Modal from "../components/Modal";
 import ItemFormModal from "../modules/items/ItemFormModal";
+import { listCreditNotes } from "../modules/creditNote/store";
 import { useOrganization } from "../context/OrganizationContext";
 import {
   computeItemStock,
@@ -20,9 +22,13 @@ import {
   upsertItemRemote
 } from "../modules/items/store";
 import { formatMoney, normalizeText, taxContext } from "../modules/items/utils";
+import { listItemReturnActions, saveItemReturnAction } from "../services/itemReturns.service";
+import { fetchPurchaseBillByBatchId } from "../services/inventory.service";
+import { purchasesList } from "../services/purchases.service";
 import { useToast } from "../context/ToastContext";
 
 export default function Items() {
+  const navigate = useNavigate();
   const toast = useToast();
   const { country = "India", currency = "" } = useOrganization();
 
@@ -51,6 +57,14 @@ export default function Items() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
+
+  function normalizeBillKey(value) {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/[^a-z0-9/_-]/g, "");
+  }
 
   const items = useMemo(() => listItems(), [refreshKey]);
   const taxCfg = useMemo(() => taxContext(country, tab), [country, tab]);
@@ -83,6 +97,125 @@ export default function Items() {
       lowStock
     };
   }, [items, tab]);
+
+  const returnActionsByRef = useMemo(() => {
+    const map = new Map();
+    listItemReturnActions().forEach((entry) => {
+      const key = String(entry?.returnRef || "").trim();
+      if (!key) return;
+      map.set(key, entry);
+    });
+    return map;
+  }, [refreshKey]);
+
+  const purchaseByBillNo = useMemo(() => {
+    const map = new Map();
+    (Array.isArray(purchasesList()) ? purchasesList() : []).forEach((purchase) => {
+      const billNoRaw = String(purchase?.billNumber || purchase?.invoiceNo || "").trim();
+      const keys = [billNoRaw, normalizeBillKey(billNoRaw)];
+      keys.forEach((key) => {
+        if (!key || map.has(key)) return;
+        map.set(key, purchase);
+      });
+    });
+    return map;
+  }, [refreshKey]);
+
+  const nonReusableReturns = useMemo(() => {
+    const rows = [];
+    const notes = listCreditNotes();
+    (Array.isArray(notes) ? notes : []).forEach((note) => {
+      const status = String(note?.status || "").trim().toLowerCase();
+      if (status !== "applied") return;
+      (Array.isArray(note?.lines) ? note.lines : []).forEach((line, index) => {
+        const returnCondition = String(line?.returnCondition || "").trim().toUpperCase();
+        if (returnCondition !== "NOT_REUSABLE") return;
+        const returnedQty = Math.max(0, Number(line?.quantity ?? line?.qty ?? 0) || 0);
+        if (!returnedQty) return;
+        const baseRef = `${note?.id || "note"}::${line?.sourceInvoiceItemId || line?.id || index}`;
+        const lineAllocations = Array.isArray(line?.returnAllocations) ? line.returnAllocations : [];
+        if (!lineAllocations.length) {
+          const action = returnActionsByRef.get(baseRef) || null;
+          rows.push({
+            returnRef: baseRef,
+            noteId: note?.id || "",
+            creditNoteNo: note?.creditNoteNo || "",
+            returnDate: note?.creditNoteDate || note?.creditDate || "",
+            itemId: line?.itemId || "",
+            itemName: line?.itemName || line?.description || "Item",
+            originalBillNo: note?.linkedInvoiceNo || note?.referenceInvoiceNo || "",
+            sourceBatchId: "",
+            sourceBatchDocumentNo: "",
+            purchaseBillId: "",
+            purchaseBillNo: "",
+            supplierId: "",
+            purchaseRate: Math.max(0, Number(line?.purchaseRate || 0) || 0),
+            sellingRate: Math.max(0, Number(line?.rate || 0) || 0),
+            returnedQty,
+            refundMode: note?.refundMode || "FULL",
+            refundAmount: Math.max(0, Number(note?.totals?.total || 0) || 0),
+            action
+          });
+          return;
+        }
+
+        let remainingQty = returnedQty;
+        lineAllocations.forEach((allocation, allocIndex) => {
+          if (remainingQty <= 1e-6) return;
+          const allocQty = Math.max(0, Number(allocation?.allocatedQty ?? allocation?.allocated_qty ?? 0) || 0);
+          if (allocQty <= 0) return;
+          const usedQty = Math.min(remainingQty, allocQty);
+          if (usedQty <= 0) return;
+          remainingQty -= usedQty;
+
+          const batchDocumentNo = String(
+            allocation?.batchDocumentNo || allocation?.batch_document_no || ""
+          ).trim();
+          const purchase =
+            purchaseByBillNo.get(batchDocumentNo) ||
+            purchaseByBillNo.get(batchDocumentNo.toLowerCase()) ||
+            purchaseByBillNo.get(normalizeBillKey(batchDocumentNo)) ||
+            null;
+          const returnRef = `${baseRef}::${allocation?.batchId || allocation?.batch_id || allocIndex}`;
+          const action = returnActionsByRef.get(returnRef) || null;
+
+          rows.push({
+            returnRef,
+            noteId: note?.id || "",
+            creditNoteNo: note?.creditNoteNo || "",
+            returnDate: note?.creditNoteDate || note?.creditDate || "",
+            itemId: line?.itemId || "",
+            itemName: line?.itemName || line?.description || "Item",
+            originalBillNo: note?.linkedInvoiceNo || note?.referenceInvoiceNo || "",
+            sourceBatchId: String(allocation?.batchId || allocation?.batch_id || ""),
+            sourceBatchDocumentNo: batchDocumentNo,
+            purchaseBillId: String(purchase?.id || ""),
+            purchaseBillNo: String(purchase?.billNumber || purchase?.invoiceNo || batchDocumentNo || ""),
+            supplierId: String(purchase?.partyId || ""),
+            purchaseRate: Math.max(
+              0,
+              Number(
+                allocation?.unitCostExclTax ??
+                  allocation?.unit_cost_excl_tax ??
+                  line?.purchaseRate ??
+                  0
+              ) || 0
+            ),
+            sellingRate: Math.max(0, Number(line?.rate || 0) || 0),
+            returnedQty: usedQty,
+            refundMode: note?.refundMode || "FULL",
+            refundAmount: Math.max(0, Number(note?.totals?.total || 0) || 0),
+            action
+          });
+        });
+      });
+    });
+    return rows.sort((a, b) => {
+      const aDate = String(a.returnDate || "");
+      const bDate = String(b.returnDate || "");
+      return aDate < bDate ? 1 : -1;
+    });
+  }, [purchaseByBillNo, refreshKey, returnActionsByRef]);
 
   useEffect(() => {
     let mounted = true;
@@ -234,6 +367,98 @@ export default function Items() {
     }
   }
 
+  function applyReturnAction(returnRow, action, extra = {}) {
+    try {
+      saveItemReturnAction({
+        returnRef: returnRow.returnRef,
+        action,
+        supplierId: returnRow.supplierId || "",
+        ...extra
+      });
+      setRefreshKey((prev) => prev + 1);
+      toast.success("Return action updated", `${returnRow.itemName} marked as ${action.replaceAll("_", " ").toLowerCase()}.`);
+    } catch (error) {
+      toast.error("Failed to update return action", error?.message || "Could not save return action.");
+    }
+  }
+
+  async function handleReturnToSupplier(returnRow) {
+    let purchaseBillId = String(returnRow?.purchaseBillId || "").trim();
+    let purchaseBillNo = String(returnRow?.purchaseBillNo || "").trim();
+
+    if (!purchaseBillId && returnRow?.sourceBatchDocumentNo) {
+      const purchase =
+        purchaseByBillNo.get(returnRow.sourceBatchDocumentNo) ||
+        purchaseByBillNo.get(String(returnRow.sourceBatchDocumentNo).toLowerCase()) ||
+        purchaseByBillNo.get(normalizeBillKey(returnRow.sourceBatchDocumentNo)) ||
+        null;
+      if (purchase?.id) {
+        purchaseBillId = String(purchase.id);
+        purchaseBillNo = String(purchase.billNumber || purchase.invoiceNo || purchaseBillNo);
+      }
+    }
+
+    if (!purchaseBillId && returnRow?.sourceBatchId) {
+      try {
+        const resolved = await fetchPurchaseBillByBatchId(returnRow.sourceBatchId);
+        if (resolved?.purchaseBillId) {
+          purchaseBillId = String(resolved.purchaseBillId);
+          purchaseBillNo = String(resolved.purchaseBillNo || purchaseBillNo);
+        }
+      } catch {
+        // Fallback error handled below with explicit message.
+      }
+    }
+
+    if (!purchaseBillId) {
+      toast.error(
+        "Purchase bill not found",
+        "No linked purchase bill was resolved from this return batch yet."
+      );
+      return;
+    }
+
+    applyReturnAction(
+      { ...returnRow, purchaseBillId, purchaseBillNo },
+      "RETURN_TO_SUPPLIER",
+      {
+        notes: "Opened Debit Note from non-reusable returns panel."
+      }
+    );
+    const params = new URLSearchParams();
+    params.set("billId", purchaseBillId);
+    if (returnRow.itemId) params.set("itemId", returnRow.itemId);
+    if (returnRow.returnedQty > 0) params.set("qty", String(returnRow.returnedQty));
+    params.set("reason", "Customer return to supplier");
+    if (returnRow.sourceBatchId) params.set("batchId", returnRow.sourceBatchId);
+    navigate(`/app/purchase/debit-note?${params.toString()}`);
+  }
+
+  function handleResellAction(returnRow) {
+    const customerName = window.prompt("Resell to customer (name)", "");
+    if (customerName === null) return;
+    const trimmedCustomer = String(customerName || "").trim();
+    if (!trimmedCustomer) {
+      toast.error("Customer name required", "Enter customer name for resale.");
+      return;
+    }
+    const defaultPrice = returnRow.sellingRate > 0 ? returnRow.sellingRate : 0;
+    const priceInput = window.prompt(
+      `Resell price (must be <= original selling rate ${defaultPrice})`,
+      String(defaultPrice)
+    );
+    if (priceInput === null) return;
+    const resellPrice = Math.max(0, Number(priceInput) || 0);
+    if (resellPrice > defaultPrice + 1e-6) {
+      toast.error("Invalid resale price", "Resale price must be same or lower than original selling rate.");
+      return;
+    }
+    applyReturnAction(returnRow, "RESELL", {
+      resellCustomerName: trimmedCustomer,
+      resellPrice
+    });
+  }
+
   return (
     <div className="mx-auto max-w-[1360px] space-y-4 pb-24">
       <PageHeader
@@ -273,6 +498,99 @@ export default function Items() {
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
           <p className="text-xs font-semibold text-slate-500">Low Stock Alerts</p>
           <p className="mt-2 text-2xl font-bold text-rose-600">{summary.lowStock}</p>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
+        <div className="border-b border-slate-100 px-4 py-4">
+          <p className="text-sm font-semibold text-slate-900">Returns (Non-Reusable)</p>
+          <p className="text-xs text-slate-500">
+            Customer-returned items that are not reusable. Manage supplier return, resale, or loss.
+          </p>
+        </div>
+        <div className="relative overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-4 py-3 font-semibold text-slate-700">Item</th>
+                <th className="px-4 py-3 font-semibold text-slate-700">Original Bill</th>
+                <th className="px-4 py-3 font-semibold text-slate-700">Batch / Purchase Bill</th>
+                <th className="px-4 py-3 font-semibold text-slate-700 text-right">Purchase Rate</th>
+                <th className="px-4 py-3 font-semibold text-slate-700 text-right">Selling Rate</th>
+                <th className="px-4 py-3 font-semibold text-slate-700 text-right">Returned Qty</th>
+                <th className="px-4 py-3 font-semibold text-slate-700">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {nonReusableReturns.length ? (
+                nonReusableReturns.map((entry) => (
+                  <tr key={entry.returnRef} className="border-t border-slate-100">
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-slate-900">{entry.itemName}</p>
+                      <p className="text-xs text-slate-500">
+                        Return {entry.creditNoteNo || "-"} | {entry.returnDate || "-"}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">{entry.originalBillNo || "-"}</td>
+                    <td className="px-4 py-3 text-xs text-slate-700">
+                      <p>Batch: {entry.sourceBatchId || "-"}</p>
+                      <p>Purchase Bill: {entry.purchaseBillNo || "-"}</p>
+                      <p>ID: {entry.purchaseBillId || "-"}</p>
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {formatMoney(entry.purchaseRate, currency)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {formatMoney(entry.sellingRate, currency)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">{entry.returnedQty}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleReturnToSupplier(entry)}
+                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Return to Supplier
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleResellAction(entry)}
+                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Resell
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyReturnAction(entry, "LOSS", {
+                              notes: "Marked as inventory loss from Items returns panel."
+                            })
+                          }
+                          className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                        >
+                          Mark as Loss
+                        </button>
+                        <span className="text-[11px] font-semibold text-slate-500">
+                          {entry.action?.action
+                            ? entry.action.action === "RESELL"
+                              ? `Resold (${entry.action.resellCustomerName || "-"})`
+                              : entry.action.action.replaceAll("_", " ")
+                            : "Pending"}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={7} className="px-4 py-6 text-center text-xs text-slate-500">
+                    No non-reusable customer returns found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 

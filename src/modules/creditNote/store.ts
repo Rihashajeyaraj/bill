@@ -54,6 +54,8 @@ export interface CreditLineDraft {
   sourceInvoiceAmountAfterTax?: number;
   priceTaxMode?: "WITH_TAX" | "WITHOUT_TAX";
   taxInclusive?: boolean;
+  returnCondition?: "REUSABLE" | "NOT_REUSABLE" | "";
+  purchaseRate?: number;
   itemName: string;
   quantity: number;
   rate: number;
@@ -76,6 +78,8 @@ export interface CreditTotals {
   subtotal: number;
   taxTotal: number;
   total: number;
+  maxRefundTotal: number;
+  refundMode: "FULL" | "PARTIAL" | "NONE";
   cgst: number;
   sgst: number;
   igst: number;
@@ -104,6 +108,8 @@ export interface CreditNoteRecord {
   internalNotes?: string;
   customerNotes?: string;
   returnToStock?: boolean;
+  refundMode?: "FULL" | "PARTIAL" | "NONE";
+  partialRefundAmount?: number;
   discountPercent?: number;
   partialAmountCap?: number;
   priceAdjustmentAmount?: number;
@@ -140,6 +146,8 @@ export interface SaveCreditNotePayload {
   internalNotes?: string;
   customerNotes?: string;
   returnToStock?: boolean;
+  refundMode?: "FULL" | "PARTIAL" | "NONE";
+  partialRefundAmount?: number;
   discountPercent?: number;
   partialAmountCap?: number;
   priceAdjustmentAmount?: number;
@@ -314,6 +322,11 @@ function computeLines(
       sourceInvoiceAmountAfterTax: Math.max(0, toNumber(line.sourceInvoiceAmountAfterTax)),
       priceTaxMode,
       taxInclusive,
+      returnCondition:
+        line.returnCondition === "REUSABLE" || line.returnCondition === "NOT_REUSABLE"
+          ? line.returnCondition
+          : "",
+      purchaseRate: Math.max(0, toNumber(line.purchaseRate)),
       quantity,
       rate,
       taxRate,
@@ -333,28 +346,54 @@ function computeTotals(
   country: CountryCode,
   lines: CreditLineComputed[],
   invoiceBalanceBefore: number,
-  partialAmountCap?: number
+  partialAmountCap?: number,
+  refundModeInput: "FULL" | "PARTIAL" | "NONE" = "FULL",
+  partialRefundAmount?: number
 ): CreditTotals {
-  const subtotal = lines.reduce((sum, line) => sum + line.baseAmount, 0);
-  const taxTotal = lines.reduce((sum, line) => sum + line.taxAmount, 0);
-  let total = lines.reduce((sum, line) => sum + line.creditAmount, 0);
+  const returnSubtotal = lines.reduce((sum, line) => sum + line.baseAmount, 0);
+  const returnTaxTotal = lines.reduce((sum, line) => sum + line.taxAmount, 0);
+  const refundMode =
+    refundModeInput === "PARTIAL" || refundModeInput === "NONE" ? refundModeInput : "FULL";
+  let maxRefundTotal = lines.reduce((sum, line) => sum + line.creditAmount, 0);
   const cap = toNumber(partialAmountCap);
 
   if (cap > 0) {
-    total = Math.min(total, cap);
+    maxRefundTotal = Math.min(maxRefundTotal, cap);
   }
+
+  let total = maxRefundTotal;
+  if (refundMode === "NONE") {
+    total = 0;
+  } else if (refundMode === "PARTIAL") {
+    total = Math.min(maxRefundTotal, Math.max(0, toNumber(partialRefundAmount)));
+  }
+  const refundRatio = maxRefundTotal > 0 ? total / maxRefundTotal : 0;
+  const subtotal = returnSubtotal * refundRatio;
+  const taxTotal = returnTaxTotal * refundRatio;
 
   const cfg = COUNTRY_CONFIG[country];
   const pendingAmount = Math.max(0, toNumber(invoiceBalanceBefore) - total);
 
   if (cfg.taxModel !== "GST" || country !== "IN") {
-    return { subtotal, taxTotal, total, cgst: 0, sgst: 0, igst: 0, pendingAmount };
+    return {
+      subtotal,
+      taxTotal,
+      total,
+      maxRefundTotal,
+      refundMode,
+      cgst: 0,
+      sgst: 0,
+      igst: 0,
+      pendingAmount
+    };
   }
 
   return {
     subtotal,
     taxTotal,
     total,
+    maxRefundTotal,
+    refundMode,
     cgst: taxTotal / 2,
     sgst: taxTotal / 2,
     igst: 0,
@@ -462,6 +501,8 @@ function validatePayloadLineLimits(
 function buildItemQtyMap(lines: Array<Partial<CreditLineComputed>> | null | undefined) {
   const map = new Map<string, number>();
   (Array.isArray(lines) ? lines : []).forEach((line) => {
+    const returnCondition = String((line as any)?.returnCondition || "").trim().toUpperCase();
+    if (returnCondition !== "REUSABLE") return;
     const itemId = String((line as any)?.itemId || "").trim();
     if (!itemId) return;
     const qty = Math.max(0, toNumber((line as any)?.quantity));
@@ -472,8 +513,8 @@ function buildItemQtyMap(lines: Array<Partial<CreditLineComputed>> | null | unde
 }
 
 function applyLocalReturnStockDelta(previousNote: CreditNoteRecord | undefined, nextNote: CreditNoteRecord) {
-  const prevEligible = !!previousNote && previousNote.status === "Applied" && !!previousNote.returnToStock;
-  const nextEligible = nextNote.status === "Applied" && !!nextNote.returnToStock;
+  const prevEligible = !!previousNote && previousNote.status === "Applied";
+  const nextEligible = nextNote.status === "Applied";
   const previousQtyByItem = prevEligible ? buildItemQtyMap(previousNote?.lines) : new Map<string, number>();
   const nextQtyByItem = nextEligible ? buildItemQtyMap(nextNote?.lines) : new Map<string, number>();
   const allItemIds = new Set<string>([
@@ -720,8 +761,13 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
     payload.country,
     lines,
     authoritativeBalanceBefore,
-    payload.partialAmountCap
+    payload.partialAmountCap,
+    payload.refundMode || "FULL",
+    payload.partialRefundAmount
   );
+  if (totals.refundMode === "PARTIAL" && totals.total <= 0) {
+    throw new Error("Partial refund amount must be greater than zero.");
+  }
   if (totals.total > authoritativeBalanceBefore + 0.01) {
     throw new Error(
       `Credit amount ${totals.total.toFixed(2)} exceeds invoice balance ${authoritativeBalanceBefore.toFixed(2)}.`
@@ -751,7 +797,11 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
     salesTaxState: payload.salesTaxState || "",
     internalNotes: payload.internalNotes || "",
     customerNotes: payload.customerNotes || "",
-    returnToStock: !!payload.returnToStock,
+    returnToStock: lines.some(
+      (line) => String((line as any)?.returnCondition || "").trim().toUpperCase() === "REUSABLE"
+    ),
+    refundMode: totals.refundMode,
+    partialRefundAmount: totals.refundMode === "PARTIAL" ? toNumber(payload.partialRefundAmount) : 0,
     discountPercent: toNumber(payload.discountPercent),
     partialAmountCap: toNumber(payload.partialAmountCap),
     priceAdjustmentAmount: toNumber(payload.priceAdjustmentAmount),

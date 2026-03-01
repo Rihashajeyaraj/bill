@@ -52,6 +52,28 @@ function roleAccess(role: string, user: any) {
   };
 }
 
+function computePurchaseRateFromAllocations(allocations: any[], qty: number) {
+  const requestedQty = Math.max(0, parseNumber(qty));
+  if (!requestedQty || !Array.isArray(allocations) || !allocations.length) return 0;
+
+  let remaining = requestedQty;
+  let usedQty = 0;
+  let totalCost = 0;
+  for (const row of allocations) {
+    const allocatedQty = Math.max(0, parseNumber(row?.allocated_qty));
+    const unitCost = Math.max(0, parseNumber(row?.unit_cost_excl_tax));
+    if (allocatedQty <= 0) continue;
+    const pickQty = Math.min(remaining, allocatedQty);
+    if (pickQty <= 0) continue;
+    usedQty += pickQty;
+    totalCost += pickQty * unitCost;
+    remaining -= pickQty;
+    if (remaining <= 1e-6) break;
+  }
+  if (!usedQty) return 0;
+  return Number((totalCost / usedQty).toFixed(6));
+}
+
 export default function CreditNotePremium() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
@@ -116,7 +138,24 @@ export default function CreditNotePremium() {
   const summary = useMemo(() => (country ? summarizeCreditNotes(country) : null), [country, refreshKey]);
   const selectedInvoice: CreditInvoice | null = useMemo(() => invoices.find((invoice) => invoice.id === form?.linkedInvoiceId) || null, [invoices, form?.linkedInvoiceId]);
   const selectedCustomer = useMemo(() => customers.find((customer) => customer.id === form?.customerId) || null, [customers, form?.customerId]);
-  const totals = useMemo(() => (form && country ? computeEditorTotals(form, country, selectedInvoice?.remainingBalance || 0, companyState) : { detailed: [], subtotal: 0, taxTotal: 0, total: 0, remaining: 0, cgst: 0, sgst: 0, igst: 0 }), [form, country, selectedInvoice?.remainingBalance, companyState]);
+  const totals = useMemo(
+    () =>
+      form && country
+        ? computeEditorTotals(form, country, selectedInvoice?.remainingBalance || 0, companyState)
+        : {
+            detailed: [],
+            subtotal: 0,
+            taxTotal: 0,
+            total: 0,
+            maxRefundTotal: 0,
+            refundMode: "FULL" as const,
+            remaining: 0,
+            cgst: 0,
+            sgst: 0,
+            igst: 0
+          },
+    [form, country, selectedInvoice?.remainingBalance, companyState]
+  );
   const allowed = !country || access.allowedCountries.includes(country);
   const prefillInvoiceId = searchParams.get("invoiceId") || "";
 
@@ -175,6 +214,8 @@ export default function CreditNotePremium() {
         discountPercent: "",
         partialAmountCap: "",
         priceAdjustmentAmount: "",
+        refundMode: "FULL",
+        partialRefundAmount: "",
         linkedInvoiceId: invoice.id,
         customerId: invoice.customerId,
         customerInput: invoice.customerName,
@@ -271,7 +312,9 @@ export default function CreditNotePremium() {
       creditType: "Full Credit",
       discountPercent: "",
       partialAmountCap: "",
-      priceAdjustmentAmount: ""
+      priceAdjustmentAmount: "",
+      refundMode: "FULL",
+      partialRefundAmount: ""
     });
     setActiveNote(null);
     setFieldErrors({});
@@ -294,6 +337,11 @@ export default function CreditNotePremium() {
       discountPercent: "",
       partialAmountCap: "",
       priceAdjustmentAmount: "",
+      refundMode:
+        hydrated.refundMode === "PARTIAL" || hydrated.refundMode === "NONE"
+          ? hydrated.refundMode
+          : "FULL",
+      partialRefundAmount: hydrated.partialRefundAmount || "",
       lines: (hydrated.lines || []).map((line) => ({
         ...line,
         creditType: "Percentage",
@@ -347,6 +395,8 @@ export default function CreditNotePremium() {
             discountPercent: "",
             partialAmountCap: "",
             priceAdjustmentAmount: "",
+            refundMode: "FULL",
+            partialRefundAmount: "",
             linkedInvoiceId: invoiceId,
             customerId: invoice.customerId,
             customerInput: invoice.customerName,
@@ -387,7 +437,28 @@ export default function CreditNotePremium() {
   function addLine() {
     if (!form) return;
     if (form.linkedInvoiceId) return;
-    setForm((prev) => (prev ? { ...prev, lines: [...prev.lines, { id: `line_${Date.now().toString(16)}`, itemName: "", quantity: 1, rate: 0, taxRate: prev.taxRate, hsnSac: "", creditType: "Percentage", creditValue: 0 }] } : prev));
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            lines: [
+              ...prev.lines,
+              {
+                id: `line_${Date.now().toString(16)}`,
+                itemName: "",
+                quantity: 1,
+                rate: 0,
+                taxRate: prev.taxRate,
+                hsnSac: "",
+                returnCondition: "",
+                purchaseRate: 0,
+                creditType: "Percentage",
+                creditValue: 0
+              }
+            ]
+          }
+        : prev
+    );
     setDirty(true);
   }
 
@@ -404,7 +475,27 @@ export default function CreditNotePremium() {
     if (!form.linkedInvoiceId) errors.linkedInvoiceId = "Linked invoice is mandatory.";
     if ((totals as any).detailed?.some((line: any) => line.validationMessage)) errors.lines = "Credit cannot exceed amount after tax.";
     if (!form.lines.length) errors.lines = "At least one line item is required.";
-    if (totals.total <= 0) errors.totals = "Total credit must be greater than zero.";
+    if (
+      form.lines.some(
+        (line) =>
+          parseNumber(line.quantity) > 0 &&
+          line.returnCondition !== "REUSABLE" &&
+          line.returnCondition !== "NOT_REUSABLE"
+      )
+    ) {
+      errors.lines = "Select reusable or not reusable for each returned line.";
+    }
+    if (form.refundMode === "FULL" && totals.maxRefundTotal <= 0) {
+      errors.totals = "Return value must be greater than zero.";
+    }
+    if (form.refundMode === "PARTIAL") {
+      const partial = parseNumber(form.partialRefundAmount);
+      if (partial <= 0) {
+        errors.totals = "Enter a partial refund amount greater than zero.";
+      } else if (partial > totals.maxRefundTotal + 0.01) {
+        errors.totals = "Partial refund cannot exceed return value.";
+      }
+    }
     if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Owner or Accounter can apply credits.";
     const currentStatus = activeNote?.status || "Draft";
     if (targetStatus === "Applied" && currentStatus !== "Issued" && currentStatus !== "Applied") {
@@ -444,16 +535,36 @@ export default function CreditNotePremium() {
         salesTaxState: form.salesTaxState,
         internalNotes: form.internalNotes,
         customerNotes: form.customerNotes,
-        returnToStock: form.returnToStock,
+        refundMode: form.refundMode,
+        partialRefundAmount: parseNumber(form.partialRefundAmount),
         discountPercent: 0,
         partialAmountCap: 0,
         priceAdjustmentAmount: 0,
         invoiceBalanceBefore: selectedInvoice?.remainingBalance || 0,
-        lines: (form.lines || []).map((line) => ({
-          ...line,
-          creditType: "Percentage",
-          creditValue: 0
-        })),
+        lines: (form.lines || []).map((line) => {
+          const allocationKey = String(line.sourceInvoiceItemId || line.id || "").trim();
+          const allocations = allocationByInvoiceItemId[allocationKey] || [];
+          const purchaseRate = computePurchaseRateFromAllocations(allocations, line.quantity);
+          return {
+            ...line,
+            purchaseRate: purchaseRate || parseNumber((line as any).purchaseRate),
+            returnAllocations: (Array.isArray(allocations) ? allocations : []).map((row: any) => ({
+              allocationId: row?.allocation_id || "",
+              batchId: row?.batch_id || "",
+              batchDate: row?.batch_date || "",
+              batchDocumentNo: row?.batch_document_no || "",
+              allocatedQty: parseNumber(row?.allocated_qty),
+              unitCostExclTax: parseNumber(row?.unit_cost_excl_tax),
+              unitCostInclTax: parseNumber(row?.unit_cost_incl_tax)
+            })),
+            returnCondition:
+              line.returnCondition === "REUSABLE" || line.returnCondition === "NOT_REUSABLE"
+                ? line.returnCondition
+                : "",
+            creditType: "Percentage",
+            creditValue: 0
+          };
+        }),
         actor: actorName
       });
 
@@ -472,6 +583,8 @@ export default function CreditNotePremium() {
               discountPercent: "",
               partialAmountCap: "",
               priceAdjustmentAmount: "",
+              refundMode: saved.refundMode || "FULL",
+              partialRefundAmount: saved.refundMode === "PARTIAL" ? String(saved.partialRefundAmount || "") : "",
               lines: (prev.lines || []).map((line) => ({
                 ...line,
                 creditType: "Percentage",

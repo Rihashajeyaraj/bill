@@ -42,6 +42,8 @@ export function defaultForm(country: CountryCode, company: any): CreditNoteFormS
     internalNotes: "",
     customerNotes: "",
     returnToStock: false,
+    refundMode: "FULL",
+    partialRefundAmount: "",
     discountPercent: "",
     partialAmountCap: "",
     priceAdjustmentAmount: "",
@@ -63,6 +65,8 @@ export function draftLinesFromInvoice(invoice: CreditInvoice): CreditLineDraft[]
     taxInclusive:
       line.taxInclusive === true ||
       String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX",
+    returnCondition: "",
+    purchaseRate: 0,
     itemName: line.itemName,
     quantity: Math.max(0, line.quantity),
     rate: Math.max(0, line.rate),
@@ -91,6 +95,9 @@ export function formFromNote(note: CreditNoteRecord): CreditNoteFormState {
     internalNotes: note.internalNotes || "",
     customerNotes: note.customerNotes || "",
     returnToStock: !!note.returnToStock,
+    refundMode:
+      note.refundMode === "PARTIAL" || note.refundMode === "NONE" ? note.refundMode : "FULL",
+    partialRefundAmount: String(note.partialRefundAmount || ""),
     discountPercent: String(note.discountPercent || ""),
     partialAmountCap: String(note.partialAmountCap || ""),
     priceAdjustmentAmount: String(note.priceAdjustmentAmount || ""),
@@ -109,6 +116,12 @@ export function formFromNote(note: CreditNoteRecord): CreditNoteFormState {
       taxInclusive:
         (line as any).taxInclusive === true ||
         String((line as any).priceTaxMode || "").toUpperCase() === "WITH_TAX",
+      returnCondition:
+        (line as any).returnCondition === "REUSABLE" ||
+        (line as any).returnCondition === "NOT_REUSABLE"
+          ? (line as any).returnCondition
+          : "",
+      purchaseRate: parseNumber((line as any).purchaseRate),
       itemName: line.itemName,
       quantity: line.quantity,
       rate: line.rate,
@@ -172,6 +185,11 @@ export function computeEditorTotals(
     return {
       ...line,
       id: line.id || `line_${index + 1}`,
+      returnCondition:
+        line.returnCondition === "REUSABLE" || line.returnCondition === "NOT_REUSABLE"
+          ? line.returnCondition
+          : "",
+      purchaseRate: Math.max(0, parseNumber(line.purchaseRate)),
       quantity,
       rate,
       taxRate,
@@ -188,19 +206,32 @@ export function computeEditorTotals(
     };
   });
 
-  const subtotal = detailed.reduce((sum, line) => sum + line.baseAmount, 0);
-  const taxTotal = detailed.reduce((sum, line) => sum + line.taxAmount, 0);
-  let total = detailed.reduce((sum, line) => sum + line.creditAmount, 0);
+  const returnSubtotal = detailed.reduce((sum, line) => sum + line.baseAmount, 0);
+  const returnTaxTotal = detailed.reduce((sum, line) => sum + line.taxAmount, 0);
+  let maxRefundTotal = detailed.reduce((sum, line) => sum + line.creditAmount, 0);
   const partialCap = parseNumber(form.partialAmountCap);
   if (form.creditType === "Partial Credit" && partialCap > 0) {
-    total = Math.min(total, partialCap);
+    maxRefundTotal = Math.min(maxRefundTotal, partialCap);
   }
+  const refundMode =
+    form.refundMode === "PARTIAL" || form.refundMode === "NONE" ? form.refundMode : "FULL";
+  let total = maxRefundTotal;
+  if (refundMode === "NONE") {
+    total = 0;
+  } else if (refundMode === "PARTIAL") {
+    total = Math.min(maxRefundTotal, Math.max(0, parseNumber(form.partialRefundAmount)));
+  }
+  const refundRatio = maxRefundTotal > 0 ? total / maxRefundTotal : 0;
+  const subtotal = returnSubtotal * refundRatio;
+  const taxTotal = returnTaxTotal * refundRatio;
 
   return {
     detailed,
     subtotal,
     taxTotal,
     total,
+    maxRefundTotal,
+    refundMode,
     remaining: Math.max(0, invoiceBalance - total),
     cgst: country === "IN" && sameState ? taxTotal / 2 : 0,
     sgst: country === "IN" && sameState ? taxTotal / 2 : 0,

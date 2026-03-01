@@ -20,6 +20,8 @@ export interface CreditNoteFormState {
   internalNotes: string;
   customerNotes: string;
   returnToStock: boolean;
+  refundMode: "FULL" | "PARTIAL" | "NONE";
+  partialRefundAmount: string;
   discountPercent: string;
   partialAmountCap: string;
   priceAdjustmentAmount: string;

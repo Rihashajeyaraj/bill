@@ -18,6 +18,8 @@ interface CreditNoteEditorProps {
     subtotal: number;
     taxTotal: number;
     total: number;
+    maxRefundTotal: number;
+    refundMode: "FULL" | "PARTIAL" | "NONE";
     remaining: number;
     cgst: number;
     sgst: number;
@@ -63,6 +65,33 @@ function customerAddressSummary(customer: CustomerOption | null) {
     .map((value) => String(value || "").trim())
     .filter(Boolean)
     .join(", ");
+}
+
+function computePurchaseRate(
+  allocations: Array<any> | undefined,
+  returnQty: number
+) {
+  const rows = Array.isArray(allocations) ? allocations : [];
+  const qtyRequested = Math.max(0, parseNumber(returnQty));
+  if (!rows.length || qtyRequested <= 0) return 0;
+
+  let remaining = qtyRequested;
+  let usedQty = 0;
+  let costTotal = 0;
+  for (const row of rows) {
+    const allocatedQty = Math.max(0, parseNumber(row?.allocated_qty));
+    const unitCost = Math.max(0, parseNumber(row?.unit_cost_excl_tax));
+    if (allocatedQty <= 0) continue;
+    const pickQty = Math.min(remaining, allocatedQty);
+    if (pickQty <= 0) continue;
+    usedQty += pickQty;
+    costTotal += pickQty * unitCost;
+    remaining -= pickQty;
+    if (remaining <= 1e-6) break;
+  }
+
+  if (usedQty <= 0) return 0;
+  return Number((costTotal / usedQty).toFixed(6));
 }
 
 export default function CreditNoteEditor({
@@ -157,6 +186,8 @@ export default function CreditNoteEditor({
   function resetInvoiceSelection() {
     onUpdateForm("linkedInvoiceId", "");
     onUpdateForm("lines", []);
+    onUpdateForm("refundMode", "FULL");
+    onUpdateForm("partialRefundAmount", "");
     onUpdateForm("partialAmountCap", "");
     onUpdateForm("discountPercent", "");
     onUpdateForm("priceAdjustmentAmount", "");
@@ -406,32 +437,71 @@ export default function CreditNoteEditor({
 
           <div className="rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft">
             <p className="text-sm font-semibold text-slate-900">Section 2 - How Credit Is Calculated</p>
-            <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2">
+            <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-3">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-700">
                 <p className="font-semibold text-slate-900">Mode: Auto (Full Credit)</p>
-                <p className="mt-1">Credit amount is automatic from `Return Qty x Invoice Rate + Tax`.</p>
+                <p className="mt-1">Return value is auto-calculated from `Return Qty x Invoice Rate + Tax`.</p>
                 <p className="mt-1">Item, rate and tax come from the linked invoice and stay locked.</p>
               </div>
-              <label className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700">
-                <span className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={!!form.returnToStock}
-                    onChange={(event) => onUpdateForm("returnToStock", event.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300"
-                  />
-                  Return items to stock
-                </span>
-                <p className="mt-2 font-normal text-slate-500">
-                  Enable this only when customer physically returns goods.
+              <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700">
+                <p className="text-slate-900">Refund Option</p>
+                <div className="mt-2 space-y-2 font-normal text-slate-600">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="refundMode"
+                      checked={form.refundMode === "FULL"}
+                      onChange={() => onUpdateForm("refundMode", "FULL")}
+                      className="h-4 w-4 border-slate-300"
+                    />
+                    Full refund
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="refundMode"
+                      checked={form.refundMode === "PARTIAL"}
+                      onChange={() => onUpdateForm("refundMode", "PARTIAL")}
+                      className="h-4 w-4 border-slate-300"
+                    />
+                    Partial refund
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="refundMode"
+                      checked={form.refundMode === "NONE"}
+                      onChange={() => onUpdateForm("refundMode", "NONE")}
+                      className="h-4 w-4 border-slate-300"
+                    />
+                    No refund
+                  </label>
+                </div>
+                {form.refundMode === "PARTIAL" ? (
+                  <label className="mt-2 block text-xs font-semibold text-slate-600">
+                    Partial Refund Amount
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={form.partialRefundAmount}
+                      onChange={(event) => onUpdateForm("partialRefundAmount", event.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    />
+                    <p className="mt-1 text-[11px] font-normal text-slate-500">
+                      Max {formatMoney(totals.maxRefundTotal, country)}
+                    </p>
+                  </label>
+                ) : null}
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600">
+                <p className="font-semibold text-slate-900">Stock Rule</p>
+                <p className="mt-2">
+                  Stock return is controlled per line using <span className="font-semibold">Reusable?</span>.
                 </p>
-                <p className="mt-1 font-normal text-slate-500">
-                  If unchecked: financial credit only, stock not changed.
-                </p>
-                <p className="mt-1 font-normal text-slate-500">
-                  If goods must be sent back to supplier, use Purchase Debit Note after this credit note.
-                </p>
-              </label>
+                <p className="mt-1">Reusable lines go back to original sold batch automatically.</p>
+                <p className="mt-1">Not reusable lines never increase stock and are managed in Items Returns.</p>
+              </div>
             </div>
           </div>
 
@@ -462,7 +532,7 @@ export default function CreditNoteEditor({
                       Remove
                     </button>
                   </div>
-                  <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-6">
                     <label className="text-xs font-semibold text-slate-600 xl:col-span-2">
                       Item Name
                       <input
@@ -482,8 +552,13 @@ export default function CreditNoteEditor({
                           const sourceQty = Math.max(0, parseNumber((line as any).sourceInvoiceQty));
                           const nextQtyRaw = Math.max(0, parseNumber(event.target.value));
                           const nextQty = sourceQty > 0 ? Math.min(nextQtyRaw, sourceQty) : nextQtyRaw;
+                          const allocationKey = String(
+                            (line as any).sourceInvoiceItemId || line.id || ""
+                          );
+                          const lineAllocations = allocationByInvoiceItemId[allocationKey] || [];
                           onUpdateLine(line.id, {
                             quantity: nextQty,
+                            purchaseRate: computePurchaseRate(lineAllocations, nextQty),
                             creditType: "Percentage",
                             creditValue: 0
                           });
@@ -513,6 +588,45 @@ export default function CreditNoteEditor({
                         type="number"
                         min={0}
                         value={line.taxRate}
+                        readOnly
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700"
+                      />
+                    </label>
+                    <label className="text-xs font-semibold text-slate-600">
+                      Reusable?
+                      <select
+                        value={
+                          (line as any).returnCondition === "REUSABLE" ||
+                          (line as any).returnCondition === "NOT_REUSABLE"
+                            ? (line as any).returnCondition
+                            : ""
+                        }
+                        onChange={(event) =>
+                          onUpdateLine(line.id, {
+                            returnCondition:
+                              event.target.value === "REUSABLE" || event.target.value === "NOT_REUSABLE"
+                                ? event.target.value
+                                : ""
+                          })
+                        }
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="">Select</option>
+                        <option value="REUSABLE">Reusable</option>
+                        <option value="NOT_REUSABLE">Not Reusable</option>
+                      </select>
+                    </label>
+                    <label className="text-xs font-semibold text-slate-600">
+                      Purchase Rate
+                      <input
+                        type="number"
+                        min={0}
+                        value={(() => {
+                          const sourceKey = String((line as any).sourceInvoiceItemId || line.id || "");
+                          const allocations = allocationByInvoiceItemId[sourceKey] || [];
+                          const computed = computePurchaseRate(allocations, parseNumber(line.quantity));
+                          return parseNumber((line as any).purchaseRate) || computed;
+                        })()}
                         readOnly
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700"
                       />
@@ -616,7 +730,21 @@ export default function CreditNoteEditor({
           )}
           <div className="border-t border-slate-200 pt-3">
             <div className="flex items-center justify-between">
-              <span className="font-semibold text-slate-900">Total Credit</span>
+              <span className="font-semibold text-slate-900">Return Value</span>
+              <span className="font-semibold text-slate-900">{formatMoney(totals.maxRefundTotal, country)}</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-slate-600">Refund Mode</span>
+              <span className="font-semibold text-slate-900">
+                {totals.refundMode === "FULL"
+                  ? "Full Refund"
+                  : totals.refundMode === "PARTIAL"
+                    ? "Partial Refund"
+                    : "No Refund"}
+              </span>
+            </div>
+            <div className="mt-2 flex items-center justify-between">
+              <span className="font-semibold text-slate-900">Refund Amount</span>
               <span className="font-semibold text-slate-900">{formatMoney(totals.total, country)}</span>
             </div>
             <div className="mt-2 flex items-center justify-between">
