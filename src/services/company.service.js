@@ -53,6 +53,53 @@ const DEFAULT_ROLE_PERMISSIONS = {
   Accounter: { create: true, edit: true, delete: false, reports: true, approvals: true },
   Staff: { create: true, edit: false, delete: false, reports: false, approvals: false }
 };
+const DOCUMENT_PREFIX_BASE = {
+  invoice: "INV",
+  purchase: "BILL",
+  creditNote: "CN",
+  debitNote: "DN",
+  paymentIn: "PR",
+  paymentOut: "PO"
+};
+
+function normalizeDocumentType(value) {
+  const key = String(value || "").trim();
+  return Object.prototype.hasOwnProperty.call(DOCUMENT_PREFIX_BASE, key) ? key : "";
+}
+
+function buildDefaultDocumentPrefix(documentType, countryName = "India") {
+  const key = normalizeDocumentType(documentType);
+  const base = DOCUMENT_PREFIX_BASE[key] || "DOC";
+  const code = getCountryCode(countryName);
+  return `${base}-${code}-0001`;
+}
+
+function formatDocumentNumber(prefix, counter) {
+  const safePrefix = String(prefix || "").trim();
+  const safeCounter = Math.max(1, Number(counter) || 1);
+  const trailingDigits = safePrefix.match(/^(.*?)(\d+)$/);
+  if (trailingDigits) {
+    const head = trailingDigits[1];
+    const width = trailingDigits[2].length;
+    return `${head}${String(safeCounter).padStart(width, "0")}`;
+  }
+  return `${safePrefix}${safeCounter}`;
+}
+
+function nextNumberingStateForYear(numbering = {}) {
+  const next = numbering && typeof numbering === "object" ? { ...numbering } : {};
+  if (!next.resetYearly) return next;
+  const nowYear = new Date().getFullYear();
+  const lastResetYear = Number(next.lastResetYear || 0);
+  if (lastResetYear === nowYear) return next;
+  const counters = next.counters && typeof next.counters === "object" ? { ...next.counters } : {};
+  Object.keys(DOCUMENT_PREFIX_BASE).forEach((key) => {
+    counters[key] = 1;
+  });
+  next.counters = counters;
+  next.lastResetYear = nowYear;
+  return next;
+}
 
 function resolveSupabaseClient(accessToken = "") {
   if (!isSupabaseConfigured || !supabase) return null;
@@ -472,6 +519,56 @@ export function companyUpdateProfile(partial) {
   const savedProfile = persistProfileLocal(next, { completedStatus: companyIsCompleted() });
   emitOrganizationUpdated(next);
   return savedProfile;
+}
+
+export function companyPeekDocumentNumber(documentType) {
+  const key = normalizeDocumentType(documentType);
+  if (!key) return "";
+  const profile = companyGetProfile() || {};
+  const settings = profile?.settings && typeof profile.settings === "object" ? profile.settings : {};
+  const numberingBase = settings?.numbering && typeof settings.numbering === "object" ? settings.numbering : {};
+  const numbering = nextNumberingStateForYear(numberingBase);
+  const prefixes = numbering?.prefixes && typeof numbering.prefixes === "object" ? numbering.prefixes : {};
+  const counters = numbering?.counters && typeof numbering.counters === "object" ? numbering.counters : {};
+  const prefix = String(prefixes[key] || buildDefaultDocumentPrefix(key, profile?.country || "India"));
+  const counter = toPositiveCounter(counters[key], 1);
+  return formatDocumentNumber(prefix, counter);
+}
+
+export function companyConsumeDocumentNumber(documentType) {
+  const key = normalizeDocumentType(documentType);
+  if (!key) return "";
+  const profile = companyGetProfile() || {};
+  const settings = profile?.settings && typeof profile.settings === "object" ? profile.settings : {};
+  const numberingBase = settings?.numbering && typeof settings.numbering === "object" ? settings.numbering : {};
+  const numbering = nextNumberingStateForYear(numberingBase);
+  const prefixes = numbering?.prefixes && typeof numbering.prefixes === "object" ? numbering.prefixes : {};
+  const counters = numbering?.counters && typeof numbering.counters === "object" ? numbering.counters : {};
+  const prefix = String(prefixes[key] || buildDefaultDocumentPrefix(key, profile?.country || "India"));
+  const currentCounter = toPositiveCounter(counters[key], 1);
+  const currentNumber = formatDocumentNumber(prefix, currentCounter);
+
+  if (numbering.autoIncrement === false) {
+    return currentNumber;
+  }
+
+  const nextCounters = {
+    ...counters,
+    [key]: currentCounter + 1
+  };
+  const nextSettings = {
+    ...settings,
+    numbering: {
+      ...numbering,
+      prefixes: {
+        ...prefixes,
+        [key]: prefix
+      },
+      counters: nextCounters
+    }
+  };
+  companyUpdateProfile({ settings: nextSettings });
+  return currentNumber;
 }
 
 async function fetchOrganizationBundle(organizationId) {

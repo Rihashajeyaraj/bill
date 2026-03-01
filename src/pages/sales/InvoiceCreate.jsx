@@ -25,6 +25,10 @@ import { computeItemStock, listItems, syncItemsFromRemote } from "../../modules/
 import { outstandingByCustomer, savePaymentIn } from "../../modules/paymentIn/store";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE } from "../../modules/paymentIn/countryConfig";
 import { getInvoiceTemplateConfig } from "../../lib/templateStore";
+import {
+  companyConsumeDocumentNumber,
+  companyPeekDocumentNumber
+} from "../../services/company.service";
 
 function money(n) {
   const v = Number(n || 0);
@@ -209,7 +213,9 @@ export default function InvoiceCreate() {
   const initialInvoiceDate = new Date().toISOString().slice(0, 10);
   const [invoiceDate, setInvoiceDate] = useState(initialInvoiceDate);
   const [invoiceDateInput, setInvoiceDateInput] = useState(() => formatIsoToDayMonthYear(initialInvoiceDate));
-  const [invoiceNo, setInvoiceNo] = useState(() => generateInvoiceNumber());
+  const [invoiceNo, setInvoiceNo] = useState(
+    () => companyPeekDocumentNumber("invoice") || generateInvoiceNumber()
+  );
   const [partyId, setPartyId] = useState("");
   const party = useMemo(() => customers.find((c) => c.id === partyId) || null, [customers, partyId]);
   const [customerSearchPhone, setCustomerSearchPhone] = useState("");
@@ -1352,7 +1358,8 @@ export default function InvoiceCreate() {
       setBankName("");
       setBankAccount("");
       setPaymentNotes("");
-      setInvoiceNo(generateInvoiceNumber());
+      companyConsumeDocumentNumber("invoice");
+      setInvoiceNo(companyPeekDocumentNumber("invoice") || generateInvoiceNumber());
       await invoicesSyncFromRemote();
 
       if (!silent) {

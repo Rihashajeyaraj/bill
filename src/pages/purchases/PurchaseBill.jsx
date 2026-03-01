@@ -17,6 +17,10 @@ import { calculateTaxes } from "../../services/tax";
 import { authGetUser } from "../../services/auth.service";
 import { syncPaymentOutRemote } from "../../services/payments.service";
 import { outstandingBySupplier, savePaymentOut } from "../../modules/paymentOut/store";
+import {
+  companyConsumeDocumentNumber,
+  companyPeekDocumentNumber
+} from "../../services/company.service";
 
 const TAX_RATES = [0, 5, 12, 18, 28];
 const DEFAULT_UNITS = ["pcs", "kg", "box", "ltr", "set", "hr"];
@@ -150,7 +154,9 @@ export default function PurchaseBill() {
   const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
   const [supplierSearchError, setSupplierSearchError] = useState("");
   const [supplierAddress, setSupplierAddress] = useState("");
-  const [autoBillNumber, setAutoBillNumber] = useState(() => generateBillNumber());
+  const [autoBillNumber, setAutoBillNumber] = useState(
+    () => companyPeekDocumentNumber("purchase") || generateBillNumber()
+  );
   const [billDate, setBillDate] = useState(new Date().toISOString().slice(0, 10));
   const [lines, setLines] = useState(() => [createLine()]);
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
@@ -882,7 +888,8 @@ export default function PurchaseBill() {
       } else {
         toast.success("Purchase bill saved", `Bill ${effectiveBillNumber} saved successfully.`);
       }
-      setAutoBillNumber(generateBillNumber());
+      companyConsumeDocumentNumber("purchase");
+      setAutoBillNumber(companyPeekDocumentNumber("purchase") || generateBillNumber());
       setMarkAsPaid(false);
       setPaymentType("Cash");
       setPaymentDate(billDate);

@@ -44,6 +44,7 @@ export default function CurrencyMultiInput({
   }
 
   function removeCurrency(code) {
+    if (disabled) return;
     onChange?.(currencies.filter((currency) => currency !== code));
   }
 
@@ -89,6 +90,7 @@ export default function CurrencyMultiInput({
               <button
                 type="button"
                 onClick={() => removeCurrency(code)}
+                disabled={disabled}
                 className="text-slate-500 hover:text-slate-700"
                 aria-label={`Remove ${code}`}
               >

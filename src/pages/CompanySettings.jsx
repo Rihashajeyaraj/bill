@@ -137,6 +137,16 @@ const TIMEZONES = [
 const DATE_FORMATS = ["DD MMM YYYY", "DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"];
 const NUMBER_FORMATS = ["1,23,456.78", "123,456.78", "123.456,78"];
 const MAX_CURRENCIES = 3;
+const API_PROVIDER_OPTIONS = ["OpenAI", "Azure OpenAI", "Anthropic", "Google", "Custom"];
+const API_MODEL_OPTIONS = [
+  "gpt-4o",
+  "gpt-4.1",
+  "gpt-4.1-mini",
+  "gpt-4o-mini",
+  "claude-3-5-sonnet",
+  "gemini-1.5-pro"
+];
+const API_STATUS_OPTIONS = ["Sandbox", "Production"];
 const COUNTRY_META = {
   India: { currency: "INR", code: "IN", gstDefault: 18 },
   "Sri Lanka": { currency: "LKR", code: "LK", vatDefault: 18 },
@@ -204,6 +214,16 @@ function getCountryMeta(country) {
 
 function normalizeCurrencyCode(value) {
   return typeof value === "string" ? value.trim().toUpperCase() : "";
+}
+
+function normalizeApiProvider(value) {
+  const next = String(value || "").trim();
+  return API_PROVIDER_OPTIONS.includes(next) ? next : "OpenAI";
+}
+
+function normalizeApiStatus(value) {
+  const next = String(value || "").trim();
+  return API_STATUS_OPTIONS.includes(next) ? next : "Sandbox";
 }
 
 function uniqueCurrencyList(values) {
@@ -396,16 +416,35 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
     members
   };
 
+  const apiStored =
+    stored.preferences?.api && typeof stored.preferences.api === "object"
+      ? stored.preferences.api
+      : {};
   const preferences = {
     auditTrail: stored.preferences?.auditTrail ?? true,
     approvals: stored.preferences?.approvals ?? true,
     stockTracking: stored.preferences?.stockTracking ?? true,
-    multiCurrency: stored.preferences?.multiCurrency ?? false
+    multiCurrency: stored.preferences?.multiCurrency ?? false,
+    api: {
+      enabled: apiStored.enabled ?? false,
+      provider: normalizeApiProvider(apiStored.provider),
+      model: String(apiStored.model || "gpt-4o-mini").trim(),
+      status: normalizeApiStatus(apiStored.status),
+      baseUrl: String(apiStored.baseUrl || "").trim()
+    }
+  };
+  const effectiveCurrencies = preferences.multiCurrency
+    ? localization.currencies
+    : localization.currencies.slice(0, 1);
+  const normalizedLocalization = {
+    ...localization,
+    currency: effectiveCurrencies[0] || localization.currency,
+    currencies: effectiveCurrencies
   };
 
   return {
     profile: profileSection,
-    localization,
+    localization: normalizedLocalization,
     tax,
     numbering,
     theme,
@@ -416,12 +455,16 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
 }
 
 function mapSettingsToProfile(settings) {
-  const normalizedCurrencies = normalizeLocalizationCurrencies({
+  const normalizedAllCurrencies = normalizeLocalizationCurrencies({
     country: settings.localization.defaultCountry,
     primary: settings.localization.currency,
     currencies: settings.localization.currencies
   });
-  const primaryCurrency = normalizedCurrencies[0] || "";
+  const normalizedCurrencies =
+    settings?.preferences?.multiCurrency === true
+      ? normalizedAllCurrencies
+      : normalizedAllCurrencies.slice(0, 1);
+  const primaryCurrency = normalizedCurrencies[0] || normalizedAllCurrencies[0] || "";
   const normalizedThemeMode = String(settings.theme?.mode || "Light").trim().toLowerCase() === "dark" ? "dark" : "light";
   const normalizedThemeConfig = {
     themePresetId: settings.theme?.themePresetId || "focus-mint",
@@ -441,6 +484,18 @@ function mapSettingsToProfile(settings) {
       ...settings.localization,
       currency: primaryCurrency,
       currencies: normalizedCurrencies
+    },
+    preferences: {
+      ...(settings.preferences || {}),
+      multiCurrency: settings?.preferences?.multiCurrency === true,
+      api: {
+        ...(settings?.preferences?.api || {}),
+        enabled: settings?.preferences?.api?.enabled === true,
+        provider: normalizeApiProvider(settings?.preferences?.api?.provider),
+        model: String(settings?.preferences?.api?.model || "gpt-4o-mini").trim(),
+        status: normalizeApiStatus(settings?.preferences?.api?.status),
+        baseUrl: String(settings?.preferences?.api?.baseUrl || "").trim()
+      }
     },
     invoice_template_selected: true
   };
@@ -643,6 +698,16 @@ function validateLocalization(localization) {
   if (!localization?.currency?.trim()) errors.currency = "Currency is required.";
   if (!localization?.dateFormat?.trim()) errors.dateFormat = "Date format is required.";
   if (!localization?.numberFormat?.trim()) errors.numberFormat = "Number format is required.";
+  const normalizedPrimary = normalizeCurrencyCode(localization?.currency);
+  const currencies = uniqueCurrencyList(
+    Array.isArray(localization?.currencies) ? localization.currencies : []
+  );
+  if (currencies.length > MAX_CURRENCIES) {
+    errors.currencies = `You can store up to ${MAX_CURRENCIES} currencies.`;
+  }
+  if (normalizedPrimary && currencies.length && !currencies.includes(normalizedPrimary)) {
+    errors.currencies = "Primary currency must be part of the currency list.";
+  }
   return errors;
 }
 
@@ -669,18 +734,42 @@ function validateTax(settings) {
 function validateNumbering(numbering) {
   const errors = {};
   const prefixes = numbering?.prefixes || {};
-  ["invoice", "purchase", "creditNote", "debitNote"].forEach((key) => {
+  DOCUMENT_TYPES.forEach((doc) => {
+    const key = doc.key;
     if (!String(prefixes[key] || "").trim()) {
       errors[`prefix_${key}`] = "Prefix is required.";
     }
   });
   const counters = numbering?.counters || {};
-  ["invoice", "purchase", "creditNote", "debitNote"].forEach((key) => {
+  DOCUMENT_TYPES.forEach((doc) => {
+    const key = doc.key;
     const value = Number(counters[key] || 0);
     if (!Number.isFinite(value) || value < 1) {
       errors[`counter_${key}`] = "Counter must be 1 or greater.";
     }
   });
+  return errors;
+}
+
+function validatePreferences(settings) {
+  const errors = {};
+  const preferences = settings?.preferences || {};
+  const api = preferences?.api || {};
+  const baseUrl = String(api?.baseUrl || "").trim();
+
+  if (api?.enabled) {
+    if (!String(api?.provider || "").trim()) {
+      errors.apiProvider = "API provider is required when API integration is enabled.";
+    }
+    if (!String(api?.model || "").trim()) {
+      errors.apiModel = "API model is required when API integration is enabled.";
+    }
+  }
+
+  if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
+    errors.apiBaseUrl = "API base URL must start with http:// or https://";
+  }
+
   return errors;
 }
 
@@ -948,12 +1037,6 @@ export default function CompanySettings() {
   }, [hasUnsaved]);
 
   useEffect(() => {
-    setLoadingSection(true);
-    const timer = window.setTimeout(() => setLoadingSection(false), 220);
-    return () => window.clearTimeout(timer);
-  }, [activeSection]);
-
-  useEffect(() => {
     if (!canGenerateRegisterCodes || activeSection !== "users") return;
     let active = true;
     (async () => {
@@ -995,6 +1078,9 @@ export default function CompanySettings() {
         primary: nextMeta.currency,
         currencies: prev.localization.currencies
       });
+      const effectiveCurrencies = prev.preferences?.multiCurrency
+        ? nextCurrencies
+        : nextCurrencies.slice(0, 1);
       const nextTax = { ...prev.tax };
       if (nextCountry === "India") {
         nextTax.enableGst = true;
@@ -1021,8 +1107,8 @@ export default function CompanySettings() {
         localization: {
           ...prev.localization,
           defaultCountry: nextCountry,
-          currency: nextCurrencies[0] || normalizeCurrencyCode(nextMeta.currency),
-          currencies: nextCurrencies
+          currency: effectiveCurrencies[0] || normalizeCurrencyCode(nextMeta.currency),
+          currencies: effectiveCurrencies
         },
         tax: nextTax,
         numbering: {
@@ -1039,13 +1125,13 @@ export default function CompanySettings() {
 
   function applyAdditionalCurrencies(nextExtraCurrencies) {
     setSettings((prev) => {
+      const allowExtraCurrencies = !!prev.preferences?.multiCurrency;
       const nextCurrencies = normalizeLocalizationCurrencies({
         country: prev.localization.defaultCountry,
         primary: prev.localization.currency,
-        currencies: [
-          prev.localization.currency,
-          ...(Array.isArray(nextExtraCurrencies) ? nextExtraCurrencies : [])
-        ]
+        currencies: allowExtraCurrencies
+          ? [prev.localization.currency, ...(Array.isArray(nextExtraCurrencies) ? nextExtraCurrencies : [])]
+          : [prev.localization.currency]
       });
       return {
         ...prev,
@@ -1065,6 +1151,7 @@ export default function CompanySettings() {
     if (section === "numbering") return validateNumbering(nextSettings.numbering);
     if (section === "theme") return validateTheme(nextSettings.theme);
     if (section === "invoiceTemplate") return validateInvoiceTemplate(nextSettings.invoiceTemplate);
+    if (section === "preferences") return validatePreferences(nextSettings);
     if (section === "users" && !canManageUsers) {
       return { users: "Only Owner can change roles and permissions." };
     }
@@ -1322,12 +1409,17 @@ export default function CompanySettings() {
 
   function handleDanger(action) {
     if (action === "reset-numbering") {
-      if (!window.confirm("Reset all numbering prefixes?")) return;
+      if (!window.confirm("Reset all numbering prefixes and counters?")) return;
+      const resetCounters = DOCUMENT_TYPES.reduce((acc, doc) => {
+        acc[doc.key] = 1;
+        return acc;
+      }, {});
       setSettings((prev) => ({
         ...prev,
         numbering: {
           ...prev.numbering,
           prefixes: buildDefaultPrefixes(prev.localization.defaultCountry),
+          counters: resetCounters,
           countryOverrides: []
         }
       }));
@@ -1694,7 +1786,14 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Additional Currencies" hint={`Add up to ${MAX_CURRENCIES - 1}`}>
+                    <FormField
+                      label="Additional Currencies"
+                      hint={
+                        settings.preferences.multiCurrency
+                          ? `Add up to ${MAX_CURRENCIES - 1}`
+                          : "Enable multi-currency in Data & Preferences first"
+                      }
+                    >
                       <CurrencyMultiInput
                         value={(settings.localization.currencies || []).filter(
                           (currency) => currency !== settings.localization.currency
@@ -1703,7 +1802,11 @@ export default function CompanySettings() {
                         max={Math.max(MAX_CURRENCIES - 1, 0)}
                         placeholder="USD"
                         ringColor={UI.COLORS.ring}
+                        disabled={!settings.preferences.multiCurrency}
                       />
+                      {sectionErrors.currencies ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.currencies}</p>
+                      ) : null}
                     </FormField>
 
                     <FormField label="Timezone">
@@ -1980,7 +2083,9 @@ export default function CompanySettings() {
                       { key: "invoice", label: "Invoice Counter" },
                       { key: "purchase", label: "Purchase Counter" },
                       { key: "creditNote", label: "Credit Note Counter" },
-                      { key: "debitNote", label: "Debit Note Counter" }
+                      { key: "debitNote", label: "Debit Note Counter" },
+                      { key: "paymentIn", label: "Payment In Counter" },
+                      { key: "paymentOut", label: "Payment Out Counter" }
                     ].map((entry) => (
                       <FormField key={entry.key} label={entry.label}>
                         <input
@@ -2780,11 +2885,143 @@ export default function CompanySettings() {
                     />
                     <SwitchRow
                       label="Enable multi-currency"
-                      description="Future release - requires admin enablement."
+                      description="Allow additional currencies beyond your primary currency."
                       checked={settings.preferences.multiCurrency}
-                      onChange={(value) => updateSection("preferences", { multiCurrency: value })}
-                      disabled
+                      onChange={(value) =>
+                        setSettings((prev) => {
+                          const primary = normalizeCurrencyCode(prev.localization.currency);
+                          return {
+                            ...prev,
+                            localization: {
+                              ...prev.localization,
+                              currency: primary || prev.localization.currency,
+                              currencies: value
+                                ? normalizeLocalizationCurrencies({
+                                    country: prev.localization.defaultCountry,
+                                    primary: primary || prev.localization.currency,
+                                    currencies: prev.localization.currencies
+                                  })
+                                : [primary || prev.localization.currency].filter(Boolean)
+                            },
+                            preferences: {
+                              ...prev.preferences,
+                              multiCurrency: value
+                            }
+                          };
+                        })
+                      }
                     />
+                  </div>
+
+                  <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">API Configuration</p>
+                        <p className="text-xs text-slate-500">
+                          Select provider/model and keep status clear for production readiness.
+                        </p>
+                      </div>
+                      <Badge tone={settings.preferences.api?.enabled ? "success" : "neutral"}>
+                        {settings.preferences.api?.enabled ? "Enabled" : "Disabled"}
+                      </Badge>
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <SwitchRow
+                        label="Enable API Integration"
+                        description="Use configured external API provider."
+                        checked={!!settings.preferences.api?.enabled}
+                        onChange={(value) =>
+                          updateSection("preferences", {
+                            api: { ...(settings.preferences.api || {}), enabled: value }
+                          })
+                        }
+                      />
+                      <FormField label="Status">
+                        <select
+                          value={normalizeApiStatus(settings.preferences.api?.status)}
+                          onChange={(event) =>
+                            updateSection("preferences", {
+                              api: {
+                                ...(settings.preferences.api || {}),
+                                status: normalizeApiStatus(event.target.value)
+                              }
+                            })
+                          }
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                        >
+                          {API_STATUS_OPTIONS.map((status) => (
+                            <option key={status} value={status}>
+                              {status}
+                            </option>
+                          ))}
+                        </select>
+                      </FormField>
+                      <FormField label="Provider">
+                        <select
+                          value={normalizeApiProvider(settings.preferences.api?.provider)}
+                          onChange={(event) =>
+                            updateSection("preferences", {
+                              api: {
+                                ...(settings.preferences.api || {}),
+                                provider: normalizeApiProvider(event.target.value)
+                              }
+                            })
+                          }
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                        >
+                          {API_PROVIDER_OPTIONS.map((provider) => (
+                            <option key={provider} value={provider}>
+                              {provider}
+                            </option>
+                          ))}
+                        </select>
+                        {sectionErrors.apiProvider ? (
+                          <p className="mt-1 text-xs text-rose-600">{sectionErrors.apiProvider}</p>
+                        ) : null}
+                      </FormField>
+                      <FormField label="Model">
+                        <input
+                          list="api-model-options"
+                          value={settings.preferences.api?.model || ""}
+                          onChange={(event) =>
+                            updateSection("preferences", {
+                              api: {
+                                ...(settings.preferences.api || {}),
+                                model: event.target.value
+                              }
+                            })
+                          }
+                          className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                          placeholder="gpt-4o-mini"
+                        />
+                        <datalist id="api-model-options">
+                          {API_MODEL_OPTIONS.map((model) => (
+                            <option key={model} value={model} />
+                          ))}
+                        </datalist>
+                        {sectionErrors.apiModel ? (
+                          <p className="mt-1 text-xs text-rose-600">{sectionErrors.apiModel}</p>
+                        ) : null}
+                      </FormField>
+                      <FormField label="Base URL (optional)">
+                        <input
+                          value={settings.preferences.api?.baseUrl || ""}
+                          onChange={(event) =>
+                            updateSection("preferences", {
+                              api: {
+                                ...(settings.preferences.api || {}),
+                                baseUrl: event.target.value
+                              }
+                            })
+                          }
+                          className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                          placeholder="https://api.example.com/v1"
+                        />
+                        {sectionErrors.apiBaseUrl ? (
+                          <p className="mt-1 text-xs text-rose-600">{sectionErrors.apiBaseUrl}</p>
+                        ) : null}
+                      </FormField>
+                    </div>
                   </div>
 
                   <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4">
