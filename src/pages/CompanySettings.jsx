@@ -624,6 +624,14 @@ const PERMISSION_LIST = [
   { key: "reports", label: "View reports" },
   { key: "approvals", label: "Approvals" }
 ];
+const PERMISSION_DESCRIPTIONS = {
+  create: "Create new entries and documents.",
+  edit: "Edit existing entries and drafts.",
+  delete: "Delete existing records.",
+  reports: "Open and view reports and analytics.",
+  approvals: "Apply approval-only actions and postings."
+};
+const ROLE_MATRIX_ORDER = ["Owner", "Accounter", "Staff"];
 
 function refreshPrefixes(prevPrefixes, prevCountry, nextCountry) {
   const prevDefaults = buildDefaultPrefixes(prevCountry);
@@ -777,6 +785,7 @@ export default function CompanySettings() {
   const [loadingSection, setLoadingSection] = useState(false);
   const [sectionMessage, setSectionMessage] = useState({});
   const [errors, setErrors] = useState({});
+  const [usersTab, setUsersTab] = useState("permissions");
   const [invite, setInvite] = useState({ name: "", email: "", role: "Staff" });
   const [registerCodeRole, setRegisterCodeRole] = useState("Accounter");
   const [generatedCode, setGeneratedCode] = useState(null);
@@ -1415,6 +1424,12 @@ export default function CompanySettings() {
   const sectionDirty = dirtyMap[activeSection];
   const activeMessage = sectionMessage[activeSection];
   const sectionErrors = errors[activeSection] || {};
+  const roleColumns = useMemo(() => {
+    const roleKeys = Object.keys(settings?.users?.roles || {});
+    const ordered = ROLE_MATRIX_ORDER.filter((role) => roleKeys.includes(role));
+    const extra = roleKeys.filter((role) => !ROLE_MATRIX_ORDER.includes(role));
+    return [...ordered, ...extra];
+  }, [settings?.users?.roles]);
   const activeMessageIsError = /failed|error|denied|unable/i.test(String(activeMessage || ""));
   const saveBlocked = authLoading || !currentUser?.id || !!savingSection;
 
@@ -2674,210 +2689,323 @@ export default function CompanySettings() {
                     description="Define permissions and manage team access."
                   />
 
-                  <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-                    <div className="space-y-4">
-                      {Object.keys(settings.users.roles).map((role) => (
-                        <div key={role} className="rounded-2xl border border-slate-200 bg-white p-4">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900">{role}</p>
-                              <p className="text-xs text-slate-500">Configure access level.</p>
-                            </div>
-                            <Badge tone={role === "Owner" ? "success" : "neutral"}>{role}</Badge>
-                          </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                            {PERMISSION_LIST.map((permission) => (
-                              <label
-                                key={permission.key}
-                                className="flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 px-2 py-2"
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={settings.users.roles[role]?.[permission.key] || false}
-                                  disabled={!canManageUsers}
-                                  onChange={(event) =>
-                                    updatePermission(role, permission.key, event.target.checked)
-                                  }
-                                />
-                                {permission.label}
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                  <div className="mt-5 inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setUsersTab("permissions")}
+                      className={clsx(
+                        "rounded-lg px-4 py-2 text-xs font-semibold transition",
+                        usersTab === "permissions"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      )}
+                    >
+                      Permissions
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUsersTab("manage")}
+                      className={clsx(
+                        "rounded-lg px-4 py-2 text-xs font-semibold transition",
+                        usersTab === "manage"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      )}
+                    >
+                      Manage Users
+                    </button>
+                  </div>
 
-                    <div className="space-y-4">
-                      {canGenerateRegisterCodes ? (
+                  {usersTab === "permissions" ? (
+                    <div className="mt-4 space-y-3">
+                      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[760px] text-left text-sm">
+                            <thead className="bg-slate-50 text-slate-700">
+                              <tr>
+                                <th className="px-4 py-3 font-semibold">Permission</th>
+                                {roleColumns.map((role) => (
+                                  <th key={role} className="px-4 py-3 text-center font-semibold">
+                                    <span className="inline-flex items-center gap-2">
+                                      {role}
+                                      <Badge tone={role === "Owner" ? "success" : "neutral"}>{role}</Badge>
+                                    </span>
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {PERMISSION_LIST.map((permission) => (
+                                <tr key={permission.key} className="border-t border-slate-100">
+                                  <td className="px-4 py-3 align-top">
+                                    <p className="text-sm font-semibold text-slate-900">{permission.label}</p>
+                                    <p className="mt-0.5 text-xs text-slate-500">
+                                      {PERMISSION_DESCRIPTIONS[permission.key] || "Permission control."}
+                                    </p>
+                                  </td>
+                                  {roleColumns.map((role) => {
+                                    const enabled = !!settings.users.roles?.[role]?.[permission.key];
+                                    return (
+                                      <td key={`${permission.key}_${role}`} className="px-4 py-3 text-center">
+                                        <button
+                                          type="button"
+                                          disabled={!canManageUsers}
+                                          onClick={() => updatePermission(role, permission.key, !enabled)}
+                                          className={clsx(
+                                            "inline-flex min-w-[96px] items-center justify-center rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                                            enabled
+                                              ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                                              : "border-slate-300 bg-white text-slate-600",
+                                            !canManageUsers ? "cursor-not-allowed opacity-60" : "hover:bg-slate-50"
+                                          )}
+                                        >
+                                          {enabled ? "Allowed" : "Blocked"}
+                                        </button>
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      {!canManageUsers ? (
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                          You do not have permission to change role permissions.
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-4">
+                      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                         <div className="rounded-2xl border border-slate-200 bg-white p-4">
                           <p className="text-sm font-semibold text-slate-900">Generate Register Code</p>
                           <p className="mt-1 text-xs text-slate-500">
-                            Use this code for Accounter or Staff signup.
+                            Create signup codes for team roles.
                           </p>
-                          <div className="mt-3 space-y-2">
-                            <select
-                              value={registerCodeRole}
-                              onChange={(event) => setRegisterCodeRole(event.target.value)}
-                              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                            >
-                              <option value="Accounter">Accounter</option>
-                              <option value="Staff">Staff</option>
-                            </select>
-                            <button
-                              type="button"
-                              disabled={codeBusy}
-                              onClick={handleGenerateRegisterCode}
-                              className={clsx(
-                                "w-full rounded-full px-4 py-2 text-xs font-semibold text-white",
-                                codeBusy ? "bg-slate-400" : "bg-slate-900"
-                              )}
-                            >
-                              {codeBusy ? "Generating..." : "Generate Code"}
-                            </button>
-                          </div>
-
-                          {generatedCode?.code ? (
-                            <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
-                              <p className="text-xs text-emerald-700">Latest Code</p>
-                              <div className="mt-1 flex items-center justify-between gap-2">
-                                <p className="text-sm font-semibold tracking-[0.08em] text-emerald-900">
-                                  {generatedCode.code}
-                                </p>
-                                <button
-                                  type="button"
-                                  onClick={() => copyRegisterCode(generatedCode.code)}
-                                  className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700"
-                                >
-                                  <Copy className="h-3.5 w-3.5" />
-                                  Copy
-                                </button>
-                              </div>
-                            </div>
-                          ) : null}
-
-                          {codeMessage ? (
-                            <p className="mt-2 text-xs text-emerald-700">{codeMessage}</p>
-                          ) : null}
-                          {codeError ? <p className="mt-2 text-xs text-rose-600">{codeError}</p> : null}
-
-                          {activeCodes.length ? (
-                            <div className="mt-3 space-y-2">
-                              <p className="text-xs font-semibold text-slate-500">Active Codes</p>
-                              {activeCodes.map((codeEntry) => (
-                                <div
-                                  key={codeEntry.id}
-                                  className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2"
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <p className="text-xs font-semibold text-slate-800">{codeEntry.code}</p>
-                                    <Badge tone="neutral">{normalizeRoleLabel(codeEntry.target_role)}</Badge>
-                                  </div>
-                                  <p className="mt-1 text-[11px] text-slate-500">
-                                    Uses: {codeEntry.used_count}/{codeEntry.max_uses} | Expires:{" "}
-                                    {formatDateByPreference(codeEntry.expires_at)}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <p className="text-sm font-semibold text-slate-900">Invite User</p>
-                        {!canManageUsers ? (
-                          <p className="mt-1 text-xs text-slate-500">You do not have permission to invite team members.</p>
-                        ) : null}
-                        <div className="mt-3 space-y-2">
-                          <input
-                            value={invite.name}
-                            disabled={!canManageUsers}
-                            onChange={(event) => setInvite((prev) => ({ ...prev, name: event.target.value }))}
-                            placeholder="Full name"
-                            className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
-                          />
-                          <input
-                            value={invite.email}
-                            disabled={!canManageUsers}
-                            onChange={(event) => setInvite((prev) => ({ ...prev, email: event.target.value }))}
-                            placeholder="Email address"
-                            className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
-                          />
-                          <select
-                            value={invite.role}
-                            disabled={!canManageUsers}
-                            onChange={(event) => setInvite((prev) => ({ ...prev, role: event.target.value }))}
-                            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                          >
-                            {Object.keys(settings.users.roles).map((role) => (
-                              <option key={role} value={role}>
-                                {role}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            disabled={!canManageUsers}
-                            onClick={handleInvite}
-                            className={clsx(
-                              "w-full rounded-full px-4 py-2 text-xs font-semibold text-white",
-                              canManageUsers ? "bg-slate-900" : "bg-slate-400"
-                            )}
-                          >
-                            Send Invite
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <p className="text-sm font-semibold text-slate-900">Team Members</p>
-                        <div className="mt-3 space-y-3">
-                          {settings.users.members.map((member) => (
-                            <div key={member.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <p className="text-sm font-semibold text-slate-900">{member.name}</p>
-                                  <p className="text-xs text-slate-500">{member.email}</p>
-                                </div>
-                                <Badge tone={member.status === "Active" ? "success" : "neutral"}>
-                                  {member.status}
-                                </Badge>
-                              </div>
-                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {canGenerateRegisterCodes ? (
+                            <>
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
                                 <select
-                                  value={member.role}
-                                  disabled={!canManageUsers}
-                                  onChange={(event) => updateUser(member.id, { role: event.target.value })}
-                                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs"
+                                  value={registerCodeRole}
+                                  onChange={(event) => setRegisterCodeRole(event.target.value)}
+                                  className="min-w-[150px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                                 >
-                                  {Object.keys(settings.users.roles).map((role) => (
-                                    <option key={role} value={role}>
-                                      {role}
-                                    </option>
-                                  ))}
+                                  {roleColumns
+                                    .filter((role) => role !== "Owner")
+                                    .map((role) => (
+                                      <option key={role} value={role}>
+                                        {role}
+                                      </option>
+                                    ))}
                                 </select>
                                 <button
                                   type="button"
-                                  disabled={!canManageUsers}
-                                  onClick={() =>
-                                    updateUser(member.id, {
-                                      status: member.status === "Active" ? "Inactive" : "Active"
-                                    })
-                                  }
+                                  disabled={codeBusy}
+                                  onClick={handleGenerateRegisterCode}
                                   className={clsx(
-                                    "rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold",
-                                    canManageUsers ? "text-slate-600" : "cursor-not-allowed text-slate-400"
+                                    "rounded-full px-4 py-2 text-xs font-semibold text-white",
+                                    codeBusy ? "bg-slate-400" : "bg-slate-900 hover:bg-slate-800"
                                   )}
                                 >
-                                  {member.status === "Active" ? "Deactivate" : "Activate"}
+                                  {codeBusy ? "Generating..." : "Generate Code"}
                                 </button>
                               </div>
-                            </div>
-                          ))}
+
+                              {generatedCode?.code ? (
+                                <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+                                  <p className="text-xs text-emerald-700">Latest Code</p>
+                                  <div className="mt-1 flex items-center justify-between gap-2">
+                                    <p className="text-sm font-semibold tracking-[0.08em] text-emerald-900">
+                                      {generatedCode.code}
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={() => copyRegisterCode(generatedCode.code)}
+                                      className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700"
+                                    >
+                                      <Copy className="h-3.5 w-3.5" />
+                                      Copy
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              {codeMessage ? <p className="mt-2 text-xs text-emerald-700">{codeMessage}</p> : null}
+                              {codeError ? <p className="mt-2 text-xs text-rose-600">{codeError}</p> : null}
+                            </>
+                          ) : (
+                            <p className="mt-3 text-xs text-slate-500">
+                              You do not have permission to generate register codes.
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                          <p className="text-sm font-semibold text-slate-900">Invite User</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Capture user details and share register code.
+                          </p>
+                          {!canManageUsers ? (
+                            <p className="mt-2 text-xs text-slate-500">
+                              You do not have permission to invite team members.
+                            </p>
+                          ) : null}
+                          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <input
+                              value={invite.name}
+                              disabled={!canManageUsers}
+                              onChange={(event) => setInvite((prev) => ({ ...prev, name: event.target.value }))}
+                              placeholder="Full name"
+                              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                            />
+                            <input
+                              value={invite.email}
+                              disabled={!canManageUsers}
+                              onChange={(event) => setInvite((prev) => ({ ...prev, email: event.target.value }))}
+                              placeholder="Email address"
+                              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                            />
+                            <select
+                              value={invite.role}
+                              disabled={!canManageUsers}
+                              onChange={(event) => setInvite((prev) => ({ ...prev, role: event.target.value }))}
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                            >
+                              {roleColumns.map((role) => (
+                                <option key={role} value={role}>
+                                  {role}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              disabled={!canManageUsers}
+                              onClick={handleInvite}
+                              className={clsx(
+                                "rounded-full px-4 py-2 text-xs font-semibold text-white",
+                                canManageUsers ? "bg-slate-900 hover:bg-slate-800" : "bg-slate-400"
+                              )}
+                            >
+                              Send Invite
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {activeCodes.length ? (
+                        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                          <div className="border-b border-slate-100 px-4 py-3">
+                            <p className="text-sm font-semibold text-slate-900">Active Register Codes</p>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[680px] text-left text-sm">
+                              <thead className="bg-slate-50 text-slate-700">
+                                <tr>
+                                  <th className="px-4 py-3 font-semibold">Code</th>
+                                  <th className="px-4 py-3 font-semibold">Role</th>
+                                  <th className="px-4 py-3 font-semibold">Usage</th>
+                                  <th className="px-4 py-3 font-semibold">Expires</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {activeCodes.map((codeEntry) => (
+                                  <tr key={codeEntry.id} className="border-t border-slate-100">
+                                    <td className="px-4 py-3 font-semibold text-slate-900">{codeEntry.code}</td>
+                                    <td className="px-4 py-3">
+                                      <Badge tone="neutral">{normalizeRoleLabel(codeEntry.target_role)}</Badge>
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-700">
+                                      {codeEntry.used_count}/{codeEntry.max_uses}
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-700">
+                                      {formatDateByPreference(codeEntry.expires_at)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        <div className="border-b border-slate-100 px-4 py-3">
+                          <p className="text-sm font-semibold text-slate-900">Team Members</p>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[780px] text-left text-sm">
+                            <thead className="bg-slate-50 text-slate-700">
+                              <tr>
+                                <th className="px-4 py-3 font-semibold">Name</th>
+                                <th className="px-4 py-3 font-semibold">Email</th>
+                                <th className="px-4 py-3 font-semibold">Role</th>
+                                <th className="px-4 py-3 font-semibold">Status</th>
+                                <th className="px-4 py-3 font-semibold">Action</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {settings.users.members.length ? (
+                                settings.users.members.map((member) => (
+                                  <tr key={member.id} className="border-t border-slate-100">
+                                    <td className="px-4 py-3 font-semibold text-slate-900">{member.name}</td>
+                                    <td className="px-4 py-3 text-slate-700">{member.email}</td>
+                                    <td className="px-4 py-3">
+                                      <select
+                                        value={member.role}
+                                        disabled={!canManageUsers}
+                                        onChange={(event) => updateUser(member.id, { role: event.target.value })}
+                                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs"
+                                      >
+                                        {roleColumns.map((role) => (
+                                          <option key={role} value={role}>
+                                            {role}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <Badge tone={member.status === "Active" ? "success" : "neutral"}>
+                                        {member.status}
+                                      </Badge>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <button
+                                        type="button"
+                                        disabled={!canManageUsers}
+                                        onClick={() =>
+                                          updateUser(member.id, {
+                                            status: member.status === "Active" ? "Inactive" : "Active"
+                                          })
+                                        }
+                                        className={clsx(
+                                          "rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold",
+                                          canManageUsers ? "text-slate-700 hover:bg-slate-50" : "cursor-not-allowed text-slate-400"
+                                        )}
+                                      >
+                                        {member.status === "Active" ? "Deactivate" : "Activate"}
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))
+                              ) : (
+                                <tr>
+                                  <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500">
+                                    No team members found.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
                         </div>
                       </div>
                     </div>
-                  </div>
+                  )}
+
+                  {sectionErrors.users ? (
+                    <p className="mt-3 text-xs text-rose-600">{sectionErrors.users}</p>
+                  ) : null}
 
                   <ActionRow
                     dirty={sectionDirty}
