@@ -6,7 +6,6 @@ import {
   BadgeCheck,
   Building2,
   Copy,
-  Database,
   Globe,
   Hash,
   LayoutTemplate,
@@ -114,12 +113,6 @@ const SECTION_ITEMS = [
     label: "Users & Roles",
     description: "Access control and approvals.",
     icon: Users2
-  },
-  {
-    id: "preferences",
-    label: "Data & Preferences",
-    description: "Audit trails and system toggles.",
-    icon: Database
   }
 ];
 
@@ -413,9 +406,7 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
     stockTracking: stored.preferences?.stockTracking ?? true,
     multiCurrency: stored.preferences?.multiCurrency ?? false
   };
-  const effectiveCurrencies = preferences.multiCurrency
-    ? localization.currencies
-    : localization.currencies.slice(0, 1);
+  const effectiveCurrencies = localization.currencies;
   const normalizedLocalization = {
     ...localization,
     currency: effectiveCurrencies[0] || localization.currency,
@@ -440,10 +431,7 @@ function mapSettingsToProfile(settings) {
     primary: settings.localization.currency,
     currencies: settings.localization.currencies
   });
-  const normalizedCurrencies =
-    settings?.preferences?.multiCurrency === true
-      ? normalizedAllCurrencies
-      : normalizedAllCurrencies.slice(0, 1);
+  const normalizedCurrencies = normalizedAllCurrencies;
   const primaryCurrency = normalizedCurrencies[0] || normalizedAllCurrencies[0] || "";
   const normalizedThemeMode = String(settings.theme?.mode || "Light").trim().toLowerCase() === "dark" ? "dark" : "light";
   const normalizedThemeConfig = {
@@ -467,7 +455,7 @@ function mapSettingsToProfile(settings) {
     },
     preferences: {
       ...(settings.preferences || {}),
-      multiCurrency: settings?.preferences?.multiCurrency === true
+      multiCurrency: true
     },
     invoice_template_selected: true
   };
@@ -1058,9 +1046,7 @@ export default function CompanySettings() {
         primary: nextMeta.currency,
         currencies: prev.localization.currencies
       });
-      const effectiveCurrencies = prev.preferences?.multiCurrency
-        ? nextCurrencies
-        : nextCurrencies.slice(0, 1);
+      const effectiveCurrencies = nextCurrencies;
       const nextTax = { ...prev.tax };
       if (canonicalCountry === "India") {
         nextTax.enableGst = true;
@@ -1114,13 +1100,10 @@ export default function CompanySettings() {
 
   function applyAdditionalCurrencies(nextExtraCurrencies) {
     setSettings((prev) => {
-      const allowExtraCurrencies = !!prev.preferences?.multiCurrency;
       const nextCurrencies = normalizeLocalizationCurrencies({
         country: prev.localization.defaultCountry,
         primary: prev.localization.currency,
-        currencies: allowExtraCurrencies
-          ? [prev.localization.currency, ...(Array.isArray(nextExtraCurrencies) ? nextExtraCurrencies : [])]
-          : [prev.localization.currency]
+        currencies: [prev.localization.currency, ...(Array.isArray(nextExtraCurrencies) ? nextExtraCurrencies : [])]
       });
       return {
         ...prev,
@@ -1832,11 +1815,7 @@ export default function CompanySettings() {
 
                     <FormField
                       label="Additional Currencies"
-                      hint={
-                        settings.preferences.multiCurrency
-                          ? `Add up to ${MAX_CURRENCIES - 1}`
-                          : "Enable multi-currency in Data & Preferences first"
-                      }
+                      hint={`Add up to ${MAX_CURRENCIES - 1}`}
                     >
                       <CurrencyMultiInput
                         value={(settings.localization.currencies || []).filter(
@@ -1846,7 +1825,6 @@ export default function CompanySettings() {
                         max={Math.max(MAX_CURRENCIES - 1, 0)}
                         placeholder="USD"
                         ringColor={UI.COLORS.ring}
-                        disabled={!settings.preferences.multiCurrency}
                       />
                       {sectionErrors.currencies ? (
                         <p className="mt-1 text-xs text-rose-600">{sectionErrors.currencies}</p>
