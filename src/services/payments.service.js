@@ -370,3 +370,45 @@ export async function syncPaymentOutRemote(record) {
   });
   await triggerCreditLimitNotifications();
 }
+
+export async function deletePaymentInRemote(recordId) {
+  const id = String(recordId || "").trim();
+  if (!id) return;
+  const sourcePrefix = `PI:${id}:`;
+  const organizationId = authGetOrganizationId();
+
+  if (isSupabaseConfigured && supabase && organizationId) {
+    const { error } = await supabase
+      .from("payments")
+      .delete()
+      .eq("organization_id", organizationId)
+      .ilike("reference_no", `${sourcePrefix}%`);
+    if (error) {
+      throw new Error(normalizeSupabaseError(error, "Failed to delete payment-in rows"));
+    }
+  }
+
+  mergeSourceRowsToLocalPayments(sourcePrefix, []);
+  await triggerCreditLimitNotifications();
+}
+
+export async function deletePaymentOutRemote(recordId) {
+  const id = String(recordId || "").trim();
+  if (!id) return;
+  const sourcePrefix = `PO:${id}:`;
+  const organizationId = authGetOrganizationId();
+
+  if (isSupabaseConfigured && supabase && organizationId) {
+    const { error } = await supabase
+      .from("payments")
+      .delete()
+      .eq("organization_id", organizationId)
+      .ilike("reference_no", `${sourcePrefix}%`);
+    if (error) {
+      throw new Error(normalizeSupabaseError(error, "Failed to delete payment-out rows"));
+    }
+  }
+
+  mergeSourceRowsToLocalPayments(sourcePrefix, []);
+  await triggerCreditLimitNotifications();
+}

@@ -263,3 +263,35 @@ export async function debitNotesSaveRemote(note) {
 
   return header;
 }
+
+export async function debitNotesDeleteRemote(note) {
+  if (!isSupabaseConfigured || !supabase || !note) return null;
+
+  const organizationId = authGetOrganizationId();
+  if (!organizationId) return null;
+
+  let noteId = looksLikeUuid(note?.id) ? note.id : null;
+  if (!noteId && note?.debitNoteNo) {
+    noteId = await fetchExistingRemoteNoteId(organizationId, note.debitNoteNo);
+  }
+  if (!noteId) return null;
+
+  const { error: deleteItemsError } = await supabase
+    .from("debit_note_items")
+    .delete()
+    .eq("debit_note_id", noteId);
+  if (deleteItemsError) {
+    throw new Error(normalizeSupabaseError(deleteItemsError, "Failed to delete debit note items"));
+  }
+
+  const { error: deleteHeaderError } = await supabase
+    .from("debit_notes")
+    .delete()
+    .eq("organization_id", organizationId)
+    .eq("id", noteId);
+  if (deleteHeaderError) {
+    throw new Error(normalizeSupabaseError(deleteHeaderError, "Failed to delete debit note"));
+  }
+
+  return noteId;
+}

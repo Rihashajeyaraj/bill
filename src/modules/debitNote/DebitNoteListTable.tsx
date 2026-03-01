@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Download, Eye, FilePenLine, MoreHorizontal } from "lucide-react";
+import { Download, Eye, FilePenLine, MoreHorizontal, Trash2 } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { DebitNoteRecord } from "./store";
 
@@ -10,7 +10,10 @@ interface DebitNoteListTableProps {
   onPageChange: (next: number) => void;
   onView: (noteId: string) => void;
   onEdit: (noteId: string) => void;
+  onDelete: (noteId: string) => void;
   onDownloadPdf: (noteId: string) => void;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
 function statusClass(status: DebitNoteRecord["status"]) {
@@ -26,6 +29,9 @@ export default function DebitNoteListTable({
   onPageChange,
   onView,
   onEdit,
+  onDelete,
+  canEdit = true,
+  canDelete = true,
   onDownloadPdf
 }: DebitNoteListTableProps) {
   const [actionMenu, setActionMenu] = useState<{
@@ -33,6 +39,7 @@ export default function DebitNoteListTable({
     top: number;
     left: number;
     canEdit: boolean;
+    canDelete: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -103,7 +110,7 @@ export default function DebitNoteListTable({
                         onClick={(event) => {
                           const triggerRect = event.currentTarget.getBoundingClientRect();
                           const menuWidth = 144;
-                          const menuHeight = 132;
+                          const menuHeight = 168;
                           const left = Math.min(
                             window.innerWidth - menuWidth - 8,
                             Math.max(8, triggerRect.right - menuWidth)
@@ -120,7 +127,8 @@ export default function DebitNoteListTable({
                                   noteId: note.id,
                                   top,
                                   left,
-                                  canEdit: note.status !== "Applied"
+                                  canEdit: canEdit && note.status !== "Applied",
+                                  canDelete: canDelete && note.status !== "Applied"
                                 }
                           );
                         }}
@@ -214,6 +222,19 @@ export default function DebitNoteListTable({
               >
                 <Download className="h-3.5 w-3.5" />
                 PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const noteId = actionMenu.noteId;
+                  setActionMenu(null);
+                  onDelete(noteId);
+                }}
+                disabled={!actionMenu.canDelete}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
               </button>
             </div>,
             document.body

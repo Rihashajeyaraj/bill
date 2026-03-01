@@ -648,6 +648,38 @@ export async function creditNotesSaveRemote(note) {
   return header;
 }
 
+export async function creditNotesDeleteRemote(note) {
+  if (!isSupabaseConfigured || !supabase || !note) return null;
+
+  const organizationId = authGetOrganizationId();
+  if (!organizationId) return null;
+
+  let noteId = looksLikeUuid(note?.id) ? note.id : null;
+  if (!noteId && note?.creditNoteNo) {
+    noteId = await fetchExistingRemoteNoteId(organizationId, note.creditNoteNo);
+  }
+  if (!noteId) return null;
+
+  const { error: deleteItemsError } = await supabase
+    .from("credit_note_items")
+    .delete()
+    .eq("credit_note_id", noteId);
+  if (deleteItemsError) {
+    throw new Error(normalizeSupabaseError(deleteItemsError, "Failed to delete credit note items"));
+  }
+
+  const { error: deleteHeaderError } = await supabase
+    .from("credit_notes")
+    .delete()
+    .eq("organization_id", organizationId)
+    .eq("id", noteId);
+  if (deleteHeaderError) {
+    throw new Error(normalizeSupabaseError(deleteHeaderError, "Failed to delete credit note"));
+  }
+
+  return noteId;
+}
+
 export function creditNotesCreate(note) {
   const id = uid("crn_");
   const next = { ...note, id, created_at: new Date().toISOString() };

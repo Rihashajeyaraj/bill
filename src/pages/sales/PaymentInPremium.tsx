@@ -9,6 +9,7 @@ import {
   mapOpenInvoicesByCountry,
   outstandingByCustomer,
   paymentInsightsByCustomer,
+  removePaymentIn,
   savePaymentIn,
   setSelectedPaymentCountry,
   summarizePaymentIn,
@@ -18,10 +19,10 @@ import { allocationsFromInvoices, computeEditorTotals, defaultForm, formFromReco
 import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf } from "../../modules/paymentIn/pdf";
 import type { PaymentInFormState } from "../../modules/paymentIn/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
-import { canApplyApprovals, roleTypeLabel } from "../../services/roles";
+import { canApplyApprovals, canCreateEntries, canDeleteEntries, canEditEntries, roleTypeLabel } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesSyncFromRemote } from "../../services/invoices.service";
-import { syncPaymentInRemote } from "../../services/payments.service";
+import { deletePaymentInRemote, syncPaymentInRemote } from "../../services/payments.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
@@ -91,7 +92,11 @@ export default function PaymentInPremium() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
   const user = authGetUser();
-  const access = useMemo(() => roleAccess(authGetRole(), user), [user]);
+  const role = authGetRole();
+  const access = useMemo(() => roleAccess(role, user), [role, user]);
+  const canCreatePayment = canCreateEntries(role);
+  const canEditPayment = canEditEntries(role);
+  const canDeletePayment = canDeleteEntries(role);
   const actorName = user?.name || user?.email || "System User";
 
   const country = useMemo<CountryCode>(
@@ -242,6 +247,11 @@ export default function PaymentInPremium() {
 
   function startNewPayment() {
     if (!allowed) return;
+    if (!canCreatePayment) {
+      setErrorMessage("You do not have permission to create payment receipts.");
+      setSuccessMessage("");
+      return;
+    }
     setForm(defaultForm(country, company));
     setActivePayment(null);
     setPanelMode("flow");
@@ -256,6 +266,11 @@ export default function PaymentInPremium() {
 
   function openFlow(record: PaymentInRecord, mode: FlowMode) {
     if (record.country !== country) return;
+    if (mode === "edit" && !canEditPayment) {
+      setErrorMessage("You do not have permission to edit payment receipts.");
+      setSuccessMessage("");
+      return;
+    }
     if (mode === "edit" && record.status === "Applied" && !canReopenWithinWindow(record)) return;
     setForm(formFromRecord(record));
     setActivePayment(record);
@@ -467,6 +482,17 @@ export default function PaymentInPremium() {
 
   async function persist(targetStatus: PaymentStatus, options?: { email?: boolean; download?: boolean }) {
     if (!form) return;
+    const isEditMode = !!form?.id;
+    if (isEditMode && !canEditPayment) {
+      setErrorMessage("You do not have permission to edit payment receipts.");
+      setSuccessMessage("");
+      return;
+    }
+    if (!isEditMode && !canCreatePayment) {
+      setErrorMessage("You do not have permission to create payment receipts.");
+      setSuccessMessage("");
+      return;
+    }
     if (!validate(targetStatus)) return;
     try {
       let saved: PaymentInRecord | null = null;
@@ -501,6 +527,11 @@ export default function PaymentInPremium() {
 
   async function undoApplied(record: PaymentInRecord) {
     if (!canReopenWithinWindow(record)) return;
+    if (!canEditPayment) {
+      setErrorMessage("You do not have permission to edit payment receipts.");
+      setSuccessMessage("");
+      return;
+    }
     try {
       const saved = savePaymentIn({
         id: record.id,
@@ -534,7 +565,41 @@ export default function PaymentInPremium() {
     }
   }
 
+  async function removeRecord(record: PaymentInRecord) {
+    if (!canDeletePayment) {
+      setErrorMessage("You do not have permission to delete payment receipts.");
+      setSuccessMessage("");
+      return;
+    }
+    if (record.status === "Applied") {
+      setErrorMessage("Applied payment receipts cannot be deleted.");
+      setSuccessMessage("");
+      return;
+    }
+    const confirmed = window.confirm(`Delete ${record.receiptNo}? This cannot be undone.`);
+    if (!confirmed) return;
+    try {
+      removePaymentIn(record.id);
+      await deletePaymentInRemote(record.id);
+      if (activePayment?.id === record.id) {
+        setPanelMode("feed");
+        setFlowMode("create");
+        setActiveStep(0);
+        setForm(null);
+        setActivePayment(null);
+        setDirty(false);
+      }
+      setRefreshKey((prev) => prev + 1);
+      setSuccessMessage(`${record.receiptNo} deleted successfully.`);
+      setErrorMessage("");
+    } catch (error: any) {
+      setErrorMessage(error?.message || "Unable to delete payment receipt.");
+      setSuccessMessage("");
+    }
+  }
+
   const confirmStatus: PaymentStatus = access.canApply && totals.amountApplied > 0 ? "Applied" : "Received";
+  const canSaveCurrentFlow = form?.id ? canEditPayment : canCreatePayment;
 
   return (
     <div className="mx-auto min-h-full max-w-[1360px] space-y-4 pb-36">
@@ -547,7 +612,7 @@ export default function PaymentInPremium() {
           <div className="mx-auto w-full max-w-xs rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm font-semibold text-slate-700 sm:mx-0 sm:flex-1 sm:max-w-sm">
             {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].code} {COUNTRY_CONFIG[country].name} | {COUNTRY_CONFIG[country].currency}
           </div>
-          <button onClick={startNewPayment} disabled={!allowed} className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+          <button onClick={startNewPayment} disabled={!allowed || !canCreatePayment} className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
             <Plus className="h-4 w-4" />
             New Payment
           </button>
@@ -633,7 +698,8 @@ export default function PaymentInPremium() {
                                 <button
                                   type="button"
                                   onClick={() => openFlow(record, "edit")}
-                                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                  disabled={!canEditPayment || (record.status === "Applied" && !canReopenWithinWindow(record))}
+                                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   Edit
                                 </button>
@@ -648,11 +714,20 @@ export default function PaymentInPremium() {
                                   <button
                                     type="button"
                                     onClick={() => undoApplied(record)}
-                                    className="rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                                    disabled={!canEditPayment}
+                                    className="rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
                                     Undo
                                   </button>
                                 ) : null}
+                                <button
+                                  type="button"
+                                  onClick={() => removeRecord(record)}
+                                  disabled={!canDeletePayment || record.status === "Applied"}
+                                  className="rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Delete
+                                </button>
                               </div>
                             </td>
                           </tr>
@@ -969,7 +1044,8 @@ export default function PaymentInPremium() {
           <button
             type="button"
             onClick={() => persist("Draft")}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"
+            disabled={!canSaveCurrentFlow}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Save className="h-3.5 w-3.5" />
             Save Draft
@@ -977,7 +1053,8 @@ export default function PaymentInPremium() {
           <button
             type="button"
             onClick={() => persist(confirmStatus)}
-            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white"
+            disabled={!canSaveCurrentFlow}
+            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Send className="h-3.5 w-3.5" />
             Confirm Payment
@@ -985,7 +1062,8 @@ export default function PaymentInPremium() {
           <button
             type="button"
             onClick={() => persist(confirmStatus, { email: true, download: true })}
-            className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700"
+            disabled={!canSaveCurrentFlow}
+            className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Mail className="h-3.5 w-3.5" />
             Send Receipt

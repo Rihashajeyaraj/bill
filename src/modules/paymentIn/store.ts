@@ -1,4 +1,6 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped } from "../../services/storage";
+import { authGetRole } from "../../services/auth.service";
+import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW } from "./countryConfig";
 import type { CountryCode, PaymentMode, PaymentStatus } from "./countryConfig";
 import type { PaymentAttachmentMeta } from "./types";
@@ -122,6 +124,26 @@ type SequenceStore = Partial<Record<CountryCode, number>>;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function assertPaymentInWritePermission({ isEdit = false }: { isEdit?: boolean } = {}) {
+  const role = authGetRole();
+  if (isEdit) {
+    if (!canEditEntries(role)) {
+      throw new Error("You do not have permission to edit payment receipts.");
+    }
+    return;
+  }
+  if (!canCreateEntries(role)) {
+    throw new Error("You do not have permission to create payment receipts.");
+  }
+}
+
+function assertPaymentInDeletePermission() {
+  const role = authGetRole();
+  if (!canDeleteEntries(role)) {
+    throw new Error("You do not have permission to delete payment receipts.");
+  }
 }
 
 function toNumber(value: unknown) {
@@ -444,6 +466,7 @@ export function paymentInsightsByCustomer(country: CountryCode, customerId: stri
 }
 
 export function savePaymentIn(payload: SavePaymentInPayload): PaymentInRecord {
+  assertPaymentInWritePermission({ isEdit: !!payload?.id });
   const openInvoices = mapOpenInvoicesByCountry(payload.country);
   const invoiceMap = new Map(openInvoices.map((invoice) => [invoice.id, invoice]));
   payload.allocations.forEach((line) => {
@@ -501,6 +524,25 @@ export function savePaymentIn(payload: SavePaymentInPayload): PaymentInRecord {
   const next = existing ? payments.map((entry) => (entry.id === existing.id ? note : entry)) : [note, ...payments];
   setAllPayments(next);
   return note;
+}
+
+export function removePaymentIn(id: string): PaymentInRecord {
+  assertPaymentInDeletePermission();
+  const normalizedId = String(id || "").trim();
+  if (!normalizedId) {
+    throw new Error("Payment receipt id is required.");
+  }
+  const payments = getAllPayments();
+  const existing = payments.find((entry) => String(entry?.id || "") === normalizedId);
+  if (!existing) {
+    throw new Error("Payment receipt not found.");
+  }
+  if (existing.status === "Applied") {
+    throw new Error("Applied payment receipts cannot be deleted.");
+  }
+  setAllPayments(payments.filter((entry) => String(entry?.id || "") !== normalizedId));
+  setLedgerEntries(getLedgerEntries().filter((entry) => String(entry?.noteId || "") !== normalizedId));
+  return existing;
 }
 
 export function summarizePaymentIn(country: CountryCode) {

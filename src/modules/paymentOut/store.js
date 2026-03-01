@@ -3,6 +3,8 @@ import {
   lsGetOrganizationScoped,
   lsSetOrganizationScoped
 } from "../../services/storage";
+import { authGetRole } from "../../services/auth.service";
+import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { countryCodeFromName, normalizeText, parseNumber, toIsoDate } from "./utils";
 
 const PAYMENT_OUT_STORE_KEY = "paymentOutPremiumV1";
@@ -45,6 +47,26 @@ const COUNTRY_NAME_TO_CODE = {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function assertPaymentOutWritePermission({ isEdit = false } = {}) {
+  const role = authGetRole();
+  if (isEdit) {
+    if (!canEditEntries(role)) {
+      throw new Error("You do not have permission to edit payment out entries.");
+    }
+    return;
+  }
+  if (!canCreateEntries(role)) {
+    throw new Error("You do not have permission to create payment out entries.");
+  }
+}
+
+function assertPaymentOutDeletePermission() {
+  const role = authGetRole();
+  if (!canDeleteEntries(role)) {
+    throw new Error("You do not have permission to delete payment out entries.");
+  }
 }
 
 function ensureArray(value) {
@@ -308,6 +330,7 @@ export function outstandingBySupplier(country, supplierId) {
 }
 
 export function savePaymentOut(payload) {
+  assertPaymentOutWritePermission({ isEdit: !!payload?.id });
   const list = getAllPayments();
   const existing = payload.id ? list.find((entry) => entry.id === payload.id) : undefined;
   if (existing && String(existing.supplierId) !== String(payload.supplierId)) {
@@ -385,6 +408,25 @@ export function savePaymentOut(payload) {
   const next = existing ? list.map((entry) => (entry.id === existing.id ? note : entry)) : [note, ...list];
   setAllPayments(next);
   return note;
+}
+
+export function removePaymentOut(id) {
+  assertPaymentOutDeletePermission();
+  const normalizedId = String(id || "").trim();
+  if (!normalizedId) {
+    throw new Error("Payment out id is required.");
+  }
+  const list = getAllPayments();
+  const existing = list.find((entry) => String(entry?.id || "") === normalizedId);
+  if (!existing) {
+    throw new Error("Payment out record not found.");
+  }
+  if (String(existing?.status || "") === "Applied") {
+    throw new Error("Applied payment out records cannot be deleted.");
+  }
+  setAllPayments(list.filter((entry) => String(entry?.id || "") !== normalizedId));
+  setLedgerEntries(getLedgerEntries().filter((entry) => String(entry?.noteId || "") !== normalizedId));
+  return existing;
 }
 
 export function summarizePaymentOut(country) {

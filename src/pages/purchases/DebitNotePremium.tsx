@@ -18,6 +18,7 @@ import {
   listDebitNotes,
   mapSuppliersByCountry,
   mapPurchaseInvoicesByCountry,
+  removeDebitNote,
   saveDebitNote,
   setSelectedDebitCountry,
   summarizeDebitNotes,
@@ -28,10 +29,10 @@ import { computeEditorTotals, defaultForm, draftLinesFromInvoice, formFromNote, 
 import { exportDebitNoteSummaryPdf, exportDebitNotesCsv, exportSingleDebitNotePdf } from "../../modules/debitNote/pdf";
 import type { DebitNoteFormState } from "../../modules/debitNote/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
-import { canApplyApprovals, roleTypeLabel } from "../../services/roles";
+import { canApplyApprovals, canCreateEntries, canDeleteEntries, canEditEntries, roleTypeLabel } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
-import { debitNotesSaveRemote } from "../../services/debitNotes.service";
+import { debitNotesDeleteRemote, debitNotesSaveRemote } from "../../services/debitNotes.service";
 import { saveItemReturnAction } from "../../services/itemReturns.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
 import EmptyState from "../../components/EmptyState";
@@ -60,6 +61,9 @@ export default function DebitNotePremium() {
   const user = authGetUser();
   const role = authGetRole();
   const access = useMemo(() => roleAccess(role, user), [role, user]);
+  const canCreateNote = canCreateEntries(role);
+  const canEditNote = canEditEntries(role);
+  const canDeleteNote = canDeleteEntries(role);
   const actorName = user?.name || user?.email || "System User";
   const companyState = company?.address?.state || "";
 
@@ -357,6 +361,11 @@ export default function DebitNotePremium() {
 
   function startCreate() {
     if (!country || !allowed) return;
+    if (!canCreateNote) {
+      setErrorMessage("You do not have permission to create debit notes.");
+      setSuccessMessage("");
+      return;
+    }
     setEditorLoading(true);
     const baseForm = defaultForm(country, company);
     setForm({
@@ -381,6 +390,11 @@ export default function DebitNotePremium() {
   function openNote(noteId: string, mode: "view" | "edit") {
     const note = getDebitNote(noteId);
     if (!note || !country || note.country !== country) return;
+    if (mode === "edit" && !canEditNote) {
+      setErrorMessage("You do not have permission to edit debit notes.");
+      setSuccessMessage("");
+      return;
+    }
     if (mode === "edit" && note.status === "Applied") return;
     setEditorLoading(true);
     setLinkedReturnRef("");
@@ -554,6 +568,17 @@ export default function DebitNotePremium() {
   async function persist(targetStatus: DebitStatus, options?: { email?: boolean; download?: boolean }) {
     if (!form || !country) return;
     if (savingStatus) return;
+    const isEditMode = !!form?.id;
+    if (isEditMode && !canEditNote) {
+      setErrorMessage("You do not have permission to edit debit notes.");
+      setSuccessMessage("");
+      return;
+    }
+    if (!isEditMode && !canCreateNote) {
+      setErrorMessage("You do not have permission to create debit notes.");
+      setSuccessMessage("");
+      return;
+    }
     if (!validate(targetStatus)) return;
     setSavingStatus(targetStatus);
     const effectiveFormForSave = forceZeroTax
@@ -653,6 +678,39 @@ export default function DebitNotePremium() {
     }
   }
 
+  async function removeNote(noteId: string) {
+    const note = getDebitNote(noteId);
+    if (!note) return;
+    if (!canDeleteNote) {
+      setErrorMessage("You do not have permission to delete debit notes.");
+      setSuccessMessage("");
+      return;
+    }
+    if (note.status === "Applied") {
+      setErrorMessage("Applied debit notes cannot be deleted.");
+      setSuccessMessage("");
+      return;
+    }
+    const confirmed = window.confirm(`Delete ${note.debitNoteNo}? This cannot be undone.`);
+    if (!confirmed) return;
+    try {
+      removeDebitNote(noteId);
+      await debitNotesDeleteRemote(note);
+      if (activeNote?.id === noteId) {
+        setViewMode("list");
+        setActiveNote(null);
+        setForm(null);
+        setDirty(false);
+      }
+      setRefreshKey((prev) => prev + 1);
+      setSuccessMessage(`${note.debitNoteNo} deleted successfully.`);
+      setErrorMessage("");
+    } catch (error: any) {
+      setErrorMessage(error?.message || "Unable to delete debit note.");
+      setSuccessMessage("");
+    }
+  }
+
   return (
     <div className="mx-auto min-h-full max-w-[1440px] space-y-3 pb-36">
       {country ? (
@@ -700,7 +758,7 @@ export default function DebitNotePremium() {
                     <label className="text-xs font-semibold text-slate-600">To<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <GradientButton onClick={startCreate}><Plus className="h-4 w-4" />Create Debit Note</GradientButton>
+                    <GradientButton onClick={startCreate} disabled={!canCreateNote}><Plus className="h-4 w-4" />Create Debit Note</GradientButton>
                     <button onClick={() => exportDebitNoteSummaryPdf(filteredNotes, country)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><FileDown className="h-4 w-4" />Export PDF</button>
                     <button onClick={() => exportDebitNotesCsv(filteredNotes, country)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><FileSpreadsheet className="h-4 w-4" />Download Excel</button>
                   </div>
@@ -717,6 +775,9 @@ export default function DebitNotePremium() {
                   onPageChange={setPage}
                   onView={(noteId) => openNote(noteId, "view")}
                   onEdit={(noteId) => openNote(noteId, "edit")}
+                  onDelete={removeNote}
+                  canEdit={canEditNote}
+                  canDelete={canDeleteNote}
                   onDownloadPdf={(noteId) => {
                     const note = getDebitNote(noteId);
                     if (note) exportSingleDebitNotePdf(note);

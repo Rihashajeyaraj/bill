@@ -18,6 +18,7 @@ import {
   listCreditNotes,
   mapCustomersByCountry,
   mapInvoicesByCountry,
+  removeCreditNote,
   saveCreditNote,
   setSelectedCreditCountry,
   summarizeCreditNotes,
@@ -28,10 +29,10 @@ import { computeEditorTotals, defaultForm, draftLinesFromInvoice, formFromNote, 
 import { exportCreditNoteSummaryPdf, exportCreditNotesCsv, exportSingleCreditNotePdf } from "../../modules/creditNote/pdf";
 import type { CreditNoteFormState } from "../../modules/creditNote/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
-import { canApplyApprovals, roleTypeLabel } from "../../services/roles";
+import { canApplyApprovals, canCreateEntries, canDeleteEntries, canEditEntries, roleTypeLabel } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesSyncFromRemote } from "../../services/invoices.service";
-import { creditNotesSaveRemote } from "../../services/creditNotes.service";
+import { creditNotesDeleteRemote, creditNotesSaveRemote } from "../../services/creditNotes.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
 import { fetchInvoiceAllocationDetails } from "../../services/inventory.service";
 import EmptyState from "../../components/EmptyState";
@@ -80,6 +81,9 @@ export default function CreditNotePremium() {
   const user = authGetUser();
   const role = authGetRole();
   const access = useMemo(() => roleAccess(role, user), [role, user]);
+  const canCreateNote = canCreateEntries(role);
+  const canEditNote = canEditEntries(role);
+  const canDeleteNote = canDeleteEntries(role);
   const actorName = user?.name || user?.email || "System User";
   const companyState = company?.address?.state || "";
 
@@ -388,6 +392,11 @@ export default function CreditNotePremium() {
 
   function startCreate() {
     if (!country || !allowed) return;
+    if (!canCreateNote) {
+      setErrorMessage("You do not have permission to create credit notes.");
+      setSuccessMessage("");
+      return;
+    }
     setEditorLoading(true);
     const baseForm = defaultForm(country, company);
     setForm({
@@ -412,6 +421,11 @@ export default function CreditNotePremium() {
   function openNote(noteId: string, mode: "view" | "edit") {
     const note = getCreditNote(noteId);
     if (!note || !country || note.country !== country) return;
+    if (mode === "edit" && !canEditNote) {
+      setErrorMessage("You do not have permission to edit credit notes.");
+      setSuccessMessage("");
+      return;
+    }
     if (mode === "edit" && note.status === "Applied") return;
     setEditorLoading(true);
     const hydrated = formFromNote(note);
@@ -609,6 +623,17 @@ export default function CreditNotePremium() {
   async function persist(targetStatus: CreditStatus, options?: { email?: boolean; download?: boolean }) {
     if (!form || !country) return;
     if (savingStatus) return;
+    const isEditMode = !!form?.id;
+    if (isEditMode && !canEditNote) {
+      setErrorMessage("You do not have permission to edit credit notes.");
+      setSuccessMessage("");
+      return;
+    }
+    if (!isEditMode && !canCreateNote) {
+      setErrorMessage("You do not have permission to create credit notes.");
+      setSuccessMessage("");
+      return;
+    }
     if (!validate(targetStatus)) return;
     setSavingStatus(targetStatus);
     const effectiveFormForSave = forceZeroTax
@@ -718,6 +743,39 @@ export default function CreditNotePremium() {
     }
   }
 
+  async function removeNote(noteId: string) {
+    const note = getCreditNote(noteId);
+    if (!note) return;
+    if (!canDeleteNote) {
+      setErrorMessage("You do not have permission to delete credit notes.");
+      setSuccessMessage("");
+      return;
+    }
+    if (note.status === "Applied") {
+      setErrorMessage("Applied credit notes cannot be deleted.");
+      setSuccessMessage("");
+      return;
+    }
+    const confirmed = window.confirm(`Delete ${note.creditNoteNo}? This cannot be undone.`);
+    if (!confirmed) return;
+    try {
+      removeCreditNote(noteId);
+      await creditNotesDeleteRemote(note);
+      if (activeNote?.id === noteId) {
+        setViewMode("list");
+        setActiveNote(null);
+        setForm(null);
+        setDirty(false);
+      }
+      setRefreshKey((prev) => prev + 1);
+      setSuccessMessage(`${note.creditNoteNo} deleted successfully.`);
+      setErrorMessage("");
+    } catch (error: any) {
+      setErrorMessage(error?.message || "Unable to delete credit note.");
+      setSuccessMessage("");
+    }
+  }
+
   return (
     <div className="mx-auto min-h-full max-w-[1440px] space-y-3 pb-36">
       {country ? (
@@ -765,7 +823,7 @@ export default function CreditNotePremium() {
                     <label className="text-xs font-semibold text-slate-600">To<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <GradientButton onClick={startCreate}><Plus className="h-4 w-4" />Create Credit Note</GradientButton>
+                    <GradientButton onClick={startCreate} disabled={!canCreateNote}><Plus className="h-4 w-4" />Create Credit Note</GradientButton>
                     <button onClick={() => exportCreditNoteSummaryPdf(filteredNotes, country)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><FileDown className="h-4 w-4" />Export PDF</button>
                     <button onClick={() => exportCreditNotesCsv(filteredNotes, country)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><FileSpreadsheet className="h-4 w-4" />Download Excel</button>
                   </div>
@@ -782,6 +840,9 @@ export default function CreditNotePremium() {
                   onPageChange={setPage}
                   onView={(noteId) => openNote(noteId, "view")}
                   onEdit={(noteId) => openNote(noteId, "edit")}
+                  onDelete={removeNote}
+                  canEdit={canEditNote}
+                  canDelete={canDeleteNote}
                   onDownloadPdf={(noteId) => {
                     const note = getCreditNote(noteId);
                     if (note) exportSingleCreditNotePdf(note);

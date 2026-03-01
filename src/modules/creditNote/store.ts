@@ -1,4 +1,6 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped } from "../../services/storage";
+import { authGetRole } from "../../services/auth.service";
+import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW } from "./countryConfig";
 import type { CountryCode, CreditStatus, CreditType } from "./countryConfig";
 
@@ -162,6 +164,26 @@ type SequenceStore = Partial<Record<CountryCode, number>>;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function assertCreditNoteWritePermission({ isEdit = false }: { isEdit?: boolean } = {}) {
+  const role = authGetRole();
+  if (isEdit) {
+    if (!canEditEntries(role)) {
+      throw new Error("You do not have permission to edit credit notes.");
+    }
+    return;
+  }
+  if (!canCreateEntries(role)) {
+    throw new Error("You do not have permission to create credit notes.");
+  }
+}
+
+function assertCreditNoteDeletePermission() {
+  const role = authGetRole();
+  if (!canDeleteEntries(role)) {
+    throw new Error("You do not have permission to delete credit notes.");
+  }
 }
 
 function normalizeCountryCode(value: unknown): CountryCode | null {
@@ -781,6 +803,7 @@ function ensureTransition(previous: CreditStatus, next: CreditStatus) {
 }
 
 export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord {
+  assertCreditNoteWritePermission({ isEdit: !!payload?.id });
   const linkedInvoice = mapInvoicesByCountry(payload.country).find(
     (invoice) => String(invoice.id) === String(payload.linkedInvoiceId)
   );
@@ -879,6 +902,28 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
   setAllNotes(nextList);
   applyLocalReturnStockDelta(existing, note);
   return note;
+}
+
+export function removeCreditNote(noteId: string): CreditNoteRecord {
+  assertCreditNoteDeletePermission();
+  const normalizedId = String(noteId || "").trim();
+  if (!normalizedId) {
+    throw new Error("Credit note id is required.");
+  }
+  const list = getAllNotes();
+  const existing = list.find((note) => String(note?.id || "") === normalizedId);
+  if (!existing) {
+    throw new Error("Credit note not found.");
+  }
+  if (existing.status === "Applied") {
+    throw new Error("Applied credit notes cannot be deleted.");
+  }
+  const nextList = list.filter((note) => String(note?.id || "") !== normalizedId);
+  setAllNotes(nextList);
+
+  // Ensure any prior local stock impact is rolled back if status rules evolve.
+  applyLocalReturnStockDelta(existing, { ...existing, status: "Draft" });
+  return existing;
 }
 
 export function summarizeCreditNotes(country: CountryCode) {

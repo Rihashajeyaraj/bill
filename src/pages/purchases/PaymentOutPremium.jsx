@@ -16,10 +16,10 @@ import EmptyState from "../../components/EmptyState";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import { authGetRole, authGetUser } from "../../services/auth.service";
-import { canApplyApprovals } from "../../services/roles";
+import { canApplyApprovals, canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
-import { syncPaymentOutRemote } from "../../services/payments.service";
+import { deletePaymentOutRemote, syncPaymentOutRemote } from "../../services/payments.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
 import { LS_KEYS, lsGetOrganizationScoped } from "../../services/storage";
 import {
@@ -30,6 +30,7 @@ import {
   mapOpenBillsByCountry,
   mapSuppliersByCountry,
   outstandingBySupplier,
+  removePaymentOut,
   savePaymentOut,
   summarizePaymentOut,
   updateAllocationAmount
@@ -76,6 +77,9 @@ export default function PaymentOutPremium() {
   const user = authGetUser();
   const role = authGetRole();
   const canApplyPayments = canApplyApprovals(role);
+  const canCreatePayment = canCreateEntries(role);
+  const canEditPayment = canEditEntries(role);
+  const canDeletePayment = canDeleteEntries(role);
   const actorName = user?.name || user?.email || "System User";
 
   const [panelMode, setPanelMode] = useState("list");
@@ -274,6 +278,10 @@ export default function PaymentOutPremium() {
   }, [prefillBillId, bills, country, currency, searchParams, setSearchParams]);
 
   function startNew() {
+    if (!canCreatePayment) {
+      window.alert("You do not have permission to create payment out entries.");
+      return;
+    }
     setForm(defaultPaymentForm(country, currency));
     setActivePayment(null);
     setPanelMode("form");
@@ -285,6 +293,10 @@ export default function PaymentOutPremium() {
   }
 
   function openRecord(record, mode) {
+    if (mode === "edit" && !canEditPayment) {
+      window.alert("You do not have permission to edit payment out entries.");
+      return;
+    }
     setForm({
       ...record,
       desiredStatus: record.status
@@ -429,6 +441,15 @@ export default function PaymentOutPremium() {
   }
 
   async function persist(status) {
+    const isEditMode = !!form?.id;
+    if (isEditMode && !canEditPayment) {
+      window.alert("You do not have permission to edit payment out entries.");
+      return;
+    }
+    if (!isEditMode && !canCreatePayment) {
+      window.alert("You do not have permission to create payment out entries.");
+      return;
+    }
     if (status === "Applied" && !canApplyPayments) {
       window.alert("You do not have approval permission to apply payment to bills.");
       return;
@@ -455,7 +476,35 @@ export default function PaymentOutPremium() {
     }
   }
 
+  async function removeRecord(record) {
+    if (!canDeletePayment) {
+      window.alert("You do not have permission to delete payment out entries.");
+      return;
+    }
+    if (String(record?.status || "") === "Applied") {
+      window.alert("Applied payment out entries cannot be deleted.");
+      return;
+    }
+    if (!window.confirm(`Delete ${record?.paymentNo || "this payment"}? This cannot be undone.`)) return;
+    try {
+      removePaymentOut(record.id);
+      await deletePaymentOutRemote(record.id);
+      if (activePayment?.id === record.id) {
+        setPanelMode("list");
+        setActiveStep(0);
+        setForm(defaultPaymentForm(country, currency));
+        setActivePayment(null);
+        setDirty(false);
+      }
+      setRefreshKey((prev) => prev + 1);
+      window.alert(`Payment ${record?.paymentNo || ""} deleted.`);
+    } catch (error) {
+      window.alert(error?.message || "Unable to delete payment.");
+    }
+  }
+
   const readOnly = !!form.readOnly;
+  const canSaveCurrentFlow = form?.id ? canEditPayment : canCreatePayment;
 
   return (
     <div className="mx-auto min-h-full max-w-[1360px] space-y-4 pb-32">
@@ -472,7 +521,8 @@ export default function PaymentOutPremium() {
             <button
               type="button"
               onClick={startNew}
-              className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+              disabled={!canCreatePayment}
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Plus className="h-4 w-4" />
               New Payment
@@ -618,9 +668,18 @@ export default function PaymentOutPremium() {
                               <button
                                 type="button"
                                 onClick={() => openRecord(entry, "edit")}
-                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                disabled={!canEditPayment}
+                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeRecord(entry)}
+                                disabled={!canDeletePayment || entry.status === "Applied"}
+                                className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Delete
                               </button>
                               <button
                                 type="button"
@@ -1004,7 +1063,8 @@ export default function PaymentOutPremium() {
               <button
                 type="button"
                 onClick={() => persist("Draft")}
-                className={`${ACTION_BAR_BASE} border border-slate-200 text-slate-700`}
+                disabled={!canSaveCurrentFlow}
+                className={`${ACTION_BAR_BASE} border border-slate-200 text-slate-700 disabled:cursor-not-allowed disabled:opacity-50`}
               >
                 <Save className="h-3.5 w-3.5" />
                 Save Draft
@@ -1012,7 +1072,8 @@ export default function PaymentOutPremium() {
               <button
                 type="button"
                 onClick={() => persist("Paid")}
-                className={`${ACTION_BAR_BASE} bg-slate-900 text-white`}
+                disabled={!canSaveCurrentFlow}
+                className={`${ACTION_BAR_BASE} bg-slate-900 text-white disabled:cursor-not-allowed disabled:opacity-50`}
               >
                 <Send className="h-3.5 w-3.5" />
                 Mark Paid
@@ -1020,7 +1081,7 @@ export default function PaymentOutPremium() {
               <button
                 type="button"
                 onClick={() => persist("Applied")}
-                disabled={!canApplyPayments}
+                disabled={!canApplyPayments || !canSaveCurrentFlow}
                 className={`${ACTION_BAR_BASE} border border-emerald-200 bg-emerald-50 text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50`}
               >
                 <Wallet className="h-3.5 w-3.5" />

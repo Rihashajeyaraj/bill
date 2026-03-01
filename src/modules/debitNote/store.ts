@@ -1,4 +1,6 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped } from "../../services/storage";
+import { authGetRole } from "../../services/auth.service";
+import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW } from "./countryConfig";
 import type { CountryCode, DebitStatus, DebitType } from "./countryConfig";
 
@@ -169,6 +171,26 @@ type SequenceStore = Partial<Record<CountryCode, number>>;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function assertDebitNoteWritePermission({ isEdit = false }: { isEdit?: boolean } = {}) {
+  const role = authGetRole();
+  if (isEdit) {
+    if (!canEditEntries(role)) {
+      throw new Error("You do not have permission to edit debit notes.");
+    }
+    return;
+  }
+  if (!canCreateEntries(role)) {
+    throw new Error("You do not have permission to create debit notes.");
+  }
+}
+
+function assertDebitNoteDeletePermission() {
+  const role = authGetRole();
+  if (!canDeleteEntries(role)) {
+    throw new Error("You do not have permission to delete debit notes.");
+  }
 }
 
 function normalizeCountryCode(value: unknown): CountryCode | null {
@@ -690,6 +712,7 @@ function ensureTransition(previous: DebitStatus, next: DebitStatus) {
 }
 
 export function saveDebitNote(payload: SaveDebitNotePayload): DebitNoteRecord {
+  assertDebitNoteWritePermission({ isEdit: !!payload?.id });
   const linkedInvoice = mapPurchaseInvoicesByCountry(payload.country).find(
     (invoice) => String(invoice.id) === String(payload.linkedPurchaseInvoiceId)
   );
@@ -779,6 +802,25 @@ export function saveDebitNote(payload: SaveDebitNotePayload): DebitNoteRecord {
   const nextList = existing ? list.map((entry) => (entry.id === existing.id ? note : entry)) : [note, ...list];
   setAllNotes(nextList);
   return note;
+}
+
+export function removeDebitNote(noteId: string): DebitNoteRecord {
+  assertDebitNoteDeletePermission();
+  const normalizedId = String(noteId || "").trim();
+  if (!normalizedId) {
+    throw new Error("Debit note id is required.");
+  }
+  const notes = getAllNotes();
+  const existing = notes.find((note) => String(note?.id || "") === normalizedId);
+  if (!existing) {
+    throw new Error("Debit note not found.");
+  }
+  if (existing.status === "Applied") {
+    throw new Error("Applied debit notes cannot be deleted.");
+  }
+  setAllNotes(notes.filter((note) => String(note?.id || "") !== normalizedId));
+  setAllLedgerEntries(getAllLedgerEntries().filter((entry) => String(entry?.noteId || "") !== normalizedId));
+  return existing;
 }
 
 export function summarizeDebitNotes(country: CountryCode) {
