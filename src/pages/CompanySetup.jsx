@@ -9,27 +9,20 @@ import CurrencyMultiInput from "../components/CurrencyMultiInput";
 import { authGetOrganizationId, authGetRole, authGetUser } from "../services/auth.service";
 import { isOwnerRole } from "../services/roles";
 import {
-  COUNTRIES,
   companyGetProfile,
   companySaveProfileRemote
 } from "../services/company.service";
 import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
 import { UI } from "../theme/tokens";
 import { useOrganization } from "../context/OrganizationContext";
+import {
+  getCanonicalCountryName,
+  listAllCountries,
+  listStatesByCountry,
+  resolveCountryIsoCode
+} from "../lib/geoData";
 
 const MAX_CURRENCIES = 3;
-
-const INDIA_STATES = [
-  "Andhra Pradesh",
-  "Delhi",
-  "Gujarat",
-  "Karnataka",
-  "Kerala",
-  "Maharashtra",
-  "Tamil Nadu",
-  "Telangana",
-  "West Bengal"
-];
 
 const COUNTRY_META = {
   India: { currency: "INR" },
@@ -73,7 +66,7 @@ function normalizeCurrencyList(existing, country) {
 }
 
 function normalizeProfile(user, role, existing) {
-  const baseCountry = existing?.country === "UK" ? "United Kingdom" : existing?.country || "India";
+  const baseCountry = getCanonicalCountryName(existing?.country || "") || "India";
   const legacyAddress = existing?.address || {};
   const normalizedAddress = {
     line1: legacyAddress.line1 || legacyAddress.street || "",
@@ -136,10 +129,32 @@ export default function CompanySetup() {
   const [saving, setSaving] = useState(false);
   const [vatInput, setVatInput] = useState("");
   const [hasInvoices, setHasInvoices] = useState(() => invoicesList().length > 0);
+  const [countryMenuOpen, setCountryMenuOpen] = useState(false);
+  const [stateMenuOpen, setStateMenuOpen] = useState(false);
 
-  const isIndia = useMemo(() => profile.country === "India", [profile.country]);
+  const isIndia = useMemo(() => resolveCountryIsoCode(profile.country) === "IN", [profile.country]);
   const isVatCountry = useMemo(() => VAT_COUNTRIES.includes(profile.country), [profile.country]);
   const isSalesTaxCountry = useMemo(() => profile.country === "USA", [profile.country]);
+  const allCountries = useMemo(() => listAllCountries(), []);
+  const stateOptions = useMemo(() => listStatesByCountry(profile.country), [profile.country]);
+  const countryQuery = String(profile.country || "")
+    .trim()
+    .toLowerCase();
+  const stateQuery = String(profile.address.state || "")
+    .trim()
+    .toLowerCase();
+  const countryMatches = useMemo(() => {
+    if (!countryQuery) return [];
+    return allCountries
+      .filter((countryEntry) => countryEntry.name.toLowerCase().includes(countryQuery))
+      .slice(0, 8);
+  }, [allCountries, countryQuery]);
+  const stateMatches = useMemo(() => {
+    if (!stateQuery || !stateOptions.length) return [];
+    return stateOptions
+      .filter((stateEntry) => stateEntry.name.toLowerCase().includes(stateQuery))
+      .slice(0, 8);
+  }, [stateOptions, stateQuery]);
 
   useEffect(() => {
     if (profile.country === "India") {
@@ -216,15 +231,36 @@ export default function CompanySetup() {
   }
 
   function applyCountryChange(country) {
-    const defaults = normalizeCurrencyList({}, country);
+    const canonicalCountry = getCanonicalCountryName(country || "");
+    if (!canonicalCountry) return;
+    const defaults = normalizeCurrencyList({}, canonicalCountry);
     setProfile((p) => ({
       ...p,
-      country,
+      country: canonicalCountry,
       currency: defaults[0] || "",
       currencies: defaults,
       address: { ...p.address, state: "" },
-      tax: { ...p.tax, gstin: "", vatNumber: "", vatRate: getVatRate(country) }
+      tax: { ...p.tax, gstin: "", vatNumber: "", vatRate: getVatRate(canonicalCountry) }
     }));
+  }
+
+  function applyCountryInput(value, options = { checkWarning: true }) {
+    const canonicalCountry = getCanonicalCountryName(value || "");
+    if (!canonicalCountry) return;
+    const currentCountry = getCanonicalCountryName(current?.country || "");
+    const hasCountryChanged = currentCountry && canonicalCountry !== currentCountry;
+
+    if (options.checkWarning && hasInvoices && hasCountryChanged) {
+      setPendingCountry(canonicalCountry);
+      setCountryWarning(true);
+      setProfile((prev) => ({ ...prev, country: currentCountry }));
+      setCountryMenuOpen(false);
+      return;
+    }
+
+    applyCountryChange(canonicalCountry);
+    setCountryMenuOpen(false);
+    setStateMenuOpen(false);
   }
 
   return (
@@ -304,28 +340,49 @@ export default function CompanySetup() {
               </FormField>
 
               <FormField label="Country">
-                <select
-                  value={profile.country}
-                  onChange={(e) => {
-                    const c = e.target.value;
-                    if (hasInvoices && current?.country && c !== current.country) {
-                      setPendingCountry(c);
-                      setCountryWarning(true);
-                      return;
-                    }
-                    applyCountryChange(c);
-                  }}
-                  className={`w-full rounded-2xl border px-3 py-2.5 text-sm outline-none focus:ring-4 bg-white ${
-                    errors.country ? "border-rose-300" : "border-slate-100"
-                  }`}
-                  style={{ "--tw-ring-color": UI.COLORS.ring }}
-                >
-                  {COUNTRIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <input
+                    value={profile.country}
+                    onChange={(event) => {
+                      setProfile((prev) => ({ ...prev, country: event.target.value }));
+                      setCountryMenuOpen(true);
+                    }}
+                    onFocus={() => setCountryMenuOpen(true)}
+                    onBlur={(event) => {
+                      applyCountryInput(event.target.value);
+                      window.setTimeout(() => setCountryMenuOpen(false), 80);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") setCountryMenuOpen(false);
+                    }}
+                    className={`w-full rounded-2xl border px-3 py-2.5 text-sm outline-none focus:ring-4 bg-white ${
+                      errors.country ? "border-rose-300" : "border-slate-100"
+                    }`}
+                    style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    placeholder="Type country name"
+                  />
+                  {countryMenuOpen && countryQuery ? (
+                    <div className="absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl">
+                      {countryMatches.length ? (
+                        countryMatches.map((countryEntry) => (
+                          <button
+                            key={countryEntry.isoCode}
+                            type="button"
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                              applyCountryInput(countryEntry.name);
+                            }}
+                            className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                          >
+                            {countryEntry.name}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-3 py-2 text-xs text-slate-500">No matching countries</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
                 {errors.country ? <p className="mt-1 text-xs text-rose-600">{errors.country}</p> : null}
                 {countryWarning ? (
                   <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
@@ -337,6 +394,10 @@ export default function CompanySetup() {
                       <button
                         type="button"
                         onClick={() => {
+                          setProfile((prev) => ({
+                            ...prev,
+                            country: getCanonicalCountryName(current?.country || prev.country)
+                          }));
                           setCountryWarning(false);
                           setPendingCountry("");
                         }}
@@ -348,7 +409,7 @@ export default function CompanySetup() {
                         type="button"
                         onClick={() => {
                           if (pendingCountry) {
-                            applyCountryChange(pendingCountry);
+                            applyCountryInput(pendingCountry, { checkWarning: false });
                           }
                           setCountryWarning(false);
                           setPendingCountry("");
@@ -436,35 +497,59 @@ export default function CompanySetup() {
                 {errors.city ? <p className="mt-1 text-xs text-rose-600">{errors.city}</p> : null}
               </FormField>
 
-            <FormField label={isIndia ? "State (required for India)" : "State / Province"}>
-              {isIndia ? (
-                  <>
-                    <input
-                      list="india-states"
-                      value={profile.address.state}
-                      onChange={(e) =>
-                        setProfile((p) => ({ ...p, address: { ...p.address, state: e.target.value } }))
-                      }
-                      className={`w-full rounded-2xl border px-3 py-2.5 text-sm outline-none focus:ring-4 ${
-                        errors.state ? "border-rose-300" : "border-slate-100"
-                      }`}
-                      style={{ "--tw-ring-color": UI.COLORS.ring }}
-                      placeholder="Select or type state"
-                    />
-                    <datalist id="india-states">
-                      {INDIA_STATES.map((s) => (
-                        <option key={s} value={s} />
-                      ))}
-                    </datalist>
-                  </>
-              ) : (
-                <input
-                  value={profile.address.state}
-                    onChange={(e) => setProfile((p) => ({ ...p, address: { ...p.address, state: e.target.value } }))}
-                    className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
+              <FormField
+                label={isIndia ? "State (required for India)" : "State / Province"}
+                hint={stateOptions.length ? `${stateOptions.length} options available` : "Type manually"}
+              >
+                <div className="relative">
+                  <input
+                    value={profile.address.state}
+                    onChange={(event) => {
+                      setProfile((prev) => ({
+                        ...prev,
+                        address: { ...prev.address, state: event.target.value }
+                      }));
+                      if (stateOptions.length) setStateMenuOpen(true);
+                    }}
+                    onFocus={() => {
+                      if (stateOptions.length) setStateMenuOpen(true);
+                    }}
+                    onBlur={() => window.setTimeout(() => setStateMenuOpen(false), 80)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") setStateMenuOpen(false);
+                    }}
+                    className={`w-full rounded-2xl border px-3 py-2.5 text-sm outline-none focus:ring-4 ${
+                      errors.state ? "border-rose-300" : "border-slate-100"
+                    }`}
                     style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    placeholder={stateOptions.length ? "Type state / region" : "State, province, or region"}
                   />
-                )}
+                  {stateMenuOpen && stateQuery && stateOptions.length ? (
+                    <div className="absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl">
+                      {stateMatches.length ? (
+                        stateMatches.map((stateEntry) => (
+                          <button
+                            key={`${stateEntry.isoCode}_${stateEntry.name}`}
+                            type="button"
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                              setProfile((prev) => ({
+                                ...prev,
+                                address: { ...prev.address, state: stateEntry.name }
+                              }));
+                              setStateMenuOpen(false);
+                            }}
+                            className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                          >
+                            {stateEntry.name}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-3 py-2 text-xs text-slate-500">No matching states/regions</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
                 {errors.state ? <p className="mt-1 text-xs text-rose-600">{errors.state}</p> : null}
               </FormField>
 

@@ -64,6 +64,12 @@ import {
   setInvoiceTemplateConfig
 } from "../lib/templateStore";
 import { getCountryTemplates } from "../data/invoiceCountryConfig";
+import {
+  getCanonicalCountryName,
+  listAllCountries,
+  listStatesByCountry,
+  resolveCountryIsoCode
+} from "../lib/geoData";
 
 const SECTION_ITEMS = [
   {
@@ -114,15 +120,6 @@ const SECTION_ITEMS = [
     description: "Audit trails and system toggles.",
     icon: Database
   }
-];
-
-const BUSINESS_TYPES = [
-  "Sole Proprietor",
-  "Partnership",
-  "Private Limited",
-  "LLC",
-  "Non Profit",
-  "Other"
 ];
 
 const TIMEZONES = [
@@ -180,6 +177,20 @@ const SIDEBAR_STYLE_LABELS = {
   glass: "Glass Blur",
   gradient: "Gradient"
 };
+
+const COUNTRY_TIMEZONE_BY_ISO = {
+  IN: "Asia/Kolkata",
+  LK: "Asia/Colombo",
+  AE: "Asia/Dubai",
+  GB: "Europe/London",
+  IE: "Europe/London",
+  US: "America/New_York"
+};
+
+function defaultTimezoneForCountry(country) {
+  const isoCode = resolveCountryIsoCode(country);
+  return COUNTRY_TIMEZONE_BY_ISO[isoCode] || "Asia/Kolkata";
+}
 
 function normalizeThemeFontSizePx(value) {
   const legacy = {
@@ -244,7 +255,7 @@ function buildDefaultPrefixes(country) {
 
 function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
   const stored = profile?.settings || {};
-  const baseCountry = stored.localization?.defaultCountry || profile?.country || "India";
+  const baseCountry = profile?.country || stored.localization?.defaultCountry || "India";
   const localizationCurrencies = normalizeLocalizationCurrencies({
     country: baseCountry,
     primary: stored.localization?.currency || profile?.currency || profile?.tax?.currency,
@@ -262,7 +273,6 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
   const profileSection = {
     companyName: profile?.companyName || "",
     logoBase64: profile?.logoBase64 || "",
-    businessType: stored.profile?.businessType || profile?.businessType || "",
     email: profile?.email || "",
     phone: profile?.phone || "",
     website: profile?.website || "",
@@ -280,7 +290,7 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
     defaultCountry: baseCountry,
     currency,
     currencies: localizationCurrencies,
-    timezone: stored.localization?.timezone || "Asia/Kolkata",
+    timezone: stored.localization?.timezone || defaultTimezoneForCountry(baseCountry),
     dateFormat: stored.localization?.dateFormat || "DD MMM YYYY",
     numberFormat: stored.localization?.numberFormat || "1,23,456.78"
   };
@@ -464,7 +474,6 @@ function mapSettingsToProfile(settings) {
   return {
     companyName: settings.profile.companyName,
     logoBase64: settings.profile.logoBase64,
-    businessType: settings.profile.businessType,
     email: settings.profile.email,
     phone: settings.profile.phone,
     website: settings.profile.website,
@@ -784,6 +793,8 @@ export default function CompanySettings() {
   const [profileLogoFile, setProfileLogoFile] = useState(null);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [savingSection, setSavingSection] = useState("");
+  const [profileCountryMenuOpen, setProfileCountryMenuOpen] = useState(false);
+  const [profileStateMenuOpen, setProfileStateMenuOpen] = useState(false);
   useGlobalLoadingBridge(loadingSection, "company-settings");
 
   useEffect(() => {
@@ -999,6 +1010,29 @@ export default function CompanySettings() {
     () => getCountryTemplates(settings.localization.defaultCountry),
     [settings.localization.defaultCountry]
   );
+  const allCountries = useMemo(() => listAllCountries(), []);
+  const profileStateOptions = useMemo(
+    () => listStatesByCountry(settings.profile.country),
+    [settings.profile.country]
+  );
+  const profileCountryQuery = String(settings.profile.country || "")
+    .trim()
+    .toLowerCase();
+  const profileStateQuery = String(settings.profile.address?.state || "")
+    .trim()
+    .toLowerCase();
+  const profileCountryMatches = useMemo(() => {
+    if (!profileCountryQuery) return [];
+    return allCountries
+      .filter((countryEntry) => countryEntry.name.toLowerCase().includes(profileCountryQuery))
+      .slice(0, 8);
+  }, [allCountries, profileCountryQuery]);
+  const profileStateMatches = useMemo(() => {
+    if (!profileStateQuery || !profileStateOptions.length) return [];
+    return profileStateOptions
+      .filter((stateEntry) => stateEntry.name.toLowerCase().includes(profileStateQuery))
+      .slice(0, 8);
+  }, [profileStateOptions, profileStateQuery]);
 
   function updateSection(section, patch) {
     setSettings((prev) => ({
@@ -1008,12 +1042,18 @@ export default function CompanySettings() {
   }
 
   function applyCountryChange(nextCountry) {
-    const nextMeta = getCountryMeta(nextCountry);
-    const templateOptions = getCountryTemplates(nextCountry);
+    const canonicalCountry = getCanonicalCountryName(nextCountry || "");
+    if (!canonicalCountry) return;
+    const nextMeta = getCountryMeta(canonicalCountry);
+    const templateOptions = getCountryTemplates(canonicalCountry);
     setSettings((prev) => {
-      const nextPrefixes = refreshPrefixes(prev.numbering.prefixes, prev.localization.defaultCountry, nextCountry);
+      const nextPrefixes = refreshPrefixes(
+        prev.numbering.prefixes,
+        prev.localization.defaultCountry,
+        canonicalCountry
+      );
       const nextCurrencies = normalizeLocalizationCurrencies({
-        country: nextCountry,
+        country: canonicalCountry,
         primary: nextMeta.currency,
         currencies: prev.localization.currencies
       });
@@ -1021,15 +1061,15 @@ export default function CompanySettings() {
         ? nextCurrencies
         : nextCurrencies.slice(0, 1);
       const nextTax = { ...prev.tax };
-      if (nextCountry === "India") {
+      if (canonicalCountry === "India") {
         nextTax.enableGst = true;
         nextTax.defaultGstRate = nextTax.defaultGstRate || nextMeta.gstDefault || 18;
       }
-      if (VAT_COUNTRIES.includes(nextCountry)) {
+      if (VAT_COUNTRIES.includes(canonicalCountry)) {
         nextTax.enableVat = true;
         nextTax.defaultVatRate = nextTax.defaultVatRate || nextMeta.vatDefault || 5;
       }
-      if (nextCountry === "USA") {
+      if (canonicalCountry === "USA") {
         nextTax.enableSalesTax = true;
       }
       const fallbackTemplateId = templateOptions[0]?.id || DEFAULT_TEMPLATE_CONFIG.templateId;
@@ -1040,14 +1080,15 @@ export default function CompanySettings() {
         ...prev,
         profile: {
           ...prev.profile,
-          country: nextCountry,
+          country: canonicalCountry,
           address: { ...prev.profile.address, state: "" }
         },
         localization: {
           ...prev.localization,
-          defaultCountry: nextCountry,
+          defaultCountry: canonicalCountry,
           currency: effectiveCurrencies[0] || normalizeCurrencyCode(nextMeta.currency),
-          currencies: effectiveCurrencies
+          currencies: effectiveCurrencies,
+          timezone: defaultTimezoneForCountry(canonicalCountry)
         },
         tax: nextTax,
         numbering: {
@@ -1060,6 +1101,14 @@ export default function CompanySettings() {
         }
       };
     });
+  }
+
+  function applyProfileCountryInput(value) {
+    const canonicalCountry = getCanonicalCountryName(value || "");
+    if (!canonicalCountry) return;
+    applyCountryChange(canonicalCountry);
+    setProfileCountryMenuOpen(false);
+    setProfileStateMenuOpen(false);
   }
 
   function applyAdditionalCurrencies(nextExtraCurrencies) {
@@ -1514,23 +1563,6 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Business Type">
-                      <select
-                        value={settings.profile.businessType}
-                        onChange={(event) =>
-                          updateSection("profile", { businessType: event.target.value })
-                        }
-                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                      >
-                        <option value="">Select type</option>
-                        {BUSINESS_TYPES.map((type) => (
-                          <option key={type} value={type}>
-                            {type}
-                          </option>
-                        ))}
-                      </select>
-                    </FormField>
-
                     <FormField label="Company Email *">
                       <input
                         value={settings.profile.email}
@@ -1617,36 +1649,114 @@ export default function CompanySettings() {
                     </FormField>
 
                     <FormField label="Country *">
-                      <select
-                        value={settings.profile.country}
-                        onChange={(event) => applyCountryChange(event.target.value)}
-                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                      >
-                        {COUNTRIES.map((entry) => (
-                          <option key={entry} value={entry}>
-                            {entry}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="relative">
+                        <input
+                          value={settings.profile.country}
+                          onChange={(event) => {
+                            updateSection("profile", { country: event.target.value });
+                            setProfileCountryMenuOpen(true);
+                          }}
+                          onFocus={() => setProfileCountryMenuOpen(true)}
+                          onBlur={(event) => {
+                            applyProfileCountryInput(event.target.value);
+                            window.setTimeout(() => setProfileCountryMenuOpen(false), 80);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") setProfileCountryMenuOpen(false);
+                          }}
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                          placeholder="Type country name"
+                        />
+                        {profileCountryMenuOpen && profileCountryQuery ? (
+                          <div className="absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl">
+                            {profileCountryMatches.length ? (
+                              profileCountryMatches.map((countryEntry) => (
+                                <button
+                                  key={countryEntry.isoCode}
+                                  type="button"
+                                  onMouseDown={(event) => {
+                                    event.preventDefault();
+                                    applyProfileCountryInput(countryEntry.name);
+                                  }}
+                                  className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                                >
+                                  {countryEntry.name}
+                                </button>
+                              ))
+                            ) : (
+                              <p className="px-3 py-2 text-xs text-slate-500">No matching countries</p>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
                       {sectionErrors.country ? (
                         <p className="mt-1 text-xs text-rose-600">{sectionErrors.country}</p>
                       ) : null}
                     </FormField>
 
                     <FormField label="State / Region">
-                      <input
-                        value={settings.profile.address.state}
-                        onChange={(event) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            profile: {
-                              ...prev.profile,
-                              address: { ...prev.profile.address, state: event.target.value }
-                            }
-                          }))
-                        }
-                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
-                      />
+                      <div className="relative">
+                        <input
+                          value={settings.profile.address.state}
+                          onChange={(event) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              profile: {
+                                ...prev.profile,
+                                address: { ...prev.profile.address, state: event.target.value }
+                              }
+                            }))
+                          }
+                          onFocus={() => {
+                            if (profileStateOptions.length) setProfileStateMenuOpen(true);
+                          }}
+                          onBlur={() => window.setTimeout(() => setProfileStateMenuOpen(false), 80)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") setProfileStateMenuOpen(false);
+                          }}
+                          className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                          placeholder={
+                            profileStateOptions.length
+                              ? "Type state / region"
+                              : "State, province, or region"
+                          }
+                        />
+                        {profileStateMenuOpen &&
+                        profileStateQuery &&
+                        profileStateOptions.length ? (
+                          <div className="absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl">
+                            {profileStateMatches.length ? (
+                              profileStateMatches.map((stateEntry) => (
+                                <button
+                                  key={`${stateEntry.isoCode}_${stateEntry.name}`}
+                                  type="button"
+                                  onMouseDown={(event) => {
+                                    event.preventDefault();
+                                    setSettings((prev) => ({
+                                      ...prev,
+                                      profile: {
+                                        ...prev.profile,
+                                        address: {
+                                          ...prev.profile.address,
+                                          state: stateEntry.name
+                                        }
+                                      }
+                                    }));
+                                    setProfileStateMenuOpen(false);
+                                  }}
+                                  className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                                >
+                                  {stateEntry.name}
+                                </button>
+                              ))
+                            ) : (
+                              <p className="px-3 py-2 text-xs text-slate-500">
+                                No matching states/regions
+                              </p>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
                     </FormField>
                   </div>
 
@@ -1695,19 +1805,13 @@ export default function CompanySettings() {
 
                   <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
                     <FormField label="Default Country">
-                      <select
-                        value={settings.localization.defaultCountry}
-                        onChange={(event) => applyCountryChange(event.target.value)}
-                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                      >
-                        {COUNTRIES.map((entry) => (
-                          <option key={entry} value={entry}>
-                            {entry}
-                          </option>
-                        ))}
-                      </select>
+                      <input
+                        value={settings.localization.defaultCountry || settings.profile.country}
+                        readOnly
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+                      />
                       <p className="mt-1 text-xs text-slate-500">
-                        Changing country updates tax defaults and document numbering.
+                        Uses Company Profile country. Change it from the Company Profile section.
                       </p>
                       {sectionErrors.defaultCountry ? (
                         <p className="mt-1 text-xs text-rose-600">{sectionErrors.defaultCountry}</p>
@@ -1762,6 +1866,9 @@ export default function CompanySettings() {
                           </option>
                         ))}
                       </select>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Default timezone is auto-set from company country.
+                      </p>
                     </FormField>
 
                     <FormField label="Date Format">
