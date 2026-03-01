@@ -590,7 +590,9 @@ export default function CreditNotePremium() {
         errors.totals = "Partial refund cannot exceed return value.";
       }
     }
-    if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Owner or Accounter can apply credits.";
+    if (targetStatus === "Applied" && !access.canApply) {
+      errors.workflow = "You do not have approval permission to apply credits.";
+    }
     const currentStatus = activeNote?.status || "Draft";
     if (targetStatus === "Applied" && currentStatus !== "Issued" && currentStatus !== "Applied") {
       errors.workflow = "Issue before apply.";

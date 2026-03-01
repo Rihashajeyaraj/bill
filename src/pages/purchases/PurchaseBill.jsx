@@ -14,9 +14,10 @@ import {
 } from "../../services/purchases.service";
 import { useOrganization } from "../../context/OrganizationContext";
 import { calculateTaxes } from "../../services/tax";
-import { authGetUser } from "../../services/auth.service";
+import { authGetRole, authGetUser } from "../../services/auth.service";
 import { syncPaymentOutRemote } from "../../services/payments.service";
 import { outstandingBySupplier, savePaymentOut } from "../../modules/paymentOut/store";
+import { canCreateEntries } from "../../services/roles";
 import {
   companyConsumeDocumentNumber,
   companyPeekDocumentNumber
@@ -137,6 +138,8 @@ function createLine(defaultTaxRate = 0) {
 
 export default function PurchaseBill() {
   const navigate = useNavigate();
+  const role = authGetRole();
+  const canCreatePurchase = canCreateEntries(role);
   const { country = "", currency = "", profile: company = {} } = useOrganization();
   const isIndiaOrg = country === "India";
   const companyTaxSettings = company?.settings?.tax || {};
@@ -734,6 +737,10 @@ export default function PurchaseBill() {
   }
 
   async function save() {
+    if (!canCreatePurchase) {
+      toast.error("Permission denied", "You do not have permission to create purchase bills.");
+      return;
+    }
     if (!partyId) {
       toast.warning("Supplier required", "Select a supplier before saving.");
       return;
@@ -937,6 +944,11 @@ export default function PurchaseBill() {
   return (
     <div className="max-w-6xl space-y-6">
       <PageHeader title="Purchase Bill" subtitle="Search supplier by mobile and create the bill." />
+      {!canCreatePurchase ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          Your role does not have purchase-bill create permission.
+        </div>
+      ) : null}
       <div className="flex justify-end">
         <button
           type="button"
@@ -1102,6 +1114,7 @@ export default function PurchaseBill() {
           <button
             type="button"
             onClick={addLine}
+            disabled={!canCreatePurchase}
             className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2"
           >
             <Plus className="h-4 w-4" />
@@ -1548,7 +1561,7 @@ export default function PurchaseBill() {
           onClick={() => {
             void save();
           }}
-          disabled={saving || loading}
+          disabled={!canCreatePurchase || saving || loading}
           className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Save className="h-4 w-4" />

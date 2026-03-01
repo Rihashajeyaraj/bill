@@ -62,13 +62,13 @@ function SessionAndShellLayer({ children }) {
           if (key === "n") navigateTo("/app/notifications");
           if (key === "r") {
             if (canAccessPathForRole(authGetRole(), "/app/reports")) navigateTo("/app/reports");
-            else toast.warning("Permission denied", "Reports are available for Owner or Accounter.");
+            else toast.warning("Permission denied", "Reports are blocked by Users & Roles permissions.");
           }
           if (key === "p") navigateTo("/app/parties");
           if (key === "i") navigateTo("/app/items");
           if (key === "s") {
             if (canAccessPathForRole(authGetRole(), "/app/company-settings")) navigateTo("/app/company-settings");
-            else toast.warning("Permission denied", "Settings are available only for Owner.");
+            else toast.warning("Permission denied", "Company settings access is blocked for your role.");
           }
           window.removeEventListener("keydown", listener);
         };

@@ -424,7 +424,9 @@ export default function PaymentInPremium() {
     if ((form.paymentMode === "Bank Transfer" || form.paymentMode === "Card" || form.paymentMode === "UPI" || form.paymentMode === "Online Gateway") && !form.transactionId.trim()) errors.transactionId = "Transaction ID is required.";
     if (form.allocations.some((line) => parseNumber(line.applyAmount) > line.balanceDue)) errors.allocations = "Apply amount cannot exceed invoice balance due.";
     if (amountApplied > amountReceived) errors.allocations = "Applied amount cannot exceed amount received.";
-    if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Owner or Accounter can apply to invoices.";
+    if (targetStatus === "Applied" && !access.canApply) {
+      errors.workflow = "You do not have approval permission to apply payments to invoices.";
+    }
 
     setFieldErrors(errors);
     if (Object.keys(errors).length) {

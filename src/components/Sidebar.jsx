@@ -21,7 +21,7 @@ import {
 import clsx from "clsx";
 import { companyIsCompleted } from "../services/company.service";
 import { authGetRole } from "../services/auth.service";
-import { canAccessSettings, canViewReports, isOwnerRole } from "../services/roles";
+import { canAccessSettings, canViewReports } from "../services/roles";
 import { useOrganization } from "../context/OrganizationContext";
 
 const base = "app-sidebar-item";
@@ -59,7 +59,7 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
   const setupComplete = companyIsCompleted();
   const canOpenSettings = canAccessSettings(role);
   const canOpenReports = canViewReports(role);
-  const showCompanySetup = isOwnerRole(role) && !setupComplete;
+  const showCompanySetup = canAccessSettings(role) && !setupComplete;
   const adjustmentsActive = routeMatches(location.pathname, "/app/sales/credit-note") ||
     routeMatches(location.pathname, "/app/purchase/debit-note");
   const paymentsActive = routeMatches(location.pathname, "/app/sales/payment-in") ||

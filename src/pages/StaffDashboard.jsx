@@ -411,7 +411,7 @@ export default function StaffDashboard() {
             </div>
           </div>
           <p className="mt-3 text-xs text-slate-500">
-            Staff can create and issue these documents. Owner/Accounter will apply them.
+            Staff can create and issue these documents. Users with approval permission will apply them.
           </p>
         </Card>
 
@@ -498,7 +498,7 @@ export default function StaffDashboard() {
         <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-slate-600">
           <li>Create invoices and purchase bills with correct tax mode (inclusive/exclusive).</li>
           <li>Check pending collections and follow up with customers daily.</li>
-          <li>Raise credit/debit notes as needed, then inform Owner/Accounter to apply.</li>
+          <li>Raise credit/debit notes as needed, then inform approved users to apply.</li>
           <li>Review low-stock alerts and notify purchasing before stockout.</li>
         </ul>
       </Card>

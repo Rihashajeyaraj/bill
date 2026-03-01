@@ -4,8 +4,9 @@ import {
   lsSetOrganizationScoped,
   uid
 } from "../../services/storage";
-import { authGetOrganizationId, authGetUser } from "../../services/auth.service";
+import { authGetOrganizationId, authGetRole, authGetUser } from "../../services/auth.service";
 import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
+import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { buildTaxLabel, normalizeItemType, normalizeText, parseNumber } from "./utils";
 
 const CREDIT_NOTES_PREMIUM_KEY = "creditNotesPremiumV1";
@@ -37,6 +38,26 @@ function normalizeItemName(value) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
+}
+
+function assertItemWritePermission({ isEdit = false } = {}) {
+  const role = authGetRole();
+  if (isEdit) {
+    if (!canEditEntries(role)) {
+      throw new Error("You do not have permission to edit items.");
+    }
+    return;
+  }
+  if (!canCreateEntries(role)) {
+    throw new Error("You do not have permission to create items.");
+  }
+}
+
+function assertItemDeletePermission() {
+  const role = authGetRole();
+  if (!canDeleteEntries(role)) {
+    throw new Error("You do not have permission to delete items.");
+  }
 }
 
 function findDuplicateItemByName(list, incomingName, incomingId) {
@@ -293,6 +314,8 @@ export function upsertItem(draft, country) {
   const list = listRawItems();
   const now = new Date().toISOString();
   const id = draft.id || uid("itm_");
+  const isEdit = !!draft?.id && list.some((item) => String(item?.id) === String(draft.id));
+  assertItemWritePermission({ isEdit });
   const itemName = String(draft?.name || draft?.itemName || "").trim();
   if (!itemName) throw new Error("Item name is required.");
   const itemType = normalizeItemType(draft?.type);
@@ -357,6 +380,7 @@ export function upsertItem(draft, country) {
 }
 
 export function removeItem(id) {
+  assertItemDeletePermission();
   lsSetOrganizationScoped(
     LS_KEYS.items,
     listRawItems().filter((item) => item.id !== id)
@@ -385,6 +409,10 @@ export async function syncItemsFromRemote() {
 }
 
 export async function upsertItemRemote(draft, country) {
+  const existing = listRawItems().some((item) => String(item?.id) === String(draft?.id || ""));
+  const isEdit = !!draft?.id && (looksLikeUuid(draft.id) || existing);
+  assertItemWritePermission({ isEdit });
+
   if (!isSupabaseConfigured || !supabase) {
     return upsertItem(draft, country);
   }
@@ -487,6 +515,7 @@ export async function upsertItemRemote(draft, country) {
 
 export async function removeItemRemote(id) {
   if (!id) return;
+  assertItemDeletePermission();
 
   if (!isSupabaseConfigured || !supabase) {
     removeItem(id);

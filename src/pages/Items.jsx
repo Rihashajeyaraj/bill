@@ -26,10 +26,16 @@ import { listItemReturnActions, saveItemReturnAction } from "../services/itemRet
 import { fetchPurchaseBillByBatchId } from "../services/inventory.service";
 import { purchasesList } from "../services/purchases.service";
 import { useToast } from "../context/ToastContext";
+import { authGetRole } from "../services/auth.service";
+import { canCreateEntries, canDeleteEntries, canEditEntries } from "../services/roles";
 
 export default function Items() {
   const navigate = useNavigate();
   const toast = useToast();
+  const role = authGetRole();
+  const canCreateItem = canCreateEntries(role);
+  const canEditItem = canEditEntries(role);
+  const canDeleteItem = canDeleteEntries(role);
   const { country = "India", currency = "" } = useOrganization();
 
   const [pageView, setPageView] = useState("items");
@@ -267,12 +273,20 @@ export default function Items() {
   }, [pageView]);
 
   function openCreate() {
+    if (!canCreateItem) {
+      toast.error("Permission denied", "You do not have permission to create items.");
+      return;
+    }
     setActiveItem({ type: tab });
     setModalMode("create");
     setModalOpen(true);
   }
 
   function openEdit(item) {
+    if (!canEditItem) {
+      toast.error("Permission denied", "You do not have permission to edit items.");
+      return;
+    }
     setActiveItem(item);
     setModalMode("edit");
     setModalOpen(true);
@@ -353,6 +367,14 @@ export default function Items() {
   }
 
   async function handleSave(item) {
+    if (modalMode === "edit" && !canEditItem) {
+      toast.error("Permission denied", "You do not have permission to edit items.");
+      return;
+    }
+    if (modalMode !== "edit" && !canCreateItem) {
+      toast.error("Permission denied", "You do not have permission to create items.");
+      return;
+    }
     try {
       await upsertItemRemote(item, country);
       setRefreshKey((prev) => prev + 1);
@@ -363,6 +385,10 @@ export default function Items() {
   }
 
   async function handleDelete(item) {
+    if (!canDeleteItem) {
+      toast.error("Permission denied", "You do not have permission to delete items.");
+      return;
+    }
     const usage = computeItemUsage(item);
     if (usage.used) return;
     if (!window.confirm(`Delete ${item.name}? This cannot be undone.`)) return;
@@ -498,6 +524,7 @@ export default function Items() {
                 <button
                   type="button"
                   onClick={openCreate}
+                  disabled={!canCreateItem}
                   className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-slate-800"
                 >
                   <Plus className="h-4 w-4" />
@@ -586,7 +613,13 @@ export default function Items() {
                 filtered.map((item) => {
                   const usage = computeItemUsage(item);
                   const stock = computeItemStock(item);
-                  const canDelete = !usage.used;
+                  const canDeleteByUsage = !usage.used;
+                  const canDelete = canDeleteItem && canDeleteByUsage;
+                  const deleteDisabledReason = !canDeleteItem
+                    ? "You do not have delete permission."
+                    : !canDeleteByUsage
+                      ? "Item already used in transactions."
+                      : "";
                   return (
                     <tr key={item.id} className="border-t border-slate-100 hover:bg-slate-50/70">
                       <td className="relative px-4 py-3">
@@ -659,7 +692,9 @@ export default function Items() {
                                   ? null
                                   : {
                                       item,
+                                      canEdit: canEditItem,
                                       canDelete,
+                                      deleteDisabledReason,
                                       top,
                                       left
                                     }
@@ -828,7 +863,9 @@ export default function Items() {
                   setActionMenu(null);
                   openEdit(selectedItem);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                disabled={!actionMenu.canEdit}
+                title={actionMenu.canEdit ? "Edit" : "You do not have edit permission."}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Pencil className="h-3.5 w-3.5" />
                 Edit
@@ -853,7 +890,7 @@ export default function Items() {
                   void handleDelete(selectedItem);
                 }}
                 disabled={!actionMenu.canDelete}
-                title={actionMenu.canDelete ? "Delete" : "Item already used in transactions"}
+                title={actionMenu.canDelete ? "Delete" : actionMenu.deleteDisabledReason}
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Trash2 className="h-3.5 w-3.5" />

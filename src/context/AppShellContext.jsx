@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { APP_NAV_ITEMS } from "../config/navigation";
 import { authGetRole } from "../services/auth.service";
 import { companyIsCompleted } from "../services/company.service";
-import { isOwnerRole } from "../services/roles";
+import { canAccessSettings } from "../services/roles";
 import { canAccessPathForRole } from "../services/accessControl";
 import {
   ensureActivitySeed,
@@ -32,7 +32,7 @@ export function AppShellProvider({ children }) {
   const [activities, setActivities] = useState([]);
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
-  const showCompanySetup = isOwnerRole(role) && !setupComplete;
+  const showCompanySetup = canAccessSettings(role) && !setupComplete;
 
   const refreshFeeds = useCallback(async () => {
     setNotifications(listCreditNotificationsCached());

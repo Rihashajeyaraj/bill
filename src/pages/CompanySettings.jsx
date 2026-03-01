@@ -41,7 +41,12 @@ import {
   settingsPutCompany
 } from "../services/company.service";
 import { authGetRole, authGetToken, authGetUser } from "../services/auth.service";
-import { isOwnerRole, normalizeRoleLabel } from "../services/roles";
+import {
+  canAccessSettings,
+  canGenerateRegisterCodes as canGenerateRegisterCodesByRole,
+  canManageUsers as canManageUsersByRole,
+  normalizeRoleLabel
+} from "../services/roles";
 import { uid } from "../services/storage";
 import { isSupabaseConfigured, supabase } from "../services/supabaseClient";
 import { UI } from "../theme/tokens";
@@ -762,8 +767,8 @@ export default function CompanySettings() {
   const [authAccessToken, setAuthAccessToken] = useState(() => authGetToken());
   const currentUser = authUser || authGetUser();
   const currentRole = authGetRole();
-  const canManageUsers = isOwnerRole(currentRole);
-  const canGenerateRegisterCodes = isOwnerRole(currentRole);
+  const canManageUsers = canManageUsersByRole(currentRole);
+  const canGenerateRegisterCodes = canGenerateRegisterCodesByRole(currentRole);
   const [settings, setSettings] = useState(() => buildDefaultSettings(currentProfile, currentUser));
   const [savedSettings, setSavedSettings] = useState(() => buildDefaultSettings(currentProfile, currentUser));
   const settingsRef = useRef(settings);
@@ -1125,7 +1130,7 @@ export default function CompanySettings() {
     if (section === "invoiceTemplate") return validateInvoiceTemplate(nextSettings.invoiceTemplate);
     if (section === "preferences") return {};
     if (section === "users" && !canManageUsers) {
-      return { users: "Only Owner can change roles and permissions." };
+      return { users: "You do not have permission to change roles and permissions." };
     }
     return {};
   }
@@ -1425,7 +1430,7 @@ export default function CompanySettings() {
     return <Navigate to="/login" replace />;
   }
 
-  if (!isOwnerRole(currentRole)) {
+  if (!canAccessSettings(currentRole)) {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -2781,7 +2786,7 @@ export default function CompanySettings() {
                       <div className="rounded-2xl border border-slate-200 bg-white p-4">
                         <p className="text-sm font-semibold text-slate-900">Invite User</p>
                         {!canManageUsers ? (
-                          <p className="mt-1 text-xs text-slate-500">Only Owner can invite team members.</p>
+                          <p className="mt-1 text-xs text-slate-500">You do not have permission to invite team members.</p>
                         ) : null}
                         <div className="mt-3 space-y-2">
                           <input

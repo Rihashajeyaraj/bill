@@ -115,6 +115,14 @@ export function canAccessSettings(value) {
   return isOwnerRole(value);
 }
 
+export function canManageUsers(value) {
+  return canAccessSettings(value);
+}
+
+export function canGenerateRegisterCodes(value) {
+  return canAccessSettings(value);
+}
+
 export function canCreateEntries(value) {
   return !!getPermissionsForRole(value).create;
 }

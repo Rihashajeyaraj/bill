@@ -7,7 +7,7 @@ import FormField from "../components/FormField";
 import FileUpload from "../components/FileUpload";
 import CurrencyMultiInput from "../components/CurrencyMultiInput";
 import { authGetOrganizationId, authGetRole, authGetUser } from "../services/auth.service";
-import { isOwnerRole } from "../services/roles";
+import { canAccessSettings } from "../services/roles";
 import {
   companyGetProfile,
   companySaveProfileRemote
@@ -114,8 +114,8 @@ export default function CompanySetup() {
   const user = authGetUser();
   const role = authGetRole();
   const organizationId = authGetOrganizationId();
-  const createMode = isOwnerRole(role) && searchParams.get("mode") === "create";
-  const freshOwnerSetup = isOwnerRole(role) && !createMode && !organizationId;
+  const createMode = canAccessSettings(role) && searchParams.get("mode") === "create";
+  const freshOwnerSetup = canAccessSettings(role) && !createMode && !organizationId;
   const { profile: organizationProfile } = useOrganization();
   const current = createMode || freshOwnerSetup ? null : organizationProfile || companyGetProfile();
 
@@ -222,7 +222,7 @@ export default function CompanySetup() {
         currency: profile.currencies[0] || "",
         created_at: new Date().toISOString()
       }, { forceCreate: createMode });
-      nav(isOwnerRole(role) ? "/invoice-template-setup" : "/dashboard", { replace: true });
+      nav(canAccessSettings(role) ? "/invoice-template-setup" : "/dashboard", { replace: true });
     } catch (error) {
       setSaveError(error?.message || "Failed to save organization details");
     } finally {

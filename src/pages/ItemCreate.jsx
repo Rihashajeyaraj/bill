@@ -22,6 +22,8 @@ import {
 } from "../modules/items/formRules";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
+import { authGetRole } from "../services/auth.service";
+import { canCreateEntries } from "../services/roles";
 
 const CATEGORY_KEY = "itemCategories";
 const DEFAULT_CATEGORIES = ["General", "Granite", "Services", "Hardware"];
@@ -149,6 +151,8 @@ function sanitizeDecimalInput(value) {
 export default function ItemCreate() {
   const nav = useNavigate();
   const toast = useToast();
+  const role = authGetRole();
+  const canCreateItem = canCreateEntries(role);
   const { country: organizationCountry = "", countryCode: organizationCountryCode = "", profile: organizationProfile = {} } =
     useOrganization();
   const companyCountry = useMemo(
@@ -325,6 +329,10 @@ export default function ItemCreate() {
 
   async function saveItem(mode = "save") {
     if (saving) return;
+    if (!canCreateItem) {
+      toast.error("Permission denied", "You do not have permission to create items.");
+      return;
+    }
     if (!validate()) return;
 
     setSaving(true);
@@ -443,6 +451,11 @@ export default function ItemCreate() {
         </div>
 
         <div className="space-y-4 px-5 py-5 md:px-6 md:py-6">
+          {!canCreateItem ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              Your role does not have item create permission.
+            </div>
+          ) : null}
           <FormSection title="1. Essentials" description="Core details for quick creation.">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <FormField label="Item Name *">
@@ -912,7 +925,7 @@ export default function ItemCreate() {
               </button>
               <button
                 type="button"
-                disabled={saving}
+                disabled={!canCreateItem || saving}
                 onClick={() => {
                   void saveItem("new");
                 }}
@@ -921,7 +934,7 @@ export default function ItemCreate() {
                 Save & New
               </button>
               <GradientButton
-                disabled={saving}
+                disabled={!canCreateItem || saving}
                 onClick={() => {
                   void saveItem("save");
                 }}

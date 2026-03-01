@@ -1,5 +1,5 @@
 import { authGetOrganizationId, authGetRole, authGetUser } from "./auth.service";
-import { fromDbRole, isOwnerRole, toDbRole } from "./roles";
+import { canAccessSettings, canManageUsers, fromDbRole, toDbRole } from "./roles";
 import {
   LS_KEYS,
   lsGetUserScoped,
@@ -987,7 +987,7 @@ export async function companySaveProfileRemote(profile, options = {}) {
     organizationId = generatedOrgId || targetOrganizationId;
   }
 
-  const ownerMode = isOwnerRole(authGetRole()) || toDbRole(authGetRole()) === "owner";
+  const ownerMode = canAccessSettings(authGetRole()) || toDbRole(authGetRole()) === "owner";
   if (ownerMode) {
     const { error: ownerMembershipError } = await supabaseClient.rpc("ensure_owner_membership", {
       p_organization_id: organizationId
@@ -1060,8 +1060,8 @@ export async function organizationUpdateUser({ userId, role, status }, options =
   if (!organizationId || !userId) {
     throw new Error("Organization and user are required.");
   }
-  if (!isOwnerRole(authGetRole())) {
-    throw new Error("Only Owner can change user roles.");
+  if (!canManageUsers(authGetRole())) {
+    throw new Error("You do not have permission to change user roles.");
   }
   if (!isSupabaseConfigured || !supabaseClient) {
     return {

@@ -430,7 +430,7 @@ export default function PaymentOutPremium() {
 
   async function persist(status) {
     if (status === "Applied" && !canApplyPayments) {
-      window.alert("Only Owner or Accounter can apply payment to bills.");
+      window.alert("You do not have approval permission to apply payment to bills.");
       return;
     }
     if (!form.supplierId) {
@@ -952,7 +952,7 @@ export default function PaymentOutPremium() {
                     <p className="text-slate-500">Approval Role</p>
                     <p className="font-semibold text-slate-700">{role}</p>
                     {!canApplyPayments ? (
-                      <p className="mt-1 text-amber-700">Apply to bills is disabled for Staff.</p>
+                      <p className="mt-1 text-amber-700">Apply to bills is disabled by Users & Roles permissions.</p>
                     ) : null}
                   </div>
                 </div>

@@ -1,6 +1,7 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
-import { authGetOrganizationId, authGetUser } from "./auth.service";
+import { authGetOrganizationId, authGetRole, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -46,6 +47,13 @@ function deriveInvoiceStatus(grandTotal, balanceAmount) {
   if (balance <= 0) return "paid";
   if (balance < grand) return "partial";
   return "issued";
+}
+
+function assertInvoiceWritePermission() {
+  const role = authGetRole();
+  if (!canCreateEntries(role) && !canEditEntries(role)) {
+    throw new Error("You do not have permission to save invoices.");
+  }
 }
 
 function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
@@ -333,6 +341,7 @@ export async function invoicesSyncFromRemote() {
 }
 
 export async function invoicesCreate(invoice) {
+  assertInvoiceWritePermission();
   const now = new Date().toISOString();
   const actor = authGetUser();
   const actorUserId = actor?.id || null;

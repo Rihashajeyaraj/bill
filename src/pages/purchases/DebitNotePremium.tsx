@@ -534,7 +534,9 @@ export default function DebitNotePremium() {
     if (!form.lines.length) errors.lines = "At least one line item is required.";
     if ((totals as any).detailed?.some((line: any) => line.validationMessage)) errors.lines = "Debit amount cannot be negative.";
     if (totals.total <= 0) errors.totals = "Total debit must be greater than zero.";
-    if (targetStatus === "Applied" && !access.canApply) errors.workflow = "Only Owner or Accounter can apply debits.";
+    if (targetStatus === "Applied" && !access.canApply) {
+      errors.workflow = "You do not have approval permission to apply debits.";
+    }
     const currentStatus = activeNote?.status || "Draft";
     if (targetStatus === "Applied" && currentStatus !== "Issued" && currentStatus !== "Applied") {
       errors.workflow = "Issue before apply.";

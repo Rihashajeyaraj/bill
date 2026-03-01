@@ -15,9 +15,10 @@ import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesCreate, invoicesSyncFromRemote } from "../../services/invoices.service";
 import { calculateTaxes } from "../../services/tax";
 import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
-import { authGetUser } from "../../services/auth.service";
+import { authGetRole, authGetUser } from "../../services/auth.service";
 import { syncPaymentInRemote } from "../../services/payments.service";
 import { fetchItemStockHistory } from "../../services/inventory.service";
+import { canCreateEntries } from "../../services/roles";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus, listParties, syncPartiesFromRemote } from "../../modules/parties/store";
@@ -200,6 +201,8 @@ function resolvePaymentCountryCode(country, countryCode) {
 
 export default function InvoiceCreate() {
   const navigate = useNavigate();
+  const role = authGetRole();
+  const canCreateInvoice = canCreateEntries(role);
   const { profile: company = {}, country = "", countryCode = "", currency = "", currencySymbol = "" } = useOrganization();
   const [templateConfig, setTemplateConfig] = useState(() => getInvoiceTemplateConfig());
   const isIndiaOrg = country === "India";
@@ -1107,6 +1110,10 @@ export default function InvoiceCreate() {
   ]);
 
   async function saveInvoice({ silent = false } = {}) {
+    if (!canCreateInvoice) {
+      alert("You do not have permission to create invoices.");
+      return null;
+    }
     const validComputedLines = computed.enriched.filter((line) => line?.itemId);
     if (!partyId) {
       alert("Select customer before saving invoice.");
@@ -1395,6 +1402,10 @@ export default function InvoiceCreate() {
   }
 
   async function handleSaveAndPrint() {
+    if (!canCreateInvoice) {
+      alert("You do not have permission to create invoices.");
+      return;
+    }
     const validComputedLines = computed.enriched.filter((line) => line?.itemId);
     if (!partyId) {
       alert("Select customer before saving and printing.");
@@ -1422,7 +1433,7 @@ export default function InvoiceCreate() {
             <div className="flex items-center gap-2">
               <button
                 onClick={handleSaveAndPrint}
-                disabled={hasStockErrors}
+                disabled={!canCreateInvoice || hasStockErrors}
                 className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
               >
                 <Printer className="h-4 w-4" />
@@ -1430,7 +1441,7 @@ export default function InvoiceCreate() {
               </button>
               <GradientButton
                 onClick={saveInvoice}
-                disabled={hasStockErrors}
+                disabled={!canCreateInvoice || hasStockErrors}
                 className="disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Save className="h-4 w-4" />
@@ -1440,6 +1451,11 @@ export default function InvoiceCreate() {
           }
         />
       </div>
+      {!canCreateInvoice ? (
+        <div className="print-hide mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          Your role does not have invoice create permission.
+        </div>
+      ) : null}
       <div className="print-hide mt-4 flex justify-end">
         <button
           type="button"
@@ -2225,7 +2241,7 @@ export default function InvoiceCreate() {
                   <GradientButton
                     className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={saveInvoice}
-                    disabled={hasStockErrors}
+                    disabled={!canCreateInvoice || hasStockErrors}
                   >
                     <Save className="h-4 w-4" />
                     Save Invoice
