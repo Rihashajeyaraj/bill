@@ -1,6 +1,7 @@
 import { COUNTRY_CONFIG, type CountryCode } from "./countryConfig";
 import type { DebitLineDraft, DebitNoteRecord, PurchaseInvoice } from "./store";
 import type { DebitNoteFormState } from "./types";
+import { formatCurrencyByPreference } from "../../lib/formatPreferences";
 
 export function parseNumber(value: string | number | null | undefined) {
   const n = Number(value || 0);
@@ -8,11 +9,9 @@ export function parseNumber(value: string | number | null | undefined) {
 }
 
 export function formatMoney(amount: number, country: CountryCode) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: COUNTRY_CONFIG[country].currency,
+  return formatCurrencyByPreference(Number(amount || 0), COUNTRY_CONFIG[country].currency, {
     maximumFractionDigits: 2
-  }).format(Number(amount || 0));
+  });
 }
 
 export function companyRegistration(company: any, country: CountryCode) {

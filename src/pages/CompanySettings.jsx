@@ -70,6 +70,7 @@ import {
   listStatesByCountry,
   resolveCountryIsoCode
 } from "../lib/geoData";
+import { formatDateByPreference } from "../lib/formatPreferences";
 
 const SECTION_ITEMS = [
   {
@@ -2790,7 +2791,7 @@ export default function CompanySettings() {
                                   </div>
                                   <p className="mt-1 text-[11px] text-slate-500">
                                     Uses: {codeEntry.used_count}/{codeEntry.max_uses} | Expires:{" "}
-                                    {new Date(codeEntry.expires_at).toLocaleDateString()}
+                                    {formatDateByPreference(codeEntry.expires_at)}
                                   </p>
                                 </div>
                               ))}

@@ -2,14 +2,11 @@ import { jsPDF } from "jspdf";
 import { COUNTRY_CONFIG } from "./countryConfig";
 import type { CountryCode } from "./countryConfig";
 import type { PaymentInRecord } from "./store";
+import { formatCurrencyByPreference, formatDateTimeByPreference } from "../../lib/formatPreferences";
 
 function money(value: number, country: CountryCode) {
   const currency = COUNTRY_CONFIG[country].currency;
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 2
-  }).format(Number(value || 0));
+  return formatCurrencyByPreference(Number(value || 0), currency, { maximumFractionDigits: 2 });
 }
 
 function downloadBlob(content: Blob, filename: string) {
@@ -71,7 +68,7 @@ export function exportPaymentInSummaryPdf(records: PaymentInRecord[], country: C
   doc.setFontSize(10);
   doc.text(`Country: ${cfg.name}`, 14, y);
   y += 5;
-  doc.text(`Generated: ${new Date().toLocaleString()}`, 14, y);
+  doc.text(`Generated: ${formatDateTimeByPreference(new Date())}`, 14, y);
   y += 8;
 
   doc.setFontSize(9);

@@ -9,17 +9,14 @@ import {
   fetchInvoiceAllocationDetails,
   fetchInvoiceProfitDetails
 } from "../../services/inventory.service";
+import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
 
 function money(n) {
-  const v = Number(n || 0);
-  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatNumberByPreference(Number(n || 0), { maximumFractionDigits: 2 });
 }
 
 function formatDate(value) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleDateString();
+  return formatDateByPreference(value, String(value || "-"));
 }
 
 function qtyFromInvoice(invoice) {

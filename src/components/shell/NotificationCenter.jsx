@@ -1,9 +1,14 @@
 import React from "react";
 import { Bell, BellRing, CheckCheck, Clock3, X } from "lucide-react";
 import { useAppShell } from "../../context/AppShellContext";
+import {
+  formatDateByPreference,
+  formatDateTimeByPreference,
+  formatNumberByPreference
+} from "../../lib/formatPreferences";
 
 function formatAmount(value) {
-  return Number(value || 0).toLocaleString(undefined, {
+  return formatNumberByPreference(Number(value || 0), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
@@ -29,10 +34,7 @@ function documentLabel(entry) {
 }
 
 function formatDate(value) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleDateString();
+  return formatDateByPreference(value, String(value || "-"));
 }
 
 function alertDescription(entry) {
@@ -137,7 +139,7 @@ export default function NotificationCenter() {
                         ) : null}
                       </div>
                       <p className="mt-1 text-[11px] text-slate-500">
-                        {new Date(entry.createdAt).toLocaleString()}
+                        {formatDateTimeByPreference(entry.createdAt)}
                       </p>
                     </button>
                   ))
@@ -157,7 +159,7 @@ export default function NotificationCenter() {
                     <div key={entry.id} className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
                       <p className="text-sm font-semibold text-slate-800">{entry.action}</p>
                       <p className="mt-1 text-[11px] text-slate-500">
-                        {new Date(entry.createdAt).toLocaleString()}
+                        {formatDateTimeByPreference(entry.createdAt)}
                       </p>
                     </div>
                   ))

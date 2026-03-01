@@ -11,17 +11,14 @@ import {
   expensesList,
   expensesSyncFromRemote
 } from "../../services/expenses.service";
+import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
 
 function money(n) {
-  const value = Number(n || 0);
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatNumberByPreference(Number(n || 0), { maximumFractionDigits: 2 });
 }
 
 function formatDate(value) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleDateString();
+  return formatDateByPreference(value, String(value || "-"));
 }
 
 export default function Expense() {

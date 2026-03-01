@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { authGetRole, authGetUser, authLogout } from "../services/auth.service";
 import { useOrganization } from "../context/OrganizationContext";
 import { useAppShell } from "../context/AppShellContext";
+import { formatDateByPreference, formatTimeByPreference } from "../lib/formatPreferences";
 
 export default function Topbar({ onOpenSidebar }) {
   const nav = useNavigate();
@@ -25,22 +26,11 @@ export default function Topbar({ onOpenSidebar }) {
     [now]
   );
   const dateText = useMemo(
-    () =>
-      new Intl.DateTimeFormat(undefined, {
-        day: "2-digit",
-        month: "short",
-        year: "numeric"
-      }).format(now),
+    () => formatDateByPreference(now),
     [now]
   );
   const timeText = useMemo(
-    () =>
-      new Intl.DateTimeFormat(undefined, {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: true
-      }).format(now),
+    () => formatTimeByPreference(now),
     [now]
   );
 

@@ -1,3 +1,5 @@
+import { formatCurrencyByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
+
 export function parseNumber(value) {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
@@ -6,17 +8,9 @@ export function parseNumber(value) {
 export function formatMoney(value, currency) {
   const amount = parseNumber(value);
   if (currency) {
-    try {
-      return new Intl.NumberFormat(undefined, {
-        style: "currency",
-        currency,
-        maximumFractionDigits: 2
-      }).format(amount);
-    } catch {
-      return `${currency} ${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-    }
+    return formatCurrencyByPreference(amount, currency, { maximumFractionDigits: 2 });
   }
-  return amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatNumberByPreference(amount, { maximumFractionDigits: 2 });
 }
 
 export function normalizeText(value) {

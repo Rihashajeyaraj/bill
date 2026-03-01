@@ -1,3 +1,5 @@
+import { formatCurrencyByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
+
 const VAT_DEFAULTS = {
   "Sri Lanka": 18,
   "United Kingdom": 20,
@@ -18,17 +20,9 @@ export function normalizeText(value) {
 export function formatMoney(value, currency) {
   const amount = parseNumber(value);
   if (currency) {
-    try {
-      return new Intl.NumberFormat(undefined, {
-        style: "currency",
-        currency,
-        maximumFractionDigits: 2
-      }).format(amount);
-    } catch {
-      return `${currency} ${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-    }
+    return formatCurrencyByPreference(amount, currency, { maximumFractionDigits: 2 });
   }
-  return amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatNumberByPreference(amount, { maximumFractionDigits: 2 });
 }
 
 export function taxContext(country, type) {

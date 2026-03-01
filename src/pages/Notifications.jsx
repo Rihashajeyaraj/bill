@@ -2,6 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Bell, ExternalLink } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAppShell } from "../context/AppShellContext";
+import {
+  formatDateByPreference,
+  formatDateTimeByPreference,
+  formatNumberByPreference
+} from "../lib/formatPreferences";
 
 const FILTER_OPTIONS = [
   { id: "all", label: "All" },
@@ -13,24 +18,21 @@ const FILTER_OPTIONS = [
 
 function formatValue(value, alertType) {
   if (alertType === "days") return `${Math.trunc(Number(value || 0))} day(s)`;
-  return Number(value || 0).toLocaleString(undefined, {
+  return formatNumberByPreference(Number(value || 0), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
 }
 
 function formatAmount(value) {
-  return Number(value || 0).toLocaleString(undefined, {
+  return formatNumberByPreference(Number(value || 0), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
 }
 
 function formatDate(value) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleDateString();
+  return formatDateByPreference(value, String(value || "-"));
 }
 
 function matchesFilter(entry, filterId) {
@@ -167,7 +169,7 @@ export default function Notifications() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-600">
-                      {new Date(entry.createdAt).toLocaleString()}
+                      {formatDateTimeByPreference(entry.createdAt)}
                     </td>
                     <td className="px-4 py-3">
                       <button

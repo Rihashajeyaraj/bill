@@ -8,14 +8,16 @@ import { formatMoney } from "../modules/items/utils";
 import { loadCashBankSnapshot } from "../services/cashBank.service";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 import { useToast } from "../context/ToastContext";
+import {
+  formatDateByPreference,
+  formatDateTimeByPreference,
+  formatNumberByPreference
+} from "../lib/formatPreferences";
 
 const CHANNEL_FILTERS = ["All", "Cash", "Bank"];
 
 function formatDate(value) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (!Number.isFinite(parsed.getTime())) return value;
-  return parsed.toLocaleDateString();
+  return formatDateByPreference(value, String(value || "-"));
 }
 
 function toCsvValue(value) {
@@ -161,7 +163,9 @@ export default function CashBank() {
     URL.revokeObjectURL(url);
   }
 
-  const syncText = snapshot.syncedAt ? `Last sync: ${new Date(snapshot.syncedAt).toLocaleString()}` : "Not synced yet";
+  const syncText = snapshot.syncedAt
+    ? `Last sync: ${formatDateTimeByPreference(snapshot.syncedAt)}`
+    : "Not synced yet";
 
   return (
     <div className="max-w-7xl space-y-4">
@@ -218,7 +222,7 @@ export default function CashBank() {
         />
         <SummaryCard
           title="Transactions"
-          value={Number(snapshot.summary.transactionCount || 0).toLocaleString()}
+          value={formatNumberByPreference(Number(snapshot.summary.transactionCount || 0))}
           icon={RefreshCw}
         />
       </div>
