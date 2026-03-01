@@ -158,6 +158,61 @@ export default function CreditNotePremium() {
   );
   const allowed = !country || access.allowedCountries.includes(country);
   const prefillInvoiceId = searchParams.get("invoiceId") || "";
+  const selectedInvoiceCreditSummary = useMemo(() => {
+    const invoiceId = String(form?.linkedInvoiceId || "").trim();
+    if (!invoiceId) {
+      return {
+        totalNotes: 0,
+        appliedNotes: 0,
+        issuedNotes: 0,
+        draftNotes: 0,
+        appliedAmount: 0,
+        soldQty: 0,
+        creditedQty: 0,
+        availableQty: 0
+      };
+    }
+    const invoiceNotes = notes.filter(
+      (note) => String(note?.linkedInvoiceId || "") === invoiceId
+    );
+    const appliedNotes = invoiceNotes.filter((note) => String(note?.status || "") === "Applied");
+    const issuedNotes = invoiceNotes.filter((note) => String(note?.status || "") === "Issued");
+    const draftNotes = invoiceNotes.filter((note) => String(note?.status || "") === "Draft");
+    const soldQty = (selectedInvoice?.lines || []).reduce(
+      (sum: number, line: any) => sum + Math.max(0, parseNumber(line?.quantity)),
+      0
+    );
+    const creditedQty = (selectedInvoice?.lines || []).reduce(
+      (sum: number, line: any) => sum + Math.max(0, parseNumber(line?.creditedQty)),
+      0
+    );
+    const availableQty = (selectedInvoice?.lines || []).reduce(
+      (sum: number, line: any) =>
+        sum +
+        Math.max(
+          0,
+          parseNumber(
+            line?.availableReturnQty !== undefined && line?.availableReturnQty !== null
+              ? line.availableReturnQty
+              : line.quantity
+          )
+        ),
+      0
+    );
+    return {
+      totalNotes: invoiceNotes.length,
+      appliedNotes: appliedNotes.length,
+      issuedNotes: issuedNotes.length,
+      draftNotes: draftNotes.length,
+      appliedAmount: appliedNotes.reduce(
+        (sum, note) => sum + Math.max(0, parseNumber(note?.totals?.total)),
+        0
+      ),
+      soldQty,
+      creditedQty,
+      availableQty
+    };
+  }, [form?.linkedInvoiceId, notes, selectedInvoice?.lines]);
 
   useEffect(() => {
     if (!country) return;
@@ -671,7 +726,20 @@ export default function CreditNotePremium() {
               )}
             </div>
           ) : form ? (
-            <div>
+            <div className="space-y-3">
+              {String(form?.linkedInvoiceId || "").trim() && selectedInvoiceCreditSummary.totalNotes > 0 ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <p className="font-semibold">
+                    This invoice already has credit notes ({selectedInvoiceCreditSummary.totalNotes})
+                  </p>
+                  <p className="mt-1 text-xs text-amber-800">
+                    Applied: {selectedInvoiceCreditSummary.appliedNotes}, Issued: {selectedInvoiceCreditSummary.issuedNotes}, Draft: {selectedInvoiceCreditSummary.draftNotes}
+                  </p>
+                  <p className="mt-1 text-xs text-amber-800">
+                    Applied amount: {formatMoney(selectedInvoiceCreditSummary.appliedAmount, country)} | Qty credited: {selectedInvoiceCreditSummary.creditedQty} / {selectedInvoiceCreditSummary.soldQty} | Qty available: {selectedInvoiceCreditSummary.availableQty}
+                  </p>
+                </div>
+              ) : null}
               {editorLoading ? (
                 <CreditNoteSkeleton />
               ) : (

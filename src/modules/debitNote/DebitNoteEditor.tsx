@@ -371,7 +371,30 @@ export default function DebitNoteEditor({
                   {selectedSupplierId && !invoiceLoading && availableInvoices.length ? <option value="">Select invoice</option> : null}
                   {availableInvoices.map((invoice) => (
                     <option key={invoice.id} value={invoice.id}>
-                      {invoice.invoiceNo} | {invoice.supplierName} | Payable {formatMoney(invoice.remainingBalance, country)}
+                      {(() => {
+                        const billQty = (invoice.lines || []).reduce(
+                          (sum, line: any) => sum + Math.max(0, parseNumber(line?.quantity)),
+                          0
+                        );
+                        const debitedQty = (invoice.lines || []).reduce(
+                          (sum, line: any) => sum + Math.max(0, parseNumber(line?.debitedQty)),
+                          0
+                        );
+                        const availableQty = (invoice.lines || []).reduce(
+                          (sum, line: any) =>
+                            sum +
+                            Math.max(
+                              0,
+                              parseNumber(
+                                line?.availableDebitQty !== undefined && line?.availableDebitQty !== null
+                                  ? line.availableDebitQty
+                                  : line.quantity
+                              )
+                            ),
+                          0
+                        );
+                        return `${invoice.invoiceNo} | ${invoice.supplierName} | Payable ${formatMoney(invoice.remainingBalance, country)} | Qty ${availableQty}/${billQty}${debitedQty > 0 ? ` | Debited ${debitedQty}` : ""}`;
+                      })()}
                     </option>
                   ))}
                 </select>
@@ -440,12 +463,12 @@ export default function DebitNoteEditor({
                       <input
                         type="number"
                         min={0}
-                        max={parseNumber((line as any).sourcePurchaseQty) > 0 ? parseNumber((line as any).sourcePurchaseQty) : undefined}
+                        max={parseNumber((line as any).sourcePurchaseQty)}
                         value={line.quantity}
                         onChange={(event) => {
                           const sourceQty = Math.max(0, parseNumber((line as any).sourcePurchaseQty));
                           const nextQtyRaw = Math.max(0, parseNumber(event.target.value));
-                          const nextQty = sourceQty > 0 ? Math.min(nextQtyRaw, sourceQty) : nextQtyRaw;
+                          const nextQty = Math.min(nextQtyRaw, sourceQty);
                           onUpdateLine(line.id, {
                             quantity: nextQty,
                             debitValueType: "Percentage",
@@ -454,9 +477,24 @@ export default function DebitNoteEditor({
                         }}
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                       />
-                      {parseNumber((line as any).sourcePurchaseQty) > 0 ? (
-                        <p className="mt-1 text-[11px] text-slate-500">Bill qty: {parseNumber((line as any).sourcePurchaseQty)}</p>
-                      ) : null}
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {(() => {
+                          const availableQty = Math.max(
+                            0,
+                            parseNumber((line as any).sourcePurchaseQty)
+                          );
+                          const billQtyRaw = Math.max(
+                            0,
+                            parseNumber((line as any).sourcePurchaseOriginalQty)
+                          );
+                          const billQty = billQtyRaw > 0 ? billQtyRaw : availableQty;
+                          const alreadyDebited = Math.max(
+                            0,
+                            parseNumber((line as any).debitedQty || billQty - availableQty)
+                          );
+                          return `Bill qty: ${billQty} | Already debited: ${alreadyDebited} | Available qty: ${availableQty}`;
+                        })()}
+                      </p>
                     </label>
                     <label className="text-xs font-semibold text-slate-600">
                       Bill Rate

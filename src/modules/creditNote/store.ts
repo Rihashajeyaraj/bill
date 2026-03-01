@@ -11,6 +11,8 @@ export interface CreditInvoiceLine {
   id: string;
   sourceInvoiceItemId?: string;
   itemId?: string;
+  creditedQty?: number;
+  availableReturnQty?: number;
   priceTaxMode?: "WITH_TAX" | "WITHOUT_TAX";
   taxInclusive?: boolean;
   itemName: string;
@@ -264,6 +266,45 @@ function appliedCreditForInvoice(invoiceId: string) {
     );
 
   return premium + legacy;
+}
+
+function appliedCreditQtyBySourceForInvoice(invoiceId: string) {
+  const bySource = new Map<string, number>();
+  const byItem = new Map<string, number>();
+  if (!invoiceId) return { bySource, byItem };
+
+  const addQty = (line: any) => {
+    const qty = Math.max(0, toNumber(line?.quantity ?? line?.qty));
+    if (qty <= 0) return;
+    const sourceId = String(line?.sourceInvoiceItemId || line?.source_invoice_item_id || line?.id || "").trim();
+    if (sourceId) {
+      bySource.set(sourceId, (bySource.get(sourceId) || 0) + qty);
+    }
+    const itemId = String(line?.itemId || line?.item_id || "").trim();
+    if (itemId) {
+      byItem.set(itemId, (byItem.get(itemId) || 0) + qty);
+    }
+  };
+
+  getAllNotes()
+    .filter((entry) => entry.status === "Applied")
+    .filter((entry) => String(entry.linkedInvoiceId || "") === String(invoiceId))
+    .forEach((entry) => {
+      (Array.isArray(entry?.lines) ? entry.lines : []).forEach((line) => addQty(line));
+    });
+
+  (lsGetOrganizationScoped(LS_KEYS.creditNotes, []) as any[])
+    .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
+    .filter(
+      (entry) =>
+        String(entry?.referenceInvoiceId || entry?.linkedInvoiceId || entry?.related_invoice_id || "") ===
+        String(invoiceId)
+    )
+    .forEach((entry) => {
+      (Array.isArray(entry?.lines) ? entry.lines : []).forEach((line: any) => addQty(line));
+    });
+
+  return { bySource, byItem };
 }
 
 function computeLines(
@@ -586,11 +627,19 @@ export function mapInvoicesByCountry(country: CountryCode): CreditInvoice[] {
     .map((invoice: any) => {
       const mappedCountry = normalizeCountryCode(invoice?.country) || null;
       if (mappedCountry && mappedCountry !== country) return null;
+      const appliedCreditQty = appliedCreditQtyBySourceForInvoice(String(invoice?.id || ""));
       const lines = Array.isArray(invoice?.lines)
         ? invoice.lines.map((line: any, idx: number) => {
             const quantity = Math.max(0, toNumber(line.qty ?? line.quantity ?? 0));
             const rate = Math.max(0, toNumber(line.rate));
             const taxRate = Math.max(0, toNumber(line.tax ?? line.taxRate));
+            const sourceInvoiceItemId = line.id || `line_${idx + 1}`;
+            const itemId = line.itemId || "";
+            const creditedFromSource = Math.max(
+              0,
+              toNumber(appliedCreditQty.bySource.get(String(sourceInvoiceItemId)) || 0)
+            );
+            const availableReturnQty = Math.max(0, quantity - creditedFromSource);
             const explicitPriceTaxMode = String(
               line.priceTaxMode ?? line.price_tax_mode ?? ""
             )
@@ -631,9 +680,11 @@ export function mapInvoicesByCountry(country: CountryCode): CreditInvoice[] {
               )
             );
             return {
-              id: line.id || `line_${idx + 1}`,
-              sourceInvoiceItemId: line.id || `line_${idx + 1}`,
-              itemId: line.itemId || "",
+              id: sourceInvoiceItemId,
+              sourceInvoiceItemId,
+              itemId,
+              creditedQty: creditedFromSource,
+              availableReturnQty,
               priceTaxMode,
               taxInclusive,
               itemName: line.itemName || line.name || `Item ${idx + 1}`,

@@ -56,7 +56,14 @@ export function draftLinesFromInvoice(invoice: CreditInvoice): CreditLineDraft[]
     id: line.id,
     sourceInvoiceItemId: line.sourceInvoiceItemId || line.id,
     itemId: line.itemId || "",
-    sourceInvoiceQty: Math.max(0, line.quantity),
+    sourceInvoiceQty: Math.max(
+      0,
+      parseNumber(
+        line.availableReturnQty !== undefined && line.availableReturnQty !== null
+          ? line.availableReturnQty
+          : line.quantity
+      )
+    ),
     sourceInvoiceAmountAfterTax: Math.max(0, parseNumber(line.amountAfterTax)),
     priceTaxMode:
       String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX"
@@ -68,7 +75,7 @@ export function draftLinesFromInvoice(invoice: CreditInvoice): CreditLineDraft[]
     returnCondition: "",
     purchaseRate: 0,
     itemName: line.itemName,
-    quantity: Math.max(0, line.quantity),
+    quantity: 0,
     rate: Math.max(0, line.rate),
     taxRate: Math.max(0, line.taxRate),
     hsnSac: line.hsnSac || "",

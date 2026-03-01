@@ -546,12 +546,12 @@ export default function CreditNoteEditor({
                       <input
                         type="number"
                         min={0}
-                        max={parseNumber((line as any).sourceInvoiceQty) > 0 ? parseNumber((line as any).sourceInvoiceQty) : undefined}
+                        max={parseNumber((line as any).sourceInvoiceQty)}
                         value={line.quantity}
                         onChange={(event) => {
                           const sourceQty = Math.max(0, parseNumber((line as any).sourceInvoiceQty));
                           const nextQtyRaw = Math.max(0, parseNumber(event.target.value));
-                          const nextQty = sourceQty > 0 ? Math.min(nextQtyRaw, sourceQty) : nextQtyRaw;
+                          const nextQty = Math.min(nextQtyRaw, sourceQty);
                           const allocationKey = String(
                             (line as any).sourceInvoiceItemId || line.id || ""
                           );
@@ -566,7 +566,9 @@ export default function CreditNoteEditor({
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                       />
                       {parseNumber((line as any).sourceInvoiceQty) > 0 ? (
-                        <p className="mt-1 text-[11px] text-slate-500">Invoice qty: {parseNumber((line as any).sourceInvoiceQty)}</p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          Available return qty: {parseNumber((line as any).sourceInvoiceQty)}
+                        </p>
                       ) : null}
                     </label>
                     <label className="text-xs font-semibold text-slate-600">

@@ -136,6 +136,61 @@ export default function DebitNotePremium() {
   const prefillQty = parseNumber(searchParams.get("qty") || 0);
   const prefillReason = searchParams.get("reason") || "";
   const prefillReturnRef = searchParams.get("returnRef") || "";
+  const selectedInvoiceDebitSummary = useMemo(() => {
+    const invoiceId = String(form?.linkedPurchaseInvoiceId || "").trim();
+    if (!invoiceId) {
+      return {
+        totalNotes: 0,
+        appliedNotes: 0,
+        issuedNotes: 0,
+        draftNotes: 0,
+        appliedAmount: 0,
+        billQty: 0,
+        debitedQty: 0,
+        availableQty: 0
+      };
+    }
+    const invoiceNotes = notes.filter(
+      (note) => String(note?.linkedPurchaseInvoiceId || "") === invoiceId
+    );
+    const appliedNotes = invoiceNotes.filter((note) => String(note?.status || "") === "Applied");
+    const issuedNotes = invoiceNotes.filter((note) => String(note?.status || "") === "Issued");
+    const draftNotes = invoiceNotes.filter((note) => String(note?.status || "") === "Draft");
+    const billQty = (selectedInvoice?.lines || []).reduce(
+      (sum: number, line: any) => sum + Math.max(0, parseNumber(line?.quantity)),
+      0
+    );
+    const debitedQty = (selectedInvoice?.lines || []).reduce(
+      (sum: number, line: any) => sum + Math.max(0, parseNumber(line?.debitedQty)),
+      0
+    );
+    const availableQty = (selectedInvoice?.lines || []).reduce(
+      (sum: number, line: any) =>
+        sum +
+        Math.max(
+          0,
+          parseNumber(
+            line?.availableDebitQty !== undefined && line?.availableDebitQty !== null
+              ? line.availableDebitQty
+              : line.quantity
+          )
+        ),
+      0
+    );
+    return {
+      totalNotes: invoiceNotes.length,
+      appliedNotes: appliedNotes.length,
+      issuedNotes: issuedNotes.length,
+      draftNotes: draftNotes.length,
+      appliedAmount: appliedNotes.reduce(
+        (sum, note) => sum + Math.max(0, parseNumber(note?.totals?.total)),
+        0
+      ),
+      billQty,
+      debitedQty,
+      availableQty
+    };
+  }, [form?.linkedPurchaseInvoiceId, notes, selectedInvoice?.lines]);
 
   const appliedCount = useMemo(() => notes.filter((note) => note.status === "Applied").length, [notes]);
   const pendingCount = useMemo(() => notes.filter((note) => note.status !== "Applied").length, [notes]);
@@ -602,6 +657,19 @@ export default function DebitNotePremium() {
             </div>
           ) : form ? (
             <div>
+              {String(form?.linkedPurchaseInvoiceId || "").trim() && selectedInvoiceDebitSummary.totalNotes > 0 ? (
+                <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                  <p className="font-semibold">
+                    This purchase bill already has debit notes ({selectedInvoiceDebitSummary.totalNotes})
+                  </p>
+                  <p className="mt-1">
+                    Applied: {selectedInvoiceDebitSummary.appliedNotes}, Issued: {selectedInvoiceDebitSummary.issuedNotes}, Draft: {selectedInvoiceDebitSummary.draftNotes}
+                  </p>
+                  <p className="mt-1">
+                    Applied amount: {formatMoney(selectedInvoiceDebitSummary.appliedAmount, country)} | Qty debited: {selectedInvoiceDebitSummary.debitedQty} / {selectedInvoiceDebitSummary.billQty} | Qty available: {selectedInvoiceDebitSummary.availableQty}
+                  </p>
+                </div>
+              ) : null}
               {editorLoading ? (
                 <DebitNoteSkeleton />
               ) : (

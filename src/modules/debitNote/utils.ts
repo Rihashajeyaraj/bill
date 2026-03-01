@@ -54,8 +54,17 @@ export function draftLinesFromInvoice(invoice: PurchaseInvoice): DebitLineDraft[
     id: line.id,
     sourcePurchaseItemId: line.sourcePurchaseItemId || line.id,
     itemId: line.itemId || "",
-    sourcePurchaseQty: Math.max(0, line.quantity),
+    sourcePurchaseOriginalQty: Math.max(0, parseNumber(line.quantity)),
+    sourcePurchaseQty: Math.max(
+      0,
+      parseNumber(
+        line.availableDebitQty !== undefined && line.availableDebitQty !== null
+          ? line.availableDebitQty
+          : line.quantity
+      )
+    ),
     sourcePurchaseAmountAfterTax: Math.max(0, parseNumber(line.amountAfterTax)),
+    debitedQty: Math.max(0, parseNumber(line.debitedQty)),
     priceTaxMode:
       String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX"
         ? "WITH_TAX"
@@ -64,7 +73,7 @@ export function draftLinesFromInvoice(invoice: PurchaseInvoice): DebitLineDraft[
       line.taxInclusive === true ||
       String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX",
     itemName: line.itemName,
-    quantity: Math.max(0, line.quantity),
+    quantity: 0,
     rate: Math.max(0, line.rate),
     taxRate: Math.max(0, line.taxRate),
     hsnSac: line.hsnSac || "",
@@ -98,10 +107,14 @@ export function formFromNote(note: DebitNoteRecord): DebitNoteFormState {
       id: line.id,
       sourcePurchaseItemId: (line as any).sourcePurchaseItemId || line.id,
       itemId: (line as any).itemId || "",
+      sourcePurchaseOriginalQty: parseNumber(
+        (line as any).sourcePurchaseOriginalQty ?? (line as any).sourcePurchaseQty ?? line.quantity
+      ),
       sourcePurchaseQty: parseNumber((line as any).sourcePurchaseQty ?? line.quantity),
       sourcePurchaseAmountAfterTax: parseNumber(
         (line as any).sourcePurchaseAmountAfterTax ?? (line as any).amountAfterTax
       ),
+      debitedQty: parseNumber((line as any).debitedQty),
       priceTaxMode:
         String((line as any).priceTaxMode || "").toUpperCase() === "WITH_TAX"
           ? "WITH_TAX"

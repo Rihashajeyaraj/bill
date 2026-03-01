@@ -12,6 +12,8 @@ export interface PurchaseInvoiceLine {
   id: string;
   sourcePurchaseItemId?: string;
   itemId?: string;
+  debitedQty?: number;
+  availableDebitQty?: number;
   priceTaxMode?: "WITH_TAX" | "WITHOUT_TAX";
   taxInclusive?: boolean;
   itemName: string;
@@ -49,8 +51,10 @@ export interface DebitLineDraft {
   id: string;
   sourcePurchaseItemId?: string;
   itemId?: string;
+  sourcePurchaseOriginalQty?: number;
   sourcePurchaseQty?: number;
   sourcePurchaseAmountAfterTax?: number;
+  debitedQty?: number;
   priceTaxMode?: "WITH_TAX" | "WITHOUT_TAX";
   taxInclusive?: boolean;
   itemName: string;
@@ -379,12 +383,13 @@ function normalizePurchaseLineSourceId(line: { sourcePurchaseItemId?: string; id
 function buildAppliedDebitQtyIndex(
   notes: DebitNoteRecord[],
   linkedPurchaseInvoiceId: string,
-  excludeNoteId?: string
+  excludeNoteId?: string,
+  statuses: DebitStatus[] = ["Applied"]
 ) {
   const bySource = new Map<string, number>();
   const byItem = new Map<string, number>();
   notes
-    .filter((entry) => entry.status === "Applied")
+    .filter((entry) => statuses.includes(entry.status))
     .filter((entry) => String(entry.linkedPurchaseInvoiceId || "") === String(linkedPurchaseInvoiceId || ""))
     .filter((entry) => String(entry.id || "") !== String(excludeNoteId || ""))
     .forEach((entry) => {
@@ -425,7 +430,8 @@ function validatePayloadLineLimits(
   const { bySource, byItem } = buildAppliedDebitQtyIndex(
     allNotes,
     payload.linkedPurchaseInvoiceId,
-    existingNoteId
+    existingNoteId,
+    ["Issued", "Applied"]
   );
 
   (Array.isArray(payload.lines) ? payload.lines : []).forEach((line, idx) => {
@@ -523,16 +529,37 @@ export function listDebitLedger(country?: CountryCode) {
 
 export function mapPurchaseInvoicesByCountry(country: CountryCode): PurchaseInvoice[] {
   const rawInvoices = lsGetOrganizationScoped(LS_KEYS.purchases, []);
+  const allNotes = getAllNotes();
   const fromStorage: PurchaseInvoice[] = rawInvoices
     .map((invoice: any) => {
       const mappedCountry = normalizeCountryCode(invoice?.country);
       if (mappedCountry && mappedCountry !== country) return null;
+      const bookedDebitQty = buildAppliedDebitQtyIndex(
+        allNotes,
+        String(invoice?.id || ""),
+        undefined,
+        ["Issued", "Applied"]
+      );
 
       const lines = Array.isArray(invoice?.lines)
         ? invoice.lines.map((line: any, idx: number) => {
             const quantity = Math.max(0, toNumber(line.qty ?? line.quantity ?? 0));
             const rate = Math.max(0, toNumber(line.rate));
             const taxRate = Math.max(0, toNumber(line.tax ?? line.taxRate));
+            const sourcePurchaseItemId = line.id || `line_${idx + 1}`;
+            const itemId = line.itemId || "";
+            const debitedFromSource = Math.max(
+              0,
+              toNumber(bookedDebitQty.bySource.get(String(sourcePurchaseItemId)) || 0)
+            );
+            const debitedFromItem = itemId
+              ? Math.max(0, toNumber(bookedDebitQty.byItem.get(String(itemId)) || 0))
+              : 0;
+            const debitedQty = Math.min(
+              quantity,
+              Math.max(0, sourcePurchaseItemId ? debitedFromSource : debitedFromItem)
+            );
+            const availableDebitQty = Math.max(0, quantity - debitedQty);
             const explicitPriceTaxMode = String(
               line.priceTaxMode ?? line.price_tax_mode ?? ""
             )
@@ -575,9 +602,11 @@ export function mapPurchaseInvoicesByCountry(country: CountryCode): PurchaseInvo
               )
             );
             return {
-              id: line.id || `line_${idx + 1}`,
-              sourcePurchaseItemId: line.id || `line_${idx + 1}`,
-              itemId: line.itemId || "",
+              id: sourcePurchaseItemId,
+              sourcePurchaseItemId,
+              itemId,
+              debitedQty,
+              availableDebitQty,
               priceTaxMode,
               taxInclusive,
               itemName: line.itemName || line.name || `Item ${idx + 1}`,
