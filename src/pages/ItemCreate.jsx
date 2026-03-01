@@ -1,5 +1,5 @@
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { ArrowLeft, ChevronDown, Plus, Trash2 } from "lucide-react";
@@ -72,7 +72,7 @@ function createTaxMapping(country, rate) {
   };
 }
 
-function createDraft(type = "PRODUCT") {
+function createDraft(type = "PRODUCT", defaultTaxRate = 0) {
   const normalizedType = normalizeItemTypeValue(type);
   return {
     type: normalizedType,
@@ -83,7 +83,7 @@ function createDraft(type = "PRODUCT") {
     description: "",
     salePrice: 0,
     purchasePrice: 0,
-    taxRate: 0,
+    taxRate: Number(defaultTaxRate || 0),
     taxInclusive: true,
     hsnOrSac: "",
     trackInventory: defaultTrackInventoryForType(normalizedType),
@@ -155,8 +155,14 @@ export default function ItemCreate() {
     () => normalizeCompanyCountry(organizationCountry, organizationCountryCode),
     [organizationCountry, organizationCountryCode]
   );
+  const companyTaxSettings = organizationProfile?.settings?.tax || {};
+  const configuredGstRate = Number(companyTaxSettings.defaultGstRate);
+  const defaultGstRate = Number.isFinite(configuredGstRate) && configuredGstRate >= 0 ? configuredGstRate : 18;
+  const gstRuntimeEnabled = companyCountry === "India" && companyTaxSettings.enableGst !== false;
+  const forceZeroTax = companyCountry === "India" && companyTaxSettings.enableGst === false;
+  const defaultItemTaxRate = gstRuntimeEnabled ? defaultGstRate : 0;
 
-  const [form, setForm] = useState(() => createDraft("PRODUCT"));
+  const [form, setForm] = useState(() => createDraft("PRODUCT", defaultItemTaxRate));
   const [errors, setErrors] = useState({});
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -164,9 +170,13 @@ export default function ItemCreate() {
   const [newCategory, setNewCategory] = useState("");
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
 
-  const showIndiaCompliance = shouldShowIndiaComplianceFields(companyCountry);
-  const taxRateLabel = taxRateLabelForCountry(companyCountry);
-  const taxHint = taxHintForCountry(companyCountry);
+  const showIndiaCompliance = shouldShowIndiaComplianceFields(companyCountry) && gstRuntimeEnabled;
+  const taxRateLabel = gstRuntimeEnabled ? taxRateLabelForCountry(companyCountry) : "Tax / VAT %";
+  const taxHint = forceZeroTax
+    ? "GST is disabled in company settings. Tax is fixed at 0%."
+    : gstRuntimeEnabled
+      ? taxHintForCountry(companyCountry)
+      : "Use the standard tax/VAT percentage for this item.";
   const showInventoryCard = shouldShowInventorySection(form.type, form.trackInventory);
   const showInventoryInputs = shouldShowInventoryFields(form.type, form.trackInventory);
   const complianceCodeLabel = form.type === "SERVICE" ? "SAC" : "HSN";
@@ -180,11 +190,40 @@ export default function ItemCreate() {
   const errorClassName = "mt-1 text-xs font-medium text-rose-600";
 
   const summaryName = form.itemName.trim() || `Untitled ${itemTypeLabel.toLowerCase()}`;
-  const summaryTaxType = showIndiaCompliance ? "GST" : "Tax/VAT";
+  const summaryTaxType = gstRuntimeEnabled ? "GST" : "Tax/VAT";
   const summaryTaxRate = `${parseNumber(form.taxRate)}%`;
 
+  useEffect(() => {
+    setForm((prev) => {
+      const isPristine =
+        !String(prev.itemName || "").trim() &&
+        !String(prev.category || "").trim() &&
+        !String(prev.description || "").trim() &&
+        parseNumber(prev.salePrice) === 0 &&
+        parseNumber(prev.purchasePrice) === 0 &&
+        parseNumber(prev.taxRate) === 0 &&
+        !String(prev.hsnOrSac || "").trim() &&
+        (!Array.isArray(prev.priceLevels) || prev.priceLevels.length === 0) &&
+        (!Array.isArray(prev.taxMappings) || prev.taxMappings.length === 0);
+      if (!isPristine) return prev;
+      if (parseNumber(prev.taxRate) === Number(defaultItemTaxRate || 0)) return prev;
+      return { ...prev, taxRate: Number(defaultItemTaxRate || 0) };
+    });
+  }, [defaultItemTaxRate]);
+
+  useEffect(() => {
+    if (!forceZeroTax) return;
+    setForm((prev) => {
+      if (parseNumber(prev.taxRate) === 0) return prev;
+      return { ...prev, taxRate: 0 };
+    });
+  }, [forceZeroTax]);
+
   function updateField(key, value) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      if (key === "taxRate" && forceZeroTax) return { ...prev, taxRate: 0 };
+      return { ...prev, [key]: value };
+    });
     setErrors((prev) => {
       if (!prev?.[key]) return prev;
       const next = { ...prev };
@@ -291,7 +330,7 @@ export default function ItemCreate() {
     setSaving(true);
     setSaveError("");
 
-    const numericTaxRate = parseNumber(form.taxRate);
+    const numericTaxRate = forceZeroTax ? 0 : parseNumber(form.taxRate);
     const trimmedCode = String(form.hsnOrSac || "").trim();
     const normalizedOpeningQty = showInventoryInputs ? wholeLike(form.openingQty) : 0;
     const normalizedPurchaseRate = parseNumber(form.purchasePrice);
@@ -367,7 +406,7 @@ export default function ItemCreate() {
     try {
       await upsertItemRemote(payload, companyCountry);
       if (mode === "new") {
-        setForm(createDraft(form.type));
+        setForm(createDraft(form.type, defaultItemTaxRate));
       } else {
         nav("/items", { replace: true });
       }
@@ -578,12 +617,14 @@ export default function ItemCreate() {
                 <input
                   type="number"
                   min={0}
-                  value={form.taxRate}
+                  value={forceZeroTax ? 0 : form.taxRate}
                   onChange={(event) => updateField("taxRate", parseNumber(event.target.value))}
-                  className={inputClassName}
+                  className={`${inputClassName} ${forceZeroTax ? "bg-slate-100 text-slate-500" : ""}`}
                   placeholder="0"
+                  disabled={forceZeroTax}
                 />
                 {errors.taxRate ? <p className={errorClassName}>{errors.taxRate}</p> : null}
+                {forceZeroTax ? <p className="mt-1 text-xs text-slate-500">GST is disabled. Tax is fixed at 0%.</p> : null}
               </FormField>
 
               {showIndiaCompliance ? (

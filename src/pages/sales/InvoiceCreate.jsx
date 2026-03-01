@@ -203,6 +203,12 @@ export default function InvoiceCreate() {
   const { profile: company = {}, country = "", countryCode = "", currency = "", currencySymbol = "" } = useOrganization();
   const [templateConfig, setTemplateConfig] = useState(() => getInvoiceTemplateConfig());
   const isIndiaOrg = country === "India";
+  const companyTaxSettings = company?.settings?.tax || {};
+  const configuredGstEnabled = companyTaxSettings.enableGst;
+  const configuredGstRate = Number(companyTaxSettings.defaultGstRate);
+  const defaultGstRate = Number.isFinite(configuredGstRate) && configuredGstRate >= 0 ? configuredGstRate : 18;
+  const gstRuntimeEnabled = isIndiaOrg && configuredGstEnabled !== false;
+  const forceZeroTax = isIndiaOrg && configuredGstEnabled === false;
 
   const [customers, setCustomers] = useState(() =>
     listParties().filter((party) => party.type === "Customer")
@@ -261,10 +267,10 @@ export default function InvoiceCreate() {
     [paymentCountryCode]
   );
   const companyVatRate = company?.tax?.vatRate;
-  const defaultRate = isIndiaOrg ? 18 : getVatRate(country, company);
+  const defaultRate = gstRuntimeEnabled ? defaultGstRate : isIndiaOrg ? 0 : getVatRate(country, company);
   const [taxRate, setTaxRate] = useState(defaultRate);
   const [vatInput, setVatInput] = useState(
-    isIndiaOrg ? "" : `TAX ${Number.isFinite(defaultRate) ? defaultRate : 0}%`
+    gstRuntimeEnabled ? "" : `TAX ${Number.isFinite(defaultRate) ? defaultRate : 0}%`
   );
 
   const creditStatus = useMemo(() => getPartyCreditStatus(partyId), [partyId]);
@@ -309,12 +315,22 @@ export default function InvoiceCreate() {
   }, []);
 
   useEffect(() => {
-    const rate = isIndiaOrg ? 18 : getVatRate(country, company);
+    const rate = gstRuntimeEnabled ? defaultGstRate : isIndiaOrg ? 0 : getVatRate(country, company);
     setTaxRate(rate);
-    if (!isIndiaOrg) {
+    if (!gstRuntimeEnabled) {
       setVatInput(`TAX ${Number.isFinite(rate) ? rate : 0}%`);
     }
-  }, [country, isIndiaOrg, companyVatRate]);
+  }, [country, isIndiaOrg, gstRuntimeEnabled, defaultGstRate, companyVatRate]);
+
+  useEffect(() => {
+    if (!forceZeroTax) return;
+    setLines((prev) =>
+      prev.map((line) => {
+        if (Number(line?.tax || 0) === 0) return line;
+        return { ...line, tax: 0 };
+      })
+    );
+  }, [forceZeroTax]);
 
   useEffect(() => {
     if (!party?.phone) return;
@@ -447,7 +463,7 @@ export default function InvoiceCreate() {
         qty: 1,
         rate: 0,
         discount: 0,
-        tax: 0
+        tax: forceZeroTax ? 0 : Number(taxRate || 0)
       }
     ]);
   }
@@ -470,7 +486,7 @@ export default function InvoiceCreate() {
         qty: Number.isFinite(maxAssignable) ? Math.min(1, maxAssignable) : 1,
         rate: item.salesRate || item.price || 0,
         discount: 0,
-        tax: item.taxRate || 0
+        tax: forceZeroTax ? 0 : Number(item.taxRate ?? taxRate ?? 0)
       };
       if (emptyIndex >= 0) {
         return prev.map((line, idx) => (idx === emptyIndex ? { ...line, ...nextLine, id: line.id } : line));
@@ -484,6 +500,7 @@ export default function InvoiceCreate() {
       p.map((x) => {
         if (x.id !== id) return x;
         const next = { ...x, ...patch };
+        if (forceZeroTax) next.tax = 0;
         const parsedQty = Number(next.qty);
         if (!allowNegativeStock && next.itemId && Number.isFinite(parsedQty) && parsedQty >= 0) {
           const maxAssignable = getMaxAssignableQty(
@@ -579,15 +596,15 @@ export default function InvoiceCreate() {
 
   const computed = useMemo(() => {
     const selectedLines = lines.filter((line) => line?.itemId);
-    const hasAnyLineTax = selectedLines.some((line) => Number(line?.tax || 0) > 0);
-    const fallbackRate = hasAnyLineTax ? 0 : Number(taxRate || 0);
+    const hasAnyLineTax = forceZeroTax ? false : selectedLines.some((line) => Number(line?.tax || 0) > 0);
+    const fallbackRate = forceZeroTax ? 0 : hasAnyLineTax ? 0 : Number(taxRate || 0);
 
     const enrichedBase = selectedLines.map((l) => {
       const item = items.find((it) => it.id === l.itemId);
       const qty = Number(l.qty || 0);
       const rate = Number(l.rate || 0);
       const discount = Number(l.discount || 0);
-      const taxRatePerLine = Number(l.tax || fallbackRate || 0);
+      const taxRatePerLine = forceZeroTax ? 0 : Number(l.tax || fallbackRate || 0);
       const isTaxInclusive = String(l.priceTaxMode || "").toUpperCase() === "WITH_TAX";
 
       const gross = Math.max(0, qty * rate - discount);
@@ -608,6 +625,7 @@ export default function InvoiceCreate() {
 
       return {
         ...l,
+        tax: taxRatePerLine,
         priceTaxMode: isTaxInclusive ? "WITH_TAX" : "WITHOUT_TAX",
         itemName: item?.name || "XXX",
         hsn: item?.hsn || item?.sac || "XX",
@@ -626,7 +644,7 @@ export default function InvoiceCreate() {
       taxableAmount: subTotal,
       taxRate: effectiveTaxRate,
       org: {
-        country: companyCountry,
+        country: isIndiaOrg && !gstRuntimeEnabled ? "Other" : companyCountry,
         state: companyState,
         gstin: company?.tax?.gstin || ""
       },
@@ -667,7 +685,7 @@ export default function InvoiceCreate() {
     const grandTotal = round2(subTotal + (tax.totalTax || 0));
 
     return { enriched, subTotal, tax, grandTotal, effectiveTaxRate };
-  }, [lines, items, companyCountry, companyState, customerCountry, customerState, taxRate, company?.tax?.gstin, party?.gstin, party?.taxId]);
+  }, [lines, items, companyCountry, companyState, customerCountry, customerState, taxRate, company?.tax?.gstin, party?.gstin, party?.taxId, isIndiaOrg, gstRuntimeEnabled, forceZeroTax]);
 
   const paymentAmount = useMemo(() => {
     if (!markAsPaid) return 0;
@@ -892,7 +910,7 @@ export default function InvoiceCreate() {
       priceTaxMode: getPreferredTaxModeForItem(matchedItem),
       qty: nextQty,
       rate: matchedItem?.salesRate || matchedItem?.price || 0,
-      tax: matchedItem?.taxRate || 0
+      tax: forceZeroTax ? 0 : Number(matchedItem?.taxRate ?? taxRate ?? 0)
     });
   }
 
@@ -935,7 +953,7 @@ export default function InvoiceCreate() {
           : batchTaxInclusive
             ? "WITH_TAX"
             : "WITHOUT_TAX",
-      tax: Number(picked?.tax_rate ?? line?.tax ?? 0),
+      tax: forceZeroTax ? 0 : Number(picked?.tax_rate ?? line?.tax ?? taxRate ?? 0),
       qty: Number.isFinite(maxAssignable)
         ? Math.min(Math.max(0, Number(line.qty || 0)), maxAssignable)
         : line.qty
@@ -998,7 +1016,7 @@ export default function InvoiceCreate() {
       state: customerState
     };
     return {
-      title: isIndiaOrg ? "Tax Invoice" : "Invoice",
+      title: gstRuntimeEnabled ? "Tax Invoice" : "Invoice",
       country,
       companyName: company?.companyName || "",
       currencySymbol: resolveCurrencySymbol(currencySymbol, currency),
@@ -1018,7 +1036,7 @@ export default function InvoiceCreate() {
       },
       taxRate: effectiveTaxRate,
       taxBreakup: computed.tax?.taxBreakup || null,
-      tax: isIndiaOrg
+      tax: gstRuntimeEnabled
         ? {
             type: "GST",
             supplyType: computed.tax?.supplyType || "INTRA",
@@ -1082,7 +1100,7 @@ export default function InvoiceCreate() {
     customerState,
     invoiceDate,
     invoiceNo,
-    isIndiaOrg,
+    gstRuntimeEnabled,
     party,
     taxRate,
     computed.effectiveTaxRate
@@ -1221,7 +1239,7 @@ export default function InvoiceCreate() {
       lines: validComputedLines,
       totals: {
         subTotal: computed.subTotal,
-        tax: isIndiaOrg
+        tax: gstRuntimeEnabled
           ? {
               type: "GST",
               supplyType: computed.tax.supplyType,
@@ -1439,7 +1457,7 @@ export default function InvoiceCreate() {
               <p className="text-sm font-semibold text-slate-900">1. Find Customer</p>
               <p className="text-xs text-slate-500">Country: {country || "—"}</p>
             </div>
-            {isIndiaOrg ? (
+            {gstRuntimeEnabled ? (
               <Badge tone="warning">GST</Badge>
             ) : country ? (
               <Badge tone="success">TAX</Badge>
@@ -1563,7 +1581,7 @@ export default function InvoiceCreate() {
               <h2 className="text-base font-semibold text-slate-900">3. Tax Details</h2>
               <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {isIndiaOrg ? (
+                  {gstRuntimeEnabled ? (
                     <p className="rounded-xl border border-slate-100 bg-white px-3 py-2.5 text-sm text-slate-600 md:col-span-2">
                       GST is auto-calculated from company and customer country/state details. Same India state uses
                       CGST + SGST, otherwise IGST is applied.
@@ -1602,7 +1620,7 @@ export default function InvoiceCreate() {
             </div>
           ) : null}
 
-          {isIndiaOrg && party && computed.tax?.warning ? (
+          {gstRuntimeEnabled && party && computed.tax?.warning ? (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
               {computed.tax.warning}
             </div>
@@ -1885,9 +1903,13 @@ export default function InvoiceCreate() {
                       header: "Tax %",
                       render: (r) => (
                         <input
-                          value={r.tax}
-                          onChange={(e) => updateLine(r.id, { tax: e.target.value })}
-                          className="w-20 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
+                          value={forceZeroTax ? 0 : r.tax}
+                          onChange={(e) => {
+                            if (forceZeroTax) return;
+                            updateLine(r.id, { tax: e.target.value });
+                          }}
+                          className="w-20 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none disabled:bg-slate-100 disabled:text-slate-500"
+                          disabled={forceZeroTax}
                         />
                       )
                     },
@@ -1912,7 +1934,7 @@ export default function InvoiceCreate() {
                         const qty = Number(r.qty || 0);
                         const rate = Number(r.rate || 0);
                         const discount = Number(r.discount || 0);
-                        const taxRateValue = Number(r.tax || 0);
+                        const taxRateValue = forceZeroTax ? 0 : Number(r.tax || 0);
                         const gross = Math.max(0, qty * rate - discount);
                         if (String(r.priceTaxMode || "").toUpperCase() === "WITH_TAX") {
                           return money(gross);

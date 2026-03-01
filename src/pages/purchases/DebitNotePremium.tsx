@@ -89,6 +89,8 @@ export default function DebitNotePremium() {
   }
 
   const [country, setCountry] = useState<CountryCode | "">(resolveInitialCountry);
+  const gstDisabledInSettings = company?.settings?.tax?.enableGst === false;
+  const forceZeroTax = country === "IN" && gstDisabledInSettings;
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [form, setForm] = useState<DebitNoteFormState | null>(null);
   const [activeNote, setActiveNote] = useState<DebitNoteRecord | null>(null);
@@ -115,6 +117,16 @@ export default function DebitNotePremium() {
   const invoices = useMemo(() => (country ? mapPurchaseInvoicesByCountry(country) : []), [country, refreshKey]);
   const suppliers = useMemo(() => (country ? mapSuppliersByCountry(country) : []), [country, refreshKey]);
   const summary = useMemo(() => (country ? summarizeDebitNotes(country) : null), [country, refreshKey]);
+  const effectiveForm = useMemo(() => {
+    if (!form) return null;
+    if (!forceZeroTax) return form;
+    return {
+      ...form,
+      taxRate: 0,
+      lines: (form.lines || []).map((line) => ({ ...line, taxRate: 0 })),
+      taxAdjustmentAmount: "0"
+    };
+  }, [form, forceZeroTax]);
   const selectedInvoice: PurchaseInvoice | null = useMemo(
     () => invoices.find((invoice) => invoice.id === form?.linkedPurchaseInvoiceId) || null,
     [invoices, form?.linkedPurchaseInvoiceId]
@@ -125,10 +137,10 @@ export default function DebitNotePremium() {
   );
   const totals = useMemo(
     () =>
-      form && country
-        ? computeEditorTotals(form, country, selectedInvoice?.remainingBalance || 0, companyState)
+      effectiveForm && country
+        ? computeEditorTotals(effectiveForm, country, selectedInvoice?.remainingBalance || 0, companyState)
         : { detailed: [], subtotal: 0, taxTotal: 0, total: 0, updatedPayable: 0, cgst: 0, sgst: 0, igst: 0 },
-    [form, country, selectedInvoice?.remainingBalance, companyState]
+    [effectiveForm, country, selectedInvoice?.remainingBalance, companyState]
   );
   const allowed = !country || access.allowedCountries.includes(country);
   const prefillBillId = searchParams.get("billId") || "";
@@ -208,6 +220,23 @@ export default function DebitNotePremium() {
   }, [country]);
 
   useEffect(() => {
+    if (!forceZeroTax) return;
+    setForm((prev) => {
+      if (!prev) return prev;
+      const hasNonZeroFormTax = parseNumber(prev.taxRate) !== 0;
+      const hasNonZeroLineTax = (prev.lines || []).some((line) => parseNumber(line?.taxRate) !== 0);
+      const hasTaxAdjustment = parseNumber(prev.taxAdjustmentAmount) !== 0;
+      if (!hasNonZeroFormTax && !hasNonZeroLineTax && !hasTaxAdjustment) return prev;
+      return {
+        ...prev,
+        taxRate: 0,
+        taxAdjustmentAmount: "0",
+        lines: (prev.lines || []).map((line) => ({ ...line, taxRate: 0 }))
+      };
+    });
+  }, [forceZeroTax]);
+
+  useEffect(() => {
     let mounted = true;
     async function syncReferenceData() {
       if (!country) return;
@@ -247,6 +276,7 @@ export default function DebitNotePremium() {
       const base = prev || defaultForm(country, company);
       const invoiceLines = draftLinesFromInvoice(bill).map((line) => ({
         ...line,
+        taxRate: forceZeroTax ? 0 : parseNumber(line.taxRate),
         debitValueType: "Percentage",
         debitValue: 0
       }));
@@ -267,13 +297,13 @@ export default function DebitNotePremium() {
         partialAmountCap: "",
         priceAdjustmentAmount: "",
         additionalChargesAmount: "",
-        taxAdjustmentAmount: "",
+        taxAdjustmentAmount: forceZeroTax ? "0" : "",
         linkedPurchaseInvoiceId: bill.id,
         supplierId: bill.supplierId,
         supplierInput: bill.supplierName,
         reason: prefillReason || base.reason,
         placeOfSupply: bill.placeOfSupply || base.placeOfSupply,
-        taxRate: bill.lines[0]?.taxRate || base.taxRate,
+        taxRate: forceZeroTax ? 0 : bill.lines[0]?.taxRate || base.taxRate,
         lines: filteredLines
       };
     });
@@ -290,7 +320,7 @@ export default function DebitNotePremium() {
     next.delete("batchId");
     next.delete("returnRef");
     setSearchParams(next, { replace: true });
-  }, [country, prefillBillId, prefillItemId, prefillQty, prefillReason, prefillReturnRef, invoices, company, searchParams, setSearchParams]);
+  }, [country, prefillBillId, prefillItemId, prefillQty, prefillReason, prefillReturnRef, invoices, company, searchParams, setSearchParams, forceZeroTax]);
 
   const filteredNotes = useMemo(
     () =>
@@ -328,13 +358,15 @@ export default function DebitNotePremium() {
   function startCreate() {
     if (!country || !allowed) return;
     setEditorLoading(true);
+    const baseForm = defaultForm(country, company);
     setForm({
-      ...defaultForm(country, company),
+      ...baseForm,
+      taxRate: forceZeroTax ? 0 : baseForm.taxRate,
       debitType: "Full Debit",
       partialAmountCap: "",
       priceAdjustmentAmount: "",
       additionalChargesAmount: "",
-      taxAdjustmentAmount: ""
+      taxAdjustmentAmount: forceZeroTax ? "0" : ""
     });
     setActiveNote(null);
     setLinkedReturnRef("");
@@ -355,13 +387,15 @@ export default function DebitNotePremium() {
     const hydrated = formFromNote(note);
     setForm({
       ...hydrated,
+      taxRate: forceZeroTax ? 0 : hydrated.taxRate,
       debitType: "Full Debit",
       partialAmountCap: "",
       priceAdjustmentAmount: "",
       additionalChargesAmount: "",
-      taxAdjustmentAmount: "",
+      taxAdjustmentAmount: forceZeroTax ? "0" : "",
       lines: (hydrated.lines || []).map((line) => ({
         ...line,
+        taxRate: forceZeroTax ? 0 : parseNumber(line.taxRate),
         debitValueType: "Percentage",
         debitValue: 0
       }))
@@ -385,7 +419,13 @@ export default function DebitNotePremium() {
   }
 
   function updateForm<K extends keyof DebitNoteFormState>(key: K, value: DebitNoteFormState[K]) {
-    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    setForm((prev) => {
+      if (!prev) return prev;
+      if (forceZeroTax && (key === "taxRate" || key === "taxAdjustmentAmount")) {
+        return { ...prev, taxRate: 0, taxAdjustmentAmount: "0" };
+      }
+      return { ...prev, [key]: value };
+    });
     setDirty(true);
   }
 
@@ -413,14 +453,15 @@ export default function DebitNotePremium() {
             partialAmountCap: "",
             priceAdjustmentAmount: "",
             additionalChargesAmount: "",
-            taxAdjustmentAmount: "",
+            taxAdjustmentAmount: forceZeroTax ? "0" : "",
             linkedPurchaseInvoiceId: invoiceId,
             supplierId: invoice.supplierId,
             supplierInput: invoice.supplierName,
             placeOfSupply: invoice.placeOfSupply || prev.placeOfSupply,
-            taxRate: invoice.lines[0]?.taxRate || prev.taxRate,
+            taxRate: forceZeroTax ? 0 : invoice.lines[0]?.taxRate || prev.taxRate,
             lines: draftLinesFromInvoice(invoice).map((line) => ({
               ...line,
+              taxRate: forceZeroTax ? 0 : parseNumber(line.taxRate),
               debitValueType: "Percentage",
               debitValue: 0
             }))
@@ -440,6 +481,7 @@ export default function DebitNotePremium() {
                 ? {
                     ...line,
                     ...patch,
+                    taxRate: forceZeroTax ? 0 : parseNumber((patch as any)?.taxRate ?? line.taxRate),
                     debitValueType: "Percentage",
                     debitValue: 0
                   }
@@ -465,7 +507,7 @@ export default function DebitNotePremium() {
                 itemName: "",
                 quantity: 1,
                 rate: 0,
-                taxRate: prev.taxRate,
+                taxRate: forceZeroTax ? 0 : prev.taxRate,
                 hsnSac: "",
                 debitValueType: "Percentage",
                 debitValue: 0
@@ -512,33 +554,42 @@ export default function DebitNotePremium() {
     if (savingStatus) return;
     if (!validate(targetStatus)) return;
     setSavingStatus(targetStatus);
+    const effectiveFormForSave = forceZeroTax
+      ? {
+          ...form,
+          taxRate: 0,
+          taxAdjustmentAmount: "0",
+          lines: (form.lines || []).map((line) => ({ ...line, taxRate: 0 }))
+        }
+      : form;
     try {
       const saved = saveDebitNote({
-        id: form.id,
+        id: effectiveFormForSave.id,
         country,
-        debitNoteDate: form.debitNoteDate,
-        supplierId: form.supplierId,
-        supplierName: selectedSupplier?.name || form.supplierInput || "Supplier",
-        linkedPurchaseInvoiceId: form.linkedPurchaseInvoiceId,
+        debitNoteDate: effectiveFormForSave.debitNoteDate,
+        supplierId: effectiveFormForSave.supplierId,
+        supplierName: selectedSupplier?.name || effectiveFormForSave.supplierInput || "Supplier",
+        linkedPurchaseInvoiceId: effectiveFormForSave.linkedPurchaseInvoiceId,
         linkedPurchaseInvoiceNo: selectedInvoice?.invoiceNo || "",
         linkedPurchaseInvoiceDate: selectedInvoice?.invoiceDate || "",
-        reason: form.reason,
+        reason: effectiveFormForSave.reason,
         debitType: "Full Debit",
         desiredStatus: targetStatus,
-        taxRate: form.taxRate,
-        placeOfSupply: form.placeOfSupply,
-        registrationNumber: form.registrationNumber,
-        hmrcReference: form.hmrcReference,
-        salesTaxState: form.salesTaxState,
-        internalNotes: form.internalNotes,
-        supplierNotes: form.supplierNotes,
+        taxRate: forceZeroTax ? 0 : effectiveFormForSave.taxRate,
+        placeOfSupply: effectiveFormForSave.placeOfSupply,
+        registrationNumber: effectiveFormForSave.registrationNumber,
+        hmrcReference: effectiveFormForSave.hmrcReference,
+        salesTaxState: effectiveFormForSave.salesTaxState,
+        internalNotes: effectiveFormForSave.internalNotes,
+        supplierNotes: effectiveFormForSave.supplierNotes,
         partialAmountCap: 0,
         priceAdjustmentAmount: 0,
         additionalChargesAmount: 0,
         taxAdjustmentAmount: 0,
         payableBalanceBefore: selectedInvoice?.remainingBalance || 0,
-        lines: (form.lines || []).map((line) => ({
+        lines: (effectiveFormForSave.lines || []).map((line) => ({
           ...line,
+          taxRate: forceZeroTax ? 0 : parseNumber(line.taxRate),
           debitValueType: "Percentage",
           debitValue: 0
         })),
@@ -560,18 +611,29 @@ export default function DebitNotePremium() {
       if (options?.email) window.alert(`Email queued for ${saved.debitNoteNo}.`);
       setRefreshKey((prev) => prev + 1);
       setActiveNote(saved);
-      setForm(formFromNote(saved));
+      const nextSavedForm = formFromNote(saved);
+      setForm(
+        forceZeroTax
+          ? {
+              ...nextSavedForm,
+              taxRate: 0,
+              taxAdjustmentAmount: "0",
+              lines: nextSavedForm.lines.map((line) => ({ ...line, taxRate: 0 }))
+            }
+          : nextSavedForm
+      );
       setForm((prev) =>
         prev
           ? {
-              ...prev,
+            ...prev,
               debitType: "Full Debit",
               partialAmountCap: "",
               priceAdjustmentAmount: "",
               additionalChargesAmount: "",
-              taxAdjustmentAmount: "",
+              taxAdjustmentAmount: forceZeroTax ? "0" : "",
               lines: (prev.lines || []).map((line) => ({
                 ...line,
+                taxRate: forceZeroTax ? 0 : parseNumber(line.taxRate),
                 debitValueType: "Percentage",
                 debitValue: 0
               }))
@@ -612,6 +674,11 @@ export default function DebitNotePremium() {
       ) : (
         <div className={`flex flex-col gap-3 transition-all duration-300 ${switching ? "translate-y-1 opacity-40" : "opacity-100"}`}>
           {!allowed ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">You do not have access to manage {COUNTRY_CONFIG[country].name} data.</div> : null}
+          {forceZeroTax ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              GST is disabled in Company Settings. Debit Note tax is locked to 0%.
+            </div>
+          ) : null}
 
           {viewMode === "list" ? (
             <div className="space-y-3">
@@ -676,7 +743,7 @@ export default function DebitNotePremium() {
                 <DebitNoteEditor
                   country={country}
                   readOnly={viewMode === "view"}
-                  form={form}
+                  form={effectiveForm || form}
                   activeNote={activeNote}
                   suppliers={suppliers}
                   invoices={invoices}

@@ -119,7 +119,7 @@ function generateBillNumber() {
   return `PB-${yy}${mm}${dd}-${rnd}`;
 }
 
-function createLine() {
+function createLine(defaultTaxRate = 0) {
   return {
     id: `line_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
     itemId: "",
@@ -131,7 +131,7 @@ function createLine() {
     rate: 0,
     saleRate: 0,
     priceTaxMode: "WITHOUT_TAX",
-    tax: 0
+    tax: Number(defaultTaxRate || 0)
   };
 }
 
@@ -139,6 +139,12 @@ export default function PurchaseBill() {
   const navigate = useNavigate();
   const { country = "", currency = "", profile: company = {} } = useOrganization();
   const isIndiaOrg = country === "India";
+  const companyTaxSettings = company?.settings?.tax || {};
+  const configuredGstRate = Number(companyTaxSettings.defaultGstRate);
+  const defaultGstRate = Number.isFinite(configuredGstRate) && configuredGstRate >= 0 ? configuredGstRate : 18;
+  const gstRuntimeEnabled = isIndiaOrg && companyTaxSettings.enableGst !== false;
+  const forceZeroTax = isIndiaOrg && companyTaxSettings.enableGst === false;
+  const defaultLineTaxRate = gstRuntimeEnabled ? defaultGstRate : 0;
   const toast = useToast();
   const [suppliers, setSuppliers] = useState(() =>
     listParties().filter((party) => party.type === "Supplier")
@@ -158,7 +164,7 @@ export default function PurchaseBill() {
     () => companyPeekDocumentNumber("purchase") || generateBillNumber()
   );
   const [billDate, setBillDate] = useState(new Date().toISOString().slice(0, 10));
-  const [lines, setLines] = useState(() => [createLine()]);
+  const [lines, setLines] = useState(() => [createLine(defaultLineTaxRate)]);
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
   const [lineItemPopover, setLineItemPopover] = useState({ top: 0, left: 0, width: 280 });
   const [roundOffEnabled, setRoundOffEnabled] = useState(false);
@@ -196,6 +202,14 @@ export default function PurchaseBill() {
     });
     return map;
   }, [items]);
+  const taxRateOptions = useMemo(
+    () =>
+      Array.from(new Set([...TAX_RATES, Number(defaultLineTaxRate || 0)].map((rate) => Number(rate || 0)))).sort(
+        (left, right) => left - right
+      ),
+    [defaultLineTaxRate]
+  );
+  const effectiveTaxRateOptions = useMemo(() => (forceZeroTax ? [0] : taxRateOptions), [forceZeroTax, taxRateOptions]);
 
   useEffect(() => {
     let mounted = true;
@@ -213,9 +227,9 @@ export default function PurchaseBill() {
         setItems(nextItems);
         setPartyId((prev) => prev || "");
         setLines((prev) => {
-          if (!prev.length) return [createLine()];
+          if (!prev.length) return [createLine(defaultLineTaxRate)];
           const hasSelectedItem = prev.some((line) => !!line.itemId || !!line.itemName);
-          return hasSelectedItem ? prev : [createLine()];
+          return hasSelectedItem ? prev : [createLine(defaultLineTaxRate)];
         });
       } catch (error) {
         toast.error("Failed to load suppliers/items", error?.message || "Using local cached data.");
@@ -233,7 +247,7 @@ export default function PurchaseBill() {
     return () => {
       mounted = false;
     };
-  }, [toast]);
+  }, [toast, defaultLineTaxRate]);
 
   useEffect(() => {
     let mounted = true;
@@ -263,6 +277,16 @@ export default function PurchaseBill() {
     if (!party?.phone) return;
     setSupplierSearchPhone(String(party.phone).replace(/\D/g, "").slice(-10));
   }, [party?.phone]);
+
+  useEffect(() => {
+    if (!forceZeroTax) return;
+    setLines((prev) =>
+      prev.map((line) => {
+        if (Number(line?.tax || 0) === 0) return line;
+        return { ...line, tax: 0 };
+      })
+    );
+  }, [forceZeroTax]);
 
   useEffect(() => {
     setPaymentDate(billDate);
@@ -346,7 +370,9 @@ export default function PurchaseBill() {
       prev.map((line) => {
         if (line.id !== id) return line;
         const nextPatch = typeof patch === "function" ? patch(line) : patch;
-        return { ...line, ...nextPatch };
+        const next = { ...line, ...nextPatch };
+        if (forceZeroTax) next.tax = 0;
+        return next;
       })
     );
   }
@@ -364,7 +390,7 @@ export default function PurchaseBill() {
       unit: normalizeUnit(item.unit || line.unit),
       rate: purchaseRate,
       saleRate: Number(item?.salesRate ?? item?.price ?? 0),
-      tax: item.taxRate ?? line.tax,
+      tax: forceZeroTax ? 0 : Number(item.taxRate ?? defaultLineTaxRate),
       priceTaxMode: item?.taxInclusive ? "WITH_TAX" : line.priceTaxMode || "WITHOUT_TAX"
     });
   }
@@ -384,7 +410,7 @@ export default function PurchaseBill() {
         unit: normalizeUnit(match.unit || line.unit),
         rate: Number(match?.purchaseRate ?? match?.metadata?.purchasePrice ?? match?.price ?? 0),
         saleRate: Number(match?.salesRate ?? match?.price ?? 0),
-        tax: match.taxRate ?? line.tax,
+        tax: forceZeroTax ? 0 : Number(match.taxRate ?? defaultLineTaxRate),
         priceTaxMode: match?.taxInclusive ? "WITH_TAX" : line.priceTaxMode || "WITHOUT_TAX"
       };
     });
@@ -434,7 +460,7 @@ export default function PurchaseBill() {
   }
 
   function addLine() {
-    setLines((prev) => [...prev, createLine()]);
+    setLines((prev) => [...prev, createLine(defaultLineTaxRate)]);
   }
 
   function removeLine(id) {
@@ -515,7 +541,7 @@ export default function PurchaseBill() {
     const detailedBase = lines.map((line) => {
       const qty = Number(line.qty || 0);
       const rate = Number(line.rate || 0);
-      const taxRate = Number(line.tax || 0);
+      const taxRate = forceZeroTax ? 0 : Number(line.tax || 0);
       const base = qty * rate;
       if (line.priceTaxMode === "WITH_TAX") {
         const divisor = 1 + taxRate / 100;
@@ -535,7 +561,7 @@ export default function PurchaseBill() {
       taxableAmount: subTotal,
       taxRate: effectiveRate,
       org: {
-        country: companyCountry,
+        country: isIndiaOrg && !gstRuntimeEnabled ? "Other" : companyCountry,
         state: company?.address?.state || "",
         gstin: ""
       },
@@ -569,7 +595,7 @@ export default function PurchaseBill() {
     const roundOff = roundOffEnabled ? Number(roundOffValue || 0) : 0;
     const finalTotal = round2(grandTotal + roundOff);
     return { detailed, totalQty, subTotal, tax, taxTotal, grandTotal, roundOff, finalTotal, effectiveRate };
-  }, [lines, roundOffEnabled, roundOffValue, companyCountry, company?.address?.state, supplierCountry, party?.state, party?.gstin, party?.taxId]);
+  }, [lines, roundOffEnabled, roundOffValue, companyCountry, company?.address?.state, supplierCountry, party?.state, party?.gstin, party?.taxId, isIndiaOrg, gstRuntimeEnabled, forceZeroTax]);
 
   const paymentAmount = useMemo(() => {
     if (!markAsPaid) return 0;
@@ -671,7 +697,7 @@ export default function PurchaseBill() {
           unit: normalizeUnit(line.unit),
           salesRate: Number(line.saleRate || line.rate || 0),
           purchaseRate: Number(line.rate || 0),
-          taxRate: Number(line.tax || 0),
+          taxRate: forceZeroTax ? 0 : Number(line.tax || 0),
           taxInclusive: line.priceTaxMode === "WITH_TAX",
           status: "Active",
           trackInventory: true,
@@ -759,13 +785,15 @@ export default function PurchaseBill() {
             unit: normalizeUnit(resolved.unit),
             rate: Number(resolved.rate || 0),
             saleRate: Number(resolved.saleRate || 0),
-            tax: Number(resolved.tax || 0)
+            tax: forceZeroTax ? 0 : Number(resolved.tax || 0)
           };
         })
       );
       setItems(listItems());
 
-      const validLines = resolvedLines.filter((line) => line.itemId);
+      const validLines = resolvedLines
+        .filter((line) => line.itemId)
+        .map((line) => (forceZeroTax ? { ...line, tax: 0 } : line));
       if (!validLines.length) {
         toast.warning("Items required", "Add at least one line item before saving.");
         return;
@@ -1197,11 +1225,15 @@ export default function PurchaseBill() {
                   </td>
                   <td className="px-3 py-3">
                     <select
-                      value={line.tax}
-                      onChange={(e) => updateLine(line.id, { tax: e.target.value })}
-                      className="w-24 rounded-xl border border-slate-100 bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      value={forceZeroTax ? 0 : line.tax}
+                      onChange={(e) => {
+                        if (forceZeroTax) return;
+                        updateLine(line.id, { tax: e.target.value });
+                      }}
+                      className="w-24 rounded-xl border border-slate-100 bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500"
+                      disabled={forceZeroTax}
                     >
-                      {TAX_RATES.map((rate) => (
+                      {effectiveTaxRateOptions.map((rate) => (
                         <option key={rate} value={rate}>
                           {rate}%
                         </option>
@@ -1462,7 +1494,7 @@ export default function PurchaseBill() {
                   <span className="font-semibold text-slate-900">{money(computed.taxTotal)}</span>
                 </div>
               )}
-              {isIndiaOrg && computed.tax.warning ? (
+              {gstRuntimeEnabled && computed.tax.warning ? (
                 <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                   {computed.tax.warning}
                 </p>

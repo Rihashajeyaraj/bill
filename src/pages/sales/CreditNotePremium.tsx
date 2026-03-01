@@ -109,6 +109,8 @@ export default function CreditNotePremium() {
   }
 
   const [country, setCountry] = useState<CountryCode | "">(resolveInitialCountry);
+  const gstDisabledInSettings = company?.settings?.tax?.enableGst === false;
+  const forceZeroTax = country === "IN" && gstDisabledInSettings;
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [form, setForm] = useState<CreditNoteFormState | null>(null);
   const [activeNote, setActiveNote] = useState<CreditNoteRecord | null>(null);
@@ -136,12 +138,21 @@ export default function CreditNotePremium() {
   const invoices = useMemo(() => (country ? mapInvoicesByCountry(country) : []), [country, refreshKey]);
   const customers = useMemo(() => (country ? mapCustomersByCountry(country) : []), [country, refreshKey]);
   const summary = useMemo(() => (country ? summarizeCreditNotes(country) : null), [country, refreshKey]);
+  const effectiveForm = useMemo(() => {
+    if (!form) return null;
+    if (!forceZeroTax) return form;
+    return {
+      ...form,
+      taxRate: 0,
+      lines: (form.lines || []).map((line) => ({ ...line, taxRate: 0 }))
+    };
+  }, [form, forceZeroTax]);
   const selectedInvoice: CreditInvoice | null = useMemo(() => invoices.find((invoice) => invoice.id === form?.linkedInvoiceId) || null, [invoices, form?.linkedInvoiceId]);
   const selectedCustomer = useMemo(() => customers.find((customer) => customer.id === form?.customerId) || null, [customers, form?.customerId]);
   const totals = useMemo(
     () =>
-      form && country
-        ? computeEditorTotals(form, country, selectedInvoice?.remainingBalance || 0, companyState)
+      effectiveForm && country
+        ? computeEditorTotals(effectiveForm, country, selectedInvoice?.remainingBalance || 0, companyState)
         : {
             detailed: [],
             subtotal: 0,
@@ -154,7 +165,7 @@ export default function CreditNotePremium() {
             sgst: 0,
             igst: 0
           },
-    [form, country, selectedInvoice?.remainingBalance, companyState]
+    [effectiveForm, country, selectedInvoice?.remainingBalance, companyState]
   );
   const allowed = !country || access.allowedCountries.includes(country);
   const prefillInvoiceId = searchParams.get("invoiceId") || "";
@@ -220,6 +231,21 @@ export default function CreditNotePremium() {
   }, [country]);
 
   useEffect(() => {
+    if (!forceZeroTax) return;
+    setForm((prev) => {
+      if (!prev) return prev;
+      const hasNonZeroFormTax = parseNumber(prev.taxRate) !== 0;
+      const hasNonZeroLineTax = (prev.lines || []).some((line) => parseNumber(line?.taxRate) !== 0);
+      if (!hasNonZeroFormTax && !hasNonZeroLineTax) return prev;
+      return {
+        ...prev,
+        taxRate: 0,
+        lines: (prev.lines || []).map((line) => ({ ...line, taxRate: 0 }))
+      };
+    });
+  }, [forceZeroTax]);
+
+  useEffect(() => {
     let mounted = true;
     async function syncReferenceData() {
       if (!country) return;
@@ -275,9 +301,10 @@ export default function CreditNotePremium() {
         customerId: invoice.customerId,
         customerInput: invoice.customerName,
         placeOfSupply: invoice.placeOfSupply || base.placeOfSupply,
-        taxRate: invoice.lines[0]?.taxRate || base.taxRate,
+        taxRate: forceZeroTax ? 0 : invoice.lines[0]?.taxRate || base.taxRate,
         lines: draftLinesFromInvoice(invoice).map((line) => ({
           ...line,
+          taxRate: forceZeroTax ? 0 : parseNumber(line.taxRate),
           creditType: "Percentage",
           creditValue: 0
         }))
@@ -291,7 +318,7 @@ export default function CreditNotePremium() {
     const next = new URLSearchParams(searchParams);
     next.delete("invoiceId");
     setSearchParams(next, { replace: true });
-  }, [country, prefillInvoiceId, invoices, company, searchParams, setSearchParams]);
+  }, [country, prefillInvoiceId, invoices, company, searchParams, setSearchParams, forceZeroTax]);
 
   useEffect(() => {
     const linkedInvoiceId = String(form?.linkedInvoiceId || "").trim();
@@ -362,8 +389,10 @@ export default function CreditNotePremium() {
   function startCreate() {
     if (!country || !allowed) return;
     setEditorLoading(true);
+    const baseForm = defaultForm(country, company);
     setForm({
-      ...defaultForm(country, company),
+      ...baseForm,
+      taxRate: forceZeroTax ? 0 : baseForm.taxRate,
       creditType: "Full Credit",
       discountPercent: "",
       partialAmountCap: "",
@@ -388,6 +417,7 @@ export default function CreditNotePremium() {
     const hydrated = formFromNote(note);
     setForm({
       ...hydrated,
+      taxRate: forceZeroTax ? 0 : hydrated.taxRate,
       creditType: "Full Credit",
       discountPercent: "",
       partialAmountCap: "",
@@ -399,6 +429,7 @@ export default function CreditNotePremium() {
       partialRefundAmount: hydrated.partialRefundAmount || "",
       lines: (hydrated.lines || []).map((line) => ({
         ...line,
+        taxRate: forceZeroTax ? 0 : parseNumber(line.taxRate),
         creditType: "Percentage",
         creditValue: 0
       }))
@@ -422,7 +453,13 @@ export default function CreditNotePremium() {
   }
 
   function updateForm<K extends keyof CreditNoteFormState>(key: K, value: CreditNoteFormState[K]) {
-    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    setForm((prev) => {
+      if (!prev) return prev;
+      if (key === "taxRate" && forceZeroTax) {
+        return { ...prev, taxRate: 0 };
+      }
+      return { ...prev, [key]: value };
+    });
     setDirty(true);
   }
 
@@ -456,9 +493,10 @@ export default function CreditNotePremium() {
             customerId: invoice.customerId,
             customerInput: invoice.customerName,
             placeOfSupply: invoice.placeOfSupply || prev.placeOfSupply,
-            taxRate: invoice.lines[0]?.taxRate || prev.taxRate,
+            taxRate: forceZeroTax ? 0 : invoice.lines[0]?.taxRate || prev.taxRate,
             lines: draftLinesFromInvoice(invoice).map((line) => ({
               ...line,
+              taxRate: forceZeroTax ? 0 : parseNumber(line.taxRate),
               creditType: "Percentage",
               creditValue: 0
             }))
@@ -478,6 +516,7 @@ export default function CreditNotePremium() {
                 ? {
                     ...line,
                     ...patch,
+                    taxRate: forceZeroTax ? 0 : parseNumber((patch as any)?.taxRate ?? line.taxRate),
                     creditType: "Percentage",
                     creditValue: 0
                   }
@@ -503,7 +542,7 @@ export default function CreditNotePremium() {
                 itemName: "",
                 quantity: 1,
                 rate: 0,
-                taxRate: prev.taxRate,
+                taxRate: forceZeroTax ? 0 : prev.taxRate,
                 hsnSac: "",
                 returnCondition: "",
                 purchaseRate: 0,
@@ -570,38 +609,46 @@ export default function CreditNotePremium() {
     if (savingStatus) return;
     if (!validate(targetStatus)) return;
     setSavingStatus(targetStatus);
+    const effectiveFormForSave = forceZeroTax
+      ? {
+          ...form,
+          taxRate: 0,
+          lines: (form.lines || []).map((line) => ({ ...line, taxRate: 0 }))
+        }
+      : form;
     try {
       const saved = saveCreditNote({
-        id: form.id,
+        id: effectiveFormForSave.id,
         country,
-        creditNoteDate: form.creditNoteDate,
-        customerId: form.customerId,
-        customerName: selectedCustomer?.name || form.customerInput || "Customer",
-        linkedInvoiceId: form.linkedInvoiceId,
+        creditNoteDate: effectiveFormForSave.creditNoteDate,
+        customerId: effectiveFormForSave.customerId,
+        customerName: selectedCustomer?.name || effectiveFormForSave.customerInput || "Customer",
+        linkedInvoiceId: effectiveFormForSave.linkedInvoiceId,
         linkedInvoiceNo: selectedInvoice?.invoiceNo || "",
         linkedInvoiceDate: selectedInvoice?.invoiceDate || "",
-        reason: form.reason,
+        reason: effectiveFormForSave.reason,
         creditType: "Full Credit",
         desiredStatus: targetStatus,
-        taxRate: form.taxRate,
-        placeOfSupply: form.placeOfSupply,
-        registrationNumber: form.registrationNumber,
-        hmrcReference: form.hmrcReference,
-        salesTaxState: form.salesTaxState,
-        internalNotes: form.internalNotes,
-        customerNotes: form.customerNotes,
-        refundMode: form.refundMode,
-        partialRefundAmount: parseNumber(form.partialRefundAmount),
+        taxRate: forceZeroTax ? 0 : effectiveFormForSave.taxRate,
+        placeOfSupply: effectiveFormForSave.placeOfSupply,
+        registrationNumber: effectiveFormForSave.registrationNumber,
+        hmrcReference: effectiveFormForSave.hmrcReference,
+        salesTaxState: effectiveFormForSave.salesTaxState,
+        internalNotes: effectiveFormForSave.internalNotes,
+        customerNotes: effectiveFormForSave.customerNotes,
+        refundMode: effectiveFormForSave.refundMode,
+        partialRefundAmount: parseNumber(effectiveFormForSave.partialRefundAmount),
         discountPercent: 0,
         partialAmountCap: 0,
         priceAdjustmentAmount: 0,
         invoiceBalanceBefore: selectedInvoice?.remainingBalance || 0,
-        lines: (form.lines || []).map((line) => {
+        lines: (effectiveFormForSave.lines || []).map((line) => {
           const allocationKey = String(line.sourceInvoiceItemId || line.id || "").trim();
           const allocations = allocationByInvoiceItemId[allocationKey] || [];
           const purchaseRate = computePurchaseRateFromAllocations(allocations, line.quantity);
           return {
             ...line,
+            taxRate: forceZeroTax ? 0 : parseNumber(line.taxRate),
             purchaseRate: purchaseRate || parseNumber((line as any).purchaseRate),
             returnAllocations: (Array.isArray(allocations) ? allocations : []).map((row: any) => ({
               allocationId: row?.allocation_id || "",
@@ -629,7 +676,16 @@ export default function CreditNotePremium() {
       if (options?.email) window.alert(`Email queued for ${saved.creditNoteNo}.`);
       setRefreshKey((prev) => prev + 1);
       setActiveNote(saved);
-      setForm(formFromNote(saved));
+      const nextSavedForm = formFromNote(saved);
+      setForm(
+        forceZeroTax
+          ? {
+              ...nextSavedForm,
+              taxRate: 0,
+              lines: nextSavedForm.lines.map((line) => ({ ...line, taxRate: 0 }))
+            }
+          : nextSavedForm
+      );
       setForm((prev) =>
         prev
           ? {
@@ -642,6 +698,7 @@ export default function CreditNotePremium() {
               partialRefundAmount: saved.refundMode === "PARTIAL" ? String(saved.partialRefundAmount || "") : "",
               lines: (prev.lines || []).map((line) => ({
                 ...line,
+                taxRate: forceZeroTax ? 0 : parseNumber(line.taxRate),
                 creditType: "Percentage",
                 creditValue: 0
               }))
@@ -682,6 +739,11 @@ export default function CreditNotePremium() {
       ) : (
         <div className={`flex flex-col gap-3 transition-all duration-300 ${switching ? "translate-y-1 opacity-40" : "opacity-100"}`}>
           {!allowed ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">You do not have access to manage {COUNTRY_CONFIG[country].name} data.</div> : null}
+          {forceZeroTax ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              GST is disabled in Company Settings. Credit Note tax is locked to 0%.
+            </div>
+          ) : null}
 
           {viewMode === "list" ? (
             <div className="space-y-3">
@@ -746,7 +808,7 @@ export default function CreditNotePremium() {
                 <CreditNoteEditor
                   country={country}
                   readOnly={viewMode === "view"}
-                  form={form}
+                  form={effectiveForm || form}
                   activeNote={activeNote}
                   customers={customers}
                   invoices={invoices}
