@@ -557,7 +557,7 @@ export default function Items() {
           <div>
             <p className="text-sm font-semibold text-slate-900">Item Library</p>
             <p className="text-xs text-slate-500">
-              Search by item name, Product ID, or SKU. Country tax: {taxCfg.label}.
+              Search by item name or Item ID. Country tax: {taxCfg.label}.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -593,8 +593,8 @@ export default function Items() {
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 bg-slate-50">
               <tr>
+                <th className="px-4 py-3 font-semibold text-slate-700">Item ID</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Name</th>
-                <th className="px-4 py-3 font-semibold text-slate-700">Product ID</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Type</th>
                 <th className="px-4 py-3 font-semibold text-slate-700 text-right">Sales Rate</th>
                 <th className="px-4 py-3 font-semibold text-slate-700 text-right">Tax %</th>
@@ -623,6 +623,9 @@ export default function Items() {
                       : "";
                   return (
                     <tr key={item.id} className="border-t border-slate-100 hover:bg-slate-50/70">
+                      <td className="px-4 py-3 font-mono text-xs text-slate-700">
+                        {item.itemCode || item.sku || item.id || "-"}
+                      </td>
                       <td className="relative px-4 py-3">
                         <div className="flex flex-col gap-1">
                           <button
@@ -634,9 +637,7 @@ export default function Items() {
                           >
                             {item.name}
                           </button>
-                          <p className="text-xs text-slate-500">
-                            {item.category || "Uncategorized"} | SKU {item.sku || "-"}
-                          </p>
+                          <p className="text-xs text-slate-500">{item.category || "Uncategorized"}</p>
                           {usage.used ? (
                             <span className="inline-flex w-fit items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
                               <BarChart3 className="h-3 w-3" />
@@ -644,9 +645,6 @@ export default function Items() {
                             </span>
                           ) : null}
                         </div>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs text-slate-700">
-                        {item.itemCode || item.sku || item.id || "-"}
                       </td>
                       <td className="px-4 py-3 text-slate-700">{item.type}</td>
                       <td className="px-4 py-3 text-right text-slate-700">
