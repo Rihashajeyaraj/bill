@@ -1050,7 +1050,7 @@ export default function Items() {
             {viewItem.type === "Product" && viewItem.trackInventory ? (
               <>
                 <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-100 p-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Batch-wise Stock Overview</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Purchase-wise Stock Overview</p>
                   <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
                       <p className="text-xs text-indigo-700">Purchased Qty</p>
@@ -1077,12 +1077,11 @@ export default function Items() {
                   </div>
                 ) : viewBatchRows.length ? (
                   <div className="overflow-auto rounded-xl border border-slate-200">
-                    <table className="w-full min-w-[740px] text-left text-sm">
+                    <table className="w-full min-w-[700px] text-left text-sm">
                       <thead className="bg-slate-50">
                         <tr>
-                          <th className="px-3 py-2 font-semibold text-slate-700">Batch</th>
-                          <th className="px-3 py-2 font-semibold text-slate-700">Bill No</th>
-                          <th className="px-3 py-2 font-semibold text-slate-700">Batch Date</th>
+                          <th className="px-3 py-2 font-semibold text-slate-700">Purchase ID</th>
+                          <th className="px-3 py-2 font-semibold text-slate-700">Purchase Date</th>
                           <th className="px-3 py-2 text-right font-semibold text-slate-700">Purchased</th>
                           <th className="px-3 py-2 text-right font-semibold text-slate-700">Sold</th>
                           <th className="px-3 py-2 text-right font-semibold text-slate-700">Pending</th>
@@ -1093,8 +1092,9 @@ export default function Items() {
                       <tbody>
                         {viewBatchRows.map((batch) => (
                           <tr key={batch.batchId || `${batch.sourceDocumentNo}_${batch.batchDate}`} className="border-t border-slate-100">
-                            <td className="px-3 py-2 font-mono text-xs text-slate-700">{batch.batchId || "-"}</td>
-                            <td className="px-3 py-2 text-slate-700">{batch.sourceDocumentNo || "-"}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-slate-700">
+                              {batch.sourceDocumentNo || batch.purchaseBillId || "-"}
+                            </td>
                             <td className="px-3 py-2 text-slate-700">{formatDate(batch.batchDate)}</td>
                             <td className="px-3 py-2 text-right text-slate-700">{batch.purchaseQty}</td>
                             <td className="px-3 py-2 text-right text-slate-700">{batch.soldQty}</td>
