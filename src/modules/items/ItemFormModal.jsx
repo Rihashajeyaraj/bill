@@ -110,6 +110,7 @@ export default function ItemFormModal({
   const itemLabel = form.type === "Service" ? "Service" : "Product";
   const modalTitle = mode === "edit" ? `Edit ${itemLabel}` : `Create ${itemLabel}`;
   const submitLabel = mode === "edit" ? `Update ${itemLabel}` : `Create ${itemLabel}`;
+  const productIdPreview = String(form.itemCode || form.sku || "").trim();
   const inputClassName =
     "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100";
 
@@ -284,9 +285,9 @@ export default function ItemFormModal({
               />
             </FormField>
 
-            <FormField label="SKU">
+            <FormField label="Product ID (Auto)">
               <input
-                value={form.sku}
+                value={productIdPreview}
                 className={`${inputClassName} bg-slate-50 text-slate-700`}
                 placeholder="Auto-generated"
                 readOnly

@@ -557,7 +557,7 @@ export default function Items() {
           <div>
             <p className="text-sm font-semibold text-slate-900">Item Library</p>
             <p className="text-xs text-slate-500">
-              Search by item name or SKU. Country tax: {taxCfg.label}.
+              Search by item name, Product ID, or SKU. Country tax: {taxCfg.label}.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -594,6 +594,7 @@ export default function Items() {
             <thead className="sticky top-0 bg-slate-50">
               <tr>
                 <th className="px-4 py-3 font-semibold text-slate-700">Name</th>
+                <th className="px-4 py-3 font-semibold text-slate-700">Product ID</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Type</th>
                 <th className="px-4 py-3 font-semibold text-slate-700 text-right">Sales Rate</th>
                 <th className="px-4 py-3 font-semibold text-slate-700 text-right">Tax %</th>
@@ -605,7 +606,7 @@ export default function Items() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
                     Loading items...
                   </td>
                 </tr>
@@ -643,6 +644,9 @@ export default function Items() {
                             </span>
                           ) : null}
                         </div>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-700">
+                        {item.itemCode || item.sku || item.id || "-"}
                       </td>
                       <td className="px-4 py-3 text-slate-700">{item.type}</td>
                       <td className="px-4 py-3 text-right text-slate-700">
@@ -712,7 +716,7 @@ export default function Items() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
                     No items found
                   </td>
                 </tr>

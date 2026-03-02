@@ -185,7 +185,7 @@ export default function ItemCreate() {
   const showInventoryInputs = shouldShowInventoryFields(form.type, form.trackInventory);
   const complianceCodeLabel = form.type === "SERVICE" ? "SAC" : "HSN";
   const itemTypeLabel = form.type === "SERVICE" ? "Service" : "Product";
-  const skuPreview = String(form.sku || form.itemCode || "").trim();
+  const productIdPreview = String(form.itemCode || form.sku || "").trim();
   const multiCountryEnabled =
     !!organizationProfile?.settings?.numbering?.allowCountryOverride ||
     !!organizationProfile?.settings?.preferences?.multiCurrency;
@@ -522,9 +522,9 @@ export default function ItemCreate() {
                 </datalist>
               </FormField>
 
-              <FormField label="SKU / Item ID (Auto)">
+              <FormField label="Product ID (Auto)">
                 <input
-                  value={skuPreview}
+                  value={productIdPreview}
                   className={`${inputClassName} bg-slate-50 text-slate-700`}
                   placeholder="Auto-generated"
                   readOnly
