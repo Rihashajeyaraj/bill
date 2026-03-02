@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
+import Modal from "../../components/Modal";
 import { useToast } from "../../context/ToastContext";
 import { purchasesList, purchasesSyncFromRemote } from "../../services/purchases.service";
 import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
@@ -19,6 +20,7 @@ export default function PurchaseHistory() {
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [bills, setBills] = useState(() => purchasesList());
+  const [selectedBill, setSelectedBill] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -97,7 +99,15 @@ export default function PurchaseHistory() {
               ) : (
                 bills.map((bill) => (
                   <tr key={bill.id} className="border-t border-slate-100 hover:bg-slate-50/60">
-                    <td className="px-3 py-3 font-semibold text-slate-900">{bill.billNumber || "-"}</td>
+                    <td className="px-3 py-3 font-semibold text-slate-900">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedBill(bill)}
+                        className="text-left text-blue-700 hover:text-blue-900 hover:underline"
+                      >
+                        {bill.billNumber || "-"}
+                      </button>
+                    </td>
                     <td className="px-3 py-3 text-slate-600">{formatDate(bill.billDate)}</td>
                     <td className="px-3 py-3 text-slate-700">{bill.partyName || "-"}</td>
                     <td className="px-3 py-3 text-slate-600">{bill.phone || "-"}</td>
@@ -135,6 +145,100 @@ export default function PurchaseHistory() {
           </table>
         </div>
       </Card>
+
+      <Modal
+        open={!!selectedBill}
+        title={selectedBill ? `Purchase Bill Details - ${selectedBill.billNumber || "-"}` : "Purchase Bill Details"}
+        onClose={() => setSelectedBill(null)}
+      >
+        {selectedBill ? (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Bill No</p>
+                <p className="font-semibold text-slate-900">{selectedBill.billNumber || "-"}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Bill Date</p>
+                <p className="font-semibold text-slate-900">{formatDate(selectedBill.billDate)}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Supplier</p>
+                <p className="font-semibold text-slate-900">{selectedBill.partyName || "-"}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Phone</p>
+                <p className="font-semibold text-slate-900">{selectedBill.phone || "-"}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Payment Type</p>
+                <p className="font-semibold text-slate-900">{selectedBill.paymentType || "-"}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Created By</p>
+                <p className="font-semibold text-slate-900">{selectedBill.createdByName || selectedBill.createdBy || "-"}</p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs text-slate-500">Supplier Address</p>
+              <p className="font-semibold text-slate-900">{selectedBill.partyAddress || "-"}</p>
+            </div>
+
+            <div className="overflow-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[700px] text-left text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold text-slate-700">Item</th>
+                    <th className="px-3 py-2 font-semibold text-slate-700">Code</th>
+                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Qty</th>
+                    <th className="px-3 py-2 font-semibold text-slate-700">Unit</th>
+                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Rate</th>
+                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Tax %</th>
+                    <th className="px-3 py-2 text-right font-semibold text-slate-700">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(Array.isArray(selectedBill.lines) ? selectedBill.lines : []).length ? (
+                    selectedBill.lines.map((line, index) => (
+                      <tr key={line?.id || `${selectedBill.id}_${index}`} className="border-t border-slate-100">
+                        <td className="px-3 py-2 text-slate-700">{line?.itemName || "-"}</td>
+                        <td className="px-3 py-2 text-slate-700">{line?.itemCode || "-"}</td>
+                        <td className="px-3 py-2 text-right text-slate-700">{money(line?.qty)}</td>
+                        <td className="px-3 py-2 text-slate-700">{line?.unit || "-"}</td>
+                        <td className="px-3 py-2 text-right text-slate-700">{money(line?.rate)}</td>
+                        <td className="px-3 py-2 text-right text-slate-700">{money(line?.tax)}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-slate-900">{money(line?.amount)}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="px-3 py-5 text-center text-slate-500">
+                        No line items found for this bill.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Total Qty</p>
+                <p className="font-semibold text-slate-900">{money(selectedBill?.totals?.totalQty)}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Grand Total</p>
+                <p className="font-semibold text-slate-900">{money(selectedBill?.totals?.grandTotal)}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Pending Balance</p>
+                <p className="font-semibold text-slate-900">{money(selectedBill?.remainingBalance ?? selectedBill?.totals?.balance)}</p>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }

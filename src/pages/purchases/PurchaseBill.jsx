@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Plus, Save, Search, Trash2 } from "lucide-react";
+import { Plus, Save, Search, Trash2, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import PageHeader from "../../components/PageHeader";
@@ -76,7 +76,13 @@ function itemMatchesSearchQuery(item, query) {
   const name = normalizeItemName(item?.name);
   const itemCode = normalizeItemName(item?.itemCode);
   const id = normalizeItemName(item?.id);
-  return name.includes(normalizedQuery) || itemCode.includes(normalizedQuery) || id.includes(normalizedQuery);
+  const label = normalizeItemName(formatItemSearchLabel(item));
+  return (
+    name.includes(normalizedQuery) ||
+    itemCode.includes(normalizedQuery) ||
+    id.includes(normalizedQuery) ||
+    label.includes(normalizedQuery)
+  );
 }
 
 function normalizePhoneForLookup(value) {
@@ -386,7 +392,7 @@ export default function PurchaseBill() {
       item?.purchaseRate ?? item?.metadata?.purchasePrice ?? item?.price ?? 0
     );
     updateLine(line.id, {
-      itemInput: formatItemSearchLabel(item),
+      itemInput: item.name || "",
       itemName: item.name,
       itemId: item.id,
       itemCode: item.itemCode || "",
@@ -406,7 +412,7 @@ export default function PurchaseBill() {
       }
       return {
         ...line,
-        itemInput: formatItemSearchLabel(match),
+        itemInput: match.name || inputValue,
         itemName: match.name,
         itemId: match.id,
         itemCode: match.itemCode || "",
@@ -416,6 +422,15 @@ export default function PurchaseBill() {
         tax: forceZeroTax ? 0 : Number(match.taxRate ?? defaultLineTaxRate),
         priceTaxMode: match?.taxInclusive ? "WITH_TAX" : line.priceTaxMode || "WITHOUT_TAX"
       };
+    });
+  }
+
+  function clearLineItemSelection(lineId) {
+    updateLine(lineId, {
+      itemId: "",
+      itemCode: "",
+      itemName: "",
+      itemInput: ""
     });
   }
 
@@ -717,13 +732,7 @@ export default function PurchaseBill() {
           itemId: matched?.id || line.itemId || "",
           itemName: line.itemName || matched?.name || "",
           itemCode: line.itemCode || matched?.itemCode || "",
-          itemInput: formatItemSearchLabel(
-            matched || {
-              id: line.itemId || "",
-              itemCode: line.itemCode || "",
-              name: line.itemName || ""
-            }
-          )
+          itemInput: matched?.name || line.itemName || ""
         });
         continue;
       }
@@ -745,7 +754,7 @@ export default function PurchaseBill() {
           itemId: existing.id,
           itemCode: existing.itemCode || "",
           itemName: existing.name,
-          itemInput: formatItemSearchLabel(existing),
+          itemInput: existing.name || typedInput,
           unit: normalizeUnit(existing.unit || line.unit)
         });
         continue;
@@ -759,7 +768,7 @@ export default function PurchaseBill() {
         itemId: created?.id || "",
         itemCode: created?.itemCode || "",
         itemName: created?.name || typedName,
-        itemInput: formatItemSearchLabel(created || { id: "", itemCode: "", name: typedName }),
+        itemInput: created?.name || typedName,
         unit: normalizeUnit(created?.unit || line.unit)
       });
     }
@@ -813,13 +822,7 @@ export default function PurchaseBill() {
             itemId: resolved.itemId || "",
             itemCode: resolved.itemCode || "",
             itemName: resolved.itemName || "",
-            itemInput:
-              resolved.itemInput ||
-              formatItemSearchLabel({
-                id: resolved.itemId || "",
-                itemCode: resolved.itemCode || "",
-                name: resolved.itemName || ""
-              }),
+            itemInput: resolved.itemInput || resolved.itemName || "",
             unit: normalizeUnit(resolved.unit),
             rate: Number(resolved.rate || 0),
             saleRate: Number(resolved.saleRate || 0),
@@ -1180,7 +1183,7 @@ export default function PurchaseBill() {
                 <tr key={line.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                   <td className="px-3 py-3 text-slate-500">{index + 1}</td>
                   <td className="px-3 py-3">
-                    <div className="min-w-[220px]">
+                    <div className="relative min-w-[220px]">
                       <input
                         value={line.itemInput || line.itemName || ""}
                         onFocus={(event) => {
@@ -1196,9 +1199,24 @@ export default function PurchaseBill() {
                           handleItemInput(line.id, e.target.value);
                           updateLineItemPopoverPosition(e.currentTarget);
                         }}
-                        className="w-full rounded-xl border border-slate-100 bg-white px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
-                        placeholder="Search by product ID or name"
+                        className="w-full rounded-xl border border-slate-100 bg-white px-2.5 py-2 pr-8 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                        placeholder="Search by product name or code"
                       />
+                      {(line.itemId || line.itemInput || line.itemName) ? (
+                        <button
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            clearLineItemSelection(line.id);
+                            setActiveLineItemSearchId(line.id);
+                          }}
+                          className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                          title="Clear selected item"
+                          aria-label="Clear selected item"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
                     </div>
                     <p className="mt-1 text-[11px] text-slate-500">{line.itemCode ? `Code: ${line.itemCode}` : "No code"}</p>
                   </td>
@@ -1312,8 +1330,7 @@ export default function PurchaseBill() {
             </tbody>
           </table>
           {activeLineForSearch &&
-          activeLineItemSearchId &&
-          normalizeItemName(activeLineForSearch.itemInput || activeLineForSearch.itemName).length
+          activeLineItemSearchId
             ? createPortal(
                 <div
                   className="fixed z-[130] rounded-xl border border-slate-100 bg-white p-1.5 shadow-soft"
