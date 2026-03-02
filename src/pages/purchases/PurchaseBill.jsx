@@ -628,33 +628,93 @@ export default function PurchaseBill() {
         .filter((item) => item?.itemCode)
         .map((item) => [normalizeItemName(item.itemCode), item])
     );
-    const ensureItemCode = async (item) => {
-      if (!item || item.itemCode) return item;
+    const toNumber = (value) => Number(value || 0);
+    const getItemPurchaseRate = (item) =>
+      toNumber(item?.purchaseRate ?? item?.metadata?.purchasePrice ?? item?.price ?? 0);
+    const getItemSalesRate = (item) => toNumber(item?.salesRate ?? item?.price ?? 0);
+    const getLineTaxInclusive = (line, item) => {
+      const mode = String(
+        line?.priceTaxMode || (item?.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX")
+      ).toUpperCase();
+      return mode === "WITH_TAX";
+    };
+    const getLineTaxRate = (line, item) =>
+      forceZeroTax ? 0 : toNumber(line?.tax ?? item?.taxRate ?? defaultLineTaxRate);
+    const shouldSyncItemFromLine = (item, line) => {
+      if (!item) return true;
+      const nextUnit = normalizeUnit(line?.unit || item?.unit || "pcs");
+      const nextPurchaseRate = toNumber(line?.rate ?? getItemPurchaseRate(item));
+      const nextSalesRate = toNumber(line?.saleRate ?? line?.rate ?? getItemSalesRate(item));
+      const nextTaxRate = getLineTaxRate(line, item);
+      const nextTaxInclusive = getLineTaxInclusive(line, item);
+      const itemType = item?.type === "Service" ? "Service" : "Product";
+      const nextTrackInventory = itemType === "Product" ? item?.trackInventory ?? true : false;
+      return (
+        !String(item?.itemCode || "").trim() ||
+        normalizeUnit(item?.unit) !== nextUnit ||
+        Math.abs(getItemPurchaseRate(item) - nextPurchaseRate) > 1e-6 ||
+        Math.abs(getItemSalesRate(item) - nextSalesRate) > 1e-6 ||
+        Math.abs(toNumber(item?.taxRate) - nextTaxRate) > 1e-6 ||
+        Boolean(item?.taxInclusive) !== nextTaxInclusive ||
+        Boolean(item?.trackInventory) !== nextTrackInventory
+      );
+    };
+    const rememberItem = (item) => {
+      if (!item) return;
+      itemsById.set(String(item.id || ""), item);
+      if (item.name) {
+        itemsByName.set(normalizeItemName(item.name), item);
+      }
+      if (item.itemCode) {
+        itemsByCode.set(normalizeItemName(item.itemCode), item);
+      }
+    };
+    const ensureItemFromLine = async (item, line, fallbackName = "") => {
+      const resolvedName = String(item?.name || line?.itemName || fallbackName || "").trim();
+      if (!resolvedName) return item || null;
+      if (item && !shouldSyncItemFromLine(item, line)) return item;
+
+      const itemType = item?.type === "Service" ? "Service" : "Product";
       const savedId = await upsertItemRemote(
         {
-          ...item,
-          id: item.id,
-          itemCode: item.itemCode || ""
+          id: item?.id,
+          itemCode: item?.itemCode || "",
+          name: resolvedName,
+          type: itemType,
+          description: item?.description || "",
+          hsn: itemType === "Product" ? item?.hsn || "" : "",
+          sac: itemType === "Service" ? item?.sac || "" : "",
+          unit: normalizeUnit(line?.unit || item?.unit || "pcs"),
+          salesRate: toNumber(line?.saleRate ?? line?.rate ?? getItemSalesRate(item)),
+          purchaseRate: toNumber(line?.rate ?? getItemPurchaseRate(item)),
+          taxRate: getLineTaxRate(line, item),
+          taxInclusive: getLineTaxInclusive(line, item),
+          status: item?.status || "Active",
+          trackInventory: itemType === "Product" ? item?.trackInventory ?? true : false,
+          openingStock: toNumber(item?.openingStock ?? item?.metadata?.openingStock ?? item?.metadata?.openingQty ?? 0),
+          lowStockAlert: toNumber(item?.lowStockAlert ?? item?.metadata?.lowStockQty ?? 0),
+          category: item?.category || "",
+          sku: item?.sku || item?.itemCode || "",
+          barcode: item?.barcode || ""
         },
         country
       );
       const refreshed =
-        listItems().find((entry) => String(entry.id) === String(savedId || item.id)) || item;
-      itemsById.set(String(refreshed.id || ""), refreshed);
-      if (refreshed.name) {
-        itemsByName.set(normalizeItemName(refreshed.name), refreshed);
-      }
-      if (refreshed.itemCode) {
-        itemsByCode.set(normalizeItemName(refreshed.itemCode), refreshed);
-      }
+        listItems().find((entry) => String(entry.id) === String(savedId || item?.id || "")) || item || null;
+      rememberItem(refreshed);
       return refreshed;
     };
 
     for (const line of detailedLines) {
       if (line.itemId) {
-        const matched = await ensureItemCode(itemsById.get(String(line.itemId || "")));
+        const matched = await ensureItemFromLine(
+          itemsById.get(String(line.itemId || "")),
+          line,
+          line.itemName || ""
+        );
         nextLines.push({
           ...line,
+          itemId: matched?.id || line.itemId || "",
           itemName: line.itemName || matched?.name || "",
           itemCode: line.itemCode || matched?.itemCode || "",
           itemInput: formatItemSearchLabel(
@@ -678,7 +738,7 @@ export default function PurchaseBill() {
         findItemBySearchInput(items, typedInput) ||
         itemsByCode.get(normalizeItemName(typedInput)) ||
         itemsByName.get(normalizeItemName(typedInput));
-      const existing = await ensureItemCode(directMatch);
+      const existing = await ensureItemFromLine(directMatch, line, typedInput);
       if (existing) {
         nextLines.push({
           ...line,
@@ -692,43 +752,14 @@ export default function PurchaseBill() {
       }
 
       const typedName = typedInput;
-      const normalizedName = normalizeItemName(typedName);
-      const createdId = await upsertItemRemote(
-        {
-          name: typedName,
-          type: "Product",
-          unit: normalizeUnit(line.unit),
-          salesRate: Number(line.saleRate || line.rate || 0),
-          purchaseRate: Number(line.rate || 0),
-          taxRate: forceZeroTax ? 0 : Number(line.tax || 0),
-          taxInclusive: line.priceTaxMode === "WITH_TAX",
-          status: "Active",
-          trackInventory: true,
-          openingStock: 0,
-          lowStockAlert: 0
-        },
-        country
-      );
-
-      const refreshedItems = listItems();
-      const created =
-        refreshedItems.find((item) => String(item.id) === String(createdId)) ||
-        refreshedItems.find((item) => normalizeItemName(item.name) === normalizedName);
-
-      if (created) {
-        itemsById.set(String(created.id), created);
-        itemsByName.set(normalizedName, created);
-        if (created.itemCode) {
-          itemsByCode.set(normalizeItemName(created.itemCode), created);
-        }
-      }
+      const created = await ensureItemFromLine(null, line, typedName);
 
       nextLines.push({
         ...line,
-        itemId: created?.id || createdId || "",
+        itemId: created?.id || "",
         itemCode: created?.itemCode || "",
         itemName: created?.name || typedName,
-        itemInput: formatItemSearchLabel(created || { id: createdId || "", itemCode: "", name: typedName }),
+        itemInput: formatItemSearchLabel(created || { id: "", itemCode: "", name: typedName }),
         unit: normalizeUnit(created?.unit || line.unit)
       });
     }
