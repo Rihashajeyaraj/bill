@@ -27,8 +27,8 @@ import { outstandingByCustomer, savePaymentIn } from "../../modules/paymentIn/st
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE } from "../../modules/paymentIn/countryConfig";
 import { getInvoiceTemplateConfig } from "../../lib/templateStore";
 import {
+  companyGetProfile,
   companyConsumeDocumentNumber,
-  companyPeekDocumentNumber
 } from "../../services/company.service";
 import {
   getCanonicalCountryName,
@@ -46,13 +46,24 @@ function round2(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
-function generateInvoiceNumber() {
-  const now = new Date();
-  const yy = String(now.getFullYear()).slice(-2);
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  const rnd = String(Math.floor(100 + Math.random() * 900));
-  return `INV-${yy}${mm}${dd}-${rnd}`;
+function normalizeInvoiceCode(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "INV";
+  const withoutTrailingDigits = raw.replace(/\d+$/, "").replace(/[-\s_]+$/, "").trim();
+  return withoutTrailingDigits || "INV";
+}
+
+function toInvoiceCounter(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 1) return 1;
+  return Math.trunc(numeric);
+}
+
+function buildInvoiceId(code, year, counter) {
+  const safeCode = normalizeInvoiceCode(code);
+  const safeYear = String(year || new Date().getFullYear());
+  const safeCounter = String(toInvoiceCounter(counter)).padStart(4, "0");
+  return `${safeCode}-${safeYear}-${safeCounter}`;
 }
 
 function formatAddress(address) {
@@ -238,10 +249,15 @@ export default function InvoiceCreate() {
   const [itemSearch, setItemSearch] = useState("");
 
   const initialInvoiceDate = new Date().toISOString().slice(0, 10);
+  const invoiceYear = new Date().getFullYear();
+  const initialInvoiceCode = normalizeInvoiceCode(company?.settings?.numbering?.prefixes?.invoice || "INV");
+  const initialInvoiceCounter = toInvoiceCounter(company?.settings?.numbering?.counters?.invoice || 1);
   const [invoiceDate, setInvoiceDate] = useState(initialInvoiceDate);
   const [invoiceDateInput, setInvoiceDateInput] = useState(() => formatIsoToDayMonthYear(initialInvoiceDate));
-  const [invoiceNo, setInvoiceNo] = useState(
-    () => companyPeekDocumentNumber("invoice") || generateInvoiceNumber()
+  const [invoiceCode, setInvoiceCode] = useState(initialInvoiceCode);
+  const [invoiceCounter, setInvoiceCounter] = useState(initialInvoiceCounter);
+  const [invoiceNo, setInvoiceNo] = useState(() =>
+    buildInvoiceId(initialInvoiceCode, invoiceYear, initialInvoiceCounter)
   );
   const [partyId, setPartyId] = useState("");
   const party = useMemo(() => customers.find((c) => c.id === partyId) || null, [customers, partyId]);
@@ -386,6 +402,10 @@ export default function InvoiceCreate() {
       })
     );
   }, [forceZeroTax]);
+
+  useEffect(() => {
+    setInvoiceNo(buildInvoiceId(invoiceCode, invoiceYear, invoiceCounter));
+  }, [invoiceCode, invoiceCounter, invoiceYear]);
 
   useEffect(() => {
     if (!party?.phone) return;
@@ -1283,6 +1303,11 @@ export default function InvoiceCreate() {
       alert("Select customer before saving invoice.");
       return null;
     }
+    const normalizedInvoiceNo = String(invoiceNo || "").trim();
+    if (!normalizedInvoiceNo) {
+      alert("Invoice ID is required.");
+      return null;
+    }
     if (!validComputedLines.length) {
       alert("Add at least one line item before saving invoice.");
       return null;
@@ -1398,7 +1423,7 @@ export default function InvoiceCreate() {
     };
     const payload = {
       invoiceDate,
-      invoiceNo,
+      invoiceNo: normalizedInvoiceNo,
       partyId,
       partyName: party?.name || "",
       placeOfSupply: buyer.state,
@@ -1463,14 +1488,14 @@ export default function InvoiceCreate() {
                 ? transactionId
                 : "",
             paymentReference: referenceNo || "",
-            internalNotes: paymentNotes || `Payment for invoice ${invoiceNo}`,
+            internalNotes: paymentNotes || `Payment for invoice ${normalizedInvoiceNo}`,
             customerNotes: "",
             attachment: null,
             amountReceived: paymentAmount,
             allocations: [
               {
                 invoiceId: savedInvoiceId,
-                invoiceNo,
+                invoiceNo: normalizedInvoiceNo,
                 invoiceDate,
                 invoiceAmount: Number(computed.grandTotal || 0),
                 balanceDue: Number(computed.grandTotal || 0),
@@ -1515,7 +1540,7 @@ export default function InvoiceCreate() {
                   : "",
               paymentReference: referenceNo || "",
               internalNotes:
-                paymentNotes || `Payment for invoice ${invoiceNo} (saved as unapplied)`,
+                paymentNotes || `Payment for invoice ${normalizedInvoiceNo} (saved as unapplied)`,
               customerNotes: "",
               attachment: null,
               desiredStatus: "Received",
@@ -1548,7 +1573,16 @@ export default function InvoiceCreate() {
       setBankAccount("");
       setPaymentNotes("");
       companyConsumeDocumentNumber("invoice");
-      setInvoiceNo(companyPeekDocumentNumber("invoice") || generateInvoiceNumber());
+      const latestProfile = companyGetProfile() || {};
+      const nextInvoiceCode = normalizeInvoiceCode(
+        latestProfile?.settings?.numbering?.prefixes?.invoice || invoiceCode
+      );
+      const nextInvoiceCounter = toInvoiceCounter(
+        latestProfile?.settings?.numbering?.counters?.invoice || invoiceCounter + 1
+      );
+      setInvoiceCode(nextInvoiceCode);
+      setInvoiceCounter(nextInvoiceCounter);
+      setInvoiceNo(buildInvoiceId(nextInvoiceCode, invoiceYear, nextInvoiceCounter));
       await invoicesSyncFromRemote();
 
       if (!silent) {
@@ -1597,7 +1631,7 @@ export default function InvoiceCreate() {
             <div className="flex items-center gap-2">
               <button
                 onClick={handleSaveAndPrint}
-                disabled={!canCreateInvoice || !partyId || hasStockErrors}
+                disabled={!canCreateInvoice || !partyId || !String(invoiceNo || "").trim() || hasStockErrors}
                 className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
               >
                 <Printer className="h-4 w-4" />
@@ -1605,7 +1639,7 @@ export default function InvoiceCreate() {
               </button>
               <GradientButton
                 onClick={saveInvoice}
-                disabled={!canCreateInvoice || !partyId || hasStockErrors}
+                disabled={!canCreateInvoice || !partyId || !String(invoiceNo || "").trim() || hasStockErrors}
                 className="disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Save className="h-4 w-4" />
@@ -1976,23 +2010,56 @@ export default function InvoiceCreate() {
           ) : null}
 
             <>
-              <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
-                <div>
-                  <p className="text-xs text-slate-500">Invoice ID</p>
-                  <p className="mt-1 rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-800">
-                    {invoiceNo}
-                  </p>
+              <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <FormField label="Invoice Code">
+                    <input
+                      value={invoiceCode}
+                      onChange={(event) => setInvoiceCode(event.target.value.toUpperCase())}
+                      placeholder="INV"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-mono outline-none focus:ring-4"
+                      style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    />
+                  </FormField>
+                  <FormField label="Year">
+                    <input
+                      value={invoiceYear}
+                      readOnly
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-100 px-3 py-2.5 text-sm font-mono text-slate-700 outline-none"
+                    />
+                  </FormField>
+                  <FormField label="Invoice Counter">
+                    <input
+                      type="number"
+                      min={1}
+                      value={invoiceCounter}
+                      onChange={(event) => setInvoiceCounter(toInvoiceCounter(event.target.value))}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-mono outline-none focus:ring-4"
+                      style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    />
+                  </FormField>
                 </div>
-                <FormField label="Invoice Date">
-                  <input
-                    value={invoiceDateInput}
-                    onChange={(e) => handleInvoiceDateChange(e.target.value)}
-                    onBlur={handleInvoiceDateBlur}
-                    placeholder="DD/MM/YYYY or YYYY-MM-DD"
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
-                    style={{ "--tw-ring-color": UI.COLORS.ring }}
-                  />
-                </FormField>
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <FormField label="Invoice ID (Editable)">
+                    <input
+                      value={invoiceNo}
+                      onChange={(event) => setInvoiceNo(event.target.value)}
+                      placeholder="Invoice ID"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-mono outline-none focus:ring-4"
+                      style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    />
+                  </FormField>
+                  <FormField label="Invoice Date">
+                    <input
+                      value={invoiceDateInput}
+                      onChange={(e) => handleInvoiceDateChange(e.target.value)}
+                      onBlur={handleInvoiceDateBlur}
+                      placeholder="DD/MM/YYYY or YYYY-MM-DD"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                      style={{ "--tw-ring-color": UI.COLORS.ring }}
+                    />
+                  </FormField>
+                </div>
               </div>
 
               <div className="mt-4 flex items-center justify-between">
@@ -2515,7 +2582,7 @@ export default function InvoiceCreate() {
                   <GradientButton
                     className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={saveInvoice}
-                    disabled={!canCreateInvoice || !partyId || hasStockErrors}
+                    disabled={!canCreateInvoice || !partyId || !String(invoiceNo || "").trim() || hasStockErrors}
                   >
                     <Save className="h-4 w-4" />
                     Save Invoice

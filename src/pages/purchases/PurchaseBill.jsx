@@ -19,10 +19,6 @@ import { syncPaymentOutRemote } from "../../services/payments.service";
 import { outstandingBySupplier, savePaymentOut } from "../../modules/paymentOut/store";
 import { canCreateEntries } from "../../services/roles";
 import {
-  companyConsumeDocumentNumber,
-  companyPeekDocumentNumber
-} from "../../services/company.service";
-import {
   getCanonicalCountryName,
   listAllCountries,
   listStatesByCountry,
@@ -135,15 +131,6 @@ function supplierAddressSummary(supplier) {
     .join(", ");
 }
 
-function generateBillNumber() {
-  const now = new Date();
-  const yy = String(now.getFullYear()).slice(-2);
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  const rnd = String(Math.floor(100 + Math.random() * 900));
-  return `PB-${yy}${mm}${dd}-${rnd}`;
-}
-
 function createLine(defaultTaxRate = 0) {
   return {
     id: `line_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
@@ -196,9 +183,7 @@ export default function PurchaseBill() {
   const [supplierCountryMenuOpen, setSupplierCountryMenuOpen] = useState(false);
   const [supplierStateMenuOpen, setSupplierStateMenuOpen] = useState(false);
   const [supplierAddress, setSupplierAddress] = useState("");
-  const [autoBillNumber, setAutoBillNumber] = useState(
-    () => companyPeekDocumentNumber("purchase") || generateBillNumber()
-  );
+  const [billNumber, setBillNumber] = useState("");
   const [billDate, setBillDate] = useState(new Date().toISOString().slice(0, 10));
   const [lines, setLines] = useState(() => [createLine(defaultLineTaxRate)]);
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
@@ -936,6 +921,11 @@ export default function PurchaseBill() {
       toast.warning("Supplier required", "Select a supplier before saving.");
       return;
     }
+    const normalizedBillNumber = String(billNumber || "").trim();
+    if (!normalizedBillNumber) {
+      toast.warning("Bill ID required", "Enter Bill ID before saving.");
+      return;
+    }
     if (markAsPaid && !paymentDate) {
       toast.warning("Payment date required", "Select payment date for paid amount.");
       return;
@@ -991,7 +981,7 @@ export default function PurchaseBill() {
         return;
       }
 
-      const effectiveBillNumber = autoBillNumber;
+      const effectiveBillNumber = normalizedBillNumber;
       const effectivePaymentType = markAsPaid ? paymentType : "Unpaid";
       const createdBillId = await purchasesCreate({
         country,
@@ -1108,8 +1098,7 @@ export default function PurchaseBill() {
       } else {
         toast.success("Purchase bill saved", `Bill ${effectiveBillNumber} saved successfully.`);
       }
-      companyConsumeDocumentNumber("purchase");
-      setAutoBillNumber(companyPeekDocumentNumber("purchase") || generateBillNumber());
+      setBillNumber("");
       setMarkAsPaid(false);
       setPaymentType("Cash");
       setPaymentDate(billDate);
@@ -1375,9 +1364,12 @@ export default function PurchaseBill() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
           <div>
             <p className="text-xs text-slate-500">Bill ID</p>
-            <p className="mt-1 rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-800">
-              {autoBillNumber}
-            </p>
+            <input
+              value={billNumber}
+              onChange={(e) => setBillNumber(e.target.value)}
+              placeholder="Enter bill ID"
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-blue-100"
+            />
           </div>
           <FormField label="Bill Date">
             <input
@@ -1868,7 +1860,7 @@ export default function PurchaseBill() {
           onClick={() => {
             void save();
           }}
-          disabled={!canCreatePurchase || !partyId || saving || loading}
+          disabled={!canCreatePurchase || !partyId || !String(billNumber || "").trim() || saving || loading}
           className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Save className="h-4 w-4" />
