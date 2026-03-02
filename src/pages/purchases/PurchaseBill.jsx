@@ -25,9 +25,7 @@ import {
   resolveCountryIsoCode
 } from "../../lib/geoData";
 
-const DEFAULT_UNITS = ["pcs", "kg", "box", "ltr", "set", "hr"];
 const BLOCKED_UNITS = ["job"];
-const UNIT_DATALIST_ID = "purchase-unit-options";
 
 function normalizeUnit(unit) {
   const value = String(unit || "").trim();
@@ -370,13 +368,6 @@ export default function PurchaseBill() {
       window.removeEventListener("resize", closePopover);
     };
   }, [activeLineItemSearchId]);
-
-  const unitOptions = useMemo(() => {
-    const itemUnits = items
-      .map((item) => normalizeUnit(item.unit))
-      .filter((unit) => unit && !BLOCKED_UNITS.includes(unit.toLowerCase()));
-    return Array.from(new Set([...DEFAULT_UNITS, ...itemUnits]));
-  }, [items]);
 
   const supplierLookupResults = useMemo(() => {
     const query = String(supplierLookupQuery || "").trim().toLowerCase();
@@ -1437,9 +1428,6 @@ export default function PurchaseBill() {
                         </button>
                       ) : null}
                     </div>
-                    {line.itemCode ? (
-                      <p className="mt-1 text-[11px] text-slate-500">{`Code: ${line.itemCode}`}</p>
-                    ) : null}
                   </td>
                   <td className="px-3 py-3">
                     <input
@@ -1452,12 +1440,11 @@ export default function PurchaseBill() {
                   </td>
                   <td className="px-3 py-3">
                     <input
-                      list={UNIT_DATALIST_ID}
                       value={line.unit}
                       onChange={(e) => updateLine(line.id, { unit: e.target.value })}
                       onBlur={(e) => updateLine(line.id, { unit: normalizeUnit(e.target.value) })}
                       className="w-24 rounded-xl border border-slate-100 bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
-                      placeholder="Search unit"
+                      placeholder="Unit"
                     />
                   </td>
                   <td className="px-3 py-3">
@@ -1564,11 +1551,6 @@ export default function PurchaseBill() {
                 document.body
               )
             : null}
-          <datalist id={UNIT_DATALIST_ID}>
-            {unitOptions.map((unit) => (
-              <option key={unit} value={unit} />
-            ))}
-          </datalist>
         </div>
         <div className="mt-5 grid grid-cols-1 xl:grid-cols-2 gap-4">
           <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
