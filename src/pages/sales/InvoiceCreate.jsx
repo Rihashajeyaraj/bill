@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Plus, Printer, Save, Search } from "lucide-react";
+import { Plus, Printer, Save, Search, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 
@@ -89,15 +89,6 @@ function parseRateInput(value) {
   const match = String(value || "").match(/[\d.]+/);
   const parsed = match ? Number(match[0]) : 0;
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function parseBooleanLike(value) {
-  if (value === true || value === false) return value;
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (!normalized) return null;
-  if (["true", "1", "yes", "y"].includes(normalized)) return true;
-  if (["false", "0", "no", "n"].includes(normalized)) return false;
-  return null;
 }
 
 function resolveCurrencySymbol(symbol, currencyCode) {
@@ -557,7 +548,7 @@ export default function InvoiceCreate() {
         itemId: item.id,
         itemInput: formatItemSearchLabel(item),
         selectedBatchId: "",
-        priceTaxMode: getPreferredTaxModeForItem(item),
+        priceTaxMode: "WITHOUT_TAX",
         qty: Number.isFinite(maxAssignable) ? Math.min(1, maxAssignable) : 1,
         rate: item.salesRate || item.price || 0,
         discount: 0,
@@ -792,31 +783,15 @@ export default function InvoiceCreate() {
       const rate = Number(l.rate || 0);
       const discount = Number(l.discount || 0);
       const taxRatePerLine = forceZeroTax ? 0 : Number(l.tax || fallbackRate || 0);
-      const isTaxInclusive = String(l.priceTaxMode || "").toUpperCase() === "WITH_TAX";
-
-      const gross = Math.max(0, qty * rate - discount);
-      let net = gross;
-      let lineTax = 0;
-      if (gross > 0 && taxRatePerLine > 0) {
-        if (isTaxInclusive) {
-          const divisor = 1 + taxRatePerLine / 100;
-          net = divisor > 0 ? round2(gross / divisor) : gross;
-          lineTax = round2(gross - net);
-        } else {
-          net = round2(gross);
-          lineTax = round2((net * taxRatePerLine) / 100);
-        }
-      } else {
-        net = round2(gross);
-      }
+      const net = round2(Math.max(0, qty * rate - discount));
+      const lineTax = round2((net * taxRatePerLine) / 100);
 
       return {
         ...l,
         tax: taxRatePerLine,
-        priceTaxMode: isTaxInclusive ? "WITH_TAX" : "WITHOUT_TAX",
+        priceTaxMode: "WITHOUT_TAX",
         itemName: item?.name || "XXX",
         hsn: item?.hsn || item?.sac || "XX",
-        gross,
         net,
         lineTax
       };
@@ -1045,25 +1020,6 @@ export default function InvoiceCreate() {
       });
   }
 
-  function getPreferredTaxModeForItem(item) {
-    if (!item?.id) {
-      return item?.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX";
-    }
-    const openRows = getOpenBatchRows(item.id);
-    if (openRows.length) {
-      const latestRow = [...openRows].sort((a, b) => {
-        const da = new Date(a?.batch_date || a?.created_at || 0).getTime();
-        const db = new Date(b?.batch_date || b?.created_at || 0).getTime();
-        return db - da;
-      })[0];
-      const batchTaxInclusive = parseBooleanLike(latestRow?.tax_inclusive);
-      if (batchTaxInclusive !== null) {
-        return batchTaxInclusive ? "WITH_TAX" : "WITHOUT_TAX";
-      }
-    }
-    return item?.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX";
-  }
-
   function getBatchAvailableForLine(itemId, batchId, excludeLineId = "") {
     if (!itemId || !batchId) return 0;
     const rows = getOpenBatchRows(itemId);
@@ -1094,7 +1050,7 @@ export default function InvoiceCreate() {
       itemInput: formatItemSearchLabel(matchedItem),
       itemId: matchedItem.id,
       selectedBatchId: "",
-      priceTaxMode: getPreferredTaxModeForItem(matchedItem),
+      priceTaxMode: "WITHOUT_TAX",
       qty: nextQty,
       rate: matchedItem?.salesRate || matchedItem?.price || 0,
       tax: forceZeroTax ? 0 : Number(matchedItem?.taxRate ?? taxRate ?? 0)
@@ -1110,20 +1066,21 @@ export default function InvoiceCreate() {
     selectLineItem(line, matchedItem);
   }
 
+  function clearLineItemSelection(lineId) {
+    updateLine(lineId, { itemInput: "", itemId: "", selectedBatchId: "" });
+  }
+
   function handleLineBatchChange(line, batchId) {
     if (!line?.itemId) return;
     const selectedId = String(batchId || "");
     if (!selectedId) {
-      const matchedItem = items.find((item) => String(item?.id || "") === String(line.itemId || ""));
       updateLine(line.id, {
-        selectedBatchId: "",
-        priceTaxMode: getPreferredTaxModeForItem(matchedItem)
+        selectedBatchId: ""
       });
       return;
     }
     const rows = getOpenBatchRows(line.itemId);
     const picked = rows.find((row) => String(row.batch_id) === selectedId);
-    const batchTaxInclusive = parseBooleanLike(picked?.tax_inclusive);
     const suggestedRate = Number(
       picked?.suggested_sale_rate ??
         picked?.metadata?.suggestedSaleRate ??
@@ -1134,12 +1091,7 @@ export default function InvoiceCreate() {
     updateLine(line.id, {
       selectedBatchId: selectedId,
       rate: suggestedRate > 0 ? suggestedRate : line.rate,
-      priceTaxMode:
-        batchTaxInclusive === null
-          ? line.priceTaxMode || "WITHOUT_TAX"
-          : batchTaxInclusive
-            ? "WITH_TAX"
-            : "WITHOUT_TAX",
+      priceTaxMode: "WITHOUT_TAX",
       tax: forceZeroTax ? 0 : Number(picked?.tax_rate ?? line?.tax ?? taxRate ?? 0),
       qty: Number.isFinite(maxAssignable)
         ? Math.min(Math.max(0, Number(line.qty || 0)), maxAssignable)
@@ -2133,7 +2085,7 @@ export default function InvoiceCreate() {
                       header: "Item",
                       render: (r) => {
                         return (
-                          <div className="min-w-[250px]">
+                          <div className="relative min-w-[250px]">
                             <input
                               value={r.itemInput || ""}
                               onFocus={(event) => {
@@ -2149,11 +2101,23 @@ export default function InvoiceCreate() {
                                 handleLineItemInput(r, e.target.value);
                                 updateLineItemPopoverPosition(e.currentTarget);
                               }}
-                              className="w-full rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-sm outline-none"
+                              className="w-full rounded-xl border border-slate-100 bg-white px-2 py-1.5 pr-8 text-sm outline-none"
                               placeholder="Search by product ID or name"
                             />
-                            {r.itemId ? (
-                              <p className="mt-1 text-[10px] text-slate-500">{formatBatchHint(r.itemId)}</p>
+                            {(r.itemId || r.itemInput) ? (
+                              <button
+                                type="button"
+                                onMouseDown={(event) => {
+                                  event.preventDefault();
+                                  clearLineItemSelection(r.id);
+                                  setActiveLineItemSearchId(r.id);
+                                }}
+                                className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                                title="Clear selected item"
+                                aria-label="Clear selected item"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
                             ) : null}
                           </div>
                         );
@@ -2267,32 +2231,25 @@ export default function InvoiceCreate() {
                       )
                     },
                     {
-                      key: "taxInclusive",
-                      header: "Tax Incl",
-                      render: (r) => (
-                        <select
-                          value={r.priceTaxMode || "WITHOUT_TAX"}
-                          onChange={(e) => updateLine(r.id, { priceTaxMode: e.target.value })}
-                          className="w-24 rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-xs outline-none"
-                        >
-                          <option value="WITHOUT_TAX">No</option>
-                          <option value="WITH_TAX">Yes</option>
-                        </select>
-                      )
+                      key: "net",
+                      header: "Net Amount",
+                      render: (r) => {
+                        const qty = Number(r.qty || 0);
+                        const rate = Number(r.rate || 0);
+                        const discount = Number(r.discount || 0);
+                        return money(round2(Math.max(0, qty * rate - discount)));
+                      }
                     },
                     {
-                      key: "net",
-                      header: "Net",
+                      key: "amount",
+                      header: "Total Amount",
                       render: (r) => {
                         const qty = Number(r.qty || 0);
                         const rate = Number(r.rate || 0);
                         const discount = Number(r.discount || 0);
                         const taxRateValue = forceZeroTax ? 0 : Number(r.tax || 0);
-                        const gross = Math.max(0, qty * rate - discount);
-                        if (String(r.priceTaxMode || "").toUpperCase() === "WITH_TAX") {
-                          return money(gross);
-                        }
-                        return money(round2(gross + (gross * taxRateValue) / 100));
+                        const net = round2(Math.max(0, qty * rate - discount));
+                        return money(round2(net + (net * taxRateValue) / 100));
                       }
                     },
                     {
