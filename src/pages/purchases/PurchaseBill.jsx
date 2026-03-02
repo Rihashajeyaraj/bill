@@ -450,9 +450,8 @@ export default function PurchaseBill() {
 
   function getLineItemSearchResults(line) {
     const query = normalizeItemName(line?.itemInput);
-    const matched = query
-      ? purchasableItems.filter((item) => itemMatchesSearchQuery(item, query))
-      : purchasableItems;
+    if (!query) return [];
+    const matched = purchasableItems.filter((item) => itemMatchesSearchQuery(item, query));
     const selected = purchasableItems.find((item) => String(item.id) === String(line?.itemId || ""));
     if (!selected) return matched.slice(0, 8);
     if (matched.some((item) => String(item.id) === String(selected.id))) return matched.slice(0, 8);
@@ -1196,6 +1195,7 @@ export default function PurchaseBill() {
                           }, 120);
                         }}
                         onChange={(e) => {
+                          setActiveLineItemSearchId(line.id);
                           handleItemInput(line.id, e.target.value);
                           updateLineItemPopoverPosition(e.currentTarget);
                         }}
@@ -1218,7 +1218,9 @@ export default function PurchaseBill() {
                         </button>
                       ) : null}
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-500">{line.itemCode ? `Code: ${line.itemCode}` : "No code"}</p>
+                    {line.itemCode ? (
+                      <p className="mt-1 text-[11px] text-slate-500">{`Code: ${line.itemCode}`}</p>
+                    ) : null}
                   </td>
                   <td className="px-3 py-3">
                     <input
@@ -1330,7 +1332,8 @@ export default function PurchaseBill() {
             </tbody>
           </table>
           {activeLineForSearch &&
-          activeLineItemSearchId
+          activeLineItemSearchId &&
+          normalizeItemName(activeLineForSearch.itemInput).length
             ? createPortal(
                 <div
                   className="fixed z-[130] rounded-xl border border-slate-100 bg-white p-1.5 shadow-soft"
