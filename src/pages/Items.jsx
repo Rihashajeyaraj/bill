@@ -999,6 +999,7 @@ export default function Items() {
             <table className="w-full min-w-[520px] text-left text-sm">
               <thead className="bg-slate-50">
                 <tr>
+                  <th className="px-3 py-2 font-semibold text-slate-700">Item ID</th>
                   <th className="px-3 py-2 font-semibold text-slate-700">
                     {historyMode === "sales" ? "Customer" : "Supplier"}
                   </th>
@@ -1013,13 +1014,16 @@ export default function Items() {
               <tbody>
                 {historyLoading ? (
                   <tr>
-                    <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                    <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
                       Loading history...
                     </td>
                   </tr>
                 ) : (historyRowsByMode[historyMode] || []).length ? (
                   (historyRowsByMode[historyMode] || []).map((entry, index) => (
                     <tr key={`${entry.billNo || "bill"}_${index}`} className="border-t border-slate-100">
+                      <td className="px-3 py-2 text-slate-700">
+                        {entry.itemId || entry.itemCode || historyItem?.itemCode || historyItem?.id || "-"}
+                      </td>
                       <td className="px-3 py-2 text-slate-700">
                         {historyMode === "sales" ? entry.customer || "-" : entry.supplier || "-"}
                       </td>
@@ -1036,7 +1040,7 @@ export default function Items() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                    <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
                       No {historyMode} history found for this item.
                     </td>
                   </tr>

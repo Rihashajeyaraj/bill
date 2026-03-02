@@ -1496,10 +1496,16 @@ export default function PurchaseBill() {
                     <span className="font-semibold text-slate-900">{money(computed.taxTotal)}</span>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-600">CGST + SGST</span>
-                    <span className="font-semibold text-slate-900">{money(computed.taxTotal)}</span>
-                  </div>
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600">CGST</span>
+                      <span className="font-semibold text-slate-900">{money(computed.tax.cgst)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600">SGST</span>
+                      <span className="font-semibold text-slate-900">{money(computed.tax.sgst)}</span>
+                    </div>
+                  </>
                 )
               ) : (
                 <div className="flex items-center justify-between">
