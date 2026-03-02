@@ -21,9 +21,9 @@ import {
   syncItemsFromRemote,
   upsertItemRemote
 } from "../modules/items/store";
-import { formatMoney, normalizeText, taxContext } from "../modules/items/utils";
+import { formatMoney, normalizeText, parseNumber, taxContext } from "../modules/items/utils";
 import { listItemReturnActions, saveItemReturnAction } from "../services/itemReturns.service";
-import { fetchPurchaseBillByBatchId } from "../services/inventory.service";
+import { fetchItemStockHistory, fetchPurchaseBillByBatchId } from "../services/inventory.service";
 import { purchasesList } from "../services/purchases.service";
 import { useToast } from "../context/ToastContext";
 import { authGetRole } from "../services/auth.service";
@@ -47,6 +47,15 @@ export default function Items() {
   const [activeItem, setActiveItem] = useState(null);
   const [viewOpen, setViewOpen] = useState(false);
   const [viewItem, setViewItem] = useState(null);
+  const [viewTradeSummary, setViewTradeSummary] = useState({
+    totalSales: 0,
+    totalPurchase: 0,
+    salesQty: 0,
+    purchaseQty: 0
+  });
+  const [viewBatchRows, setViewBatchRows] = useState([]);
+  const [viewDetailLoading, setViewDetailLoading] = useState(false);
+  const [viewDetailError, setViewDetailError] = useState("");
   const [actionMenu, setActionMenu] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyItem, setHistoryItem] = useState(null);
@@ -87,12 +96,17 @@ export default function Items() {
     });
   }, [items, tab, statusFilter, search]);
 
-  const viewTradeSummary = useMemo(() => {
-    if (!viewItem?.id) {
-      return { totalSales: 0, totalPurchase: 0, salesQty: 0, purchaseQty: 0 };
-    }
-    return getItemTradeSummary(viewItem.id);
-  }, [viewItem]);
+  const viewBatchSummary = useMemo(() => {
+    return viewBatchRows.reduce(
+      (acc, batch) => {
+        acc.purchaseQty += parseNumber(batch.purchaseQty);
+        acc.soldQty += parseNumber(batch.soldQty);
+        acc.pendingQty += parseNumber(batch.pendingQty);
+        return acc;
+      },
+      { purchaseQty: 0, soldQty: 0, pendingQty: 0 }
+    );
+  }, [viewBatchRows]);
 
   const summary = useMemo(() => {
     const scoped = items.filter((item) => item.type === tab);
@@ -298,9 +312,81 @@ export default function Items() {
   }
 
   function openView(item) {
+    setHistoryOpen(false);
+    setHistoryItem(null);
+    setActionMenu(null);
     setViewItem(item);
+    setViewTradeSummary(getItemTradeSummary(item?.id));
+    setViewBatchRows([]);
+    setViewDetailError("");
     setViewOpen(true);
   }
+
+  function formatDate(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "-";
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleDateString();
+    }
+    if (raw.length >= 10 && raw[4] === "-" && raw[7] === "-") {
+      return raw.slice(0, 10);
+    }
+    return raw;
+  }
+
+  useEffect(() => {
+    if (!viewOpen || !viewItem?.id) return;
+    let active = true;
+    async function loadViewDetails() {
+      setViewDetailLoading(true);
+      setViewDetailError("");
+      try {
+        const [tradeSummary, stockDetails] = await Promise.all([
+          getItemTradeSummaryRemote(viewItem.id),
+          fetchItemStockHistory(viewItem.id)
+        ]);
+        if (!active) return;
+        setViewTradeSummary(
+          tradeSummary || {
+            totalSales: 0,
+            totalPurchase: 0,
+            salesQty: 0,
+            purchaseQty: 0
+          }
+        );
+        const batches = (Array.isArray(stockDetails?.batches) ? stockDetails.batches : []).map((row) => {
+          const purchaseQty = parseNumber(row?.qty_purchased ?? row?.qtyPurchased);
+          const pendingQty = Math.max(0, parseNumber(row?.qty_remaining ?? row?.qtyRemaining));
+          return {
+            batchId: String(row?.batch_id || row?.batchId || ""),
+            batchDate: String(row?.batch_date || row?.batchDate || ""),
+            sourceDocumentNo: String(row?.source_document_no || row?.sourceDocumentNo || ""),
+            purchaseBillId: String(row?.purchase_bill_id || row?.purchaseBillId || ""),
+            purchaseQty,
+            pendingQty,
+            soldQty: Math.max(0, purchaseQty - pendingQty),
+            unitCostExclTax: parseNumber(row?.unit_cost_excl_tax ?? row?.unitCostExclTax),
+            suggestedSaleRate: parseNumber(row?.suggested_sale_rate ?? row?.suggestedSaleRate),
+            taxRate: parseNumber(row?.tax_rate ?? row?.taxRate),
+            taxInclusive: !!(row?.tax_inclusive ?? row?.taxInclusive)
+          };
+        });
+        setViewBatchRows(
+          batches.sort((a, b) => new Date(b.batchDate || 0).getTime() - new Date(a.batchDate || 0).getTime())
+        );
+      } catch (error) {
+        if (!active) return;
+        setViewDetailError(error?.message || "Could not load batch-wise stock details.");
+      } finally {
+        if (active) setViewDetailLoading(false);
+      }
+    }
+    void loadViewDetails();
+    return () => {
+      active = false;
+    };
+  }, [viewOpen, viewItem?.id]);
 
   async function loadHistoryRowsByMode(itemId, mode) {
     if (mode === "sales") {
@@ -330,6 +416,9 @@ export default function Items() {
   }
 
   async function openItemHistory(item) {
+    setViewOpen(false);
+    setViewItem(null);
+    setActionMenu(null);
     setHistoryItem(item);
     setHistoryMode("purchase");
     setHistoryRowsByMode({
@@ -906,7 +995,10 @@ export default function Items() {
       <Modal
         open={viewOpen}
         title={viewItem ? `Item Details - ${viewItem.name}` : "Item Details"}
-        onClose={() => setViewOpen(false)}
+        onClose={() => {
+          setViewOpen(false);
+          setViewDetailError("");
+        }}
       >
         {viewItem ? (
           <div className="space-y-4 text-sm">
@@ -937,15 +1029,91 @@ export default function Items() {
                   {viewItem.type === "Service" ? viewItem.sac || "-" : viewItem.hsn || "-"}
                 </p>
               </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <p className="text-xs text-slate-500">Total Purchase</p>
-                <p className="font-semibold text-slate-900">{formatMoney(viewTradeSummary.totalPurchase, currency)}</p>
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+                <p className="text-xs text-blue-700">Total Purchase Value</p>
+                <p className="font-semibold text-blue-950">{formatMoney(viewTradeSummary.totalPurchase, currency)}</p>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                <p className="text-xs text-emerald-700">Total Sales Value</p>
+                <p className="font-semibold text-emerald-950">{formatMoney(viewTradeSummary.totalSales, currency)}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <p className="text-xs text-slate-500">Total Sales</p>
-                <p className="font-semibold text-slate-900">{formatMoney(viewTradeSummary.totalSales, currency)}</p>
+                <p className="text-xs text-slate-500">Purchase Qty</p>
+                <p className="font-semibold text-slate-900">{parseNumber(viewTradeSummary.purchaseQty)}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Selling Qty</p>
+                <p className="font-semibold text-slate-900">{parseNumber(viewTradeSummary.salesQty)}</p>
               </div>
             </div>
+
+            {viewItem.type === "Product" && viewItem.trackInventory ? (
+              <>
+                <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-100 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Batch-wise Stock Overview</p>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
+                      <p className="text-xs text-indigo-700">Purchased Qty</p>
+                      <p className="text-lg font-semibold text-indigo-950">{viewBatchSummary.purchaseQty}</p>
+                    </div>
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                      <p className="text-xs text-amber-700">Sold Qty</p>
+                      <p className="text-lg font-semibold text-amber-950">{viewBatchSummary.soldQty}</p>
+                    </div>
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <p className="text-xs text-emerald-700">Pending / In Stock</p>
+                      <p className="text-lg font-semibold text-emerald-950">{viewBatchSummary.pendingQty}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {viewDetailLoading ? (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-center text-slate-500">
+                    Loading batch details...
+                  </div>
+                ) : viewDetailError ? (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-4 text-xs text-rose-700">
+                    {viewDetailError}
+                  </div>
+                ) : viewBatchRows.length ? (
+                  <div className="overflow-auto rounded-xl border border-slate-200">
+                    <table className="w-full min-w-[740px] text-left text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-3 py-2 font-semibold text-slate-700">Batch</th>
+                          <th className="px-3 py-2 font-semibold text-slate-700">Bill No</th>
+                          <th className="px-3 py-2 font-semibold text-slate-700">Batch Date</th>
+                          <th className="px-3 py-2 text-right font-semibold text-slate-700">Purchased</th>
+                          <th className="px-3 py-2 text-right font-semibold text-slate-700">Sold</th>
+                          <th className="px-3 py-2 text-right font-semibold text-slate-700">Pending</th>
+                          <th className="px-3 py-2 text-right font-semibold text-slate-700">Unit Cost</th>
+                          <th className="px-3 py-2 text-right font-semibold text-slate-700">Suggested Sell</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {viewBatchRows.map((batch) => (
+                          <tr key={batch.batchId || `${batch.sourceDocumentNo}_${batch.batchDate}`} className="border-t border-slate-100">
+                            <td className="px-3 py-2 font-mono text-xs text-slate-700">{batch.batchId || "-"}</td>
+                            <td className="px-3 py-2 text-slate-700">{batch.sourceDocumentNo || "-"}</td>
+                            <td className="px-3 py-2 text-slate-700">{formatDate(batch.batchDate)}</td>
+                            <td className="px-3 py-2 text-right text-slate-700">{batch.purchaseQty}</td>
+                            <td className="px-3 py-2 text-right text-slate-700">{batch.soldQty}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-emerald-700">{batch.pendingQty}</td>
+                            <td className="px-3 py-2 text-right text-slate-700">{formatMoney(batch.unitCostExclTax, currency)}</td>
+                            <td className="px-3 py-2 text-right text-slate-700">{formatMoney(batch.suggestedSaleRate, currency)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-center text-slate-500">
+                    No batch-wise stock entries found for this product.
+                  </div>
+                )}
+              </>
+            ) : null}
+
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
               <p className="text-xs text-slate-500">Description</p>
               <p className="font-semibold text-slate-900">{viewItem.description || "-"}</p>
