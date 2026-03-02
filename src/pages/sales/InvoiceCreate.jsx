@@ -21,7 +21,7 @@ import { fetchItemStockHistory } from "../../services/inventory.service";
 import { canCreateEntries } from "../../services/roles";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
-import { getPartyCreditStatus, listParties, syncPartiesFromRemote } from "../../modules/parties/store";
+import { getPartyCreditStatus, listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../modules/parties/store";
 import { computeItemStock, listItems, syncItemsFromRemote } from "../../modules/items/store";
 import { outstandingByCustomer, savePaymentIn } from "../../modules/paymentIn/store";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE } from "../../modules/paymentIn/countryConfig";
@@ -30,6 +30,12 @@ import {
   companyConsumeDocumentNumber,
   companyPeekDocumentNumber
 } from "../../services/company.service";
+import {
+  getCanonicalCountryName,
+  listAllCountries,
+  listStatesByCountry,
+  resolveCountryIsoCode
+} from "../../lib/geoData";
 
 function money(n) {
   const v = Number(n || 0);
@@ -95,6 +101,18 @@ function normalizePhoneForLookup(value) {
   if (digits.length > 10) digits = digits.slice(-10);
   digits = digits.replace(/^0+/, "");
   return digits || "0";
+}
+
+function extractTenDigitPhone(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length < 10) return "";
+  return digits.slice(-10);
+}
+
+function queryLooksPhoneLike(value) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  return /^[\d\s()+-]+$/.test(text);
 }
 
 function customerAddressSummary(customer) {
@@ -230,6 +248,15 @@ export default function InvoiceCreate() {
   const [customerSearchPhone, setCustomerSearchPhone] = useState("");
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerSearchError, setCustomerSearchError] = useState("");
+  const [customerCreateLoading, setCustomerCreateLoading] = useState(false);
+  const [customerCreateDraft, setCustomerCreateDraft] = useState({
+    name: "",
+    phone: "",
+    country: country || "",
+    state: ""
+  });
+  const [customerCountryMenuOpen, setCustomerCountryMenuOpen] = useState(false);
+  const [customerStateMenuOpen, setCustomerStateMenuOpen] = useState(false);
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
   const [lineItemPopover, setLineItemPopover] = useState({ top: 0, left: 0, width: 280 });
   const [itemBatchMap, setItemBatchMap] = useState({});
@@ -275,6 +302,31 @@ export default function InvoiceCreate() {
   const [vatInput, setVatInput] = useState(
     gstRuntimeEnabled ? "" : `TAX ${Number.isFinite(defaultRate) ? defaultRate : 0}%`
   );
+  const allCountryOptions = useMemo(() => listAllCountries(), []);
+  const customerCreateStateOptions = useMemo(
+    () => listStatesByCountry(customerCreateDraft.country),
+    [customerCreateDraft.country]
+  );
+  const customerCountryQuery = String(customerCreateDraft.country || "")
+    .trim()
+    .toLowerCase();
+  const customerStateQuery = String(customerCreateDraft.state || "")
+    .trim()
+    .toLowerCase();
+  const customerCountryMatches = useMemo(() => {
+    if (!customerCountryQuery) return [];
+    return allCountryOptions
+      .filter((countryOption) => countryOption.name.toLowerCase().includes(customerCountryQuery))
+      .slice(0, 8);
+  }, [allCountryOptions, customerCountryQuery]);
+  const customerStateMatches = useMemo(() => {
+    if (!customerStateQuery) return [];
+    return customerCreateStateOptions
+      .filter((stateOption) => stateOption.name.toLowerCase().includes(customerStateQuery))
+      .slice(0, 8);
+  }, [customerCreateStateOptions, customerStateQuery]);
+  const suggestionMenuClassName =
+    "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
 
   const creditStatus = useMemo(() => getPartyCreditStatus(partyId), [partyId]);
 
@@ -530,6 +582,14 @@ export default function InvoiceCreate() {
     setPartyId(nextCustomer.id);
     setCustomerSearchPhone(String(nextCustomer.phone || "").replace(/\D/g, "").slice(-10));
     setCustomerLookupQuery("");
+    setCustomerCreateDraft({
+      name: "",
+      phone: "",
+      country: country || "",
+      state: ""
+    });
+    setCustomerCountryMenuOpen(false);
+    setCustomerStateMenuOpen(false);
   }
 
   function handleCustomerPhoneChange(value) {
@@ -543,13 +603,26 @@ export default function InvoiceCreate() {
 
   function handleCustomerLookupChange(value) {
     setCustomerLookupQuery(value);
+    const draftPhone = extractTenDigitPhone(value);
+    setCustomerSearchPhone(draftPhone);
+    setCustomerCreateDraft((prev) => ({
+      ...prev,
+      name: queryLooksPhoneLike(value) ? prev.name : String(value || "").trim(),
+      phone: draftPhone || prev.phone,
+      country: prev.country || country || ""
+    }));
     setCustomerSearchError("");
   }
 
   function handleCustomerSearch() {
-    const phoneDigits = String(customerSearchPhone || "").replace(/\D/g, "");
-    if (phoneDigits) {
-      if (phoneDigits.length !== 10) {
+    const query = String(customerLookupQuery || "").trim();
+    if (query.length < 1) {
+      setCustomerSearchError("Enter mobile number or name/email/address to search.");
+      return;
+    }
+    if (queryLooksPhoneLike(query)) {
+      const phoneDigits = extractTenDigitPhone(query);
+      if (!phoneDigits) {
         setCustomerSearchError("Enter valid 10-digit mobile number.");
         return;
       }
@@ -558,19 +631,25 @@ export default function InvoiceCreate() {
         (customer) => normalizePhoneForLookup(customer?.phone) === normalizedPhone
       );
       if (!matchedCustomer) {
+        setCustomerCreateDraft((prev) => ({
+          ...prev,
+          name: prev.name || "",
+          phone: phoneDigits,
+          country: prev.country || country || ""
+        }));
         setCustomerSearchError("No customer found for this mobile number.");
         return;
       }
       applyCustomerSelection(matchedCustomer);
       return;
     }
-
-    const query = String(customerLookupQuery || "").trim();
-    if (query.length < 2) {
-      setCustomerSearchError("Enter mobile number or name/email/address to search.");
-      return;
-    }
     if (!customerLookupResults.length) {
+      setCustomerCreateDraft((prev) => ({
+        ...prev,
+        name: query,
+        phone: prev.phone || extractTenDigitPhone(query),
+        country: prev.country || country || ""
+      }));
       setCustomerSearchError("No customer found.");
       return;
     }
@@ -579,6 +658,91 @@ export default function InvoiceCreate() {
       return;
     }
     setCustomerSearchError("Multiple customers found. Select one below.");
+  }
+
+  async function handleCreateCustomer() {
+    const name = String(customerCreateDraft.name || "").trim();
+    const phone = extractTenDigitPhone(customerCreateDraft.phone);
+    const draftCountry = String(customerCreateDraft.country || country || "").trim();
+    const draftState = String(customerCreateDraft.state || "").trim();
+    if (!name) {
+      setCustomerSearchError("Customer name is required.");
+      return;
+    }
+    if (phone.length !== 10) {
+      setCustomerSearchError("Customer mobile must be exactly 10 digits.");
+      return;
+    }
+
+    setCustomerCreateLoading(true);
+    setCustomerSearchError("");
+    try {
+      const created = await upsertPartyRemote({
+        type: "Customer",
+        name,
+        phone,
+        email: "",
+        country: draftCountry,
+        state: draftState,
+        address: "",
+        taxId: "",
+        notes: "",
+        openingBalance: 0,
+        openingBalanceType: "Receivable",
+        creditLimitEnabled: false,
+        creditLimitType: "Amount",
+        creditLimit: 0,
+        creditLimitDays: 0
+      });
+      const nextCustomers = listParties().filter((entry) => entry.type === "Customer");
+      setCustomers(nextCustomers);
+      applyCustomerSelection(created);
+      setCustomerLookupQuery("");
+      setCustomerCreateDraft({
+        name: "",
+        phone: "",
+        country: country || "",
+        state: ""
+      });
+      setCustomerCountryMenuOpen(false);
+      setCustomerStateMenuOpen(false);
+    } catch (error) {
+      setCustomerSearchError(error?.message || "Failed to create customer.");
+    } finally {
+      setCustomerCreateLoading(false);
+    }
+  }
+
+  function applyCustomerCreateCountry(nextCountry) {
+    const canonicalCountry = getCanonicalCountryName(nextCountry);
+    const previousCountryCode = resolveCountryIsoCode(customerCreateDraft.country);
+    const nextCountryCode = resolveCountryIsoCode(canonicalCountry);
+    setCustomerCreateDraft((prev) => ({
+      ...prev,
+      country: canonicalCountry,
+      state: previousCountryCode !== nextCountryCode ? "" : prev.state
+    }));
+    setCustomerCountryMenuOpen(false);
+  }
+
+  function applyCustomerCreateState(nextState) {
+    setCustomerCreateDraft((prev) => ({ ...prev, state: nextState }));
+    setCustomerStateMenuOpen(false);
+  }
+
+  function resetCustomer() {
+    setPartyId("");
+    setCustomerSearchPhone("");
+    setCustomerLookupQuery("");
+    setCustomerSearchError("");
+    setCustomerCreateDraft({
+      name: "",
+      phone: "",
+      country: country || "",
+      state: ""
+    });
+    setCustomerCountryMenuOpen(false);
+    setCustomerStateMenuOpen(false);
   }
 
   function handleInvoiceDateChange(value) {
@@ -1433,7 +1597,7 @@ export default function InvoiceCreate() {
             <div className="flex items-center gap-2">
               <button
                 onClick={handleSaveAndPrint}
-                disabled={!canCreateInvoice || hasStockErrors}
+                disabled={!canCreateInvoice || !partyId || hasStockErrors}
                 className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
               >
                 <Printer className="h-4 w-4" />
@@ -1441,7 +1605,7 @@ export default function InvoiceCreate() {
               </button>
               <GradientButton
                 onClick={saveInvoice}
-                disabled={!canCreateInvoice || hasStockErrors}
+                disabled={!canCreateInvoice || !partyId || hasStockErrors}
                 className="disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Save className="h-4 w-4" />
@@ -1482,23 +1646,21 @@ export default function InvoiceCreate() {
             )}
           </div>
 
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField label="Customer Mobile Search">
-              <div className="flex gap-2">
+          <div className="mt-4">
+            <FormField label="Customer Search">
+              <div className="flex flex-wrap gap-2">
                 <input
-                  value={customerSearchPhone}
-                  onChange={(e) => handleCustomerPhoneChange(e.target.value)}
+                  value={customerLookupQuery}
+                  onChange={(e) => handleCustomerLookupChange(e.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
                       event.preventDefault();
                       handleCustomerSearch();
                     }
                   }}
-                  inputMode="numeric"
-                  maxLength={10}
-                  className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
+                  className="min-w-[260px] flex-1 rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                   style={{ "--tw-ring-color": UI.COLORS.ring }}
-                  placeholder="Enter customer mobile number"
+                  placeholder="Enter mobile or customer name/email/address"
                 />
                 <button
                   type="button"
@@ -1508,25 +1670,17 @@ export default function InvoiceCreate() {
                   <Search className="h-4 w-4" />
                   Search
                 </button>
+                {partyId ? (
+                  <button
+                    type="button"
+                    onClick={resetCustomer}
+                    className="inline-flex items-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Clear
+                  </button>
+                ) : null}
               </div>
             </FormField>
-
-            <FormField label="Search by Name / Email / Address">
-              <input
-                value={customerLookupQuery}
-                onChange={(e) => handleCustomerLookupChange(e.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    handleCustomerSearch();
-                  }
-                }}
-                className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
-                style={{ "--tw-ring-color": UI.COLORS.ring }}
-                placeholder="Type customer name, email or address"
-              />
-            </FormField>
-
           </div>
 
           {customerSearchError ? (
@@ -1552,47 +1706,165 @@ export default function InvoiceCreate() {
                         <p className="text-xs text-slate-600">{customer.phone || "-"}</p>
                       </div>
                       <p className="mt-1 text-xs text-slate-600">{customer.email || "-"}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {customer.country || "-"}{customer.state ? ` | ${customer.state}` : ""}
+                      </p>
                       <p className="mt-1 text-xs text-slate-500">{customerAddressSummary(customer) || "-"}</p>
                     </button>
                   ))}
                 </div>
               ) : (
-                <p className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                  No customer found. Try another search.
-                </p>
+                <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
+                  <p>No customer found for this search.</p>
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <input
+                      value={customerCreateDraft.name}
+                      onChange={(event) =>
+                        setCustomerCreateDraft((prev) => ({ ...prev, name: event.target.value }))
+                      }
+                      placeholder="Customer name"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                    />
+                    <input
+                      value={customerCreateDraft.phone}
+                      onChange={(event) =>
+                        setCustomerCreateDraft((prev) => ({
+                          ...prev,
+                          phone: String(event.target.value || "").replace(/\D/g, "").slice(0, 10)
+                        }))
+                      }
+                      placeholder="10-digit mobile"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                    />
+                    <div className="relative">
+                      <input
+                        value={customerCreateDraft.country}
+                        onChange={(event) => {
+                          setCustomerCreateDraft((prev) => ({ ...prev, country: event.target.value }));
+                          setCustomerCountryMenuOpen(true);
+                        }}
+                        onFocus={() => setCustomerCountryMenuOpen(true)}
+                        onBlur={(event) => {
+                          applyCustomerCreateCountry(event.target.value);
+                          setTimeout(() => setCustomerCountryMenuOpen(false), 80);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") setCustomerCountryMenuOpen(false);
+                        }}
+                        placeholder="Country"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                      />
+                      {customerCountryMenuOpen && customerCountryQuery ? (
+                        <div className={suggestionMenuClassName}>
+                          {customerCountryMatches.length ? (
+                            customerCountryMatches.map((countryOption) => (
+                              <button
+                                key={countryOption.isoCode}
+                                type="button"
+                                onMouseDown={(event) => {
+                                  event.preventDefault();
+                                  applyCustomerCreateCountry(countryOption.name);
+                                }}
+                                className="w-full rounded-xl px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                              >
+                                {countryOption.name}
+                              </button>
+                            ))
+                          ) : (
+                            <p className="px-3 py-2 text-xs text-slate-500">No matching countries</p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="relative">
+                      <input
+                        value={customerCreateDraft.state}
+                        onChange={(event) => {
+                          setCustomerCreateDraft((prev) => ({ ...prev, state: event.target.value }));
+                          if (customerCreateStateOptions.length) setCustomerStateMenuOpen(true);
+                        }}
+                        onFocus={() => {
+                          if (customerCreateStateOptions.length) setCustomerStateMenuOpen(true);
+                        }}
+                        onBlur={() => {
+                          setTimeout(() => setCustomerStateMenuOpen(false), 80);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") setCustomerStateMenuOpen(false);
+                        }}
+                        placeholder={customerCreateStateOptions.length ? "State / Region" : "State, province, or region"}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                      />
+                      {customerStateMenuOpen && customerStateQuery && customerCreateStateOptions.length ? (
+                        <div className={suggestionMenuClassName}>
+                          {customerStateMatches.length ? (
+                            customerStateMatches.map((stateOption) => (
+                              <button
+                                key={`${stateOption.isoCode}_${stateOption.name}`}
+                                type="button"
+                                onMouseDown={(event) => {
+                                  event.preventDefault();
+                                  applyCustomerCreateState(stateOption.name);
+                                }}
+                                className="w-full rounded-xl px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                              >
+                                {stateOption.name}
+                              </button>
+                            ))
+                          ) : (
+                            <p className="px-3 py-2 text-xs text-slate-500">No matching states/regions</p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleCreateCustomer();
+                    }}
+                    disabled={customerCreateLoading}
+                    className="mt-2 inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {customerCreateLoading ? "Creating..." : "Create Customer"}
+                  </button>
+                </div>
               )}
             </div>
           ) : null}
 
-          {party ? (
+          <div className={partyId ? "" : "pointer-events-none select-none opacity-50"}>
             <div className="mt-5">
               <h2 className="text-base font-semibold text-slate-900">2. Customer Details</h2>
-              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 text-sm">
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
                   <p className="text-xs text-slate-500">Name</p>
-                  <p className="font-semibold text-slate-900">{party.name || "-"}</p>
+                  <p className="font-semibold text-slate-900">{party?.name || "-"}</p>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
                   <p className="text-xs text-slate-500">Mobile</p>
-                  <p className="font-semibold text-slate-900">{party.phone || "-"}</p>
+                  <p className="font-semibold text-slate-900">{party?.phone || "-"}</p>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
                   <p className="text-xs text-slate-500">Email</p>
-                  <p className="font-semibold text-slate-900">{party.email || "-"}</p>
+                  <p className="font-semibold text-slate-900">{party?.email || "-"}</p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs text-slate-500">Country</p>
+                  <p className="font-semibold text-slate-900">{party?.country || "-"}</p>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
                   <p className="text-xs text-slate-500">State</p>
-                  <p className="font-semibold text-slate-900">{party.state || "-"}</p>
+                  <p className="font-semibold text-slate-900">{party?.state || "-"}</p>
                 </div>
               </div>
               <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-sm">
                 <p className="text-xs text-slate-500">Address</p>
-                <p className="font-semibold text-slate-900">{party.address || "-"}</p>
+                <p className="font-semibold text-slate-900">{party?.address || "-"}</p>
               </div>
             </div>
-          ) : null}
 
-          {party ? (
             <div className="mt-5">
               <h2 className="text-base font-semibold text-slate-900">3. Tax Details</h2>
               <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
@@ -1634,7 +1906,6 @@ export default function InvoiceCreate() {
                 </div>
               </div>
             </div>
-          ) : null}
 
           {gstRuntimeEnabled && party && computed.tax?.warning ? (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
@@ -1704,7 +1975,6 @@ export default function InvoiceCreate() {
             </div>
           ) : null}
 
-          {party ? (
             <>
               <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
                 <div>
@@ -2042,14 +2312,18 @@ export default function InvoiceCreate() {
                 ) : null}
               </div>
             </>
-          ) : (
-            <p className="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              Select a customer first to continue with invoice details and items.
-            </p>
-          )}
+          </div>
         </Card>
 
-        {party ? (
+        {!partyId ? (
+          <Card className="p-6">
+            <p className="text-sm text-slate-600">
+              Search and select customer first. Invoice form is visible but disabled until customer is selected.
+            </p>
+          </Card>
+        ) : null}
+
+        <div className={partyId ? "" : "pointer-events-none select-none opacity-50"}>
           <Card className="p-5">
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
               <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
@@ -2241,7 +2515,7 @@ export default function InvoiceCreate() {
                   <GradientButton
                     className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={saveInvoice}
-                    disabled={!canCreateInvoice || hasStockErrors}
+                    disabled={!canCreateInvoice || !partyId || hasStockErrors}
                   >
                     <Save className="h-4 w-4" />
                     Save Invoice
@@ -2250,7 +2524,7 @@ export default function InvoiceCreate() {
               </div>
             </div>
           </Card>
-        ) : null}
+        </div>
       </div>
 
       {printInvoiceData ? (

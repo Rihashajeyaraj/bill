@@ -6,7 +6,7 @@ import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import FormField from "../../components/FormField";
 import { useToast } from "../../context/ToastContext";
-import { listParties, syncPartiesFromRemote } from "../../modules/parties/store";
+import { listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../modules/parties/store";
 import { computeItemStock, listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
 import {
   fetchSupplierAddress,
@@ -22,6 +22,12 @@ import {
   companyConsumeDocumentNumber,
   companyPeekDocumentNumber
 } from "../../services/company.service";
+import {
+  getCanonicalCountryName,
+  listAllCountries,
+  listStatesByCountry,
+  resolveCountryIsoCode
+} from "../../lib/geoData";
 
 const TAX_RATES = [0, 5, 12, 18, 28];
 const DEFAULT_UNITS = ["pcs", "kg", "box", "ltr", "set", "hr"];
@@ -91,6 +97,18 @@ function normalizePhoneForLookup(value) {
   if (digits.length > 10) digits = digits.slice(-10);
   digits = digits.replace(/^0+/, "");
   return digits || "0";
+}
+
+function extractTenDigitPhone(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length < 10) return "";
+  return digits.slice(-10);
+}
+
+function queryLooksPhoneLike(value) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  return /^[\d\s()+-]+$/.test(text);
 }
 
 function money(n) {
@@ -168,6 +186,15 @@ export default function PurchaseBill() {
   const [supplierSearchPhone, setSupplierSearchPhone] = useState("");
   const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
   const [supplierSearchError, setSupplierSearchError] = useState("");
+  const [supplierCreateLoading, setSupplierCreateLoading] = useState(false);
+  const [supplierCreateDraft, setSupplierCreateDraft] = useState({
+    name: "",
+    phone: "",
+    country: country || "",
+    state: ""
+  });
+  const [supplierCountryMenuOpen, setSupplierCountryMenuOpen] = useState(false);
+  const [supplierStateMenuOpen, setSupplierStateMenuOpen] = useState(false);
   const [supplierAddress, setSupplierAddress] = useState("");
   const [autoBillNumber, setAutoBillNumber] = useState(
     () => companyPeekDocumentNumber("purchase") || generateBillNumber()
@@ -219,6 +246,31 @@ export default function PurchaseBill() {
     [defaultLineTaxRate]
   );
   const effectiveTaxRateOptions = useMemo(() => (forceZeroTax ? [0] : taxRateOptions), [forceZeroTax, taxRateOptions]);
+  const allCountryOptions = useMemo(() => listAllCountries(), []);
+  const supplierCreateStateOptions = useMemo(
+    () => listStatesByCountry(supplierCreateDraft.country),
+    [supplierCreateDraft.country]
+  );
+  const supplierCountryQuery = String(supplierCreateDraft.country || "")
+    .trim()
+    .toLowerCase();
+  const supplierStateQuery = String(supplierCreateDraft.state || "")
+    .trim()
+    .toLowerCase();
+  const supplierCountryMatches = useMemo(() => {
+    if (!supplierCountryQuery) return [];
+    return allCountryOptions
+      .filter((countryOption) => countryOption.name.toLowerCase().includes(supplierCountryQuery))
+      .slice(0, 8);
+  }, [allCountryOptions, supplierCountryQuery]);
+  const supplierStateMatches = useMemo(() => {
+    if (!supplierStateQuery) return [];
+    return supplierCreateStateOptions
+      .filter((stateOption) => stateOption.name.toLowerCase().includes(supplierStateQuery))
+      .slice(0, 8);
+  }, [supplierCreateStateOptions, supplierStateQuery]);
+  const suggestionMenuClassName =
+    "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
 
   useEffect(() => {
     let mounted = true;
@@ -492,6 +544,8 @@ export default function PurchaseBill() {
     setSupplierAddress(nextSupplier.address || "");
     setSupplierSearchPhone(String(nextSupplier.phone || "").replace(/\D/g, "").slice(-10));
     setSupplierLookupQuery("");
+    setSupplierCountryMenuOpen(false);
+    setSupplierStateMenuOpen(false);
   }
 
   function handleSupplierPhoneChange(value) {
@@ -507,31 +561,43 @@ export default function PurchaseBill() {
 
   function handleSupplierLookupChange(value) {
     setSupplierLookupQuery(value);
+    setSupplierSearchPhone(extractTenDigitPhone(value));
+    setSupplierCreateDraft((prev) => ({
+      ...prev,
+      name: queryLooksPhoneLike(value) ? prev.name : String(value || "").trim(),
+      phone: extractTenDigitPhone(value) || prev.phone,
+      country: prev.country || country || ""
+    }));
     setSupplierSearchError("");
   }
 
   function handleSupplierSearch() {
-    const normalizedQuery = normalizePhoneForLookup(supplierSearchPhone);
-    const phoneDigits = String(supplierSearchPhone || "").replace(/\D/g, "");
-    if (phoneDigits) {
-      if (phoneDigits.length !== 10) {
+    const query = String(supplierLookupQuery || "").trim();
+    if (query.length < 1) {
+      setSupplierSearchError("Enter mobile number or name/email/address to search.");
+      return;
+    }
+    if (queryLooksPhoneLike(query)) {
+      const phoneDigits = extractTenDigitPhone(query);
+      if (!phoneDigits) {
         setSupplierSearchError("Enter a valid 10-digit supplier mobile number.");
         return;
       }
+      const normalizedQuery = normalizePhoneForLookup(phoneDigits);
       const matchedSupplier = suppliers.find(
         (supplier) => normalizePhoneForLookup(supplier?.phone) === normalizedQuery
       );
       if (!matchedSupplier) {
+        setSupplierCreateDraft((prev) => ({
+          ...prev,
+          name: prev.name || "",
+          phone: phoneDigits,
+          country: prev.country || country || ""
+        }));
         setSupplierSearchError("No supplier found for this mobile number.");
         return;
       }
       applySupplierSelection(matchedSupplier);
-      return;
-    }
-
-    const query = String(supplierLookupQuery || "").trim();
-    if (query.length < 2) {
-      setSupplierSearchError("Enter mobile number or name/email/address to search.");
       return;
     }
     if (supplierLookupResults.length === 1) {
@@ -539,10 +605,88 @@ export default function PurchaseBill() {
       return;
     }
     if (!supplierLookupResults.length) {
+      setSupplierCreateDraft((prev) => ({
+        ...prev,
+        name: query,
+        phone: prev.phone || extractTenDigitPhone(query),
+        country: prev.country || country || ""
+      }));
       setSupplierSearchError("No supplier found for this search.");
       return;
     }
     setSupplierSearchError("Multiple suppliers found. Choose one from the list below.");
+  }
+
+  async function handleCreateSupplier() {
+    const name = String(supplierCreateDraft.name || "").trim();
+    const phone = extractTenDigitPhone(supplierCreateDraft.phone);
+    const draftCountry = String(supplierCreateDraft.country || country || "").trim();
+    const draftState = String(supplierCreateDraft.state || "").trim();
+
+    if (!name) {
+      setSupplierSearchError("Supplier name is required.");
+      return;
+    }
+    if (phone.length !== 10) {
+      setSupplierSearchError("Supplier mobile must be exactly 10 digits.");
+      return;
+    }
+
+    setSupplierCreateLoading(true);
+    setSupplierSearchError("");
+    try {
+      const created = await upsertPartyRemote({
+        type: "Supplier",
+        name,
+        phone,
+        email: "",
+        country: draftCountry,
+        state: draftState,
+        address: "",
+        taxId: "",
+        notes: "",
+        openingBalance: 0,
+        openingBalanceType: "Payable",
+        creditLimitEnabled: false,
+        creditLimitType: "Amount",
+        creditLimit: 0,
+        creditLimitDays: 0
+      });
+      const nextSuppliers = listParties().filter((entry) => entry.type === "Supplier");
+      setSuppliers(nextSuppliers);
+      applySupplierSelection(created);
+      setSupplierLookupQuery("");
+      setSupplierCreateDraft({
+        name: "",
+        phone: "",
+        country: country || "",
+        state: ""
+      });
+      setSupplierCountryMenuOpen(false);
+      setSupplierStateMenuOpen(false);
+      toast.success("Supplier created", `${created.name} added successfully.`);
+    } catch (error) {
+      setSupplierSearchError(error?.message || "Failed to create supplier.");
+    } finally {
+      setSupplierCreateLoading(false);
+    }
+  }
+
+  function applySupplierCreateCountry(nextCountry) {
+    const canonicalCountry = getCanonicalCountryName(nextCountry);
+    const previousCountryCode = resolveCountryIsoCode(supplierCreateDraft.country);
+    const nextCountryCode = resolveCountryIsoCode(canonicalCountry);
+    setSupplierCreateDraft((prev) => ({
+      ...prev,
+      country: canonicalCountry,
+      state: previousCountryCode !== nextCountryCode ? "" : prev.state
+    }));
+    setSupplierCountryMenuOpen(false);
+  }
+
+  function applySupplierCreateState(nextState) {
+    setSupplierCreateDraft((prev) => ({ ...prev, state: nextState }));
+    setSupplierStateMenuOpen(false);
   }
 
   function resetSupplier() {
@@ -552,6 +696,14 @@ export default function PurchaseBill() {
     setSupplierSearchError("");
     setSupplierSearchPhone("");
     setSupplierLookupQuery("");
+    setSupplierCreateDraft({
+      name: "",
+      phone: "",
+      country: country || "",
+      state: ""
+    });
+    setSupplierCountryMenuOpen(false);
+    setSupplierStateMenuOpen(false);
   }
 
   const computed = useMemo(() => {
@@ -995,26 +1147,24 @@ export default function PurchaseBill() {
       <Card className="p-5">
         <h2 className="text-base font-semibold text-slate-900">1. Find Supplier</h2>
         <p className="mt-1 text-xs text-slate-500">
-          Default search starts with mobile number. You can also search by name, email, or address.
+          Use one search box for mobile, name, email, or address. If not found, create supplier directly.
         </p>
 
-        <div className="mt-4 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4">
-          <FormField label="Supplier Mobile Number">
+        <div className="mt-4">
+          <FormField label="Supplier Search">
             <div className="flex flex-wrap items-center gap-2">
               <input
-                value={supplierSearchPhone}
+                value={supplierLookupQuery}
                 autoFocus
-                onChange={(event) => handleSupplierPhoneChange(event.target.value)}
+                onChange={(event) => handleSupplierLookupChange(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
                     handleSupplierSearch();
                   }
                 }}
-                inputMode="numeric"
-                maxLength={10}
-                placeholder="Enter 10-digit mobile number"
-                className="min-w-[220px] flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                placeholder="Enter mobile or supplier name/email/address"
+                className="min-w-[260px] flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
               />
               <button
                 type="button"
@@ -1035,21 +1185,6 @@ export default function PurchaseBill() {
                 </button>
               ) : null}
             </div>
-          </FormField>
-
-          <FormField label="Search by Name / Email / Address">
-            <input
-              value={supplierLookupQuery}
-              onChange={(event) => handleSupplierLookupChange(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  handleSupplierSearch();
-                }
-              }}
-              placeholder="Type supplier name, email, or address"
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
-            />
           </FormField>
         </div>
 
@@ -1076,21 +1211,136 @@ export default function PurchaseBill() {
                       <p className="text-xs text-slate-600">{supplier.phone || "-"}</p>
                     </div>
                     <p className="mt-1 text-xs text-slate-600">{supplier.email || "-"}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {supplier.country || "-"}{supplier.state ? ` | ${supplier.state}` : ""}
+                    </p>
                     <p className="mt-1 text-xs text-slate-500">{supplierAddressSummary(supplier) || "-"}</p>
                   </button>
                 ))}
               </div>
             ) : (
-              <p className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                No supplier found. Try another mobile, name, email, or address.
-              </p>
+              <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
+                <p>No supplier found for this search.</p>
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <input
+                    value={supplierCreateDraft.name}
+                    onChange={(event) =>
+                      setSupplierCreateDraft((prev) => ({ ...prev, name: event.target.value }))
+                    }
+                    placeholder="Supplier name"
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                  <input
+                    value={supplierCreateDraft.phone}
+                    onChange={(event) =>
+                      setSupplierCreateDraft((prev) => ({
+                        ...prev,
+                        phone: String(event.target.value || "").replace(/\D/g, "").slice(0, 10)
+                      }))
+                    }
+                    placeholder="10-digit mobile"
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                  <div className="relative">
+                    <input
+                      value={supplierCreateDraft.country}
+                      onChange={(event) => {
+                        setSupplierCreateDraft((prev) => ({ ...prev, country: event.target.value }));
+                        setSupplierCountryMenuOpen(true);
+                      }}
+                      onFocus={() => setSupplierCountryMenuOpen(true)}
+                      onBlur={(event) => {
+                        applySupplierCreateCountry(event.target.value);
+                        setTimeout(() => setSupplierCountryMenuOpen(false), 80);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") setSupplierCountryMenuOpen(false);
+                      }}
+                      placeholder="Country"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                    />
+                    {supplierCountryMenuOpen && supplierCountryQuery ? (
+                      <div className={suggestionMenuClassName}>
+                        {supplierCountryMatches.length ? (
+                          supplierCountryMatches.map((countryOption) => (
+                            <button
+                              key={countryOption.isoCode}
+                              type="button"
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                applySupplierCreateCountry(countryOption.name);
+                              }}
+                              className="w-full rounded-xl px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                            >
+                              {countryOption.name}
+                            </button>
+                          ))
+                        ) : (
+                          <p className="px-3 py-2 text-xs text-slate-500">No matching countries</p>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="relative">
+                    <input
+                      value={supplierCreateDraft.state}
+                      onChange={(event) => {
+                        setSupplierCreateDraft((prev) => ({ ...prev, state: event.target.value }));
+                        if (supplierCreateStateOptions.length) setSupplierStateMenuOpen(true);
+                      }}
+                      onFocus={() => {
+                        if (supplierCreateStateOptions.length) setSupplierStateMenuOpen(true);
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setSupplierStateMenuOpen(false), 80);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") setSupplierStateMenuOpen(false);
+                      }}
+                      placeholder={supplierCreateStateOptions.length ? "State / Region" : "State, province, or region"}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                    />
+                    {supplierStateMenuOpen && supplierStateQuery && supplierCreateStateOptions.length ? (
+                      <div className={suggestionMenuClassName}>
+                        {supplierStateMatches.length ? (
+                          supplierStateMatches.map((stateOption) => (
+                            <button
+                              key={`${stateOption.isoCode}_${stateOption.name}`}
+                              type="button"
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                applySupplierCreateState(stateOption.name);
+                              }}
+                              className="w-full rounded-xl px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                            >
+                              {stateOption.name}
+                            </button>
+                          ))
+                        ) : (
+                          <p className="px-3 py-2 text-xs text-slate-500">No matching states/regions</p>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleCreateSupplier();
+                  }}
+                  disabled={supplierCreateLoading}
+                  className="mt-2 inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {supplierCreateLoading ? "Creating..." : "Create Supplier"}
+                </button>
+              </div>
             )}
           </div>
         ) : null}
       </Card>
 
-      {partyId ? (
-        <>
+      <div className={partyId ? "" : "pointer-events-none select-none opacity-50"}>
           <Card className="p-5">
             <div>
               <h2 className="text-base font-semibold text-slate-900">2. Supplier Details</h2>
@@ -1108,9 +1358,9 @@ export default function PurchaseBill() {
                   <p className="font-semibold text-slate-900">{party?.country || "-"}</p>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
-                  <p className="text-xs text-slate-500">City</p>
+                  <p className="text-xs text-slate-500">State</p>
                   <p className="font-semibold text-slate-900">
-                    {party?.city || extractCity(supplierAddress || party?.address) || party?.state || "-"}
+                    {party?.state || party?.city || extractCity(supplierAddress || party?.address) || "-"}
                   </p>
                 </div>
               </div>
@@ -1618,21 +1868,21 @@ export default function PurchaseBill() {
           onClick={() => {
             void save();
           }}
-          disabled={!canCreatePurchase || saving || loading}
+          disabled={!canCreatePurchase || !partyId || saving || loading}
           className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Save className="h-4 w-4" />
           {saving ? "Saving..." : "Save Purchase Bill"}
         </button>
       </div>
-        </>
-      ) : (
+      </div>
+      {!partyId ? (
         <Card className="p-6">
           <p className="text-sm text-slate-600">
-            Search supplier by mobile, name, email, or address to load supplier details. Then bill ID, bill date, and items will appear.
+            Search and select supplier first. Purchase form is visible but disabled until supplier is selected.
           </p>
         </Card>
-      )}
+      ) : null}
     </div>
   );
 }
