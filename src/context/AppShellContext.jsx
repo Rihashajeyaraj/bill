@@ -88,7 +88,8 @@ export function AppShellProvider({ children }) {
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      const key = event.key.toLowerCase();
+      const key = typeof event?.key === "string" ? event.key.toLowerCase() : "";
+      if (!key) return;
 
       if ((event.ctrlKey || event.metaKey) && key === "k") {
         event.preventDefault();

@@ -6,10 +6,15 @@ const CREDIT_NOTIFICATION_EVENT = "credit-notifications-updated";
 const SYSTEM_ACTOR = "System";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REMOTE_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+const LOCAL_NOTIFICATION_LIMIT = 500;
+const LOCAL_WRITE_FALLBACK_LIMITS = [300, 200, 120, 80, 50, 30, 20, 10, 5, 1];
+const LOCAL_WRITE_BACKOFF_MS = 30 * 1000;
 
 let remoteSyncDisabledUntil = 0;
 let remoteSyncDisableReason = "";
 let remoteSyncInFlight = false;
+let localWriteBlockedUntil = 0;
+let localWriteBlockedReason = "";
 
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
@@ -39,8 +44,39 @@ function parseNumber(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function isQuotaExceededError(error) {
+  const name = String(error?.name || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    name.includes("quotaexceeded") ||
+    message.includes("quotaexceeded") ||
+    (message.includes("storage") && message.includes("quota"))
+  );
+}
+
 function looksLikeUuid(value) {
   return UUID_PATTERN.test(String(value || ""));
+}
+
+function isLocalWriteCoolingDown() {
+  return Date.now() < localWriteBlockedUntil;
+}
+
+function pauseLocalWrites(reason, cooldownMs = LOCAL_WRITE_BACKOFF_MS) {
+  const safeReason = String(reason || "local_storage_quota");
+  const nextUntil = Date.now() + Math.max(1000, Number(cooldownMs) || LOCAL_WRITE_BACKOFF_MS);
+  if (nextUntil <= localWriteBlockedUntil && safeReason === localWriteBlockedReason) return;
+  localWriteBlockedUntil = nextUntil;
+  localWriteBlockedReason = safeReason;
+  console.warn("[CreditMonitoring] Local notification writes paused", {
+    reason: safeReason,
+    retryAt: new Date(nextUntil).toISOString()
+  });
+}
+
+function resumeLocalWrites() {
+  localWriteBlockedUntil = 0;
+  localWriteBlockedReason = "";
 }
 
 function isRemoteSyncCoolingDown() {
@@ -442,9 +478,54 @@ function emitNotificationUpdate() {
   window.dispatchEvent(new Event(CREDIT_NOTIFICATION_EVENT));
 }
 
+function normalizeForStorage(list) {
+  return sortByDate(ensureArray(list))
+    .map(normalizeStoredRecord)
+    .filter((entry) => entry.isActive !== false)
+    .slice(0, LOCAL_NOTIFICATION_LIMIT);
+}
+
+function buildWriteLimits(maxLength) {
+  const base = Math.max(0, Math.trunc(parseNumber(maxLength)));
+  const limits = [base, ...LOCAL_WRITE_FALLBACK_LIMITS]
+    .map((limit) => Math.min(base, Math.max(0, Math.trunc(parseNumber(limit)))))
+    .filter((limit, index, values) => values.indexOf(limit) === index);
+  if (!limits.includes(0)) limits.push(0);
+  return limits;
+}
+
+function setLocalListSafely(list) {
+  if (isLocalWriteCoolingDown()) return false;
+  const normalized = normalizeForStorage(list);
+  const activeUnread = normalized.filter((entry) => entry.isRead !== true);
+  const writeCandidates =
+    activeUnread.length && activeUnread.length < normalized.length
+      ? [normalized, activeUnread]
+      : [normalized];
+
+  for (const candidate of writeCandidates) {
+    const limits = buildWriteLimits(candidate.length);
+    for (const limit of limits) {
+      try {
+        lsSetOrganizationScoped(LS_KEYS.credit_notifications, candidate.slice(0, limit));
+        resumeLocalWrites();
+        return true;
+      } catch (error) {
+        if (!isQuotaExceededError(error)) {
+          console.warn("[CreditMonitoring] Failed to write local notifications", error);
+          return false;
+        }
+      }
+    }
+  }
+
+  pauseLocalWrites("storage_quota_exceeded");
+  return false;
+}
+
 function setLocalList(list, options = {}) {
   const shouldEmit = options.emit !== false;
-  lsSetOrganizationScoped(LS_KEYS.credit_notifications, sortByDate(ensureArray(list)).slice(0, 500));
+  setLocalListSafely(list);
   if (shouldEmit) emitNotificationUpdate();
 }
 

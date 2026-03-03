@@ -48,25 +48,28 @@ function SessionAndShellLayer({ children }) {
   useEffect(() => {
     const onKeyDown = (event) => {
       if (isEditableTarget(event.target)) return;
+      const key = typeof event?.key === "string" ? event.key.toLowerCase() : "";
+      if (!key) return;
 
-      if (event.altKey && event.key.toLowerCase() === "d") {
+      if (event.altKey && key === "d") {
         event.preventDefault();
         toggleTheme();
       }
 
-      if (event.key.toLowerCase() === "g" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (key === "g" && !event.altKey && !event.ctrlKey && !event.metaKey) {
         const listener = (nextEvent) => {
           if (isEditableTarget(nextEvent.target)) return;
-          const key = nextEvent.key.toLowerCase();
-          if (key === "d") navigateTo("/dashboard");
-          if (key === "n") navigateTo("/app/notifications");
-          if (key === "r") {
+          const nextKey = typeof nextEvent?.key === "string" ? nextEvent.key.toLowerCase() : "";
+          if (!nextKey) return;
+          if (nextKey === "d") navigateTo("/dashboard");
+          if (nextKey === "n") navigateTo("/app/notifications");
+          if (nextKey === "r") {
             if (canAccessPathForRole(authGetRole(), "/app/reports")) navigateTo("/app/reports");
             else toast.warning("Permission denied", "Reports are blocked by Users & Roles permissions.");
           }
-          if (key === "p") navigateTo("/app/parties");
-          if (key === "i") navigateTo("/app/items");
-          if (key === "s") {
+          if (nextKey === "p") navigateTo("/app/parties");
+          if (nextKey === "i") navigateTo("/app/items");
+          if (nextKey === "s") {
             if (canAccessPathForRole(authGetRole(), "/app/company-settings")) navigateTo("/app/company-settings");
             else toast.warning("Permission denied", "Company settings access is blocked for your role.");
           }
