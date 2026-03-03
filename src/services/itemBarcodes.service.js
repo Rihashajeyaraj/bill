@@ -5,6 +5,7 @@ import { isSupabaseConfigured, supabase } from "./supabaseClient";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BARCODE_MODE_BATCH = "batch";
 const BARCODE_MODE_UNIT = "unit";
+const BARCODE_STORAGE_FALLBACK_LIMITS = [5000, 3000, 2000, 1200, 800, 500, 300, 200, 100, 50, 20, 10, 1, 0];
 
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
@@ -23,12 +24,70 @@ function looksLikeUuid(value) {
   return UUID_PATTERN.test(String(value || ""));
 }
 
+function isQuotaExceededError(error) {
+  const name = String(error?.name || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    name.includes("quotaexceeded") ||
+    message.includes("quotaexceeded") ||
+    (message.includes("storage") && message.includes("quota"))
+  );
+}
+
 function getAll() {
   return ensureArray(lsGetOrganizationScoped(LS_KEYS.item_barcodes, []));
 }
 
-function setAll(list) {
-  lsSetOrganizationScoped(LS_KEYS.item_barcodes, ensureArray(list));
+function compactBarcodeRowForStorage(entry) {
+  const normalized = normalizeBarcodeRow(entry);
+  return {
+    id: normalized.id,
+    organization_id: normalized.organization_id,
+    item_id: normalized.item_id,
+    purchase_id: normalized.purchase_id,
+    barcode_value: normalized.barcode_value,
+    qr_value: normalized.qr_value,
+    created_at: normalized.created_at,
+    lineIndex: normalized.lineIndex,
+    unitIndex: normalized.unitIndex
+  };
+}
+
+function buildStorageLimits(length) {
+  const base = Math.max(0, Math.trunc(parseNumber(length)));
+  const limits = [base, ...BARCODE_STORAGE_FALLBACK_LIMITS]
+    .map((limit) => Math.min(base, Math.max(0, Math.trunc(parseNumber(limit)))))
+    .filter((limit, index, values) => values.indexOf(limit) === index);
+  if (!limits.includes(0)) limits.push(0);
+  return limits;
+}
+
+function setAll(list, options = {}) {
+  const throwOnFailure = options?.throwOnFailure === true;
+  const normalized = dedupeRows(ensureArray(list));
+  const compact = normalized.map((entry) => compactBarcodeRowForStorage(entry));
+  const candidates = [normalized, compact];
+
+  for (const candidate of candidates) {
+    const limits = buildStorageLimits(candidate.length);
+    for (const limit of limits) {
+      try {
+        lsSetOrganizationScoped(LS_KEYS.item_barcodes, candidate.slice(0, limit));
+        return true;
+      } catch (error) {
+        if (!isQuotaExceededError(error)) {
+          if (throwOnFailure) throw error;
+          console.warn("Failed to persist barcode cache", error);
+          return false;
+        }
+      }
+    }
+  }
+
+  const quotaError = new Error("Browser storage quota exceeded while saving barcode cache.");
+  if (throwOnFailure) throw quotaError;
+  console.warn(quotaError.message);
+  return false;
 }
 
 function normalizeCodeSegment(value, fallback = "ITEM") {
