@@ -18,6 +18,7 @@ export const LS_KEYS = {
   invoices: "invoices",
   creditNotes: "creditNotes",
   itemReturnActions: "itemReturnActions",
+  item_barcodes: "item_barcodes",
   purchases: "purchases",
   payments: "payments",
   expenses: "expenses",

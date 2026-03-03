@@ -36,6 +36,11 @@ import {
   listStatesByCountry,
   resolveCountryIsoCode
 } from "../../lib/geoData";
+import {
+  listItemBarcodes,
+  normalizeBarcodeLookupValue,
+  syncItemBarcodesFromRemote
+} from "../../services/itemBarcodes.service";
 
 function money(n) {
   const v = Number(n || 0);
@@ -141,29 +146,47 @@ function formatItemSearchLabel(item) {
   return name || identifier;
 }
 
-function itemMatchesSearchQuery(item, query) {
+function itemMatchesSearchQuery(item, query, barcodeLookupByItemId = null) {
   const normalizedQuery = normalizeItemSearchText(query);
   if (!normalizedQuery) return true;
   const name = normalizeItemSearchText(item?.name);
   const itemCode = normalizeItemSearchText(item?.itemCode);
   const id = normalizeItemSearchText(item?.id);
-  return name.includes(normalizedQuery) || itemCode.includes(normalizedQuery) || id.includes(normalizedQuery);
+  if (name.includes(normalizedQuery) || itemCode.includes(normalizedQuery) || id.includes(normalizedQuery)) {
+    return true;
+  }
+  if (!barcodeLookupByItemId || typeof barcodeLookupByItemId.get !== "function") return false;
+  const barcodeValues = barcodeLookupByItemId.get(String(item?.id || "")) || [];
+  return barcodeValues.some((barcodeValue) =>
+    normalizeBarcodeLookupValue(barcodeValue).includes(normalizeBarcodeLookupValue(normalizedQuery))
+  );
 }
 
-function findItemBySearchInput(items, value) {
-  const normalizedValue = normalizeItemSearchText(value);
-  if (!normalizedValue) return null;
+function findItemBySearchInput(items, value, barcodeLookupByItemId = null) {
+  const normalizedTextValue = normalizeItemSearchText(value);
+  const normalizedBarcodeValue = normalizeBarcodeLookupValue(value);
+  if (!normalizedTextValue && !normalizedBarcodeValue) return null;
   return (
     items.find((item) => {
       const name = normalizeItemSearchText(item?.name);
       const itemCode = normalizeItemSearchText(item?.itemCode);
       const id = normalizeItemSearchText(item?.id);
       const label = normalizeItemSearchText(formatItemSearchLabel(item));
+      const barcodeValues =
+        barcodeLookupByItemId && typeof barcodeLookupByItemId.get === "function"
+          ? barcodeLookupByItemId.get(String(item?.id || "")) || []
+          : [];
+      const barcodeMatch = normalizedBarcodeValue
+        ? barcodeValues.some(
+            (barcodeValue) => normalizeBarcodeLookupValue(barcodeValue) === normalizedBarcodeValue
+          )
+        : false;
       return (
-        normalizedValue === name ||
-        normalizedValue === itemCode ||
-        normalizedValue === id ||
-        normalizedValue === label
+        normalizedTextValue === name ||
+        normalizedTextValue === itemCode ||
+        normalizedTextValue === id ||
+        normalizedTextValue === label ||
+        barcodeMatch
       );
     }) || null
   );
@@ -237,6 +260,7 @@ export default function InvoiceCreate() {
     listParties().filter((party) => party.type === "Customer")
   );
   const [items, setItems] = useState(() => listItems());
+  const [itemBarcodes, setItemBarcodes] = useState(() => listItemBarcodes());
   const [itemSearch, setItemSearch] = useState("");
 
   const initialInvoiceDate = new Date().toISOString().slice(0, 10);
@@ -361,13 +385,19 @@ export default function InvoiceCreate() {
     let mounted = true;
     async function loadLookups() {
       try {
-        await Promise.all([syncPartiesFromRemote(), syncItemsFromRemote(), invoicesSyncFromRemote()]);
+        await Promise.all([
+          syncPartiesFromRemote(),
+          syncItemsFromRemote(),
+          invoicesSyncFromRemote(),
+          syncItemBarcodesFromRemote().catch(() => listItemBarcodes())
+        ]);
       } catch {
         // Fallback to cached local data.
       } finally {
         if (!mounted) return;
         setCustomers(listParties().filter((party) => party.type === "Customer"));
         setItems(listItems());
+        setItemBarcodes(listItemBarcodes());
       }
     }
     loadLookups();
@@ -919,18 +949,36 @@ export default function InvoiceCreate() {
     [items]
   );
 
+  const barcodeLookupByItemId = useMemo(() => {
+    const map = new Map();
+    (Array.isArray(itemBarcodes) ? itemBarcodes : []).forEach((entry) => {
+      const itemId = String(entry?.item_id || entry?.itemId || "").trim();
+      const barcodeValue = normalizeBarcodeLookupValue(entry?.barcode_value || entry?.barcodeValue || "");
+      if (!itemId || !barcodeValue) return;
+      const list = map.get(itemId) || [];
+      list.push(barcodeValue);
+      map.set(itemId, list);
+    });
+    return map;
+  }, [itemBarcodes]);
+
   const filteredItems = useMemo(() => {
     const query = normalizeItemSearchText(itemSearch);
     if (!query) return availableLineItems;
+    const barcodeQuery = normalizeBarcodeLookupValue(query);
     const startsWith = availableLineItems.filter((item) => {
       const name = normalizeItemSearchText(item?.name);
       const itemCode = normalizeItemSearchText(item?.itemCode);
       const id = normalizeItemSearchText(item?.id);
-      return name.startsWith(query) || itemCode.startsWith(query) || id.startsWith(query);
+      const barcodeValues = barcodeLookupByItemId.get(String(item?.id || "")) || [];
+      const barcodeStartsWith = barcodeQuery
+        ? barcodeValues.some((barcodeValue) => normalizeBarcodeLookupValue(barcodeValue).startsWith(barcodeQuery))
+        : false;
+      return name.startsWith(query) || itemCode.startsWith(query) || id.startsWith(query) || barcodeStartsWith;
     });
     if (startsWith.length) return startsWith;
-    return availableLineItems.filter((item) => itemMatchesSearchQuery(item, query));
-  }, [availableLineItems, itemSearch]);
+    return availableLineItems.filter((item) => itemMatchesSearchQuery(item, query, barcodeLookupByItemId));
+  }, [availableLineItems, itemSearch, barcodeLookupByItemId]);
 
   const stockByItemId = useMemo(() => {
     const map = new Map();
@@ -1058,7 +1106,7 @@ export default function InvoiceCreate() {
   }
 
   function handleLineItemInput(line, inputValue) {
-    const matchedItem = findItemBySearchInput(availableLineItems, inputValue);
+    const matchedItem = findItemBySearchInput(availableLineItems, inputValue, barcodeLookupByItemId);
     if (!matchedItem) {
       updateLine(line.id, { itemInput: inputValue, itemId: "", selectedBatchId: "" });
       return;
@@ -1116,7 +1164,7 @@ export default function InvoiceCreate() {
   function getLineItemSearchResults(line) {
     const query = normalizeItemSearchText(line?.itemInput);
     const matched = query
-      ? availableLineItems.filter((item) => itemMatchesSearchQuery(item, query))
+      ? availableLineItems.filter((item) => itemMatchesSearchQuery(item, query, barcodeLookupByItemId))
       : availableLineItems;
     const selected = availableLineItems.find((item) => String(item.id) === String(line?.itemId || ""));
     if (!selected) return matched.slice(0, 8);
@@ -1131,7 +1179,7 @@ export default function InvoiceCreate() {
   const activeLineSearchResults = useMemo(() => {
     if (!activeLineForSearch) return [];
     return getLineItemSearchResults(activeLineForSearch);
-  }, [activeLineForSearch, availableLineItems]);
+  }, [activeLineForSearch, availableLineItems, barcodeLookupByItemId]);
 
   const invoicePreviewData = useMemo(() => {
     const subTotal = Number(computed.subTotal || 0);

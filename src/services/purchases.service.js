@@ -3,6 +3,7 @@ import { authGetOrganizationId, authGetRole, authGetUser } from "./auth.service"
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
+import { createItemBarcodesForPurchase } from "./itemBarcodes.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -478,6 +479,17 @@ export async function purchasesCreate(bill) {
   };
 
   setAll([next, ...getAll()]);
+  try {
+    await createItemBarcodesForPurchase({
+      purchaseId: id,
+      billDate: bill?.billDate || now.slice(0, 10),
+      lines: next.lines,
+      enabled: bill?.barcodeOptions?.enabled !== false,
+      mode: bill?.barcodeOptions?.mode || "batch"
+    });
+  } catch (error) {
+    console.warn("Barcode generation failed for purchase", error);
+  }
   await triggerCreditLimitNotifications();
   return id;
 }
