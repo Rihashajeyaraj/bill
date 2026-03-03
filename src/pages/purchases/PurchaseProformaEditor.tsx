@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { X } from "lucide-react";
 import Card from "../../components/Card";
 import GradientButton from "../../components/GradientButton";
 import PageHeader from "../../components/PageHeader";
@@ -28,16 +29,69 @@ function lineAmount(line: any) {
   return Math.max(0, taxable + tax);
 }
 
+function normalizeItemName(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function getItemSearchIdentifier(item: any) {
+  const itemCode = String(item?.itemCode || "").trim();
+  if (itemCode) return itemCode;
+  return String(item?.id || "").trim();
+}
+
+function formatItemSearchLabel(item: any) {
+  const identifier = getItemSearchIdentifier(item);
+  const name = String(item?.name || "").trim();
+  if (identifier && name) return `${identifier} | ${name}`;
+  return name || identifier;
+}
+
+function findItemBySearchInput(items: any[], value: unknown) {
+  const normalizedValue = normalizeItemName(value);
+  if (!normalizedValue) return null;
+  return (
+    items.find((item) => {
+      const name = normalizeItemName(item?.name);
+      const itemCode = normalizeItemName(item?.itemCode);
+      const id = normalizeItemName(item?.id);
+      const label = normalizeItemName(formatItemSearchLabel(item));
+      return (
+        normalizedValue === name ||
+        normalizedValue === itemCode ||
+        normalizedValue === id ||
+        normalizedValue === label
+      );
+    }) || null
+  );
+}
+
+function itemMatchesSearchQuery(item: any, query: unknown) {
+  const normalizedQuery = normalizeItemName(query);
+  if (!normalizedQuery) return true;
+  const name = normalizeItemName(item?.name);
+  const itemCode = normalizeItemName(item?.itemCode);
+  const id = normalizeItemName(item?.id);
+  const label = normalizeItemName(formatItemSearchLabel(item));
+  return (
+    name.includes(normalizedQuery) ||
+    itemCode.includes(normalizedQuery) ||
+    id.includes(normalizedQuery) ||
+    label.includes(normalizedQuery)
+  );
+}
+
 function createEmptyLine() {
   return {
     id: `ppf_line_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
     itemId: "",
     itemCode: "",
+    itemInput: "",
     description: "",
     qty: 1,
     rate: 0,
-    taxRate: 0,
-    taxInclusive: false
+    taxRate: 0
   };
 }
 
@@ -53,6 +107,7 @@ export default function PurchaseProformaEditor() {
   const [converting, setConverting] = useState(false);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
+  const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
   const [form, setForm] = useState<any>({
     id: "",
     proformaNo: "",
@@ -129,11 +184,11 @@ export default function PurchaseProformaEditor() {
                     id: line?.id || createEmptyLine().id,
                     itemId: line?.itemId || "",
                     itemCode: line?.itemCode || "",
+                    itemInput: line?.itemName || line?.description || "",
                     description: line?.description || "",
                     qty: parseNumber(line?.qty) || 1,
                     rate: parseNumber(line?.rate),
-                    taxRate: parseNumber(line?.taxRate),
-                    taxInclusive: !!line?.taxInclusive
+                    taxRate: parseNumber(line?.taxRate)
                   }))
                 : [createEmptyLine()]
           });
@@ -158,7 +213,11 @@ export default function PurchaseProformaEditor() {
   function updateLine(lineId: string, patch: any) {
     setForm((prev: any) => ({
       ...prev,
-      lines: (prev.lines || []).map((line: any) => (line.id === lineId ? { ...line, ...patch } : line))
+      lines: (prev.lines || []).map((line: any) => {
+        if (line.id !== lineId) return line;
+        const nextPatch = typeof patch === "function" ? patch(line) : patch;
+        return { ...line, ...nextPatch };
+      })
     }));
   }
 
@@ -176,6 +235,66 @@ export default function PurchaseProformaEditor() {
     setForm((prev: any) => ({ ...prev, lines: [...(prev.lines || []), createEmptyLine()] }));
   }
 
+  function selectLineItem(line: any, item: any) {
+    if (!line || !item) return;
+    updateLine(line.id, {
+      itemId: item?.id || "",
+      itemCode: item?.itemCode || "",
+      itemInput: item?.name || "",
+      description: item?.name || "",
+      rate: parseNumber(item?.purchaseRate ?? item?.metadata?.purchasePrice ?? item?.purchase_price ?? line?.rate),
+      taxRate: parseNumber(item?.taxRate ?? item?.metadata?.taxRate ?? item?.tax_rate ?? line?.taxRate)
+    });
+  }
+
+  function handleItemInput(lineId: string, inputValue: string) {
+    const match = findItemBySearchInput(items, inputValue);
+    updateLine(lineId, (line: any) => {
+      if (!match) {
+        return {
+          ...line,
+          itemInput: inputValue,
+          itemId: "",
+          itemCode: "",
+          description: String(inputValue || "").trim()
+        };
+      }
+      return {
+        ...line,
+        itemInput: match?.name || inputValue,
+        itemId: match?.id || "",
+        itemCode: match?.itemCode || "",
+        description: match?.name || "",
+        rate: parseNumber(match?.purchaseRate ?? match?.metadata?.purchasePrice ?? match?.purchase_price ?? line?.rate),
+        taxRate: parseNumber(match?.taxRate ?? match?.metadata?.taxRate ?? match?.tax_rate ?? line?.taxRate)
+      };
+    });
+  }
+
+  function clearLineItemSelection(lineId: string) {
+    updateLine(lineId, {
+      itemId: "",
+      itemCode: "",
+      itemInput: "",
+      description: ""
+    });
+  }
+
+  function getLineItemSearchResults(line: any) {
+    const query = normalizeItemName(line?.itemInput);
+    if (!query) return [];
+    return (items || []).filter((item) => itemMatchesSearchQuery(item, query)).slice(0, 8);
+  }
+
+  const activeLineForSearch = useMemo(
+    () => (form.lines || []).find((line: any) => String(line?.id || "") === String(activeLineItemSearchId || "")) || null,
+    [form.lines, activeLineItemSearchId]
+  );
+  const activeLineSearchResults = useMemo(() => {
+    if (!activeLineForSearch) return [];
+    return getLineItemSearchResults(activeLineForSearch);
+  }, [activeLineForSearch, items]);
+
   async function onSave() {
     if (locked) return;
     if (!form.supplierId) {
@@ -187,12 +306,14 @@ export default function PurchaseProformaEditor() {
       const cleanedLines = (form.lines || [])
         .map((line: any, index: number) => ({
           ...line,
+          description: String(line?.itemInput || line?.description || "").trim(),
           qty: parseNumber(line?.qty),
           rate: parseNumber(line?.rate),
           taxRate: parseNumber(line?.taxRate),
+          taxInclusive: false,
           lineNo: index + 1
         }))
-        .filter((line: any) => line.qty > 0 && (line.itemId || line.description));
+        .filter((line: any) => line.qty > 0 && (line.itemId || line.itemInput || line.description));
       if (!cleanedLines.length) {
         toast.warning("Line items required", "Add at least one line item before saving.");
         return;
@@ -372,7 +493,10 @@ export default function PurchaseProformaEditor() {
 
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-slate-900">Line Items</p>
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Line Items</p>
+                  <p className="text-xs text-slate-500">Use the same pricing flow as Purchase Bill (tax exclusive only).</p>
+                </div>
                 <button
                   type="button"
                   onClick={addLine}
@@ -383,114 +507,130 @@ export default function PurchaseProformaEditor() {
                 </button>
               </div>
 
-              <div className="overflow-x-auto rounded-2xl border border-slate-100">
-                <table className="min-w-[980px] w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-slate-600">
-                    <tr>
-                      <th className="px-2 py-2 font-semibold">Item</th>
-                      <th className="px-2 py-2 font-semibold">Description</th>
-                      <th className="px-2 py-2 font-semibold text-right">Qty</th>
-                      <th className="px-2 py-2 font-semibold text-right">Rate</th>
-                      <th className="px-2 py-2 font-semibold text-right">Tax %</th>
-                      <th className="px-2 py-2 font-semibold text-center">Tax Inclusive</th>
-                      <th className="px-2 py-2 font-semibold text-right">Amount</th>
-                      <th className="px-2 py-2 font-semibold">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(form.lines || []).map((line: any) => (
-                      <tr key={line.id} className="border-t border-slate-100">
-                        <td className="px-2 py-2">
-                          <select
-                            className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
-                            value={line.itemId || ""}
+              <div className="space-y-3">
+                {(form.lines || []).map((line: any, index: number) => (
+                  <div key={line.id} className="rounded-2xl border border-slate-200 bg-white p-3">
+                    <div className="mb-3 flex items-center justify-between">
+                      <p className="text-xs font-semibold text-slate-600">Row {index + 1}</p>
+                      <button
+                        type="button"
+                        onClick={() => removeLine(line.id)}
+                        disabled={locked}
+                        className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                      <label className="text-xs text-slate-600 xl:col-span-2">
+                        Item
+                        <div className="relative">
+                          <input
+                            className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 pr-8 text-sm"
+                            value={line.itemInput || ""}
                             disabled={locked}
-                            onChange={(event) => {
-                              const itemId = event.target.value;
-                              const item = items.find((entry) => String(entry?.id || "") === String(itemId));
-                              updateLine(line.id, {
-                                itemId,
-                                itemCode: item?.itemCode || "",
-                                description: item?.name || line.description || "",
-                                rate: parseNumber(item?.purchasePrice ?? item?.purchase_price ?? line.rate),
-                                taxRate: parseNumber(item?.taxRate ?? item?.tax_rate ?? line.taxRate)
-                              });
+                            placeholder="Search by item name or code"
+                            onFocus={() => setActiveLineItemSearchId(line.id)}
+                            onBlur={() => {
+                              window.setTimeout(() => {
+                                setActiveLineItemSearchId((current) => (current === line.id ? "" : current));
+                              }, 120);
                             }}
-                          >
-                            <option value="">Select item</option>
-                            {items.map((entry) => (
-                              <option key={entry.id} value={entry.id}>
-                                {entry.name || entry.id}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-2 py-2">
-                          <input
-                            className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
-                            value={line.description || ""}
-                            disabled={locked}
-                            onChange={(event) => updateLine(line.id, { description: event.target.value })}
+                            onChange={(event) => {
+                              setActiveLineItemSearchId(line.id);
+                              handleItemInput(line.id, event.target.value);
+                            }}
                           />
-                        </td>
-                        <td className="px-2 py-2">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.001"
-                            className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
-                            value={line.qty}
-                            disabled={locked}
-                            onChange={(event) => updateLine(line.id, { qty: parseNumber(event.target.value) })}
-                          />
-                        </td>
-                        <td className="px-2 py-2">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
-                            value={line.rate}
-                            disabled={locked}
-                            onChange={(event) => updateLine(line.id, { rate: parseNumber(event.target.value) })}
-                          />
-                        </td>
-                        <td className="px-2 py-2">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
-                            value={line.taxRate}
-                            disabled={locked}
-                            onChange={(event) => updateLine(line.id, { taxRate: parseNumber(event.target.value) })}
-                          />
-                        </td>
-                        <td className="px-2 py-2 text-center">
-                          <input
-                            type="checkbox"
-                            checked={!!line.taxInclusive}
-                            disabled={locked}
-                            onChange={(event) => updateLine(line.id, { taxInclusive: event.target.checked })}
-                          />
-                        </td>
-                        <td className="px-2 py-2 text-right font-semibold text-slate-900">
-                          {lineAmount(line).toFixed(2)}
-                        </td>
-                        <td className="px-2 py-2">
-                          <button
-                            type="button"
-                            onClick={() => removeLine(line.id)}
-                            disabled={locked}
-                            className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Remove
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                          {(line.itemId || line.itemInput) ? (
+                            <button
+                              type="button"
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                clearLineItemSelection(line.id);
+                                setActiveLineItemSearchId(line.id);
+                              }}
+                              className="absolute right-1.5 top-[9px] inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                              title="Clear selected item"
+                              aria-label="Clear selected item"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          ) : null}
+                          {activeLineItemSearchId === line.id && normalizeItemName(line.itemInput).length ? (
+                            <div className="absolute z-20 mt-1 w-full rounded-xl border border-slate-100 bg-white p-1.5 shadow-soft">
+                              {activeLineSearchResults.length ? (
+                                activeLineSearchResults.map((item) => (
+                                  <button
+                                    key={`proforma-line-${line.id}-${item.id}`}
+                                    type="button"
+                                    onMouseDown={(event) => {
+                                      event.preventDefault();
+                                      selectLineItem(line, item);
+                                      setActiveLineItemSearchId("");
+                                    }}
+                                    className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
+                                  >
+                                    {formatItemSearchLabel(item)}
+                                  </button>
+                                ))
+                              ) : (
+                                <div className="px-2 py-1.5 text-xs text-slate-500">No items found</div>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                        {line.itemCode ? (
+                          <p className="mt-1 text-[11px] text-slate-500">Code: {line.itemCode}</p>
+                        ) : null}
+                      </label>
+
+                      <label className="text-xs text-slate-600">
+                        Qty
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.001"
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-right text-sm"
+                          value={line.qty}
+                          disabled={locked}
+                          onChange={(event) => updateLine(line.id, { qty: parseNumber(event.target.value) })}
+                        />
+                      </label>
+
+                      <label className="text-xs text-slate-600">
+                        Rate
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-right text-sm"
+                          value={line.rate}
+                          disabled={locked}
+                          onChange={(event) => updateLine(line.id, { rate: parseNumber(event.target.value) })}
+                        />
+                      </label>
+
+                      <label className="text-xs text-slate-600">
+                        Tax %
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-right text-sm"
+                          value={line.taxRate}
+                          disabled={locked}
+                          onChange={(event) => updateLine(line.id, { taxRate: parseNumber(event.target.value) })}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-right">
+                      <p className="text-[11px] text-slate-500">Line Amount</p>
+                      <p className="text-sm font-semibold text-slate-900">{lineAmount(line).toFixed(2)}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
