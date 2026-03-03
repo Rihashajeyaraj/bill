@@ -390,8 +390,15 @@ export default function ItemFormModal({
             <FormField label="Product ID (Auto)">
               <input
                 value={productIdPreview}
-                className={`${inputClassName} bg-slate-50 text-slate-700`}
+                className={`${inputClassName} bg-slate-50 text-slate-700 font-sans text-sm font-medium leading-5 tracking-normal`}
                 placeholder="Auto-generated"
+                inputMode="text"
+                autoComplete="off"
+                spellCheck={false}
+                style={{
+                  fontVariantNumeric: "normal",
+                  fontFeatureSettings: "\"tnum\" 0, \"onum\" 0, \"lnum\" 1"
+                }}
                 readOnly
               />
               <p className="mt-1 text-xs text-slate-500">Auto-generated. Cannot be edited.</p>
