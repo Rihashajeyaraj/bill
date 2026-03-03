@@ -258,7 +258,7 @@ export default function PurchaseProformaEditor() {
           if (!mounted) return;
           if (!found) {
             toast.warning("Not found", "Purchase proforma does not exist.");
-            navigate("/app/purchase/proformas", { replace: true });
+            navigate("/app/purchase/proformas/history", { replace: true });
             return;
           }
           setForm({
@@ -679,10 +679,10 @@ export default function PurchaseProformaEditor() {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => navigate("/app/purchase/proformas")}
+              onClick={() => navigate("/app/purchase/proformas/history")}
               className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
-              Back
+              History
             </button>
             {!isNew ? (
               <button

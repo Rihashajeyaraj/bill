@@ -268,7 +268,7 @@ export default function SalesProformaEditor() {
           if (!mounted) return;
           if (!found) {
             toast.warning("Not found", "Sales proforma does not exist.");
-            navigate("/app/sales/proformas", { replace: true });
+            navigate("/app/sales/proformas/history", { replace: true });
             return;
           }
           setForm({
@@ -715,10 +715,10 @@ export default function SalesProformaEditor() {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => navigate("/app/sales/proformas")}
+              onClick={() => navigate("/app/sales/proformas/history")}
               className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
-              Back
+              History
             </button>
             {!isNew ? (
               <button

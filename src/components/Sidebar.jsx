@@ -111,7 +111,7 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
             activeMatchers: ["/sales/invoices", "/app/sales/invoice"]
           },
           {
-            to: "/app/sales/proformas",
+            to: "/app/sales/proformas/new",
             icon: FileText,
             label: "Proforma Invoice",
             activeMatchers: ["/sales/proformas", "/app/sales/proformas"]
@@ -131,7 +131,7 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
             activeMatchers: ["/purchase/bills", "/app/purchase/bill"]
           },
           {
-            to: "/app/purchase/proformas",
+            to: "/app/purchase/proformas/new",
             icon: FileText,
             label: "Purchase Order",
             activeMatchers: ["/purchase/proformas", "/app/purchase/proformas"]
