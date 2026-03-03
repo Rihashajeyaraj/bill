@@ -22,7 +22,7 @@ import { canCreateEntries } from "../../services/roles";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus, listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../modules/parties/store";
-import { computeItemStock, listItems, syncItemsFromRemote } from "../../modules/items/store";
+import { computeItemStock, listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
 import { outstandingByCustomer, savePaymentIn } from "../../modules/paymentIn/store";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE } from "../../modules/paymentIn/countryConfig";
 import { getInvoiceTemplateConfig } from "../../lib/templateStore";
@@ -146,6 +146,16 @@ function formatItemSearchLabel(item) {
   return name || identifier;
 }
 
+function normalizeInvoiceItemType(value) {
+  return String(value || "").trim().toLowerCase() === "service" ? "Service" : "Product";
+}
+
+function itemTypeBadgeClassName(type) {
+  return normalizeInvoiceItemType(type) === "Service"
+    ? "rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700"
+    : "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700";
+}
+
 function itemMatchesSearchQuery(item, query, barcodeLookupByItemId = null) {
   const normalizedQuery = normalizeItemSearchText(query);
   if (!normalizedQuery) return true;
@@ -262,6 +272,7 @@ export default function InvoiceCreate() {
   const [items, setItems] = useState(() => listItems());
   const [itemBarcodes, setItemBarcodes] = useState(() => listItemBarcodes());
   const [itemSearch, setItemSearch] = useState("");
+  const [lineItemMode, setLineItemMode] = useState("Product");
 
   const initialInvoiceDate = new Date().toISOString().slice(0, 10);
   const invoiceYear = new Date().getFullYear();
@@ -555,6 +566,7 @@ export default function InvoiceCreate() {
         itemId: "",
         itemInput: "",
         selectedBatchId: "",
+        hsnInput: "",
         priceTaxMode: "WITHOUT_TAX",
         qty: 1,
         rate: 0,
@@ -566,7 +578,8 @@ export default function InvoiceCreate() {
 
   function addLineWithItem(item) {
     if (!item) return;
-    const maxAssignable = getMaxAssignableQty(item.id);
+    const itemType = normalizeInvoiceItemType(item?.type);
+    const maxAssignable = itemType === "Product" ? getMaxAssignableQty(item.id) : Number.POSITIVE_INFINITY;
     if (!allowNegativeStock && Number.isFinite(maxAssignable) && maxAssignable <= 0) {
       alert(`Out of stock: ${item.name}.`);
       return;
@@ -578,6 +591,7 @@ export default function InvoiceCreate() {
         itemId: item.id,
         itemInput: formatItemSearchLabel(item),
         selectedBatchId: "",
+        hsnInput: itemType === "Service" ? item?.sac || item?.hsn || "" : "",
         priceTaxMode: "WITHOUT_TAX",
         qty: Number.isFinite(maxAssignable) ? Math.min(1, maxAssignable) : 1,
         rate: item.salesRate || item.price || 0,
@@ -802,26 +816,33 @@ export default function InvoiceCreate() {
     setInvoiceDateInput(formatIsoToDayMonthYear(invoiceDate));
   }
 
-  const computed = useMemo(() => {
-    const selectedLines = lines.filter((line) => line?.itemId);
+  function computeInvoiceSummary(sourceLines, sourceItems) {
+    const itemByIdMap = new Map(
+      (Array.isArray(sourceItems) ? sourceItems : []).map((item) => [String(item?.id || ""), item])
+    );
+    const selectedLines = (Array.isArray(sourceLines) ? sourceLines : []).filter((line) => line?.itemId);
     const hasAnyLineTax = forceZeroTax ? false : selectedLines.some((line) => Number(line?.tax || 0) > 0);
     const fallbackRate = forceZeroTax ? 0 : hasAnyLineTax ? 0 : Number(taxRate || 0);
 
-    const enrichedBase = selectedLines.map((l) => {
-      const item = items.find((it) => it.id === l.itemId);
-      const qty = Number(l.qty || 0);
-      const rate = Number(l.rate || 0);
-      const discount = Number(l.discount || 0);
-      const taxRatePerLine = forceZeroTax ? 0 : Number(l.tax || fallbackRate || 0);
+    const enrichedBase = selectedLines.map((line) => {
+      const item = itemByIdMap.get(String(line?.itemId || "")) || null;
+      const itemType = normalizeInvoiceItemType(item?.type);
+      const qty = Number(line.qty || 0);
+      const rate = Number(line.rate || 0);
+      const discount = Number(line.discount || 0);
+      const taxRatePerLine = forceZeroTax ? 0 : Number(line.tax || fallbackRate || 0);
       const net = round2(Math.max(0, qty * rate - discount));
       const lineTax = round2((net * taxRatePerLine) / 100);
+      const codeFromItem = itemType === "Service" ? item?.sac || item?.hsn || "" : item?.hsn || item?.sac || "";
+      const codeFromLine = String(line?.hsnInput || "").trim();
 
       return {
-        ...l,
+        ...line,
         tax: taxRatePerLine,
         priceTaxMode: "WITHOUT_TAX",
         itemName: item?.name || "XXX",
-        hsn: item?.hsn || item?.sac || "XX",
+        itemType,
+        hsn: itemType === "Service" ? codeFromLine || codeFromItem : codeFromItem,
         net,
         lineTax
       };
@@ -829,8 +850,7 @@ export default function InvoiceCreate() {
 
     const subTotal = round2(enrichedBase.reduce((a, x) => a + x.net, 0));
     const lineTaxTotal = round2(enrichedBase.reduce((a, x) => a + x.lineTax, 0));
-    const effectiveTaxRate =
-      subTotal > 0 ? (lineTaxTotal / subTotal) * 100 : Number(taxRate || 0);
+    const effectiveTaxRate = subTotal > 0 ? (lineTaxTotal / subTotal) * 100 : Number(taxRate || 0);
 
     const tax = calculateTaxes({
       taxableAmount: subTotal,
@@ -877,7 +897,12 @@ export default function InvoiceCreate() {
     const grandTotal = round2(subTotal + (tax.totalTax || 0));
 
     return { enriched, subTotal, tax, grandTotal, effectiveTaxRate };
-  }, [lines, items, companyCountry, companyState, customerCountry, customerState, taxRate, company?.tax?.gstin, party?.gstin, party?.taxId, isIndiaOrg, gstRuntimeEnabled, forceZeroTax]);
+  }
+
+  const computed = useMemo(
+    () => computeInvoiceSummary(lines, items),
+    [lines, items, companyCountry, companyState, customerCountry, customerState, taxRate, company?.tax?.gstin, party?.gstin, party?.taxId, isIndiaOrg, gstRuntimeEnabled, forceZeroTax]
+  );
 
   const paymentAmount = useMemo(() => {
     if (!markAsPaid) return 0;
@@ -949,6 +974,27 @@ export default function InvoiceCreate() {
     [items]
   );
 
+  const itemById = useMemo(
+    () => new Map((Array.isArray(items) ? items : []).map((item) => [String(item?.id || ""), item])),
+    [items]
+  );
+
+  const modeFilteredLineItems = useMemo(
+    () =>
+      availableLineItems.filter(
+        (item) => normalizeInvoiceItemType(item?.type) === normalizeInvoiceItemType(lineItemMode)
+      ),
+    [availableLineItems, lineItemMode]
+  );
+  const dynamicBatchColumnHeader =
+    normalizeInvoiceItemType(lineItemMode) === "Service" ? "HSN / SAC" : "Batch";
+
+  function resolveLineItemType(line, sourceItemMap = itemById) {
+    const matchedItem = sourceItemMap.get(String(line?.itemId || ""));
+    if (!matchedItem) return normalizeInvoiceItemType(lineItemMode);
+    return normalizeInvoiceItemType(matchedItem?.type);
+  }
+
   const barcodeLookupByItemId = useMemo(() => {
     const map = new Map();
     (Array.isArray(itemBarcodes) ? itemBarcodes : []).forEach((entry) => {
@@ -964,9 +1010,9 @@ export default function InvoiceCreate() {
 
   const filteredItems = useMemo(() => {
     const query = normalizeItemSearchText(itemSearch);
-    if (!query) return availableLineItems;
+    if (!query) return modeFilteredLineItems;
     const barcodeQuery = normalizeBarcodeLookupValue(query);
-    const startsWith = availableLineItems.filter((item) => {
+    const startsWith = modeFilteredLineItems.filter((item) => {
       const name = normalizeItemSearchText(item?.name);
       const itemCode = normalizeItemSearchText(item?.itemCode);
       const id = normalizeItemSearchText(item?.id);
@@ -977,12 +1023,12 @@ export default function InvoiceCreate() {
       return name.startsWith(query) || itemCode.startsWith(query) || id.startsWith(query) || barcodeStartsWith;
     });
     if (startsWith.length) return startsWith;
-    return availableLineItems.filter((item) => itemMatchesSearchQuery(item, query, barcodeLookupByItemId));
-  }, [availableLineItems, itemSearch, barcodeLookupByItemId]);
+    return modeFilteredLineItems.filter((item) => itemMatchesSearchQuery(item, query, barcodeLookupByItemId));
+  }, [modeFilteredLineItems, itemSearch, barcodeLookupByItemId]);
 
-  const stockByItemId = useMemo(() => {
+  function buildStockMap(sourceItems) {
     const map = new Map();
-    items.forEach((item) => {
+    (Array.isArray(sourceItems) ? sourceItems : []).forEach((item) => {
       if (item?.type !== "Product" || !item?.trackInventory) return;
       map.set(item.id, {
         itemId: item.id,
@@ -991,16 +1037,24 @@ export default function InvoiceCreate() {
       });
     });
     return map;
-  }, [items]);
+  }
 
-  function getMaxAssignableQty(itemId, excludeLineId = "", preferredBatchId = "") {
+  const stockByItemId = useMemo(() => buildStockMap(items), [items]);
+
+  function getMaxAssignableQtyFromSource(
+    itemId,
+    sourceLines,
+    stockMap,
+    excludeLineId = "",
+    preferredBatchId = ""
+  ) {
     if (allowNegativeStock) return Number.POSITIVE_INFINITY;
     if (preferredBatchId) {
-      return getBatchAvailableForLine(itemId, preferredBatchId, excludeLineId);
+      return getBatchAvailableForLineFromSource(itemId, preferredBatchId, sourceLines, excludeLineId);
     }
-    const stockInfo = stockByItemId.get(itemId);
+    const stockInfo = stockMap.get(itemId);
     if (!stockInfo) return Number.POSITIVE_INFINITY;
-    const reservedQty = lines.reduce((sum, line) => {
+    const reservedQty = (Array.isArray(sourceLines) ? sourceLines : []).reduce((sum, line) => {
       if (excludeLineId && String(line?.id || "") === String(excludeLineId)) return sum;
       if (String(line?.itemId || "") !== String(itemId || "")) return sum;
       return sum + Math.max(0, Number(line?.qty || 0));
@@ -1008,17 +1062,26 @@ export default function InvoiceCreate() {
     return Math.max(0, Number(stockInfo.available || 0) - reservedQty);
   }
 
-  const stockValidationIssues = useMemo(() => {
+  function getMaxAssignableQty(itemId, excludeLineId = "", preferredBatchId = "") {
+    return getMaxAssignableQtyFromSource(itemId, lines, stockByItemId, excludeLineId, preferredBatchId);
+  }
+
+  function collectStockValidationIssues(enrichedLines, sourceLines, stockMap) {
     if (allowNegativeStock) return [];
     const issues = [];
-    computed.enriched.forEach((line) => {
+    (Array.isArray(enrichedLines) ? enrichedLines : []).forEach((line) => {
       if (!line?.itemId) return;
       const qty = Math.max(0, Number(line?.qty || 0));
       if (!qty) return;
-      const stockInfo = stockByItemId.get(line.itemId);
+      const stockInfo = stockMap.get(line.itemId);
       if (!stockInfo) return;
       if (line?.selectedBatchId) {
-        const available = getBatchAvailableForLine(line.itemId, line.selectedBatchId, line.id);
+        const available = getBatchAvailableForLineFromSource(
+          line.itemId,
+          line.selectedBatchId,
+          sourceLines,
+          line.id
+        );
         if (qty > available) {
           issues.push({
             itemId: line.itemId,
@@ -1029,7 +1092,13 @@ export default function InvoiceCreate() {
         }
         return;
       }
-      const totalAvailable = getMaxAssignableQty(line.itemId, line.id, "");
+      const totalAvailable = getMaxAssignableQtyFromSource(
+        line.itemId,
+        sourceLines,
+        stockMap,
+        line.id,
+        ""
+      );
       if (qty > totalAvailable) {
         issues.push({
           itemId: line.itemId,
@@ -1040,6 +1109,10 @@ export default function InvoiceCreate() {
       }
     });
     return issues;
+  }
+
+  const stockValidationIssues = useMemo(() => {
+    return collectStockValidationIssues(computed.enriched, lines, stockByItemId);
   }, [allowNegativeStock, computed.enriched, stockByItemId, lines]);
 
   const hasStockErrors = stockValidationIssues.length > 0;
@@ -1068,12 +1141,12 @@ export default function InvoiceCreate() {
       });
   }
 
-  function getBatchAvailableForLine(itemId, batchId, excludeLineId = "") {
+  function getBatchAvailableForLineFromSource(itemId, batchId, sourceLines, excludeLineId = "") {
     if (!itemId || !batchId) return 0;
     const rows = getOpenBatchRows(itemId);
     const target = rows.find((row) => String(row.batch_id) === String(batchId));
     if (!target) return 0;
-    const reserved = lines.reduce((sum, line) => {
+    const reserved = (Array.isArray(sourceLines) ? sourceLines : []).reduce((sum, line) => {
       if (excludeLineId && String(line?.id || "") === String(excludeLineId)) return sum;
       if (String(line?.itemId || "") !== String(itemId || "")) return sum;
       if (String(line?.selectedBatchId || "") !== String(batchId || "")) return sum;
@@ -1082,9 +1155,17 @@ export default function InvoiceCreate() {
     return Math.max(0, Number(target?.qty_remaining || 0) - reserved);
   }
 
+  function getBatchAvailableForLine(itemId, batchId, excludeLineId = "") {
+    return getBatchAvailableForLineFromSource(itemId, batchId, lines, excludeLineId);
+  }
+
   function selectLineItem(line, matchedItem) {
     if (!matchedItem || !line) return;
-    const maxAssignable = getMaxAssignableQty(matchedItem.id, line.id);
+    const itemType = normalizeInvoiceItemType(matchedItem?.type);
+    const maxAssignable =
+      itemType === "Product"
+        ? getMaxAssignableQty(matchedItem.id, line.id)
+        : Number.POSITIVE_INFINITY;
     if (!allowNegativeStock && Number.isFinite(maxAssignable) && maxAssignable <= 0) {
       alert(`Out of stock: ${matchedItem.name}.`);
       return;
@@ -1098,6 +1179,7 @@ export default function InvoiceCreate() {
       itemInput: formatItemSearchLabel(matchedItem),
       itemId: matchedItem.id,
       selectedBatchId: "",
+      hsnInput: itemType === "Service" ? matchedItem?.sac || matchedItem?.hsn || line?.hsnInput || "" : "",
       priceTaxMode: "WITHOUT_TAX",
       qty: nextQty,
       rate: matchedItem?.salesRate || matchedItem?.price || 0,
@@ -1106,7 +1188,7 @@ export default function InvoiceCreate() {
   }
 
   function handleLineItemInput(line, inputValue) {
-    const matchedItem = findItemBySearchInput(availableLineItems, inputValue, barcodeLookupByItemId);
+    const matchedItem = findItemBySearchInput(modeFilteredLineItems, inputValue, barcodeLookupByItemId);
     if (!matchedItem) {
       updateLine(line.id, { itemInput: inputValue, itemId: "", selectedBatchId: "" });
       return;
@@ -1115,7 +1197,7 @@ export default function InvoiceCreate() {
   }
 
   function clearLineItemSelection(lineId) {
-    updateLine(lineId, { itemInput: "", itemId: "", selectedBatchId: "" });
+    updateLine(lineId, { itemInput: "", itemId: "", selectedBatchId: "", hsnInput: "" });
   }
 
   function handleLineBatchChange(line, batchId) {
@@ -1136,6 +1218,10 @@ export default function InvoiceCreate() {
         0
     );
     const maxAssignable = getMaxAssignableQty(line.itemId, line.id, selectedId);
+    if (Number.isFinite(maxAssignable) && maxAssignable <= 0) {
+      alert("Selected batch has zero available stock.");
+      return;
+    }
     updateLine(line.id, {
       selectedBatchId: selectedId,
       rate: suggestedRate > 0 ? suggestedRate : line.rate,
@@ -1164,9 +1250,9 @@ export default function InvoiceCreate() {
   function getLineItemSearchResults(line) {
     const query = normalizeItemSearchText(line?.itemInput);
     const matched = query
-      ? availableLineItems.filter((item) => itemMatchesSearchQuery(item, query, barcodeLookupByItemId))
-      : availableLineItems;
-    const selected = availableLineItems.find((item) => String(item.id) === String(line?.itemId || ""));
+      ? modeFilteredLineItems.filter((item) => itemMatchesSearchQuery(item, query, barcodeLookupByItemId))
+      : modeFilteredLineItems;
+    const selected = modeFilteredLineItems.find((item) => String(item.id) === String(line?.itemId || ""));
     if (!selected) return matched.slice(0, 8);
     if (matched.some((item) => String(item.id) === String(selected.id))) return matched.slice(0, 8);
     return [selected, ...matched].slice(0, 8);
@@ -1179,7 +1265,7 @@ export default function InvoiceCreate() {
   const activeLineSearchResults = useMemo(() => {
     if (!activeLineForSearch) return [];
     return getLineItemSearchResults(activeLineForSearch);
-  }, [activeLineForSearch, availableLineItems, barcodeLookupByItemId]);
+  }, [activeLineForSearch, modeFilteredLineItems, barcodeLookupByItemId]);
 
   const invoicePreviewData = useMemo(() => {
     const subTotal = Number(computed.subTotal || 0);
@@ -1293,12 +1379,119 @@ export default function InvoiceCreate() {
     computed.effectiveTaxRate
   ]);
 
+  async function resolveInvoiceLinesWithItems(sourceLines) {
+    const nextLines = [];
+    let didCreateService = false;
+    let nextItems = listItems();
+    const itemsById = new Map(nextItems.map((item) => [String(item?.id || ""), item]));
+    const itemsByName = new Map(
+      nextItems
+        .filter((item) => item?.name)
+        .map((item) => [normalizeItemSearchText(item.name).replace(/\s+/g, " "), item])
+    );
+    const itemsByCode = new Map(
+      nextItems
+        .filter((item) => item?.itemCode)
+        .map((item) => [normalizeItemSearchText(item.itemCode), item])
+    );
+
+    function rememberItem(item) {
+      if (!item) return;
+      itemsById.set(String(item?.id || ""), item);
+      if (item?.name) {
+        itemsByName.set(normalizeItemSearchText(item.name).replace(/\s+/g, " "), item);
+      }
+      if (item?.itemCode) {
+        itemsByCode.set(normalizeItemSearchText(item.itemCode), item);
+      }
+    }
+
+    for (const line of Array.isArray(sourceLines) ? sourceLines : []) {
+      const typedInput = String(line?.itemInput || "").trim();
+      const normalizedTypedKey = normalizeItemSearchText(typedInput).replace(/\s+/g, " ");
+      const directById = itemsById.get(String(line?.itemId || "")) || null;
+      const directByInput = typedInput
+        ? findItemBySearchInput(nextItems, typedInput, barcodeLookupByItemId) ||
+          itemsByCode.get(normalizeItemSearchText(typedInput)) ||
+          itemsByName.get(normalizedTypedKey) ||
+          null
+        : null;
+      const matched = directById || directByInput;
+
+      if (matched) {
+        const matchedType = normalizeInvoiceItemType(matched?.type);
+        nextLines.push({
+          ...line,
+          itemId: matched.id,
+          itemInput: formatItemSearchLabel(matched),
+          selectedBatchId: matchedType === "Product" ? line?.selectedBatchId || "" : "",
+          hsnInput:
+            matchedType === "Service"
+              ? String(line?.hsnInput || matched?.sac || matched?.hsn || "").trim()
+              : ""
+        });
+        continue;
+      }
+
+      if (!typedInput) {
+        nextLines.push({ ...line, itemId: "", selectedBatchId: "", hsnInput: String(line?.hsnInput || "").trim() });
+        continue;
+      }
+
+      if (normalizeInvoiceItemType(lineItemMode) !== "Service") {
+        nextLines.push({ ...line, itemId: "", selectedBatchId: "", hsnInput: "" });
+        continue;
+      }
+
+      const createdId = await upsertItemRemote(
+        {
+          name: typedInput,
+          type: "Service",
+          description: "",
+          hsn: "",
+          sac: String(line?.hsnInput || "").trim(),
+          unit: "pcs",
+          salesRate: Number(line?.rate || 0),
+          purchaseRate: 0,
+          taxRate: forceZeroTax ? 0 : Number(line?.tax ?? taxRate ?? 0),
+          status: "Active",
+          trackInventory: false,
+          openingStock: 0,
+          lowStockAlert: 0,
+          category: ""
+        },
+        country
+      );
+      didCreateService = true;
+      nextItems = listItems();
+      const createdItem =
+        nextItems.find((item) => String(item?.id || "") === String(createdId || "")) ||
+        nextItems.find(
+          (item) =>
+            normalizeItemSearchText(item?.name || "").replace(/\s+/g, " ") === normalizedTypedKey
+        ) ||
+        null;
+      if (!createdItem) {
+        throw new Error(`Failed to create service item for "${typedInput}".`);
+      }
+      rememberItem(createdItem);
+      nextLines.push({
+        ...line,
+        itemId: createdItem.id,
+        itemInput: formatItemSearchLabel(createdItem),
+        selectedBatchId: "",
+        hsnInput: String(line?.hsnInput || createdItem?.sac || createdItem?.hsn || "").trim()
+      });
+    }
+
+    return { lines: nextLines, items: didCreateService ? nextItems : items, didCreateService };
+  }
+
   async function saveInvoice({ silent = false } = {}) {
     if (!canCreateInvoice) {
       alert("You do not have permission to create invoices.");
       return null;
     }
-    const validComputedLines = computed.enriched.filter((line) => line?.itemId);
     if (!partyId) {
       alert("Select customer before saving invoice.");
       return null;
@@ -1306,68 +1499,6 @@ export default function InvoiceCreate() {
     const normalizedInvoiceNo = String(invoiceNo || "").trim();
     if (!normalizedInvoiceNo) {
       alert("Invoice ID is required.");
-      return null;
-    }
-    if (!validComputedLines.length) {
-      alert("Add at least one line item before saving invoice.");
-      return null;
-    }
-    const productLineItems = validComputedLines
-      .map((line) => ({
-        line,
-        item: items.find((entry) => String(entry?.id || "") === String(line?.itemId || ""))
-      }))
-      .filter((entry) => entry?.item?.type === "Product" && entry?.item?.trackInventory);
-    const effectiveBatchMap = { ...itemBatchMap };
-
-    if (productLineItems.length) {
-      const missingBatchIds = Array.from(
-        new Set(
-          productLineItems
-            .map((entry) => String(entry.item.id || "").trim())
-            .filter((itemId) => itemId && !effectiveBatchMap[itemId])
-        )
-      );
-      if (missingBatchIds.length) {
-        const loaded = await Promise.all(
-          missingBatchIds.map(async (itemId) => {
-            try {
-              const result = await fetchItemStockHistory(itemId);
-              return { itemId, batches: Array.isArray(result?.batches) ? result.batches : [] };
-            } catch {
-              return { itemId, batches: [] };
-            }
-          })
-        );
-        setItemBatchMap((prev) => {
-          const next = { ...prev };
-          loaded.forEach((row) => {
-            next[row.itemId] = row.batches;
-            effectiveBatchMap[row.itemId] = row.batches;
-          });
-          return next;
-        });
-      }
-    }
-
-    const missingBatchLine = validComputedLines.find((line) => {
-      const item = items.find((entry) => String(entry?.id || "") === String(line?.itemId || ""));
-      if (!item || item.type !== "Product" || !item.trackInventory) return false;
-      const batchRows = effectiveBatchMap[item.id] || [];
-      const openBatches = (Array.isArray(batchRows) ? batchRows : []).filter(
-        (row) => Number(row?.qty_remaining || 0) > 0
-      );
-      return openBatches.length > 0 && !String(line?.selectedBatchId || "").trim();
-    });
-    if (missingBatchLine) {
-      alert(`Please select batch for ${missingBatchLine.itemName || "selected item"} before saving.`);
-      return null;
-    }
-    if (!allowNegativeStock && stockValidationIssues.length) {
-      const issue = stockValidationIssues[0];
-      alert(
-        `Insufficient stock for ${issue.itemName}. Available ${issue.available}, requested ${issue.requested}.`
-      );
       return null;
     }
     if (markAsPaid && paymentAmount <= 0) {
@@ -1403,6 +1534,90 @@ export default function InvoiceCreate() {
       alert("Enter transaction ID.");
       return null;
     }
+    let effectiveLines = lines;
+    let effectiveItems = items;
+    try {
+      const resolved = await resolveInvoiceLinesWithItems(lines);
+      effectiveLines = resolved.lines;
+      effectiveItems = resolved.items;
+      if (resolved.didCreateService) {
+        setItems(effectiveItems);
+      }
+      setLines(effectiveLines);
+    } catch (resolveError) {
+      alert(resolveError?.message || "Failed to resolve invoice items.");
+      return null;
+    }
+    const effectiveComputed = computeInvoiceSummary(effectiveLines, effectiveItems);
+    const validComputedLines = effectiveComputed.enriched.filter((line) => line?.itemId);
+    if (!validComputedLines.length) {
+      alert("Add at least one line item before saving invoice.");
+      return null;
+    }
+    const effectiveStockByItemId = buildStockMap(effectiveItems);
+    const effectiveStockIssues = collectStockValidationIssues(
+      effectiveComputed.enriched,
+      effectiveLines,
+      effectiveStockByItemId
+    );
+    const productLineItems = validComputedLines
+      .map((line) => ({
+        line,
+        item: effectiveItems.find((entry) => String(entry?.id || "") === String(line?.itemId || ""))
+      }))
+      .filter((entry) => entry?.item?.type === "Product" && entry?.item?.trackInventory);
+    const effectiveBatchMap = { ...itemBatchMap };
+
+    if (productLineItems.length) {
+      const missingBatchIds = Array.from(
+        new Set(
+          productLineItems
+            .map((entry) => String(entry.item.id || "").trim())
+            .filter((itemId) => itemId && !effectiveBatchMap[itemId])
+        )
+      );
+      if (missingBatchIds.length) {
+        const loaded = await Promise.all(
+          missingBatchIds.map(async (itemId) => {
+            try {
+              const result = await fetchItemStockHistory(itemId);
+              return { itemId, batches: Array.isArray(result?.batches) ? result.batches : [] };
+            } catch {
+              return { itemId, batches: [] };
+            }
+          })
+        );
+        setItemBatchMap((prev) => {
+          const next = { ...prev };
+          loaded.forEach((row) => {
+            next[row.itemId] = row.batches;
+            effectiveBatchMap[row.itemId] = row.batches;
+          });
+          return next;
+        });
+      }
+    }
+
+    const missingBatchLine = validComputedLines.find((line) => {
+      const item = effectiveItems.find((entry) => String(entry?.id || "") === String(line?.itemId || ""));
+      if (!item || item.type !== "Product" || !item.trackInventory) return false;
+      const batchRows = effectiveBatchMap[item.id] || [];
+      const openBatches = (Array.isArray(batchRows) ? batchRows : []).filter(
+        (row) => Number(row?.qty_remaining || 0) > 0
+      );
+      return openBatches.length > 0 && !String(line?.selectedBatchId || "").trim();
+    });
+    if (missingBatchLine) {
+      alert(`Please select batch for ${missingBatchLine.itemName || "selected item"} before saving.`);
+      return null;
+    }
+    if (!allowNegativeStock && effectiveStockIssues.length) {
+      const issue = effectiveStockIssues[0];
+      alert(
+        `Insufficient stock for ${issue.itemName}. Available ${issue.available}, requested ${issue.requested}.`
+      );
+      return null;
+    }
 
     const seller = {
       name: company?.companyName || "",
@@ -1428,36 +1643,36 @@ export default function InvoiceCreate() {
       partyName: party?.name || "",
       placeOfSupply: buyer.state,
       country,
-      taxRate: computed.effectiveTaxRate,
+      taxRate: effectiveComputed.effectiveTaxRate,
       companySnapshot: company,
       seller,
       buyer,
       lines: validComputedLines,
       totals: {
-        subTotal: computed.subTotal,
+        subTotal: effectiveComputed.subTotal,
         tax: gstRuntimeEnabled
           ? {
               type: "GST",
-              supplyType: computed.tax.supplyType,
-              sameState: computed.tax.supplyType !== "INTER",
-              cgst: computed.tax.cgst,
-              sgst: computed.tax.sgst,
-              igst: computed.tax.igst,
-              totalTax: computed.tax.totalTax
+              supplyType: effectiveComputed.tax.supplyType,
+              sameState: effectiveComputed.tax.supplyType !== "INTER",
+              cgst: effectiveComputed.tax.cgst,
+              sgst: effectiveComputed.tax.sgst,
+              igst: effectiveComputed.tax.igst,
+              totalTax: effectiveComputed.tax.totalTax
             }
           : {
               type: "NORMAL",
-              rate: computed.tax.taxRate,
-              taxLabel: computed.tax.taxBreakup?.taxLabel || "TAX",
-              taxAmount: computed.tax.taxAmount,
-              totalTax: computed.tax.totalTax
+              rate: effectiveComputed.tax.taxRate,
+              taxLabel: effectiveComputed.tax.taxBreakup?.taxLabel || "TAX",
+              taxAmount: effectiveComputed.tax.taxAmount,
+              totalTax: effectiveComputed.tax.totalTax
             },
-        taxBreakup: computed.tax.taxBreakup,
-        totalTax: computed.tax.totalTax,
-        grandTotal: computed.grandTotal
+        taxBreakup: effectiveComputed.tax.taxBreakup,
+        totalTax: effectiveComputed.tax.totalTax,
+        grandTotal: effectiveComputed.grandTotal
       },
-      taxMode: computed.tax.taxMode,
-      supplyType: computed.tax.supplyType || null
+      taxMode: effectiveComputed.tax.taxMode,
+      supplyType: effectiveComputed.tax.supplyType || null
     };
     try {
       const savedInvoiceId = await invoicesCreate(payload);
@@ -1468,7 +1683,7 @@ export default function InvoiceCreate() {
       if (markAsPaid && paymentAmount > 0 && savedInvoiceId) {
         try {
           const outstandingBefore = outstandingByCustomer(paymentCountryCode, partyId);
-          const applyAmount = Math.min(paymentAmount, Number(computed.grandTotal || 0));
+          const applyAmount = Math.min(paymentAmount, Number(effectiveComputed.grandTotal || 0));
           const actor = authGetUser()?.name || authGetUser()?.email || "System User";
           const basePaymentPayload = {
             country: paymentCountryCode,
@@ -1497,8 +1712,8 @@ export default function InvoiceCreate() {
                 invoiceId: savedInvoiceId,
                 invoiceNo: normalizedInvoiceNo,
                 invoiceDate,
-                invoiceAmount: Number(computed.grandTotal || 0),
-                balanceDue: Number(computed.grandTotal || 0),
+                invoiceAmount: Number(effectiveComputed.grandTotal || 0),
+                balanceDue: Number(effectiveComputed.grandTotal || 0),
                 applyAmount
               }
             ],
@@ -1604,13 +1819,8 @@ export default function InvoiceCreate() {
       alert("You do not have permission to create invoices.");
       return;
     }
-    const validComputedLines = computed.enriched.filter((line) => line?.itemId);
     if (!partyId) {
       alert("Select customer before saving and printing.");
-      return;
-    }
-    if (!validComputedLines.length) {
-      alert("Add at least one line item before saving and printing.");
       return;
     }
 
@@ -2066,6 +2276,23 @@ export default function InvoiceCreate() {
                 <div>
                   <h2 className="text-base font-semibold text-slate-900">4. Items</h2>
                   <p className="text-xs text-slate-500">Add item rows, quantity, rate, tax and amount.</p>
+                  <div className="mt-2 inline-flex rounded-xl border border-slate-200 bg-white p-1">
+                    {["Product", "Service"].map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => {
+                          setLineItemMode(mode);
+                          setItemSearch("");
+                        }}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                          lineItemMode === mode ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <button
                   onClick={addLine}
@@ -2083,14 +2310,22 @@ export default function InvoiceCreate() {
                     onChange={(e) => setItemSearch(e.target.value)}
                     className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none focus:ring-4"
                     style={{ "--tw-ring-color": UI.COLORS.ring }}
-                    placeholder="Search by product ID or name..."
+                    placeholder={
+                      lineItemMode === "Service"
+                        ? "Search by service ID or name..."
+                        : "Search by product ID or name..."
+                    }
                   />
                   {itemSearch.trim().length ? (
                     <div className="absolute z-10 mt-2 w-full rounded-2xl border border-slate-100 bg-white shadow-soft p-2 max-h-52 overflow-auto">
                       {filteredItems.length ? (
                         filteredItems.map((item) => {
                           const stockInfo = stockByItemId.get(item.id);
-                          const maxAssignable = getMaxAssignableQty(item.id);
+                          const itemType = normalizeInvoiceItemType(item?.type);
+                          const maxAssignable =
+                            itemType === "Product"
+                              ? getMaxAssignableQty(item.id)
+                              : Number.POSITIVE_INFINITY;
                           const outOfStock = Number.isFinite(maxAssignable) && maxAssignable <= 0;
                           return (
                             <button
@@ -2104,8 +2339,11 @@ export default function InvoiceCreate() {
                               }}
                               className="w-full rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              <div className="flex items-center justify-between gap-2">
-                                <span>{formatItemSearchLabel(item)}</span>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex min-w-0 flex-col gap-1">
+                                  <span className="truncate">{formatItemSearchLabel(item)}</span>
+                                  <span className={itemTypeBadgeClassName(itemType)}>{itemType}</span>
+                                </div>
                                 {stockInfo ? (
                                   <span className={`text-xs font-semibold ${outOfStock ? "text-rose-600" : "text-slate-500"}`}>
                                     Remaining: {stockInfo.available}
@@ -2132,6 +2370,8 @@ export default function InvoiceCreate() {
                       key: "itemId",
                       header: "Item",
                       render: (r) => {
+                        const selectedItem = itemById.get(String(r?.itemId || "")) || null;
+                        const rowType = resolveLineItemType(r);
                         return (
                           <div className="relative min-w-[250px]">
                             <input
@@ -2150,7 +2390,11 @@ export default function InvoiceCreate() {
                                 updateLineItemPopoverPosition(e.currentTarget);
                               }}
                               className="w-full rounded-xl border border-slate-100 bg-white px-2 py-1.5 pr-8 text-sm outline-none"
-                              placeholder="Search by product ID or name"
+                              placeholder={
+                                rowType === "Service"
+                                  ? "Search by service ID or name"
+                                  : "Search by product ID or name"
+                              }
                             />
                             {(r.itemId || r.itemInput) ? (
                               <button
@@ -2167,16 +2411,32 @@ export default function InvoiceCreate() {
                                 <X className="h-3.5 w-3.5" />
                               </button>
                             ) : null}
+                            <div className="mt-1">
+                              <span className={itemTypeBadgeClassName(rowType)}>
+                                {selectedItem ? normalizeInvoiceItemType(selectedItem?.type) : rowType}
+                              </span>
+                            </div>
                           </div>
                         );
                       }
                     },
                     {
-                      key: "batch",
-                      header: "Batch",
+                      key: "batchOrHsn",
+                      header: dynamicBatchColumnHeader,
                       render: (r) => {
+                        const rowType = resolveLineItemType(r);
+                        if (rowType === "Service") {
+                          return (
+                            <input
+                              value={r.hsnInput || ""}
+                              onChange={(e) => updateLine(r.id, { hsnInput: e.target.value, selectedBatchId: "" })}
+                              className="w-36 rounded-xl border border-slate-100 px-2 py-1.5 text-xs outline-none"
+                              placeholder="HSN / SAC"
+                            />
+                          );
+                        }
                         if (!r.itemId) {
-                          return <span className="text-xs text-slate-400">Select item</span>;
+                          return <span className="text-xs text-slate-400">Select product</span>;
                         }
                         const batchRows = getOpenBatchRows(r.itemId);
                         if (!batchRows.length) {
@@ -2191,14 +2451,15 @@ export default function InvoiceCreate() {
                             <option value="">Select batch</option>
                             {batchRows.map((row) => {
                               const batchId = String(row.batch_id || "");
-                              const qty = Number(row.qty_remaining || 0);
+                              const availableQty = getBatchAvailableForLine(r.itemId, batchId, r.id);
+                              const isUnavailable = availableQty <= 0;
                               const cost = Number(row.unit_cost_excl_tax || 0);
                               const suggested = Number(
                                 row?.suggested_sale_rate ?? row?.metadata?.suggestedSaleRate ?? 0
                               );
-                              const label = `${String(row.source_document_no || "BATCH").slice(0, 14)} | ${qty} @ ${money(cost)}${suggested > 0 ? ` | Sell ${money(suggested)}` : ""}`;
+                              const label = `${String(row.source_document_no || "BATCH").slice(0, 14)} | Avl ${availableQty} @ ${money(cost)}${suggested > 0 ? ` | Sell ${money(suggested)}` : ""}`;
                               return (
-                                <option key={`${r.id}-${batchId}`} value={batchId}>
+                                <option key={`${r.id}-${batchId}`} value={batchId} disabled={isUnavailable}>
                                   {label}
                                 </option>
                               );
@@ -2331,8 +2592,12 @@ export default function InvoiceCreate() {
                       >
                         {activeLineSearchResults.length ? (
                           activeLineSearchResults.map((item) => {
+                            const itemType = normalizeInvoiceItemType(item?.type);
                             const stockInfo = stockByItemId.get(item.id);
-                            const maxAssignable = getMaxAssignableQty(item.id, activeLineForSearch.id);
+                            const maxAssignable =
+                              itemType === "Product"
+                                ? getMaxAssignableQty(item.id, activeLineForSearch.id)
+                                : Number.POSITIVE_INFINITY;
                             const outOfStock = Number.isFinite(maxAssignable) && maxAssignable <= 0;
                             return (
                               <button
@@ -2348,8 +2613,11 @@ export default function InvoiceCreate() {
                                 className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 <div className="flex flex-col gap-0.5">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span>{formatItemSearchLabel(item)}</span>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex min-w-0 flex-col gap-1">
+                                      <span className="truncate">{formatItemSearchLabel(item)}</span>
+                                      <span className={itemTypeBadgeClassName(itemType)}>{itemType}</span>
+                                    </div>
                                     {stockInfo ? (
                                       <span className={`text-[11px] font-semibold ${outOfStock ? "text-rose-600" : "text-slate-500"}`}>
                                         Remaining: {stockInfo.available}
@@ -2358,7 +2626,7 @@ export default function InvoiceCreate() {
                                       <span className="text-[11px] text-slate-400">Service / Not tracked</span>
                                     )}
                                   </div>
-                                  {item?.type === "Product" ? (
+                                  {itemType === "Product" ? (
                                     <span className="text-[10px] text-slate-500">{formatBatchHint(item.id)}</span>
                                   ) : null}
                                 </div>
