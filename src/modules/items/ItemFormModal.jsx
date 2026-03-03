@@ -6,7 +6,28 @@ import GradientButton from "../../components/GradientButton";
 import { getNextItemCode } from "./store";
 import { buildTaxLabel, parseNumber, taxContext } from "./utils";
 
-const UNITS = ["pcs", "kg", "box", "litre", "mtr", "set", "hr"];
+const PRODUCT_UOMS = ["pcs", "box", "kg", "gram", "litre", "meter", "pack", "unit", "dozen", "piece"];
+const SERVICE_UOMS = ["hr", "day", "weekly", "monthly", "yearly", "session", "project", "contract"];
+
+function normalizeItemTypeLabel(type) {
+  return String(type || "").trim().toLowerCase() === "service" ? "Service" : "Product";
+}
+
+function uomOptionsForType(type) {
+  return normalizeItemTypeLabel(type) === "Service" ? SERVICE_UOMS : PRODUCT_UOMS;
+}
+
+function defaultUnitForType(type) {
+  return normalizeItemTypeLabel(type) === "Service" ? SERVICE_UOMS[0] : PRODUCT_UOMS[0];
+}
+
+function hasUomForType(type, unit) {
+  const target = String(unit || "")
+    .trim()
+    .toLowerCase();
+  if (!target) return false;
+  return uomOptionsForType(type).some((option) => option.toLowerCase() === target);
+}
 
 function decimalLike(value) {
   return parseNumber(value).toFixed(2);
@@ -36,20 +57,21 @@ function sanitizeDecimalInput(value) {
 }
 
 function defaultItem(type) {
+  const normalizedType = normalizeItemTypeLabel(type);
   return {
-    type,
+    type: normalizedType,
     itemCode: "",
     name: "",
     description: "",
     hsn: "",
     sac: "",
-    unit: "pcs",
+    unit: defaultUnitForType(normalizedType),
     salesRate: 0,
     purchaseRate: 0,
     taxRate: 0,
     taxInclusive: true,
     status: "Active",
-    trackInventory: type === "Product",
+    trackInventory: normalizedType === "Product",
     openingStock: 0,
     openingStockValue: 0,
     lowStockAlert: 0,
@@ -106,14 +128,18 @@ export default function ItemFormModal({
     if (!open) return;
     setError("");
     const next = initialItem ? { ...defaultItem(initialItem.type), ...initialItem } : defaultItem("Product");
+    next.type = normalizeItemTypeLabel(next.type);
     if (mode !== "edit" && !String(next.itemCode || "").trim()) {
       next.itemCode = getNextItemCode(next.type);
     }
     const normalizedSku = String(next.sku || next.itemCode || "").trim();
     next.sku = normalizedSku;
     if (!String(next.unit || "").trim()) {
-      next.unit = "pcs";
+      next.unit = defaultUnitForType(next.type);
+    } else if (!hasUomForType(next.type, next.unit)) {
+      next.unit = defaultUnitForType(next.type);
     }
+    next.trackInventory = next.type === "Product" ? !!next.trackInventory : false;
     const nextCategoryId = String(next.categoryId || "").trim();
     if (nextCategoryId) {
       const matched = normalizedCategoryOptions.find((entry) => entry.id === nextCategoryId);
@@ -133,6 +159,7 @@ export default function ItemFormModal({
   }, [open, initialItem, mode, normalizedCategoryOptions]);
 
   const taxCfg = useMemo(() => taxContext(country, form.type), [country, form.type]);
+  const uomOptions = useMemo(() => uomOptionsForType(form.type), [form.type]);
   const showStock = form.type === "Product";
   const itemLabel = form.type === "Service" ? "Service" : "Product";
   const modalTitle = mode === "edit" ? `Edit ${itemLabel}` : `Create ${itemLabel}`;
@@ -142,7 +169,17 @@ export default function ItemFormModal({
     "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100";
 
   function updateField(key, value) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      if (key !== "type") return { ...prev, [key]: value };
+      const nextType = normalizeItemTypeLabel(value);
+      const nextUnit = hasUomForType(nextType, prev.unit) ? prev.unit : defaultUnitForType(nextType);
+      return {
+        ...prev,
+        type: nextType,
+        unit: nextUnit,
+        trackInventory: nextType === "Product" ? !!prev.trackInventory : false
+      };
+    });
   }
 
   function addPriceLevel() {
@@ -197,25 +234,29 @@ export default function ItemFormModal({
       return;
     }
     setError("");
-    const normalizedOpeningStock = form.trackInventory ? wholeLike(form.openingStock) : 0;
-    const normalizedOpeningStockValue = form.trackInventory
+    const normalizedType = normalizeItemTypeLabel(form.type);
+    const normalizedTrackInventory = normalizedType === "Product" ? !!form.trackInventory : false;
+    const normalizedOpeningStock = normalizedTrackInventory ? wholeLike(form.openingStock) : 0;
+    const normalizedOpeningStockValue = normalizedTrackInventory
       ? parseNumber(normalizedOpeningStock * parseNumber(form.purchaseRate))
       : 0;
     const next = {
       ...form,
+      type: normalizedType,
       itemCode: form.itemCode?.trim() || "",
       sku: form.sku?.trim() || form.itemCode?.trim() || "",
       name: form.name.trim(),
       description: form.description?.trim() || "",
       hsn: form.hsn?.trim() || "",
       sac: form.sac?.trim() || "",
-      unit: form.unit?.trim() || "pcs",
+      unit: hasUomForType(normalizedType, form.unit) ? form.unit?.trim() : defaultUnitForType(normalizedType),
       salesRate: parseNumber(form.salesRate),
       purchaseRate: parseNumber(form.purchaseRate),
       taxRate: parseNumber(form.taxRate),
+      trackInventory: normalizedTrackInventory,
       openingStock: normalizedOpeningStock,
       openingStockValue: normalizedOpeningStockValue,
-      lowStockAlert: wholeLike(form.lowStockAlert),
+      lowStockAlert: normalizedTrackInventory ? wholeLike(form.lowStockAlert) : 0,
       categoryId: String(form.categoryId || "").trim(),
       category: String(form.category || "").trim(),
       priceLevels: form.priceLevels.map((level) => ({
@@ -278,6 +319,17 @@ export default function ItemFormModal({
               </select>
             </FormField>
 
+            <FormField label="Type">
+              <select
+                value={form.type}
+                onChange={(event) => updateField("type", event.target.value)}
+                className={inputClassName}
+              >
+                <option value="Product">Product</option>
+                <option value="Service">Service</option>
+              </select>
+            </FormField>
+
             <FormField label={taxCfg.codeLabel} hint={form.type === "Service" ? "Required for Service" : "Optional"}>
               <input
                 value={form.type === "Service" ? form.sac : form.hsn}
@@ -289,21 +341,19 @@ export default function ItemFormModal({
               />
             </FormField>
 
-            {form.type === "Product" ? (
-              <FormField label="Unit of Measure">
-                <select
-                  value={form.unit}
-                  onChange={(event) => updateField("unit", event.target.value)}
-                  className={inputClassName}
-                >
-                  {UNITS.map((unit) => (
-                    <option key={unit} value={unit}>
-                      {unit}
-                    </option>
-                  ))}
-                </select>
-              </FormField>
-            ) : null}
+            <FormField label="Unit of Measure">
+              <select
+                value={form.unit}
+                onChange={(event) => updateField("unit", event.target.value)}
+                className={inputClassName}
+              >
+                {uomOptions.map((unit) => (
+                  <option key={unit} value={unit}>
+                    {unit}
+                  </option>
+                ))}
+              </select>
+            </FormField>
 
             <FormField label="Category">
               {normalizedCategoryOptions.length ? (
