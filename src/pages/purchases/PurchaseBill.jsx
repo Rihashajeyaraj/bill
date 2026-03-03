@@ -113,6 +113,12 @@ function round2(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
+function nonNegativeNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return Math.max(0, Number(fallback || 0));
+  return Math.max(0, numeric);
+}
+
 function extractCity(address) {
   const firstSegment = String(address || "")
     .split(",")
@@ -128,6 +134,10 @@ function supplierAddressSummary(supplier) {
     .join(", ");
 }
 
+function getItemLowStockAlert(item) {
+  return nonNegativeNumber(item?.lowStockAlert ?? item?.metadata?.lowStockQty ?? item?.metadata?.lowStockAlert, 0);
+}
+
 function createLine(defaultTaxRate = 0) {
   return {
     id: `line_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
@@ -139,6 +149,7 @@ function createLine(defaultTaxRate = 0) {
     unit: "pcs",
     rate: 0,
     saleRate: 0,
+    lowStockAlert: 0,
     priceTaxMode: "WITHOUT_TAX",
     tax: Number(defaultTaxRate || 0)
   };
@@ -420,6 +431,7 @@ export default function PurchaseBill() {
       unit: normalizeUnit(item.unit || line.unit),
       rate: purchaseRate,
       saleRate: Number(item?.salesRate ?? item?.price ?? 0),
+      lowStockAlert: getItemLowStockAlert(item),
       tax: forceZeroTax ? 0 : Number(item.taxRate ?? defaultLineTaxRate),
       priceTaxMode: "WITHOUT_TAX"
     });
@@ -429,7 +441,14 @@ export default function PurchaseBill() {
     const match = findItemBySearchInput(purchasableItems, inputValue);
     updateLine(id, (line) => {
       if (!match) {
-        return { ...line, itemInput: inputValue, itemName: inputValue, itemId: "", itemCode: "" };
+        return {
+          ...line,
+          itemInput: inputValue,
+          itemName: inputValue,
+          itemId: "",
+          itemCode: "",
+          lowStockAlert: 0
+        };
       }
       return {
         ...line,
@@ -440,6 +459,7 @@ export default function PurchaseBill() {
         unit: normalizeUnit(match.unit || line.unit),
         rate: Number(match?.purchaseRate ?? match?.metadata?.purchasePrice ?? match?.price ?? 0),
         saleRate: Number(match?.salesRate ?? match?.price ?? 0),
+        lowStockAlert: getItemLowStockAlert(match),
         tax: forceZeroTax ? 0 : Number(match.taxRate ?? defaultLineTaxRate),
         priceTaxMode: "WITHOUT_TAX"
       };
@@ -451,7 +471,8 @@ export default function PurchaseBill() {
       itemId: "",
       itemCode: "",
       itemName: "",
-      itemInput: ""
+      itemInput: "",
+      lowStockAlert: 0
     });
   }
 
@@ -763,6 +784,13 @@ export default function PurchaseBill() {
     const getLineTaxInclusive = () => false;
     const getLineTaxRate = (line, item) =>
       forceZeroTax ? 0 : toNumber(line?.tax ?? item?.taxRate ?? defaultLineTaxRate);
+    const getLineLowStockAlert = (line, item, itemType) => {
+      if (itemType === "Service") return 0;
+      return nonNegativeNumber(
+        line?.lowStockAlert ?? line?.lowStockThreshold,
+        item?.lowStockAlert ?? item?.metadata?.lowStockQty ?? 0
+      );
+    };
     const shouldSyncItemFromLine = (item, line) => {
       if (!item) return true;
       const nextUnit = normalizeUnit(line?.unit || item?.unit || "pcs");
@@ -771,11 +799,13 @@ export default function PurchaseBill() {
       const nextTaxInclusive = getLineTaxInclusive(line, item);
       const itemType = item?.type === "Service" ? "Service" : "Product";
       const nextTrackInventory = itemType === "Product" ? item?.trackInventory ?? true : false;
+      const nextLowStockAlert = getLineLowStockAlert(line, item, itemType);
       return (
         !String(item?.itemCode || "").trim() ||
         normalizeUnit(item?.unit) !== nextUnit ||
         Math.abs(getItemSalesRate(item) - nextSalesRate) > 1e-6 ||
         Math.abs(toNumber(item?.taxRate) - nextTaxRate) > 1e-6 ||
+        Math.abs(toNumber(item?.lowStockAlert ?? item?.metadata?.lowStockQty ?? 0) - nextLowStockAlert) > 1e-6 ||
         Boolean(item?.taxInclusive) !== nextTaxInclusive ||
         Boolean(item?.trackInventory) !== nextTrackInventory
       );
@@ -796,6 +826,7 @@ export default function PurchaseBill() {
       if (item && !shouldSyncItemFromLine(item, line)) return item;
 
       const itemType = item?.type === "Service" ? "Service" : "Product";
+      const nextLowStockAlert = getLineLowStockAlert(line, item, itemType);
       const savedId = await upsertItemRemote(
         {
           id: item?.id,
@@ -813,7 +844,7 @@ export default function PurchaseBill() {
           status: item?.status || "Active",
           trackInventory: itemType === "Product" ? item?.trackInventory ?? true : false,
           openingStock: toNumber(item?.openingStock ?? item?.metadata?.openingStock ?? item?.metadata?.openingQty ?? 0),
-          lowStockAlert: toNumber(item?.lowStockAlert ?? item?.metadata?.lowStockQty ?? 0),
+          lowStockAlert: nextLowStockAlert,
           category: item?.category || "",
           sku: item?.sku || item?.itemCode || "",
           barcode: item?.barcode || ""
@@ -838,7 +869,8 @@ export default function PurchaseBill() {
           itemId: matched?.id || line.itemId || "",
           itemName: line.itemName || matched?.name || "",
           itemCode: line.itemCode || matched?.itemCode || "",
-          itemInput: matched?.name || line.itemName || ""
+          itemInput: matched?.name || line.itemName || "",
+          lowStockAlert: getLineLowStockAlert(line, matched, matched?.type === "Service" ? "Service" : "Product")
         });
         continue;
       }
@@ -861,7 +893,8 @@ export default function PurchaseBill() {
           itemCode: existing.itemCode || "",
           itemName: existing.name,
           itemInput: existing.name || typedInput,
-          unit: normalizeUnit(existing.unit || line.unit)
+          unit: normalizeUnit(existing.unit || line.unit),
+          lowStockAlert: getLineLowStockAlert(line, existing, existing?.type === "Service" ? "Service" : "Product")
         });
         continue;
       }
@@ -875,7 +908,8 @@ export default function PurchaseBill() {
         itemCode: created?.itemCode || "",
         itemName: created?.name || typedName,
         itemInput: created?.name || typedName,
-        unit: normalizeUnit(created?.unit || line.unit)
+        unit: normalizeUnit(created?.unit || line.unit),
+        lowStockAlert: getLineLowStockAlert(line, created, created?.type === "Service" ? "Service" : "Product")
       });
     }
 
@@ -937,6 +971,7 @@ export default function PurchaseBill() {
             unit: normalizeUnit(resolved.unit),
             rate: Number(resolved.rate || 0),
             saleRate: Number(resolved.saleRate || 0),
+            lowStockAlert: nonNegativeNumber(resolved.lowStockAlert ?? line.lowStockAlert, 0),
             tax: forceZeroTax ? 0 : Number(resolved.tax || 0)
           };
         })
@@ -1380,7 +1415,7 @@ export default function PurchaseBill() {
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-slate-900">3. Items</h2>
-            <p className="text-xs text-slate-500">Add item rows, quantity, unit, rate, tax, net amount and total amount.</p>
+            <p className="text-xs text-slate-500">Add item rows, quantity, unit, rate, sell rate, low stock threshold, tax, net amount and total amount.</p>
           </div>
           <button
             type="button"
@@ -1394,7 +1429,7 @@ export default function PurchaseBill() {
         </div>
 
         <div className="relative mt-4 overflow-x-auto overflow-y-visible rounded-2xl border border-slate-100">
-          <table className="min-w-[760px] w-full text-left text-sm">
+          <table className="min-w-[920px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-3 py-3 font-semibold">#</th>
@@ -1403,6 +1438,7 @@ export default function PurchaseBill() {
                 <th className="px-3 py-3 font-semibold">Unit</th>
                 <th className="px-3 py-3 font-semibold">Rate</th>
                 <th className="px-3 py-3 font-semibold">Sell Rate</th>
+                <th className="px-3 py-3 font-semibold">Low Stock Threshold</th>
                 <th className="px-3 py-3 font-semibold">Tax %</th>
                 <th className="px-3 py-3 font-semibold text-right">Net Amount</th>
                 <th className="px-3 py-3 font-semibold text-right">Total Amount</th>
@@ -1412,7 +1448,7 @@ export default function PurchaseBill() {
             <tbody>
               {loading ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={11}>
                     Loading items...
                   </td>
                 </tr>
@@ -1492,6 +1528,16 @@ export default function PurchaseBill() {
                       value={line.saleRate ?? ""}
                       onChange={(e) => updateLine(line.id, { saleRate: e.target.value })}
                       className="w-28 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                    />
+                  </td>
+                  <td className="px-3 py-3">
+                    <input
+                      type="number"
+                      min="0"
+                      value={line.lowStockAlert ?? 0}
+                      onChange={(e) => updateLine(line.id, { lowStockAlert: e.target.value })}
+                      className="w-32 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      placeholder="0"
                     />
                   </td>
                   <td className="px-3 py-3">
