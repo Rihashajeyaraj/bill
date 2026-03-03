@@ -15,11 +15,15 @@ import ItemCreate from "../pages/ItemCreate";
 
 import InvoiceCreate from "../pages/sales/InvoiceCreate";
 import InvoiceHistory from "../pages/sales/InvoiceHistory";
+import SalesProformasList from "../pages/sales/SalesProformasList";
+import SalesProformaEditor from "../pages/sales/SalesProformaEditor";
 import CreditNote from "../pages/sales/CreditNotePremium";
 import PaymentIn from "../pages/sales/PaymentInPremium";
 
 import PurchaseBill from "../pages/purchases/PurchaseBill";
 import PurchaseHistory from "../pages/purchases/PurchaseHistory";
+import PurchaseProformasList from "../pages/purchases/PurchaseProformasList";
+import PurchaseProformaEditor from "../pages/purchases/PurchaseProformaEditor";
 import DebitNote from "../pages/purchases/DebitNotePremium";
 import PaymentOutPremium from "../pages/purchases/PaymentOutPremium";
 import Expense from "../pages/purchases/Expense";
@@ -80,11 +84,23 @@ export const routes = [
 
                   { path: "/app/sales/invoice", element: <InvoiceCreate /> },
                   { path: "/app/sales/invoice/history", element: <InvoiceHistory /> },
+                  { path: "/app/sales/proformas", element: <SalesProformasList /> },
+                  { path: "/app/sales/proformas/new", element: <SalesProformaEditor /> },
+                  { path: "/app/sales/proformas/:id", element: <SalesProformaEditor /> },
+                  { path: "/sales/proformas", element: <Navigate to="/app/sales/proformas" replace /> },
+                  { path: "/sales/proformas/new", element: <Navigate to="/app/sales/proformas/new" replace /> },
+                  { path: "/sales/proformas/:id", element: <SalesProformaEditor /> },
                   { path: "/app/sales/credit-note", element: <CreditNote /> },
                   { path: "/app/sales/payment-in", element: <PaymentIn /> },
 
                   { path: "/app/purchase/bill", element: <PurchaseBill /> },
                   { path: "/app/purchase/history", element: <PurchaseHistory /> },
+                  { path: "/app/purchase/proformas", element: <PurchaseProformasList /> },
+                  { path: "/app/purchase/proformas/new", element: <PurchaseProformaEditor /> },
+                  { path: "/app/purchase/proformas/:id", element: <PurchaseProformaEditor /> },
+                  { path: "/purchase/proformas", element: <Navigate to="/app/purchase/proformas" replace /> },
+                  { path: "/purchase/proformas/new", element: <Navigate to="/app/purchase/proformas/new" replace /> },
+                  { path: "/purchase/proformas/:id", element: <PurchaseProformaEditor /> },
                   { path: "/app/purchase/debit-note", element: <DebitNote /> },
                   { path: "/app/purchases/payment-out", element: <PaymentOutPremium /> },
                   { path: "/app/purchase/payment-out", element: <Navigate to="/app/purchases/payment-out" replace /> },

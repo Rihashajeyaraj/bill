@@ -236,6 +236,24 @@ async function fetchPrimaryMembership(userId) {
   };
 }
 
+async function fetchOwnerOrganizations(userId) {
+  if (!isSupabaseConfigured || !supabase || !userId) return [];
+  const { data: ownerRows, error: ownerError } = await supabase
+    .from("organizations")
+    .select("id,company_name,country_code,is_setup_completed,settings,created_at,updated_at")
+    .eq("owner_user_id", userId)
+    .order("created_at", { ascending: true });
+  if (ownerError || !Array.isArray(ownerRows) || !ownerRows.length) return [];
+  return ownerRows
+    .filter((row) => !!row?.id)
+    .map((row) => ({
+      organization_id: row.id,
+      role: ROLE_LABELS.owner,
+      created_at: row.created_at,
+      organization: row
+    }));
+}
+
 async function fetchAllMemberships(userId) {
   if (!isSupabaseConfigured || !supabase || !userId) return [];
 
@@ -245,16 +263,23 @@ async function fetchAllMemberships(userId) {
     .eq("user_id", userId)
     .eq("status", "active")
     .order("created_at", { ascending: true });
-  if (memberError || !Array.isArray(memberRows) || !memberRows.length) return [];
+  if (memberError || !Array.isArray(memberRows)) {
+    return fetchOwnerOrganizations(userId);
+  }
+  if (!memberRows.length) {
+    return fetchOwnerOrganizations(userId);
+  }
 
   const organizationIds = [...new Set(memberRows.map((row) => row.organization_id).filter(Boolean))];
-  if (!organizationIds.length) return [];
+  if (!organizationIds.length) return fetchOwnerOrganizations(userId);
 
   const { data: organizationRows, error: organizationError } = await supabase
     .from("organizations")
     .select("id,company_name,country_code,is_setup_completed,settings,created_at,updated_at")
     .in("id", organizationIds);
-  if (organizationError || !Array.isArray(organizationRows)) return [];
+  if (organizationError || !Array.isArray(organizationRows)) {
+    return fetchOwnerOrganizations(userId);
+  }
 
   const byOrgId = new Map(organizationRows.map((row) => [row.id, row]));
   return memberRows
@@ -389,6 +414,42 @@ export function authGetOrganizationId() {
 
 export function authUsingSupabase() {
   return isSupabaseConfigured;
+}
+
+export async function authEnsureOrganizationAccess(preferredOrganizationId = "") {
+  const requestedOrgId = String(preferredOrganizationId || authGetOrganizationId() || "").trim();
+  if (!isSupabaseConfigured || !supabase) {
+    return requestedOrgId;
+  }
+
+  const {
+    data: { session }
+  } = await supabase.auth.getSession();
+  const sessionUser = session?.user || authGetUser();
+  if (!sessionUser?.id) return requestedOrgId;
+
+  const memberships = filterActiveMemberships(await fetchAllMemberships(sessionUser.id));
+  const selectedMembership =
+    memberships.find((entry) => String(entry?.organization_id || "") === requestedOrgId) ||
+    memberships[0] ||
+    null;
+
+  if (!selectedMembership?.organization_id) {
+    return requestedOrgId;
+  }
+
+  if (String(selectedMembership.organization_id) !== requestedOrgId) {
+    setAuthState({
+      token: session?.access_token || authGetToken(),
+      user: mapSessionUser(sessionUser),
+      role: selectedMembership.role,
+      organizationId: selectedMembership.organization_id,
+      companySetupCompleted: !!selectedMembership.organization?.is_setup_completed,
+      invoiceTemplateCompleted: resolveInvoiceTemplateCompleted(selectedMembership.organization)
+    });
+  }
+
+  return String(selectedMembership.organization_id || "");
 }
 
 export async function authListOrganizations() {

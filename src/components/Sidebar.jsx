@@ -89,7 +89,9 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
       { to: "/app/parties", icon: Users, label: "Parties" },
       { to: "/app/items", icon: Boxes, label: "Items" },
       { to: "/app/sales/invoice", icon: ReceiptIndianRupee, label: "Invoices" },
+      { to: "/app/sales/proformas", icon: FileText, label: "Sales Proformas" },
       { to: "/app/purchase/bill", icon: FileText, label: "Purchases" },
+      { to: "/app/purchase/proformas", icon: FileText, label: "Purchase Proformas" },
       {
         type: "group",
         key: "adjustments",
