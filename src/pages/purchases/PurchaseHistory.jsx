@@ -9,7 +9,6 @@ import { purchasesList, purchasesSyncFromRemote } from "../../services/purchases
 import {
   createItemBarcodesForPurchase,
   getBarcodeImageUrl,
-  getQrImageUrl,
   listItemBarcodesByPurchaseIds
 } from "../../services/itemBarcodes.service";
 import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
@@ -24,10 +23,6 @@ function formatDate(value) {
 
 function barcodeValueOf(entry) {
   return String(entry?.barcode_value || entry?.barcodeValue || "").trim();
-}
-
-function qrValueOf(entry) {
-  return String(entry?.qr_value || entry?.qrValue || barcodeValueOf(entry)).trim();
 }
 
 function escapeHtml(value) {
@@ -201,9 +196,7 @@ export default function PurchaseHistory() {
     const cardsHtml = rows
       .map((entry, index) => {
         const barcodeValue = barcodeValueOf(entry);
-        const qrValue = qrValueOf(entry);
         const barcodeImage = getBarcodeImageUrl(barcodeValue);
-        const qrImage = getQrImageUrl(qrValue);
         const itemId = String(entry?.item_id || entry?.itemId || "").trim();
         const lineMatch = (Array.isArray(bill?.lines) ? bill.lines : []).find(
           (line) => String(line?.itemId || line?.item_id || "").trim() === itemId
@@ -215,7 +208,6 @@ export default function PurchaseHistory() {
             <p class="meta">Bill: ${escapeHtml(bill?.billNumber || "-")}</p>
             <img class="barcode" src="${barcodeImage}" alt="Barcode ${escapeHtml(barcodeValue)}" />
             <p class="value">${escapeHtml(barcodeValue)}</p>
-            <img class="qr" src="${qrImage}" alt="QR ${escapeHtml(qrValue)}" />
           </article>
         `;
       })
@@ -235,7 +227,6 @@ export default function PurchaseHistory() {
             .label-card h3 { margin: 0 0 4px; font-size: 13px; }
             .label-card .meta { margin: 0 0 8px; color: #64748b; font-size: 11px; }
             .label-card .barcode { width: 100%; height: 72px; object-fit: contain; }
-            .label-card .qr { width: 96px; height: 96px; margin-top: 8px; }
             .label-card .value { margin: 6px 0 0; font-size: 11px; font-weight: 600; }
             @media print {
               body { margin: 0; }
@@ -439,7 +430,6 @@ export default function PurchaseHistory() {
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {barcodeModalRows.map((entry, index) => {
                 const barcodeValue = barcodeValueOf(entry);
-                const qrValue = qrValueOf(entry);
                 const itemId = String(entry?.item_id || entry?.itemId || "").trim();
                 const lineMatch = (Array.isArray(barcodeModalBill?.lines) ? barcodeModalBill.lines : []).find(
                   (line) => String(line?.itemId || line?.item_id || "").trim() === itemId
@@ -453,11 +443,6 @@ export default function PurchaseHistory() {
                       src={getBarcodeImageUrl(barcodeValue)}
                       alt={`Barcode ${barcodeValue}`}
                       className="mt-2 h-20 w-full rounded-md border border-slate-100 bg-white object-contain"
-                    />
-                    <img
-                      src={getQrImageUrl(qrValue)}
-                      alt={`QR ${qrValue}`}
-                      className="mt-2 h-24 w-24 rounded-md border border-slate-100 bg-white object-contain"
                     />
                   </article>
                 );
