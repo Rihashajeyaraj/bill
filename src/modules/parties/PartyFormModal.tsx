@@ -678,7 +678,9 @@ export default function PartyFormModal({
             </section>
 
             <section className="rounded-2xl border border-slate-200 bg-white p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">Notes And Files</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">
+                {form.type === "Customer" ? "Notes" : "Notes And Files"}
+              </p>
               <div className="mt-3 space-y-4">
                 <FormField label="Notes">
                   <textarea
@@ -690,47 +692,49 @@ export default function PartyFormModal({
                   />
                 </FormField>
 
-                <div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-slate-700">Attachments</p>
-                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-                      <input
-                        type="file"
-                        multiple
-                        className="hidden"
-                        onChange={(event) => addAttachments(event.target.files)}
-                      />
-                      <Plus className="h-3.5 w-3.5" />
-                      Add Files
-                    </label>
-                  </div>
-                  {form.attachments?.length ? (
-                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {form.attachments.map((file) => (
-                        <div
-                          key={file.name}
-                          className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"
-                        >
-                          <div>
-                            <p className="font-semibold text-slate-700">{file.name}</p>
-                            <p>
-                              {(file.size / 1024).toFixed(1)} KB | {file.type || "document"}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => removeAttachment(file.name)}
-                            className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-rose-50"
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-rose-500" />
-                          </button>
-                        </div>
-                      ))}
+                {form.type !== "Customer" ? (
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-slate-700">Attachments</p>
+                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                        <input
+                          type="file"
+                          multiple
+                          className="hidden"
+                          onChange={(event) => addAttachments(event.target.files)}
+                        />
+                        <Plus className="h-3.5 w-3.5" />
+                        Add Files
+                      </label>
                     </div>
-                  ) : (
-                    <p className="mt-2 text-xs text-slate-500">Upload KYC docs, agreements, or compliance files.</p>
-                  )}
-                </div>
+                    {form.attachments?.length ? (
+                      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {form.attachments.map((file) => (
+                          <div
+                            key={file.name}
+                            className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"
+                          >
+                            <div>
+                              <p className="font-semibold text-slate-700">{file.name}</p>
+                              <p>
+                                {(file.size / 1024).toFixed(1)} KB | {file.type || "document"}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeAttachment(file.name)}
+                              className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-rose-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs text-slate-500">Upload KYC docs, agreements, or compliance files.</p>
+                    )}
+                  </div>
+                ) : null}
               </div>
             </section>
           </>

@@ -135,18 +135,20 @@ export default function PartyStatement() {
               <p className="mt-1">{party.notes}</p>
             </div>
           ) : null}
-          {party.attachments?.length ? (
-            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-              <p className="font-semibold text-slate-700">Attachments</p>
-              <div className="mt-2 space-y-1">
-                {party.attachments.map((file) => (
-                  <p key={file.name}>{file.name}</p>
-                ))}
+          {party.type !== "Customer" ? (
+            party.attachments?.length ? (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                <p className="font-semibold text-slate-700">Attachments</p>
+                <div className="mt-2 space-y-1">
+                  {party.attachments.map((file) => (
+                    <p key={file.name}>{file.name}</p>
+                  ))}
+                </div>
               </div>
-            </div>
-          ) : (
-            <p className="mt-3 text-xs text-slate-500">No documents attached</p>
-          )}
+            ) : (
+              <p className="mt-3 text-xs text-slate-500">No documents attached</p>
+            )
+          ) : null}
         </div>
       </div>
 

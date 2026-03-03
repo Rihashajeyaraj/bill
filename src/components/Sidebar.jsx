@@ -11,6 +11,7 @@ import {
   ArrowUpFromLine,
   Wallet,
   FileText,
+  ShoppingCart,
   BarChart3,
   Building2,
   Settings,
@@ -27,7 +28,12 @@ import { useOrganization } from "../context/OrganizationContext";
 const base = "app-sidebar-item";
 const active = "app-sidebar-item is-active";
 
-function Item({ to, icon: Icon, label, collapsed, onNavigate }) {
+function routeMatches(pathname, to) {
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
+
+function Item({ to, icon: Icon, label, collapsed, onNavigate, activeMatchers = [] }) {
+  const location = useLocation();
   return (
     <NavLink
       to={to}
@@ -35,7 +41,7 @@ function Item({ to, icon: Icon, label, collapsed, onNavigate }) {
       className={({ isActive }) =>
         clsx(
           "flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-colors",
-          isActive ? active : base
+          isActive || activeMatchers.some((path) => routeMatches(location.pathname, path)) ? active : base
         )
       }
     >
@@ -43,10 +49,6 @@ function Item({ to, icon: Icon, label, collapsed, onNavigate }) {
       {!collapsed ? <span className="truncate">{label}</span> : null}
     </NavLink>
   );
-}
-
-function routeMatches(pathname, to) {
-  return pathname === to || pathname.startsWith(`${to}/`);
 }
 
 export default function Sidebar({ collapsed, onToggle, onNavigate }) {
@@ -60,22 +62,30 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
   const canOpenSettings = canAccessSettings(role);
   const canOpenReports = canViewReports(role);
   const showCompanySetup = canAccessSettings(role) && !setupComplete;
+  const salesActive = routeMatches(location.pathname, "/app/sales") || routeMatches(location.pathname, "/sales");
+  const purchaseActive = routeMatches(location.pathname, "/app/purchase") ||
+    routeMatches(location.pathname, "/purchase") ||
+    routeMatches(location.pathname, "/app/purchases");
   const adjustmentsActive = routeMatches(location.pathname, "/app/sales/credit-note") ||
     routeMatches(location.pathname, "/app/purchase/debit-note");
   const paymentsActive = routeMatches(location.pathname, "/app/sales/payment-in") ||
     routeMatches(location.pathname, "/app/purchases/payment-out") ||
     routeMatches(location.pathname, "/app/purchase/payment-out");
   const [openGroups, setOpenGroups] = useState(() => ({
+    sales: salesActive,
+    purchase: purchaseActive,
     adjustments: adjustmentsActive,
     payments: paymentsActive
   }));
 
   useEffect(() => {
     setOpenGroups((prev) => ({
+      sales: prev.sales || salesActive,
+      purchase: prev.purchase || purchaseActive,
       adjustments: prev.adjustments || adjustmentsActive,
       payments: prev.payments || paymentsActive
     }));
-  }, [adjustmentsActive, paymentsActive]);
+  }, [salesActive, purchaseActive, adjustmentsActive, paymentsActive]);
 
   const companyName = useMemo(() => {
     const value = String(company?.companyName || "").trim();
@@ -88,10 +98,46 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
       { to: "/app/notifications", icon: Bell, label: "Notifications" },
       { to: "/app/parties", icon: Users, label: "Parties" },
       { to: "/app/items", icon: Boxes, label: "Items" },
-      { to: "/app/sales/invoice", icon: ReceiptIndianRupee, label: "Invoices" },
-      { to: "/app/sales/proformas", icon: FileText, label: "Sales Proformas" },
-      { to: "/app/purchase/bill", icon: FileText, label: "Purchases" },
-      { to: "/app/purchase/proformas", icon: FileText, label: "Purchase Proformas" },
+      {
+        type: "group",
+        key: "sales",
+        icon: FileText,
+        label: "Sales",
+        children: [
+          {
+            to: "/app/sales/invoice",
+            icon: ReceiptIndianRupee,
+            label: "Invoice",
+            activeMatchers: ["/sales/invoices", "/app/sales/invoice"]
+          },
+          {
+            to: "/app/sales/proformas",
+            icon: FileText,
+            label: "Proforma Invoice",
+            activeMatchers: ["/sales/proformas", "/app/sales/proformas"]
+          }
+        ]
+      },
+      {
+        type: "group",
+        key: "purchase",
+        icon: ShoppingCart,
+        label: "Purchase",
+        children: [
+          {
+            to: "/app/purchase/bill",
+            icon: FileText,
+            label: "Purchase Bill",
+            activeMatchers: ["/purchase/bills", "/app/purchase/bill"]
+          },
+          {
+            to: "/app/purchase/proformas",
+            icon: FileText,
+            label: "Purchase Order",
+            activeMatchers: ["/purchase/proformas", "/app/purchase/proformas"]
+          }
+        ]
+      },
       {
         type: "group",
         key: "adjustments",
@@ -126,6 +172,13 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
     }
     return baseItems;
   }, [showCompanySetup, canOpenReports, canOpenSettings]);
+
+  const groupIsActive = {
+    sales: salesActive,
+    purchase: purchaseActive,
+    adjustments: adjustmentsActive,
+    payments: paymentsActive
+  };
 
   return (
     <aside
@@ -167,9 +220,7 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
                   onClick={() => setOpenGroups((prev) => ({ ...prev, [it.key]: !prev[it.key] }))}
                   className={clsx(
                     "w-full flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-colors",
-                    (it.key === "adjustments" && adjustmentsActive) || (it.key === "payments" && paymentsActive)
-                      ? active
-                      : base
+                    groupIsActive[it.key] ? active : base
                   )}
                 >
                   <it.icon className="h-4.5 w-4.5" />
@@ -185,8 +236,13 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
                     </>
                   ) : null}
                 </button>
-                {openGroups[it.key] && !collapsed ? (
-                  <div className="mt-1 space-y-1 pl-4">
+                {!collapsed ? (
+                  <div
+                    className={clsx(
+                      "mt-1 space-y-1 pl-4 overflow-hidden transition-all duration-200 ease-in-out",
+                      openGroups[it.key] ? "max-h-96 opacity-100" : "max-h-0 opacity-0 pointer-events-none"
+                    )}
+                  >
                     {it.children.map((child) => (
                       <Item key={child.to} {...child} collapsed={false} onNavigate={onNavigate} />
                     ))}
