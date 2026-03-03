@@ -1,12 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { X } from "lucide-react";
+import { Plus, Search, X } from "lucide-react";
 import Card from "../../components/Card";
 import GradientButton from "../../components/GradientButton";
 import PageHeader from "../../components/PageHeader";
 import { useToast } from "../../context/ToastContext";
-import { listParties, syncPartiesFromRemote } from "../../modules/parties/store";
+import { listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../modules/parties/store";
 import { listItems, syncItemsFromRemote } from "../../modules/items/store";
+import {
+  getCanonicalCountryName,
+  listAllCountries,
+  listStatesByCountry,
+  resolveCountryIsoCode
+} from "../../lib/geoData";
 import {
   convertPurchaseProforma,
   getPurchaseProformaStatusOptions,
@@ -27,6 +33,33 @@ function lineAmount(line: any) {
   const taxable = Math.max(0, qty * rate);
   const tax = (taxable * parseNumber(line?.taxRate)) / 100;
   return Math.max(0, taxable + tax);
+}
+
+function normalizePhoneForLookup(value: unknown) {
+  let digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length > 10) digits = digits.slice(-10);
+  digits = digits.replace(/^0+/, "");
+  return digits || "0";
+}
+
+function extractTenDigitPhone(value: unknown) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length < 10) return "";
+  return digits.slice(-10);
+}
+
+function queryLooksPhoneLike(value: unknown) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  return /^[\d\s()+-]+$/.test(text);
+}
+
+function supplierAddressSummary(supplier: any) {
+  return [supplier?.address, supplier?.city, supplier?.state, supplier?.country]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(", ");
 }
 
 function normalizeItemName(value: unknown) {
@@ -107,6 +140,18 @@ export default function PurchaseProformaEditor() {
   const [converting, setConverting] = useState(false);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
+  const [supplierSearchPhone, setSupplierSearchPhone] = useState("");
+  const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
+  const [supplierSearchError, setSupplierSearchError] = useState("");
+  const [supplierCreateLoading, setSupplierCreateLoading] = useState(false);
+  const [supplierCreateDraft, setSupplierCreateDraft] = useState({
+    name: "",
+    phone: "",
+    country: "",
+    state: ""
+  });
+  const [supplierCountryMenuOpen, setSupplierCountryMenuOpen] = useState(false);
+  const [supplierStateMenuOpen, setSupplierStateMenuOpen] = useState(false);
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
   const [form, setForm] = useState<any>({
     id: "",
@@ -132,6 +177,59 @@ export default function PurchaseProformaEditor() {
   );
   const locked = String(form?.status || "").toUpperCase() === "CONVERTED";
   const totals = useMemo(() => purchaseProformaComputeTotals(form.lines || []), [form.lines]);
+  const allCountryOptions = useMemo(() => listAllCountries(), []);
+  const supplierCreateStateOptions = useMemo(
+    () => listStatesByCountry(supplierCreateDraft.country),
+    [supplierCreateDraft.country]
+  );
+  const supplierCountryQuery = String(supplierCreateDraft.country || "")
+    .trim()
+    .toLowerCase();
+  const supplierStateQuery = String(supplierCreateDraft.state || "")
+    .trim()
+    .toLowerCase();
+  const supplierCountryMatches = useMemo(() => {
+    if (!supplierCountryQuery) return [];
+    return allCountryOptions
+      .filter((countryOption) => countryOption.name.toLowerCase().includes(supplierCountryQuery))
+      .slice(0, 8);
+  }, [allCountryOptions, supplierCountryQuery]);
+  const supplierStateMatches = useMemo(() => {
+    if (!supplierStateQuery) return [];
+    return supplierCreateStateOptions
+      .filter((stateOption) => stateOption.name.toLowerCase().includes(supplierStateQuery))
+      .slice(0, 8);
+  }, [supplierCreateStateOptions, supplierStateQuery]);
+  const suggestionMenuClassName =
+    "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
+  const supplierSearchTerm = useMemo(() => {
+    const lookupText = String(supplierLookupQuery || "").trim();
+    if (lookupText) return lookupText;
+    return String(supplierSearchPhone || "").trim();
+  }, [supplierLookupQuery, supplierSearchPhone]);
+  const supplierLookupResults = useMemo(() => {
+    const query = supplierSearchTerm.toLowerCase();
+    if (!query) return [];
+    const normalizedPhoneQuery = normalizePhoneForLookup(supplierSearchTerm);
+    return suppliers
+      .filter((supplier) => {
+        const text = [
+          supplier?.name,
+          supplier?.email,
+          supplier?.address,
+          supplier?.state,
+          supplier?.country
+        ]
+          .map((value) => String(value || "").toLowerCase())
+          .join(" ");
+        const supplierPhone = normalizePhoneForLookup(supplier?.phone);
+        return (
+          text.includes(query) ||
+          (normalizedPhoneQuery && supplierPhone && supplierPhone.includes(normalizedPhoneQuery))
+        );
+      })
+      .slice(0, 8);
+  }, [suppliers, supplierSearchTerm]);
 
   useEffect(() => {
     let mounted = true;
@@ -233,6 +331,203 @@ export default function PurchaseProformaEditor() {
 
   function addLine() {
     setForm((prev: any) => ({ ...prev, lines: [...(prev.lines || []), createEmptyLine()] }));
+  }
+
+  useEffect(() => {
+    if (!selectedSupplier?.phone) return;
+    setSupplierSearchPhone(String(selectedSupplier.phone).replace(/\D/g, "").slice(-10));
+  }, [selectedSupplier?.phone]);
+
+  function applySupplierSelection(nextSupplier: any) {
+    if (!nextSupplier) return;
+    setSupplierSearchError("");
+    updateForm({
+      supplierId: nextSupplier.id || "",
+      partyName: nextSupplier.name || nextSupplier.displayName || "",
+      partyAddress: nextSupplier.address || "",
+      phone: nextSupplier.phone || "",
+      country: nextSupplier.country || form.country || ""
+    });
+    setSupplierLookupQuery("");
+    setSupplierCountryMenuOpen(false);
+    setSupplierStateMenuOpen(false);
+  }
+
+  function handleSupplierPhoneChange(value: string) {
+    const digits = String(value || "").replace(/\D/g, "").slice(0, 10);
+    setSupplierSearchPhone(digits);
+    setSupplierCreateDraft((prev) => ({
+      ...prev,
+      phone: digits || prev.phone,
+      country: prev.country || form.country || ""
+    }));
+    setSupplierSearchError("");
+    if (
+      form.supplierId &&
+      normalizePhoneForLookup(digits) !== normalizePhoneForLookup(selectedSupplier?.phone || form.phone || "")
+    ) {
+      updateForm({
+        supplierId: "",
+        partyName: "",
+        partyAddress: "",
+        phone: "",
+        country: form.country || ""
+      });
+    }
+  }
+
+  function handleSupplierLookupChange(value: string) {
+    setSupplierLookupQuery(value);
+    setSupplierSearchPhone(extractTenDigitPhone(value));
+    setSupplierCreateDraft((prev) => ({
+      ...prev,
+      name: queryLooksPhoneLike(value) ? prev.name : String(value || "").trim(),
+      phone: extractTenDigitPhone(value) || prev.phone,
+      country: prev.country || form.country || ""
+    }));
+    setSupplierSearchError("");
+  }
+
+  function handleSupplierSearch() {
+    const query = String(supplierSearchTerm || "").trim();
+    if (query.length < 1) {
+      setSupplierSearchError("Enter mobile number or name/email/address to search.");
+      return;
+    }
+    if (queryLooksPhoneLike(query)) {
+      const phoneDigits = extractTenDigitPhone(query);
+      if (!phoneDigits) {
+        setSupplierSearchError("Enter a valid 10-digit supplier mobile number.");
+        return;
+      }
+      const normalizedQuery = normalizePhoneForLookup(phoneDigits);
+      const matchedSupplier = suppliers.find(
+        (supplier) => normalizePhoneForLookup(supplier?.phone) === normalizedQuery
+      );
+      if (!matchedSupplier) {
+        setSupplierCreateDraft((prev) => ({
+          ...prev,
+          name: prev.name || "",
+          phone: phoneDigits,
+          country: prev.country || form.country || ""
+        }));
+        setSupplierSearchError("No supplier found for this mobile number.");
+        return;
+      }
+      applySupplierSelection(matchedSupplier);
+      return;
+    }
+    if (supplierLookupResults.length === 1) {
+      applySupplierSelection(supplierLookupResults[0]);
+      return;
+    }
+    if (!supplierLookupResults.length) {
+      setSupplierCreateDraft((prev) => ({
+        ...prev,
+        name: query,
+        phone: prev.phone || extractTenDigitPhone(query),
+        country: prev.country || form.country || ""
+      }));
+      setSupplierSearchError("No supplier found for this search.");
+      return;
+    }
+    setSupplierSearchError("Multiple suppliers found. Choose one from the list below.");
+  }
+
+  async function handleCreateSupplier() {
+    const name = String(supplierCreateDraft.name || "").trim();
+    const phone = extractTenDigitPhone(supplierCreateDraft.phone);
+    const draftCountry = String(supplierCreateDraft.country || form.country || "").trim();
+    const draftState = String(supplierCreateDraft.state || "").trim();
+
+    if (!name) {
+      setSupplierSearchError("Supplier name is required.");
+      return;
+    }
+    if (phone.length !== 10) {
+      setSupplierSearchError("Supplier mobile must be exactly 10 digits.");
+      return;
+    }
+
+    setSupplierCreateLoading(true);
+    setSupplierSearchError("");
+    try {
+      const created = await upsertPartyRemote({
+        type: "Supplier",
+        name,
+        phone,
+        email: "",
+        country: draftCountry,
+        state: draftState,
+        address: "",
+        taxId: "",
+        notes: "",
+        openingBalance: 0,
+        openingBalanceType: "Payable",
+        creditLimitEnabled: false,
+        creditLimitType: "Amount",
+        creditLimit: 0,
+        creditLimitDays: 0
+      });
+      const nextSuppliers = listParties().filter((entry) => {
+        const partyType = String(entry?.type || "").toLowerCase();
+        return partyType === "supplier" || partyType === "both";
+      });
+      setSuppliers(nextSuppliers);
+      applySupplierSelection(created);
+      setSupplierLookupQuery("");
+      setSupplierCreateDraft({
+        name: "",
+        phone: "",
+        country: form.country || "",
+        state: ""
+      });
+      setSupplierCountryMenuOpen(false);
+      setSupplierStateMenuOpen(false);
+      toast.success("Supplier created", `${created.name} added successfully.`);
+    } catch (error: any) {
+      setSupplierSearchError(error?.message || "Failed to create supplier.");
+    } finally {
+      setSupplierCreateLoading(false);
+    }
+  }
+
+  function applySupplierCreateCountry(nextCountry: string) {
+    const canonicalCountry = getCanonicalCountryName(nextCountry);
+    const previousCountryCode = resolveCountryIsoCode(supplierCreateDraft.country);
+    const nextCountryCode = resolveCountryIsoCode(canonicalCountry);
+    setSupplierCreateDraft((prev) => ({
+      ...prev,
+      country: canonicalCountry,
+      state: previousCountryCode !== nextCountryCode ? "" : prev.state
+    }));
+    setSupplierCountryMenuOpen(false);
+  }
+
+  function applySupplierCreateState(nextState: string) {
+    setSupplierCreateDraft((prev) => ({ ...prev, state: nextState }));
+    setSupplierStateMenuOpen(false);
+  }
+
+  function resetSupplier() {
+    setSupplierSearchError("");
+    setSupplierSearchPhone("");
+    setSupplierLookupQuery("");
+    updateForm({
+      supplierId: "",
+      partyName: "",
+      partyAddress: "",
+      phone: "",
+      country: ""
+    });
+    setSupplierCreateDraft({
+      name: "",
+      phone: "",
+      country: form.country || "",
+      state: ""
+    });
+    setSupplierCountryMenuOpen(false);
+    setSupplierStateMenuOpen(false);
   }
 
   function selectLineItem(line: any, item: any) {
@@ -423,10 +718,11 @@ export default function PurchaseProformaEditor() {
               <label className="text-sm text-slate-600">
                 Proforma No
                 <input
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600"
                   value={form.proformaNo || ""}
-                  disabled={locked}
-                  onChange={(event) => updateForm({ proformaNo: event.target.value })}
+                  disabled
+                  readOnly
+                  title="Auto-generated"
                 />
               </label>
               <label className="text-sm text-slate-600">
@@ -448,22 +744,6 @@ export default function PurchaseProformaEditor() {
                   disabled={locked}
                   onChange={(event) => updateForm({ validTill: event.target.value })}
                 />
-              </label>
-              <label className="text-sm text-slate-600">
-                Supplier
-                <select
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                  value={form.supplierId || ""}
-                  disabled={locked}
-                  onChange={(event) => updateForm({ supplierId: event.target.value })}
-                >
-                  <option value="">Select supplier</option>
-                  {suppliers.map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.name || entry.displayName || entry.id}
-                    </option>
-                  ))}
-                </select>
               </label>
               <label className="text-sm text-slate-600">
                 Status
@@ -489,6 +769,222 @@ export default function PurchaseProformaEditor() {
                   onChange={(event) => updateForm({ paymentType: event.target.value })}
                 />
               </label>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_220px_auto]">
+                <label className="text-sm text-slate-600">
+                  Supplier Lookup
+                  <input
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    value={supplierLookupQuery}
+                    disabled={locked}
+                    onChange={(event) => handleSupplierLookupChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        handleSupplierSearch();
+                      }
+                    }}
+                    placeholder="Search by phone, name, email, address"
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  Mobile (10 digit)
+                  <input
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                    value={supplierSearchPhone}
+                    disabled={locked}
+                    onChange={(event) => handleSupplierPhoneChange(event.target.value)}
+                    placeholder="e.g. 9876543210"
+                  />
+                </label>
+                <div className="flex items-end gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSupplierSearch}
+                    disabled={loading || locked}
+                    className="inline-flex h-[42px] items-center gap-2 rounded-2xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Search className="h-4 w-4" />
+                    Search
+                  </button>
+                  {form.supplierId ? (
+                    <button
+                      type="button"
+                      onClick={resetSupplier}
+                      disabled={locked}
+                      className="inline-flex h-[42px] items-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              {supplierSearchError ? (
+                <p className="mt-2 text-xs font-medium text-rose-600">{supplierSearchError}</p>
+              ) : null}
+
+              {selectedSupplier ? (
+                <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-800">
+                  <p className="font-semibold">{selectedSupplier?.name || selectedSupplier?.displayName || "-"}</p>
+                  <p className="mt-1">{selectedSupplier?.phone || "-"}</p>
+                  <p className="mt-1">{supplierAddressSummary(selectedSupplier) || "-"}</p>
+                </div>
+              ) : null}
+
+              {supplierSearchTerm ? (
+                <div className="mt-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Matching Suppliers
+                  </p>
+                  {supplierLookupResults.length ? (
+                    <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                      {supplierLookupResults.map((supplier) => (
+                        <button
+                          key={supplier.id}
+                          type="button"
+                          onClick={() => applySupplierSelection(supplier)}
+                          disabled={locked}
+                          className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left transition hover:border-blue-200 hover:bg-blue-50/30 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-semibold text-slate-900">{supplier.name || "-"}</p>
+                            <p className="text-xs text-slate-600">{supplier.phone || "-"}</p>
+                          </div>
+                          <p className="mt-1 text-xs text-slate-600">{supplier.email || "-"}</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {supplier.country || "-"}{supplier.state ? ` | ${supplier.state}` : ""}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">{supplierAddressSummary(supplier) || "-"}</p>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs text-slate-600">
+                      <p>No supplier found for this search.</p>
+                      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <input
+                          value={supplierCreateDraft.name}
+                          onChange={(event) =>
+                            setSupplierCreateDraft((prev) => ({ ...prev, name: event.target.value }))
+                          }
+                          disabled={locked}
+                          placeholder="Supplier name"
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                        />
+                        <input
+                          value={supplierCreateDraft.phone}
+                          onChange={(event) =>
+                            setSupplierCreateDraft((prev) => ({
+                              ...prev,
+                              phone: String(event.target.value || "").replace(/\D/g, "").slice(0, 10)
+                            }))
+                          }
+                          disabled={locked}
+                          placeholder="10-digit mobile"
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                        />
+                        <div className="relative">
+                          <input
+                            value={supplierCreateDraft.country}
+                            onChange={(event) => {
+                              setSupplierCreateDraft((prev) => ({ ...prev, country: event.target.value }));
+                              setSupplierCountryMenuOpen(true);
+                            }}
+                            onFocus={() => setSupplierCountryMenuOpen(true)}
+                            onBlur={(event) => {
+                              applySupplierCreateCountry(event.target.value);
+                              setTimeout(() => setSupplierCountryMenuOpen(false), 80);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") setSupplierCountryMenuOpen(false);
+                            }}
+                            disabled={locked}
+                            placeholder="Country"
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                          />
+                          {supplierCountryMenuOpen && supplierCountryQuery ? (
+                            <div className={suggestionMenuClassName}>
+                              {supplierCountryMatches.length ? (
+                                supplierCountryMatches.map((countryOption) => (
+                                  <button
+                                    key={countryOption.isoCode}
+                                    type="button"
+                                    onMouseDown={(event) => {
+                                      event.preventDefault();
+                                      applySupplierCreateCountry(countryOption.name);
+                                    }}
+                                    className="w-full rounded-xl px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                                  >
+                                    {countryOption.name}
+                                  </button>
+                                ))
+                              ) : (
+                                <p className="px-3 py-2 text-xs text-slate-500">No matching countries</p>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="relative">
+                          <input
+                            value={supplierCreateDraft.state}
+                            onChange={(event) => {
+                              setSupplierCreateDraft((prev) => ({ ...prev, state: event.target.value }));
+                              if (supplierCreateStateOptions.length) setSupplierStateMenuOpen(true);
+                            }}
+                            onFocus={() => {
+                              if (supplierCreateStateOptions.length) setSupplierStateMenuOpen(true);
+                            }}
+                            onBlur={() => {
+                              setTimeout(() => setSupplierStateMenuOpen(false), 80);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") setSupplierStateMenuOpen(false);
+                            }}
+                            disabled={locked}
+                            placeholder={supplierCreateStateOptions.length ? "State / Region" : "State, province, or region"}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                          />
+                          {supplierStateMenuOpen && supplierStateQuery && supplierCreateStateOptions.length ? (
+                            <div className={suggestionMenuClassName}>
+                              {supplierStateMatches.length ? (
+                                supplierStateMatches.map((stateOption) => (
+                                  <button
+                                    key={`${stateOption.isoCode}_${stateOption.name}`}
+                                    type="button"
+                                    onMouseDown={(event) => {
+                                      event.preventDefault();
+                                      applySupplierCreateState(stateOption.name);
+                                    }}
+                                    className="w-full rounded-xl px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                                  >
+                                    {stateOption.name}
+                                  </button>
+                                ))
+                              ) : (
+                                <p className="px-3 py-2 text-xs text-slate-500">No matching states/regions</p>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleCreateSupplier();
+                        }}
+                        disabled={supplierCreateLoading || locked}
+                        className="mt-2 inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        {supplierCreateLoading ? "Creating..." : "Create Supplier"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </div>
 
             <div className="space-y-3">
