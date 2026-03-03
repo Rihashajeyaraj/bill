@@ -17,9 +17,20 @@ const ITEM_CODE_CONFIG_BY_TYPE = {
   Product: { prefix: "PRD-", pattern: /^PRD-(\d+)$/i },
   Service: { prefix: "SER-", pattern: /^SER-(\d+)$/i }
 };
+const ITEM_STORAGE_FALLBACK_LIMITS = [1000, 700, 500, 300, 200, 120, 80, 40, 20, 10, 5, 1, 0];
 
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function isQuotaExceededError(error) {
+  const name = String(error?.name || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    name.includes("quotaexceeded") ||
+    message.includes("quotaexceeded") ||
+    (message.includes("storage") && message.includes("quota"))
+  );
 }
 
 function looksLikeUuid(value) {
@@ -357,6 +368,125 @@ function listRawItems() {
   return ensureArray(lsGetOrganizationScoped(LS_KEYS.items, []));
 }
 
+function compactItemForStorage(raw) {
+  const normalized = normalizeItem(raw);
+  const metadata = normalized?.metadata && typeof normalized.metadata === "object" ? normalized.metadata : {};
+  const categoryId = normalizeCategoryId(normalized?.categoryId || metadata?.categoryId || metadata?.category_id);
+  const category = normalizeCategoryName(normalized?.category || metadata?.category || "");
+  const itemCode = normalizeItemCodeValue(normalized?.itemCode || metadata?.itemCode || "");
+  const sku = String(normalized?.sku || metadata?.sku || itemCode || "").trim();
+  const barcode = String(normalized?.barcode || metadata?.barcode || "").trim();
+  const quantity = Math.max(0, parseNumber(normalized?.quantity ?? metadata?.quantity ?? normalized?.openingStock));
+  const openingStock = Math.max(0, parseNumber(normalized?.openingStock ?? metadata?.openingStock ?? quantity));
+  const currentStock = Math.max(0, parseNumber(normalized?.currentStock ?? metadata?.currentStock ?? openingStock));
+  const lowStockAlert = Math.max(0, parseNumber(normalized?.lowStockAlert ?? metadata?.lowStockQty ?? metadata?.lowStockAlert));
+  const taxRate = Math.max(0, parseNumber(normalized?.taxRate));
+  const salesRate = Math.max(0, parseNumber(normalized?.salesRate ?? normalized?.price));
+  const purchaseRate = Math.max(0, parseNumber(normalized?.purchaseRate ?? metadata?.purchasePrice));
+
+  return {
+    id: normalized.id,
+    itemCode,
+    type: normalized.type,
+    name: normalized.name || "",
+    description: normalized.description || "",
+    hsn: normalized.hsn || "",
+    sac: normalized.sac || "",
+    unit: normalized.unit || "pcs",
+    price: salesRate,
+    salesRate,
+    purchaseRate,
+    taxRate,
+    taxLabel: normalized.taxLabel || "",
+    status: normalized.status || "Active",
+    trackInventory: normalized.trackInventory === true,
+    quantity,
+    stockQty: currentStock,
+    openingStock,
+    currentStock,
+    openingStockValue: Math.max(0, parseNumber(metadata?.openingStockValue)),
+    lowStockAlert,
+    categoryId,
+    category,
+    sku,
+    barcode,
+    priceLevels: [],
+    taxMappings: [],
+    metadata: {
+      description: normalized.description || "",
+      categoryId,
+      category,
+      itemCode,
+      sku,
+      barcode,
+      purchasePrice: purchaseRate,
+      trackStock: normalized.trackInventory === true,
+      quantity,
+      openingStock,
+      openingQty: Math.max(0, parseNumber(metadata?.openingQty ?? openingStock)),
+      currentStock,
+      openingStockValue: Math.max(0, parseNumber(metadata?.openingStockValue)),
+      lowStockQty: lowStockAlert,
+      gstPercent: Math.max(0, parseNumber(metadata?.gstPercent ?? taxRate)),
+      taxPercent: Math.max(0, parseNumber(metadata?.taxPercent ?? taxRate)),
+      hsnOrSac: String(metadata?.hsnOrSac || normalized.hsn || normalized.sac || "").trim(),
+      priceLevels: [],
+      taxMappings: [],
+      updated_at: metadata?.updated_at || normalized?.updated_at || ""
+    },
+    updated_at: normalized?.updated_at || "",
+    created_at: normalized?.created_at || ""
+  };
+}
+
+function buildItemStorageLimits(length) {
+  const base = Math.max(0, Math.trunc(parseNumber(length)));
+  const limits = [base, ...ITEM_STORAGE_FALLBACK_LIMITS]
+    .map((limit) => Math.min(base, Math.max(0, Math.trunc(parseNumber(limit)))))
+    .filter((limit, index, values) => values.indexOf(limit) === index);
+  if (!limits.includes(0)) limits.push(0);
+  return limits;
+}
+
+function persistItemCache(list, { required = false, context = "items-cache" } = {}) {
+  const normalized = ensureArray(list).map((entry) => normalizeItem(entry));
+  const activeOnly = normalized.filter(
+    (entry) => String(entry?.status || "").trim().toLowerCase() !== "inactive"
+  );
+  const compactAll = normalized.map((entry) => compactItemForStorage(entry));
+  const compactActive = activeOnly.map((entry) => compactItemForStorage(entry));
+  const candidates = [normalized, activeOnly, compactAll, compactActive].filter((candidate) => candidate.length > 0);
+  if (!candidates.length) {
+    lsSetOrganizationScoped(LS_KEYS.items, []);
+    return true;
+  }
+
+  for (const candidate of candidates) {
+    const limits = buildItemStorageLimits(candidate.length);
+    for (const limit of limits) {
+      try {
+        lsSetOrganizationScoped(LS_KEYS.items, candidate.slice(0, limit));
+        return true;
+      } catch (error) {
+        if (!isQuotaExceededError(error)) {
+          if (required) {
+            throw error;
+          }
+          console.warn(`Failed to persist ${context}`, error);
+          return false;
+        }
+      }
+    }
+  }
+
+  const message = "Browser storage quota exceeded while saving item cache.";
+  if (required) {
+    throw new Error(message);
+  }
+  console.warn(`${message} Context: ${context}`);
+  return false;
+}
+
 export function getNextItemCode(type = "Product") {
   return generateUniqueItemCode(listRawItems(), null, type);
 }
@@ -443,16 +573,16 @@ export function upsertItem(draft, country) {
   } else {
     list.unshift({ ...payload, created_at: now });
   }
-  lsSetOrganizationScoped(LS_KEYS.items, list);
+  persistItemCache(list, { required: true, context: "upsertItem" });
   return id;
 }
 
 export function removeItem(id) {
   assertItemDeletePermission();
-  lsSetOrganizationScoped(
-    LS_KEYS.items,
-    listRawItems().filter((item) => item.id !== id)
-  );
+  persistItemCache(listRawItems().filter((item) => item.id !== id), {
+    required: true,
+    context: "removeItem"
+  });
 }
 
 async function fetchCategoryMapByIds(organizationId, categoryIds = []) {
@@ -548,7 +678,7 @@ export async function syncItemsFromRemote() {
   const categoryIds = rows.map((row) => normalizeCategoryId(row?.category_id)).filter(Boolean);
   const categoryById = await fetchCategoryMapByIds(organizationId, categoryIds).catch(() => new Map());
   const mapped = ensureArray(rows).map((row) => mapRemoteItem(row, categoryById));
-  lsSetOrganizationScoped(LS_KEYS.items, mapped);
+  persistItemCache(mapped, { required: false, context: "syncItemsFromRemote" });
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -672,7 +802,7 @@ export async function upsertItemRemote(draft, country) {
     saved.category = "";
   }
   const nextList = listRawItems().filter((item) => item.id !== incoming.id && item.id !== saved.id);
-  lsSetOrganizationScoped(LS_KEYS.items, [saved, ...nextList]);
+  persistItemCache([saved, ...nextList], { required: false, context: "upsertItemRemote" });
   return saved.id;
 }
 
