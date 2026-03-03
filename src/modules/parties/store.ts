@@ -499,7 +499,10 @@ export async function syncPartiesFromRemote(): Promise<PartyRecord[]> {
     return normalizeParty({
       ...remote,
       contactType: local.contactType || remote.contactType,
-      customerType: local.customerType || remote.customerType
+      customerType: local.customerType || remote.customerType,
+      attachments: ensureArray(local.attachments).length
+        ? ensureArray(local.attachments)
+        : ensureArray(remote.attachments)
     });
   });
   lsSetOrganizationScoped(LS_KEYS.parties, mapped);
@@ -598,7 +601,15 @@ export async function upsertPartyRemote(draft: PartyDraft, actor?: string): Prom
     remoteRow = attempt.data;
   }
 
-  const saved = mapRemoteParty(remoteRow);
+  const localExisting = listParties().find((party) => party.id === (incoming.id || remoteRow?.id));
+  const saved = normalizeParty({
+    ...mapRemoteParty(remoteRow),
+    contactType: incoming.contactType,
+    customerType: incoming.customerType,
+    attachments: ensureArray(incoming.attachments).length
+      ? ensureArray(incoming.attachments)
+      : ensureArray(localExisting?.attachments)
+  });
   const nextList = basePartyList().filter((party: any) => party.id !== saved.id && party.id !== incoming.id);
   lsSetOrganizationScoped(LS_KEYS.parties, [saved, ...nextList]);
   await triggerCreditLimitNotifications([saved]);

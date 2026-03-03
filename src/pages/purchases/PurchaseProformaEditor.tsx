@@ -454,6 +454,8 @@ export default function PurchaseProformaEditor() {
     try {
       const created = await upsertPartyRemote({
         type: "Supplier",
+        contactType: "Individual",
+        customerType: "Individual",
         name,
         phone,
         email: "",

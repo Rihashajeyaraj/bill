@@ -36,8 +36,8 @@ type CreateFlowStep = "quick" | "details";
 function createDraft(type: PartyType): PartyDraft {
   return {
     type,
-    contactType: type === "Customer" ? "Individual" : "Business",
-    customerType: type === "Customer" ? "Individual" : "Business",
+    contactType: "Individual",
+    customerType: "Individual",
     name: "",
     phone: "",
     email: "",
@@ -179,6 +179,7 @@ export default function PartyFormModal({
   const submitLabel = mode === "edit" ? `Update ${entityLabel}` : `Create ${entityLabel}`;
   const showQuickSections = mode === "edit" || createStep === "quick";
   const showAdvancedSections = mode === "edit" || createStep === "details";
+  const showSupplierAttachments = mode === "edit" && form.type !== "Customer";
   const inputClassName =
     "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100";
   const mutedInputClassName = `${inputClassName} disabled:bg-slate-50 disabled:text-slate-500`;
@@ -679,7 +680,7 @@ export default function PartyFormModal({
 
             <section className="rounded-2xl border border-slate-200 bg-white p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">
-                {form.type === "Customer" ? "Notes" : "Notes And Files"}
+                {showSupplierAttachments ? "Notes And Files" : "Notes"}
               </p>
               <div className="mt-3 space-y-4">
                 <FormField label="Notes">
@@ -692,7 +693,7 @@ export default function PartyFormModal({
                   />
                 </FormField>
 
-                {form.type !== "Customer" ? (
+                {showSupplierAttachments ? (
                   <div>
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-semibold text-slate-700">Attachments</p>

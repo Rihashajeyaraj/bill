@@ -617,6 +617,8 @@ export default function PurchaseBill() {
     try {
       const created = await upsertPartyRemote({
         type: "Supplier",
+        contactType: "Individual",
+        customerType: "Individual",
         name,
         phone,
         email: "",
