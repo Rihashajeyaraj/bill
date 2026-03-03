@@ -16,6 +16,7 @@ import {
   computeItemUsage,
   getItemPurchaseHistoryRemote,
   getItemTradeSummaryRemote,
+  listItemCategoryOptionsRemote,
   listItems,
   removeItemRemote,
   syncItemsFromRemote,
@@ -42,6 +43,7 @@ export default function Items() {
   const [tab, setTab] = useState("Product");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Active");
+  const [summaryFilter, setSummaryFilter] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState("create");
   const [activeItem, setActiveItem] = useState(null);
@@ -71,6 +73,7 @@ export default function Items() {
     purchaseQty: 0
   });
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [categoryOptions, setCategoryOptions] = useState([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -96,6 +99,17 @@ export default function Items() {
     });
   }, [items, tab, statusFilter, search]);
 
+  const visibleItems = useMemo(() => {
+    if (summaryFilter === "all") return filtered;
+    if (summaryFilter === "type") {
+      return filtered.filter((item) => item.type === tab);
+    }
+    if (summaryFilter === "active") {
+      return filtered.filter((item) => item.status === "Active");
+    }
+    return filtered.filter((item) => computeItemStock(item).lowStock);
+  }, [filtered, summaryFilter, tab]);
+
   const viewBatchSummary = useMemo(() => {
     return viewBatchRows.reduce(
       (acc, batch) => {
@@ -118,6 +132,25 @@ export default function Items() {
       lowStock
     };
   }, [items, tab]);
+
+  const resolvedCategoryOptions = useMemo(() => {
+    const map = new Map();
+    (Array.isArray(categoryOptions) ? categoryOptions : []).forEach((entry) => {
+      const id = String(entry?.id || "").trim();
+      const name = String(entry?.name || "").trim();
+      if (!id || !name) return;
+      map.set(id, name);
+    });
+    items.forEach((item) => {
+      const id = String(item?.categoryId || "").trim();
+      const name = String(item?.category || "").trim();
+      if (!id || !name || map.has(id)) return;
+      map.set(id, name);
+    });
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [categoryOptions, items]);
 
   const returnActionsByRef = useMemo(() => {
     const map = new Map();
@@ -243,8 +276,14 @@ export default function Items() {
     async function loadItems() {
       setLoading(true);
       try {
-        await syncItemsFromRemote();
-        if (mounted) setRefreshKey((prev) => prev + 1);
+        const [, fetchedCategories] = await Promise.all([
+          syncItemsFromRemote(),
+          listItemCategoryOptionsRemote().catch(() => [])
+        ]);
+        if (mounted) {
+          setCategoryOptions(Array.isArray(fetchedCategories) ? fetchedCategories : []);
+          setRefreshKey((prev) => prev + 1);
+        }
       } catch (error) {
         toast.error("Failed to load items", error?.message || "Could not fetch items from backend.");
       } finally {
@@ -285,6 +324,14 @@ export default function Items() {
       setActionMenu(null);
     }
   }, [pageView]);
+
+  useEffect(() => {
+    setSummaryFilter("all");
+  }, [tab]);
+
+  function toggleSummaryFilter(nextFilter) {
+    setSummaryFilter((current) => (current === nextFilter ? "all" : nextFilter));
+  }
 
   function openCreate() {
     if (!canCreateItem) {
@@ -627,18 +674,36 @@ export default function Items() {
       {pageView === "items" ? (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
+            <button
+              type="button"
+              onClick={() => toggleSummaryFilter("type")}
+              className={`rounded-2xl border bg-white p-4 text-left shadow-soft transition cursor-pointer hover:-translate-y-0.5 hover:shadow ${
+                summaryFilter === "type" ? "border-slate-900 bg-slate-50" : "border-slate-200"
+              }`}
+            >
               <p className="text-xs font-semibold text-slate-500">Total {tab}s</p>
               <p className="mt-2 text-2xl font-bold text-slate-900">{summary.total}</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleSummaryFilter("active")}
+              className={`rounded-2xl border bg-white p-4 text-left shadow-soft transition cursor-pointer hover:-translate-y-0.5 hover:shadow ${
+                summaryFilter === "active" ? "border-emerald-300 bg-emerald-50" : "border-slate-200"
+              }`}
+            >
               <p className="text-xs font-semibold text-slate-500">Active Items</p>
               <p className="mt-2 text-2xl font-bold text-emerald-600">{summary.active}</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleSummaryFilter("lowStock")}
+              className={`rounded-2xl border bg-white p-4 text-left shadow-soft transition cursor-pointer hover:-translate-y-0.5 hover:shadow ${
+                summaryFilter === "lowStock" ? "border-rose-300 bg-rose-50" : "border-slate-200"
+              }`}
+            >
               <p className="text-xs font-semibold text-slate-500">Low Stock Alerts</p>
               <p className="mt-2 text-2xl font-bold text-rose-600">{summary.lowStock}</p>
-            </div>
+            </button>
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
@@ -699,10 +764,11 @@ export default function Items() {
                     Loading items...
                   </td>
                 </tr>
-              ) : filtered.length ? (
-                filtered.map((item) => {
+              ) : visibleItems.length ? (
+                visibleItems.map((item) => {
                   const usage = computeItemUsage(item);
                   const stock = computeItemStock(item);
+                  const categoryLabel = item?.categoryId ? item.category || "Uncategorized" : "Uncategorized";
                   const canDeleteByUsage = !usage.used;
                   const canDelete = canDeleteItem && canDeleteByUsage;
                   const deleteDisabledReason = !canDeleteItem
@@ -726,7 +792,7 @@ export default function Items() {
                           >
                             {item.name}
                           </button>
-                          <p className="text-xs text-slate-500">{item.category || "Uncategorized"}</p>
+                          <p className="text-xs text-slate-500">{categoryLabel}</p>
                           {usage.used ? (
                             <span className="inline-flex w-fit items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
                               <BarChart3 className="h-3 w-3" />
@@ -804,7 +870,7 @@ export default function Items() {
               ) : (
                 <tr>
                   <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
-                    No items found
+                    {summaryFilter === "all" ? "No items found" : "No items match the selected card filter"}
                   </td>
                 </tr>
               )}
@@ -921,6 +987,7 @@ export default function Items() {
         open={modalOpen}
         mode={modalMode}
         country={country}
+        categoryOptions={resolvedCategoryOptions}
         initialItem={activeItem}
         onClose={closeModal}
         onSave={(item) => {

@@ -53,6 +53,7 @@ function defaultItem(type) {
     openingStock: 0,
     openingStockValue: 0,
     lowStockAlert: 0,
+    categoryId: "",
     category: "",
     sku: "",
     barcode: "",
@@ -81,6 +82,7 @@ export default function ItemFormModal({
   open,
   mode,
   country,
+  categoryOptions = [],
   initialItem,
   onClose,
   onSave
@@ -89,6 +91,16 @@ export default function ItemFormModal({
     initialItem ? { ...defaultItem(initialItem.type), ...initialItem } : defaultItem("Product")
   );
   const [error, setError] = useState("");
+  const normalizedCategoryOptions = useMemo(
+    () =>
+      (Array.isArray(categoryOptions) ? categoryOptions : [])
+        .map((entry) => ({
+          id: String(entry?.id || "").trim(),
+          name: String(entry?.name || "").trim()
+        }))
+        .filter((entry) => entry.id && entry.name),
+    [categoryOptions]
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -102,8 +114,23 @@ export default function ItemFormModal({
     if (!String(next.unit || "").trim()) {
       next.unit = "pcs";
     }
+    const nextCategoryId = String(next.categoryId || "").trim();
+    if (nextCategoryId) {
+      const matched = normalizedCategoryOptions.find((entry) => entry.id === nextCategoryId);
+      if (matched?.name) {
+        next.category = matched.name;
+      }
+    } else {
+      const byName = normalizedCategoryOptions.find(
+        (entry) => entry.name.toLowerCase() === String(next.category || "").trim().toLowerCase()
+      );
+      if (byName?.id) {
+        next.categoryId = byName.id;
+        next.category = byName.name;
+      }
+    }
     setForm(next);
-  }, [open, initialItem, mode]);
+  }, [open, initialItem, mode, normalizedCategoryOptions]);
 
   const taxCfg = useMemo(() => taxContext(country, form.type), [country, form.type]);
   const showStock = form.type === "Product";
@@ -189,6 +216,8 @@ export default function ItemFormModal({
       openingStock: normalizedOpeningStock,
       openingStockValue: normalizedOpeningStockValue,
       lowStockAlert: wholeLike(form.lowStockAlert),
+      categoryId: String(form.categoryId || "").trim(),
+      category: String(form.category || "").trim(),
       priceLevels: form.priceLevels.map((level) => ({
         ...level,
         label: level.label.trim(),
@@ -277,12 +306,35 @@ export default function ItemFormModal({
             ) : null}
 
             <FormField label="Category">
-              <input
-                value={form.category}
-                onChange={(event) => updateField("category", event.target.value)}
-                className={inputClassName}
-                placeholder="Tiles, Services, Hardware"
-              />
+              {normalizedCategoryOptions.length ? (
+                <select
+                  value={form.categoryId || ""}
+                  onChange={(event) => {
+                    const nextId = String(event.target.value || "").trim();
+                    const matched = normalizedCategoryOptions.find((entry) => entry.id === nextId);
+                    setForm((prev) => ({
+                      ...prev,
+                      categoryId: nextId,
+                      category: matched?.name || ""
+                    }));
+                  }}
+                  className={inputClassName}
+                >
+                  <option value="">Select category</option>
+                  {normalizedCategoryOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={form.category}
+                  onChange={(event) => updateField("category", event.target.value)}
+                  className={inputClassName}
+                  placeholder="Tiles, Services, Hardware"
+                />
+              )}
             </FormField>
 
             <FormField label="Product ID (Auto)">

@@ -20,6 +20,8 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { validateContactTax } from "../services/customerTax";
 
+type SummaryFilter = "all" | "balance" | "risk";
+
 export default function Parties() {
   const nav = useNavigate();
   const toast = useToast();
@@ -37,6 +39,7 @@ export default function Parties() {
   } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>("all");
 
   const parties = useMemo(() => listParties(), [refreshKey]);
   const filtered = useMemo(() => {
@@ -58,6 +61,16 @@ export default function Parties() {
     [filtered]
   );
 
+  const visibleRows = useMemo(() => {
+    if (summaryFilter === "all") return rows;
+    if (summaryFilter === "balance") {
+      return rows.filter(({ financials }) => financials.outstanding > 0);
+    }
+    return rows.filter(
+      ({ financials }) => financials.amountExceeded || financials.maxOverdueDays > 0
+    );
+  }, [rows, summaryFilter]);
+
   const summary = useMemo(() => {
     const scoped = parties.filter((party) => party.type === tab);
     let positive = 0;
@@ -67,7 +80,7 @@ export default function Parties() {
       const financials = computePartyFinancials(party);
       if (financials.outstanding >= 0) positive += financials.outstanding;
       else negative += Math.abs(financials.outstanding);
-      if (financials.creditExceeded) creditRisk += 1;
+      if (financials.amountExceeded || financials.maxOverdueDays > 0) creditRisk += 1;
     });
     return {
       count: scoped.length,
@@ -110,6 +123,10 @@ export default function Parties() {
   useEffect(() => {
     setActionMenu(null);
   }, [tab, search, loading]);
+
+  useEffect(() => {
+    setSummaryFilter("all");
+  }, [tab]);
 
   useEffect(() => {
     function closeActionMenu() {
@@ -168,6 +185,10 @@ export default function Parties() {
     }
   }
 
+  function toggleSummaryFilter(nextFilter: SummaryFilter) {
+    setSummaryFilter((current) => (current === nextFilter ? "all" : nextFilter));
+  }
+
   return (
     <div className="mx-auto max-w-[1360px] space-y-4 pb-24">
       <PageHeader
@@ -196,11 +217,23 @@ export default function Parties() {
       />
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
+        <button
+          type="button"
+          onClick={() => setSummaryFilter("all")}
+          className={`rounded-2xl border bg-white p-4 text-left shadow-soft transition cursor-pointer hover:-translate-y-0.5 hover:shadow ${
+            summaryFilter === "all" ? "border-slate-900 bg-slate-50" : "border-slate-200"
+          }`}
+        >
           <p className="text-xs font-semibold text-slate-500">Total {tab}s</p>
           <p className="mt-2 text-2xl font-bold text-slate-900">{summary.count}</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
+        </button>
+        <button
+          type="button"
+          onClick={() => toggleSummaryFilter("balance")}
+          className={`rounded-2xl border bg-white p-4 text-left shadow-soft transition cursor-pointer hover:-translate-y-0.5 hover:shadow ${
+            summaryFilter === "balance" ? "border-slate-900 bg-slate-50" : "border-slate-200"
+          }`}
+        >
           <p className="text-xs font-semibold text-slate-500">
             {tab === "Customer" ? "Total Receivable" : "Total Payable"}
           </p>
@@ -212,12 +245,18 @@ export default function Parties() {
               Reverse balance: {formatMoney(summary.negative, currency)}
             </p>
           ) : null}
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
+        </button>
+        <button
+          type="button"
+          onClick={() => toggleSummaryFilter("risk")}
+          className={`rounded-2xl border bg-white p-4 text-left shadow-soft transition cursor-pointer hover:-translate-y-0.5 hover:shadow ${
+            summaryFilter === "risk" ? "border-rose-300 bg-rose-50" : "border-slate-200"
+          }`}
+        >
           <p className="text-xs font-semibold text-slate-500">Credit / Overdue Risk</p>
           <p className="mt-2 text-2xl font-bold text-rose-600">{summary.creditRisk}</p>
           <p className="mt-1 text-xs text-slate-500">Parties exceeding configured rules</p>
-        </div>
+        </button>
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
@@ -255,8 +294,8 @@ export default function Parties() {
                     Loading parties...
                   </td>
                 </tr>
-              ) : rows.length ? (
-                rows.map(({ party, financials }) => {
+              ) : visibleRows.length ? (
+                visibleRows.map(({ party, financials }) => {
                   const meta = outstandingMeta(party, financials.outstanding);
                   return (
                     <tr key={party.id} className="border-t border-slate-100 hover:bg-slate-50/70">
@@ -330,7 +369,7 @@ export default function Parties() {
               ) : (
                 <tr>
                   <td className="px-4 py-10 text-center text-slate-500" colSpan={5}>
-                    No parties found
+                    {summaryFilter === "all" ? "No parties found" : "No parties match the selected card filter"}
                   </td>
                 </tr>
               )}

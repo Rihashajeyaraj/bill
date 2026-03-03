@@ -209,6 +209,23 @@ create trigger trg_parties_updated_at
 before update on public.parties
 for each row execute procedure public.set_updated_at();
 
+create table if not exists public.categories (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  name text not null,
+  is_active boolean not null default true,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists idx_categories_org_id on public.categories(organization_id);
+create index if not exists idx_categories_name on public.categories(name);
+create unique index if not exists idx_categories_org_name_unique
+on public.categories(organization_id, lower(trim(name)));
+create trigger trg_categories_updated_at
+before update on public.categories
+for each row execute procedure public.set_updated_at();
+
 create table if not exists public.items (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
@@ -225,6 +242,7 @@ create table if not exists public.items (
   opening_stock numeric(14,3) not null default 0,
   current_stock numeric(14,3) not null default 0,
   reorder_level numeric(14,3),
+  category_id uuid references public.categories(id) on delete set null,
   is_active boolean not null default true,
   created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
@@ -233,6 +251,7 @@ create table if not exists public.items (
 create index if not exists idx_items_org_id on public.items(organization_id);
 create index if not exists idx_items_name on public.items(item_name);
 create index if not exists idx_items_item_code on public.items(item_code);
+create index if not exists idx_items_category_id on public.items(category_id);
 create unique index if not exists idx_items_org_item_code_unique
 on public.items(organization_id, item_code)
 where item_code is not null;
@@ -752,6 +771,7 @@ alter table public.organization_tax_profiles enable row level security;
 alter table public.organization_document_sequences enable row level security;
 alter table public.company_settings enable row level security;
 alter table public.parties enable row level security;
+alter table public.categories enable row level security;
 alter table public.items enable row level security;
 alter table public.invoices enable row level security;
 alter table public.invoice_items enable row level security;
@@ -886,6 +906,12 @@ with check (public.current_user_is_org_member(organization_id));
 -- Generic org member access
 create policy "parties_member_access"
 on public.parties for all
+to authenticated
+using (public.current_user_is_org_member(organization_id))
+with check (public.current_user_is_org_member(organization_id));
+
+create policy "categories_member_access"
+on public.categories for all
 to authenticated
 using (public.current_user_is_org_member(organization_id))
 with check (public.current_user_is_org_member(organization_id));
