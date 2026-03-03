@@ -19,6 +19,13 @@ import type {
   StatementDocType
 } from "./types";
 import { defaultOpeningBalanceType, normalizeText, openingBalanceSigned, parseNumber, toIsoDate } from "./utils";
+import {
+  normalizePhoneForComparison as normalizePhoneForComparisonValue,
+  normalizePhoneForStorage as normalizePhoneForStorageValue,
+  resolveDefaultDialCodeFromCountry,
+  splitFullMobileNumber,
+  validateMobileNumber
+} from "./phone";
 
 const CREDIT_NOTES_PREMIUM_KEY = "creditNotesPremiumV1";
 const PAYMENT_IN_PREMIUM_KEY = "paymentInPremiumV1";
@@ -68,29 +75,22 @@ function normalizeCreditLimitType(value: unknown): CreditLimitType {
   return "Amount";
 }
 
-function digitsOnly(value: unknown) {
-  return String(value || "").replace(/\D/g, "");
+function normalizePhoneForStorage(value: unknown, country?: unknown) {
+  return normalizePhoneForStorageValue(value, String(country || ""));
 }
 
-function normalizePhoneForStorage(value: unknown) {
-  return digitsOnly(value).slice(0, 10);
+function normalizePhoneForComparison(value: unknown, country?: unknown) {
+  return normalizePhoneForComparisonValue(value, String(country || ""));
 }
 
-function normalizePhoneForComparison(value: unknown) {
-  let digits = digitsOnly(value);
-  if (!digits) return "";
-  if (digits.length > 10) digits = digits.slice(-10);
-  digits = digits.replace(/^0+/, "");
-  return digits || "0";
-}
-
-function validatePhoneNumber(value: unknown) {
-  const digits = digitsOnly(value);
-  if (!digits) return { error: "Mobile number is required.", normalized: "" };
-  if (digits.length !== 10) {
-    return { error: "Mobile number must be exactly 10 digits.", normalized: digits };
-  }
-  return { error: "", normalized: digits };
+function validatePhoneNumber(value: unknown, country?: unknown) {
+  const fallbackDialCode = resolveDefaultDialCodeFromCountry(String(country || ""));
+  const parsedPhone = splitFullMobileNumber(value, fallbackDialCode);
+  const validation = validateMobileNumber(parsedPhone.countryCode, parsedPhone.mobileNumber);
+  return {
+    error: validation.error,
+    normalized: validation.fullNumber
+  };
 }
 
 function duplicateMessage(incomingName: string, existingName: string) {
@@ -100,7 +100,7 @@ function duplicateMessage(incomingName: string, existingName: string) {
 }
 
 function findDuplicateByPhone(parties: PartyRecord[], incoming: PartyRecord) {
-  const incomingPhone = normalizePhoneForComparison(incoming.phone);
+  const incomingPhone = normalizePhoneForComparison(incoming.phone, incoming.country);
   if (!incomingPhone) return null;
   const incomingId = String(incoming.id || "");
   const incomingType = String(incoming.type || "");
@@ -108,7 +108,7 @@ function findDuplicateByPhone(parties: PartyRecord[], incoming: PartyRecord) {
   for (const party of parties) {
     if (incomingId && String(party.id || "") === incomingId) continue;
     if (String(party.type || "") !== incomingType) continue;
-    const currentPhone = normalizePhoneForComparison(party.phone);
+    const currentPhone = normalizePhoneForComparison(party.phone, party.country);
     if (!currentPhone) continue;
     if (currentPhone === incomingPhone) return party;
   }
@@ -117,13 +117,13 @@ function findDuplicateByPhone(parties: PartyRecord[], incoming: PartyRecord) {
 
 async function findRemoteDuplicateByPhone(organizationId: string, incoming: PartyRecord) {
   if (!supabase) return null;
-  const incomingPhone = normalizePhoneForComparison(incoming.phone);
+  const incomingPhone = normalizePhoneForComparison(incoming.phone, incoming.country);
   if (!incomingPhone) return null;
   const incomingType = incoming.type === "Supplier" ? "supplier" : "customer";
 
   const { data, error } = await supabase
     .from("parties")
-    .select("id,display_name,phone")
+    .select("id,display_name,phone,country_code")
     .eq("organization_id", organizationId)
     .eq("party_type", incomingType)
     .eq("is_active", true);
@@ -133,7 +133,8 @@ async function findRemoteDuplicateByPhone(organizationId: string, incoming: Part
   const rows = ensureArray<any>(data);
   for (const row of rows) {
     if (incomingId && String(row?.id || "") === incomingId) continue;
-    const rowPhone = normalizePhoneForComparison(row?.phone);
+    const rowCountry = row?.country_code ? codeToCountry(row?.country_code) : organizationTaxContext().country;
+    const rowPhone = normalizePhoneForComparison(row?.phone, rowCountry);
     if (rowPhone !== incomingPhone) continue;
     return {
       id: String(row?.id || ""),
@@ -168,6 +169,8 @@ function normalizeParty(raw: any): PartyRecord {
     updatedAt: raw?.updated_at || raw?.created_at || nowIso(),
     updatedBy: raw?.updated_by || raw?.created_by || SYSTEM_ACTOR
   };
+  const fallbackPhoneCountry =
+    raw?.country || (raw?.country_code ? codeToCountry(raw?.country_code) : organizationTaxContext().country || "");
 
   return {
     id: raw?.id || uid("pty_"),
@@ -175,7 +178,7 @@ function normalizeParty(raw: any): PartyRecord {
     contactType,
     customerType,
     name: raw?.name || "",
-    phone: String(raw?.phone || "").trim(),
+    phone: normalizePhoneForStorage(raw?.phone, fallbackPhoneCountry),
     email: raw?.email || "",
     country: raw?.country || "",
     state: raw?.state || "",
@@ -400,9 +403,9 @@ export function upsertParty(draft: PartyDraft, actor?: string): PartyRecord {
     taxId: taxValidation.normalizedTaxId,
     gstin: taxValidation.normalizedTaxId || incoming.gstin || ""
   };
-  const phoneValidation = validatePhoneNumber(incoming.phone);
+  const phoneValidation = validatePhoneNumber(incoming.phone, incoming.country);
   if (phoneValidation.error) throw new Error(phoneValidation.error);
-  incoming.phone = normalizePhoneForStorage(phoneValidation.normalized);
+  incoming.phone = normalizePhoneForStorage(phoneValidation.normalized, incoming.country);
   const creditValidationError = validateCreditSetup(incoming, taxValidation);
   if (creditValidationError) throw new Error(creditValidationError);
   const duplicateLocal = findDuplicateByPhone(list.map(normalizeParty), incoming);
@@ -521,9 +524,9 @@ export async function upsertPartyRemote(draft: PartyDraft, actor?: string): Prom
     taxId: taxValidation.normalizedTaxId,
     gstin: taxValidation.normalizedTaxId || incoming.gstin || ""
   };
-  const phoneValidation = validatePhoneNumber(incoming.phone);
+  const phoneValidation = validatePhoneNumber(incoming.phone, incoming.country);
   if (phoneValidation.error) throw new Error(phoneValidation.error);
-  incoming.phone = normalizePhoneForStorage(phoneValidation.normalized);
+  incoming.phone = normalizePhoneForStorage(phoneValidation.normalized, incoming.country);
   const creditValidationError = validateCreditSetup(incoming, taxValidation);
   if (creditValidationError) throw new Error(creditValidationError);
   const duplicateLocal = findDuplicateByPhone(listParties(), incoming);

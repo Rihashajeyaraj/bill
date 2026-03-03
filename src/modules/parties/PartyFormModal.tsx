@@ -5,6 +5,15 @@ import FormField from "../../components/FormField";
 import GradientButton from "../../components/GradientButton";
 import type { PartyAttachment, PartyDraft, PartyType } from "./types";
 import { defaultOpeningBalanceType, parseNumber } from "./utils";
+import {
+  composeFullMobileNumber,
+  COUNTRY_DIAL_OPTIONS,
+  mobileLengthHint,
+  phoneDigits,
+  resolveDefaultDialCodeFromCountry,
+  splitFullMobileNumber,
+  validateMobileNumber
+} from "./phone";
 import { useOrganization } from "../../context/OrganizationContext";
 import { normalizeContactType, validateContactTax } from "../../services/customerTax";
 import {
@@ -77,10 +86,6 @@ function sanitizeDecimalInput(value: string) {
   return normalized.includes(".") ? `${integer}.${decimal}` : integer;
 }
 
-function sanitizePhoneInput(value: string) {
-  return String(value || "").replace(/\D/g, "");
-}
-
 export default function PartyFormModal({
   open,
   mode,
@@ -89,6 +94,7 @@ export default function PartyFormModal({
   onSave
 }: PartyFormModalProps) {
   const { profile: organizationProfile = {}, country: organizationCountry = "" } = useOrganization();
+  const organizationCountryValue = organizationCountry || organizationProfile?.country || "";
   const [form, setForm] = useState<PartyDraft>(() =>
     initialParty
       ? withNormalizedContactType({ ...createDraft(initialParty.type || "Customer"), ...initialParty })
@@ -98,6 +104,10 @@ export default function PartyFormModal({
   const [warning, setWarning] = useState("");
   const [openingBalanceInput, setOpeningBalanceInput] = useState(() => formatDecimalAmount(0));
   const [creditLimitInput, setCreditLimitInput] = useState(() => formatDecimalAmount(0));
+  const [countryCode, setCountryCode] = useState(() =>
+    resolveDefaultDialCodeFromCountry(organizationCountryValue)
+  );
+  const [mobileNumber, setMobileNumber] = useState("");
   const [countryMenuOpen, setCountryMenuOpen] = useState(false);
   const [stateMenuOpen, setStateMenuOpen] = useState(false);
   const [createStep, setCreateStep] = useState<CreateFlowStep>("quick");
@@ -110,15 +120,20 @@ export default function PartyFormModal({
     const nextForm = initialParty
       ? withNormalizedContactType({ ...createDraft(initialParty.type || "Customer"), ...initialParty })
       : createDraft("Customer");
-    const normalizedPhone = sanitizePhoneInput(String(nextForm.phone || ""));
-    nextForm.phone = normalizedPhone.length > 10 ? normalizedPhone.slice(-10) : normalizedPhone;
+    const fallbackDialCode = resolveDefaultDialCodeFromCountry(
+      nextForm.country || organizationCountryValue
+    );
+    const parsedPhone = splitFullMobileNumber(nextForm.phone || "", fallbackDialCode);
+    nextForm.phone = parsedPhone.fullNumber;
     setOpeningBalanceInput(formatDecimalAmount(nextForm.openingBalance));
     setCreditLimitInput(formatDecimalAmount(nextForm.creditLimit));
+    setCountryCode(parsedPhone.countryCode || fallbackDialCode);
+    setMobileNumber(parsedPhone.mobileNumber || "");
     setCountryMenuOpen(false);
     setStateMenuOpen(false);
     setCreateStep(mode === "create" ? "quick" : "details");
     setForm(nextForm);
-  }, [open, initialParty, mode]);
+  }, [open, initialParty, mode, organizationCountryValue]);
 
   useEffect(() => {
     if (!open || mode !== "create") return;
@@ -135,9 +150,9 @@ export default function PartyFormModal({
   const orgContext = useMemo(
     () => ({
       ...organizationProfile,
-      country: organizationCountry || organizationProfile?.country || ""
+      country: organizationCountryValue
     }),
-    [organizationProfile, organizationCountry]
+    [organizationProfile, organizationCountryValue]
   );
   const allCountries = useMemo(() => listAllCountries(), []);
   const stateOptions = useMemo(() => listStatesByCountry(form.country), [form.country]);
@@ -158,6 +173,7 @@ export default function PartyFormModal({
   const selectedContactType = normalizeContactType(form.contactType ?? form.customerType, form.taxId);
   const isIndiaCountry = resolveCountryIsoCode(form.country) === "IN";
   const showGSTINField = selectedContactType === "Business" && isIndiaCountry;
+  const phoneHint = mobileLengthHint(countryCode);
   const entityLabel = form.type === "Customer" ? "Customer" : "Supplier";
   const modalTitle = mode === "edit" ? `Edit ${entityLabel}` : `Create ${entityLabel}`;
   const submitLabel = mode === "edit" ? `Update ${entityLabel}` : `Create ${entityLabel}`;
@@ -205,6 +221,11 @@ export default function PartyFormModal({
     if (nextCountryCode !== "IN") {
       updateField("taxId", "");
     }
+    if (!mobileNumber) {
+      const defaultDialCode = resolveDefaultDialCodeFromCountry(canonicalCountry);
+      setCountryCode(defaultDialCode);
+      updateField("phone", composeFullMobileNumber(defaultDialCode, ""));
+    }
     setCountryMenuOpen(false);
   }
 
@@ -218,15 +239,15 @@ export default function PartyFormModal({
       setError("Party name is required.");
       return;
     }
-    const normalizedPhone = sanitizePhoneInput(form.phone || "");
-    if (normalizedPhone.length !== 10) {
-      setError("Mobile number must be exactly 10 digits.");
+    const phoneValidation = validateMobileNumber(countryCode, mobileNumber);
+    if (phoneValidation.error) {
+      setError(phoneValidation.error);
       return;
     }
     const normalized: PartyDraft = {
       ...form,
       name: form.name.trim(),
-      phone: normalizedPhone,
+      phone: phoneValidation.fullNumber,
       email: form.email?.trim() || "",
       country: form.country?.trim() || "",
       state: form.state?.trim() || "",
@@ -387,19 +408,42 @@ export default function PartyFormModal({
                   </select>
                 </FormField>
 
-                <FormField label="Mobile Number" hint="10 digits only">
-                  <input
-                    value={form.phone}
-                    onChange={(event) => {
-                      const nextPhone = sanitizePhoneInput(event.target.value);
-                      if (nextPhone.length > 10) return;
-                      updateField("phone", nextPhone);
-                    }}
-                    className={inputClassName}
-                    placeholder="9876543210"
-                    inputMode="numeric"
-                    maxLength={10}
-                  />
+                <FormField label="Mobile Number" hint={phoneHint}>
+                  <div className="grid grid-cols-[130px_1fr] gap-2">
+                    <select
+                      value={countryCode}
+                      onChange={(event) => {
+                        const nextCountryCode = event.target.value;
+                        setError("");
+                        setWarning("");
+                        setCountryCode(nextCountryCode);
+                        updateField("phone", composeFullMobileNumber(nextCountryCode, mobileNumber));
+                      }}
+                      className={inputClassName}
+                    >
+                      {COUNTRY_DIAL_OPTIONS.map((option) => (
+                        <option key={`${option.isoCode}_${option.dialCode}`} value={option.dialCode}>
+                          {option.dialCode} ({option.country})
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={mobileNumber}
+                      onChange={(event) => {
+                        const nextMobileNumber = phoneDigits(event.target.value);
+                        setError("");
+                        setWarning("");
+                        setMobileNumber(nextMobileNumber);
+                        updateField("phone", composeFullMobileNumber(countryCode, nextMobileNumber));
+                      }}
+                      className={inputClassName}
+                      placeholder="Enter mobile number"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      pattern="[0-9]*"
+                      maxLength={15}
+                    />
+                  </div>
                 </FormField>
 
                 <FormField label="Email" className="md:col-span-2">
