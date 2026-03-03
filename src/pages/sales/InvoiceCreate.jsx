@@ -7,7 +7,6 @@ import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import GradientButton from "../../components/GradientButton";
 import FormField from "../../components/FormField";
-import DataTable from "../../components/DataTable";
 import Badge from "../../components/Badge";
 import InvoicePreview from "../../components/InvoicePreview";
 
@@ -1116,19 +1115,7 @@ export default function InvoiceCreate() {
   }, [allowNegativeStock, computed.enriched, stockByItemId, lines]);
 
   const hasStockErrors = stockValidationIssues.length > 0;
-
-  function formatBatchHint(itemId) {
-    const rows = Array.isArray(itemBatchMap[itemId]) ? itemBatchMap[itemId] : [];
-    const openRows = rows.filter((row) => Number(row?.qty_remaining || 0) > 0);
-    if (!openRows.length) return "No open purchase batch found.";
-    const parts = openRows.slice(0, 3).map((row) => {
-      const qty = Number(row?.qty_remaining || 0);
-      const cost = Number(row?.unit_cost_excl_tax || 0);
-      return `${qty} @ ${money(cost)}`;
-    });
-    const extra = openRows.length > 3 ? ` +${openRows.length - 3} more` : "";
-    return `FIFO open batches: ${parts.join(" | ")}${extra}`;
-  }
+  const invoiceItemGridClassName = "grid grid-cols-[2.5fr_1.5fr_0.8fr_1fr_1fr_0.8fr_1fr_1fr] gap-2";
 
   function getOpenBatchRows(itemId) {
     const rows = Array.isArray(itemBatchMap[itemId]) ? itemBatchMap[itemId] : [];
@@ -2364,220 +2351,205 @@ export default function InvoiceCreate() {
               </div>
 
               <div className="mt-3">
-                <DataTable
-                  columns={[
-                    {
-                      key: "itemId",
-                      header: "Item",
-                      render: (r) => {
-                        const selectedItem = itemById.get(String(r?.itemId || "")) || null;
-                        const rowType = resolveLineItemType(r);
-                        return (
-                          <div className="relative min-w-[250px]">
-                            <input
-                              value={r.itemInput || ""}
-                              onFocus={(event) => {
-                                setActiveLineItemSearchId(r.id);
-                                updateLineItemPopoverPosition(event.currentTarget);
-                              }}
-                              onBlur={() => {
-                                window.setTimeout(() => {
-                                  setActiveLineItemSearchId((current) => (current === r.id ? "" : current));
-                                }, 120);
-                              }}
-                              onChange={(e) => {
-                                handleLineItemInput(r, e.target.value);
-                                updateLineItemPopoverPosition(e.currentTarget);
-                              }}
-                              className="w-full rounded-xl border border-slate-100 bg-white px-2 py-1.5 pr-8 text-sm outline-none"
-                              placeholder={
-                                rowType === "Service"
-                                  ? "Search by service ID or name"
-                                  : "Search by product ID or name"
-                              }
-                            />
-                            {(r.itemId || r.itemInput) ? (
-                              <button
-                                type="button"
-                                onMouseDown={(event) => {
-                                  event.preventDefault();
-                                  clearLineItemSelection(r.id);
-                                  setActiveLineItemSearchId(r.id);
-                                }}
-                                className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                                title="Clear selected item"
-                                aria-label="Clear selected item"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            ) : null}
-                            <div className="mt-1">
-                              <span className={itemTypeBadgeClassName(rowType)}>
-                                {selectedItem ? normalizeInvoiceItemType(selectedItem?.type) : rowType}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      }
-                    },
-                    {
-                      key: "batchOrHsn",
-                      header: dynamicBatchColumnHeader,
-                      render: (r) => {
-                        const rowType = resolveLineItemType(r);
-                        if (rowType === "Service") {
+                <Card className="overflow-visible">
+                  <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
+                    <div className="border-b border-slate-100 bg-slate-50 px-2 py-2">
+                      <div className={`${invoiceItemGridClassName} text-xs font-semibold text-slate-600`}>
+                        <span>Item</span>
+                        <span>{dynamicBatchColumnHeader}</span>
+                        <span className="text-right">Qty</span>
+                        <span className="text-right">Rate</span>
+                        <span className="text-right">Discount</span>
+                        <span className="text-right">Tax %</span>
+                        <span className="text-right">Net Amount</span>
+                        <span className="text-right">Total Amount</span>
+                      </div>
+                    </div>
+
+                    {lines.length ? (
+                      <div className="divide-y divide-slate-100">
+                        {lines.map((r) => {
+                          const selectedItem = itemById.get(String(r?.itemId || "")) || null;
+                          const rowType = resolveLineItemType(r);
+                          const qty = Number(r.qty || 0);
+                          const rate = Number(r.rate || 0);
+                          const discount = Number(r.discount || 0);
+                          const taxRateValue = forceZeroTax ? 0 : Number(r.tax || 0);
+                          const net = round2(Math.max(0, qty * rate - discount));
+                          const total = round2(net + (net * taxRateValue) / 100);
+
                           return (
-                            <input
-                              value={r.hsnInput || ""}
-                              onChange={(e) => updateLine(r.id, { hsnInput: e.target.value, selectedBatchId: "" })}
-                              className="w-36 rounded-xl border border-slate-100 px-2 py-1.5 text-xs outline-none"
-                              placeholder="HSN / SAC"
-                            />
+                            <div key={r.id} className="px-2 py-2">
+                              <div className={`${invoiceItemGridClassName} items-start`}>
+                                <div className="min-w-0">
+                                  <div className="relative">
+                                    <input
+                                      value={r.itemInput || ""}
+                                      onFocus={(event) => {
+                                        setActiveLineItemSearchId(r.id);
+                                        updateLineItemPopoverPosition(event.currentTarget);
+                                      }}
+                                      onBlur={() => {
+                                        window.setTimeout(() => {
+                                          setActiveLineItemSearchId((current) => (current === r.id ? "" : current));
+                                        }, 120);
+                                      }}
+                                      onChange={(e) => {
+                                        handleLineItemInput(r, e.target.value);
+                                        updateLineItemPopoverPosition(e.currentTarget);
+                                      }}
+                                      className="h-10 w-full rounded-xl border border-slate-100 bg-white px-3 pr-9 text-sm outline-none"
+                                      placeholder={
+                                        rowType === "Service"
+                                          ? "Search by service ID or name"
+                                          : "Search by product ID or name"
+                                      }
+                                    />
+                                    {(r.itemId || r.itemInput) ? (
+                                      <button
+                                        type="button"
+                                        onMouseDown={(event) => {
+                                          event.preventDefault();
+                                          clearLineItemSelection(r.id);
+                                          setActiveLineItemSearchId(r.id);
+                                        }}
+                                        className="absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                                        title="Clear selected item"
+                                        aria-label="Clear selected item"
+                                      >
+                                        <X className="h-3.5 w-3.5" />
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                  <div className="mt-1 flex items-center justify-between gap-2">
+                                    <span className={itemTypeBadgeClassName(rowType)}>
+                                      {selectedItem ? normalizeInvoiceItemType(selectedItem?.type) : rowType}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeLine(r.id)}
+                                      className="rounded-md border border-slate-100 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-rose-50 hover:text-rose-700"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="min-w-0">
+                                  {rowType === "Service" ? (
+                                    <input
+                                      value={r.hsnInput || ""}
+                                      onChange={(e) => updateLine(r.id, { hsnInput: e.target.value, selectedBatchId: "" })}
+                                      className="h-10 w-full rounded-xl border border-slate-100 bg-white px-3 text-sm outline-none"
+                                      placeholder="HSN / SAC"
+                                    />
+                                  ) : !r.itemId ? (
+                                    <div className="flex h-10 items-center rounded-xl border border-slate-100 bg-slate-50 px-3 text-xs text-slate-400">
+                                      Select product
+                                    </div>
+                                  ) : (() => {
+                                    const batchRows = getOpenBatchRows(r.itemId);
+                                    if (!batchRows.length) {
+                                      return (
+                                        <div className="flex h-10 items-center rounded-xl border border-slate-100 bg-slate-50 px-3 text-xs text-slate-400">
+                                          No open batch
+                                        </div>
+                                      );
+                                    }
+                                    return (
+                                      <select
+                                        value={r.selectedBatchId || ""}
+                                        onChange={(e) => handleLineBatchChange(r, e.target.value)}
+                                        className="h-10 w-full rounded-xl border border-slate-100 bg-white px-3 text-xs outline-none"
+                                      >
+                                        <option value="">Select batch</option>
+                                        {batchRows.map((row) => {
+                                          const batchId = String(row.batch_id || "");
+                                          const availableQty = getBatchAvailableForLine(r.itemId, batchId, r.id);
+                                          const isUnavailable = availableQty <= 0;
+                                          const suggested = Number(
+                                            row?.suggested_sale_rate ?? row?.metadata?.suggestedSaleRate ?? 0
+                                          );
+                                          const label = `${String(row.source_document_no || "BATCH").slice(0, 14)} | Avl ${availableQty}${suggested > 0 ? ` | Sell ${money(suggested)}` : ""}`;
+                                          return (
+                                            <option key={`${r.id}-${batchId}`} value={batchId} disabled={isUnavailable}>
+                                              {label}
+                                            </option>
+                                          );
+                                        })}
+                                      </select>
+                                    );
+                                  })()}
+                                </div>
+
+                                <input
+                                  value={r.qty}
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    if (raw === "") {
+                                      updateLine(r.id, { qty: raw });
+                                      return;
+                                    }
+                                    const parsed = Number(raw);
+                                    if (!Number.isFinite(parsed) || parsed < 0) {
+                                      updateLine(r.id, { qty: raw });
+                                      return;
+                                    }
+                                    if (r.itemId) {
+                                      const maxAssignable = getMaxAssignableQty(
+                                        r.itemId,
+                                        r.id,
+                                        r.selectedBatchId || ""
+                                      );
+                                      if (Number.isFinite(maxAssignable) && parsed > maxAssignable) {
+                                        updateLine(r.id, { qty: maxAssignable });
+                                        return;
+                                      }
+                                    }
+                                    updateLine(r.id, { qty: raw });
+                                  }}
+                                  className="h-10 w-full rounded-xl border border-slate-100 bg-white px-3 text-right text-sm outline-none"
+                                />
+
+                                <input
+                                  value={r.rate}
+                                  onChange={(e) => updateLine(r.id, { rate: e.target.value })}
+                                  className="h-10 w-full rounded-xl border border-slate-100 bg-white px-3 text-right text-sm outline-none"
+                                />
+
+                                <input
+                                  value={r.discount}
+                                  onChange={(e) => updateLine(r.id, { discount: e.target.value })}
+                                  className="h-10 w-full rounded-xl border border-slate-100 bg-white px-3 text-right text-sm outline-none"
+                                />
+
+                                <input
+                                  value={forceZeroTax ? 0 : r.tax}
+                                  onChange={(e) => {
+                                    if (forceZeroTax) return;
+                                    updateLine(r.id, { tax: e.target.value });
+                                  }}
+                                  className="h-10 w-full rounded-xl border border-slate-100 bg-white px-3 text-right text-sm outline-none disabled:bg-slate-100 disabled:text-slate-500"
+                                  disabled={forceZeroTax}
+                                />
+
+                                <div className="flex h-10 items-center justify-end rounded-xl border border-slate-100 bg-slate-50 px-3 text-right text-sm font-semibold text-slate-700">
+                                  {money(net)}
+                                </div>
+
+                                <div className="flex h-10 items-center justify-end rounded-xl border border-slate-100 bg-slate-50 px-3 text-right text-sm font-semibold text-slate-900">
+                                  {money(total)}
+                                </div>
+                              </div>
+                            </div>
                           );
-                        }
-                        if (!r.itemId) {
-                          return <span className="text-xs text-slate-400">Select product</span>;
-                        }
-                        const batchRows = getOpenBatchRows(r.itemId);
-                        if (!batchRows.length) {
-                          return <span className="text-xs text-slate-400">No open batch</span>;
-                        }
-                        return (
-                          <select
-                            value={r.selectedBatchId || ""}
-                            onChange={(e) => handleLineBatchChange(r, e.target.value)}
-                            className="w-44 rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-xs outline-none"
-                          >
-                            <option value="">Select batch</option>
-                            {batchRows.map((row) => {
-                              const batchId = String(row.batch_id || "");
-                              const availableQty = getBatchAvailableForLine(r.itemId, batchId, r.id);
-                              const isUnavailable = availableQty <= 0;
-                              const cost = Number(row.unit_cost_excl_tax || 0);
-                              const suggested = Number(
-                                row?.suggested_sale_rate ?? row?.metadata?.suggestedSaleRate ?? 0
-                              );
-                              const label = `${String(row.source_document_no || "BATCH").slice(0, 14)} | Avl ${availableQty} @ ${money(cost)}${suggested > 0 ? ` | Sell ${money(suggested)}` : ""}`;
-                              return (
-                                <option key={`${r.id}-${batchId}`} value={batchId} disabled={isUnavailable}>
-                                  {label}
-                                </option>
-                              );
-                            })}
-                          </select>
-                        );
-                      }
-                    },
-                    {
-                      key: "qty",
-                      header: "Qty",
-                      render: (r) => (
-                        <input
-                          value={r.qty}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (raw === "") {
-                              updateLine(r.id, { qty: raw });
-                              return;
-                            }
-                            const parsed = Number(raw);
-                            if (!Number.isFinite(parsed) || parsed < 0) {
-                              updateLine(r.id, { qty: raw });
-                              return;
-                            }
-                            if (r.itemId) {
-                              const maxAssignable = getMaxAssignableQty(
-                                r.itemId,
-                                r.id,
-                                r.selectedBatchId || ""
-                              );
-                              if (Number.isFinite(maxAssignable) && parsed > maxAssignable) {
-                                updateLine(r.id, { qty: maxAssignable });
-                                return;
-                              }
-                            }
-                            updateLine(r.id, { qty: raw });
-                          }}
-                          className="w-20 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
-                        />
-                      )
-                    },
-                    {
-                      key: "rate",
-                      header: "Rate",
-                      render: (r) => (
-                        <input
-                          value={r.rate}
-                          onChange={(e) => updateLine(r.id, { rate: e.target.value })}
-                          className="w-28 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
-                        />
-                      )
-                    },
-                    {
-                      key: "discount",
-                      header: "Discount",
-                      render: (r) => (
-                        <input
-                          value={r.discount}
-                          onChange={(e) => updateLine(r.id, { discount: e.target.value })}
-                          className="w-28 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none"
-                        />
-                      )
-                    },
-                    {
-                      key: "tax",
-                      header: "Tax %",
-                      render: (r) => (
-                        <input
-                          value={forceZeroTax ? 0 : r.tax}
-                          onChange={(e) => {
-                            if (forceZeroTax) return;
-                            updateLine(r.id, { tax: e.target.value });
-                          }}
-                          className="w-20 rounded-xl border border-slate-100 px-2 py-1.5 text-sm outline-none disabled:bg-slate-100 disabled:text-slate-500"
-                          disabled={forceZeroTax}
-                        />
-                      )
-                    },
-                    {
-                      key: "net",
-                      header: "Net Amount",
-                      render: (r) => {
-                        const qty = Number(r.qty || 0);
-                        const rate = Number(r.rate || 0);
-                        const discount = Number(r.discount || 0);
-                        return money(round2(Math.max(0, qty * rate - discount)));
-                      }
-                    },
-                    {
-                      key: "amount",
-                      header: "Total Amount",
-                      render: (r) => {
-                        const qty = Number(r.qty || 0);
-                        const rate = Number(r.rate || 0);
-                        const discount = Number(r.discount || 0);
-                        const taxRateValue = forceZeroTax ? 0 : Number(r.tax || 0);
-                        const net = round2(Math.max(0, qty * rate - discount));
-                        return money(round2(net + (net * taxRateValue) / 100));
-                      }
-                    },
-                    {
-                      key: "rm",
-                      header: "",
-                      render: (r) => (
-                        <button
-                          onClick={() => removeLine(r.id)}
-                          className="rounded-xl border border-slate-100 bg-white px-2 py-1.5 text-xs font-semibold hover:bg-rose-50"
-                        >
-                          Remove
-                        </button>
-                      )
-                    }
-                  ]}
-                  rows={lines}
-                  allowOverflow
-                  emptyText="Add items to invoice"
-                />
+                        })}
+                      </div>
+                    ) : (
+                      <div className="px-3 py-6 text-sm text-slate-500">Add items to invoice</div>
+                    )}
+                  </div>
+                </Card>
                 {activeLineForSearch &&
                 activeLineItemSearchId &&
                 normalizeItemSearchText(activeLineForSearch.itemInput).length
@@ -2612,7 +2584,7 @@ export default function InvoiceCreate() {
                                 }}
                                 className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
-                                <div className="flex flex-col gap-0.5">
+                                <div className="flex flex-col">
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="flex min-w-0 flex-col gap-1">
                                       <span className="truncate">{formatItemSearchLabel(item)}</span>
@@ -2626,9 +2598,6 @@ export default function InvoiceCreate() {
                                       <span className="text-[11px] text-slate-400">Service / Not tracked</span>
                                     )}
                                   </div>
-                                  {itemType === "Product" ? (
-                                    <span className="text-[10px] text-slate-500">{formatBatchHint(item.id)}</span>
-                                  ) : null}
                                 </div>
                               </button>
                             );

@@ -26,6 +26,7 @@ export interface PartyRecord {
   phone?: string;
   email?: string;
   country?: string;
+  city?: string;
   state?: string;
   address?: string;
   taxId?: string;

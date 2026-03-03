@@ -119,16 +119,8 @@ function nonNegativeNumber(value, fallback = 0) {
   return Math.max(0, numeric);
 }
 
-function extractCity(address) {
-  const firstSegment = String(address || "")
-    .split(",")
-    .map((segment) => segment.trim())
-    .filter(Boolean)[0];
-  return firstSegment || "";
-}
-
 function supplierAddressSummary(supplier) {
-  return [supplier?.address, supplier?.state, supplier?.country]
+  return [supplier?.address, supplier?.city, supplier?.state, supplier?.country]
     .map((value) => String(value || "").trim())
     .filter(Boolean)
     .join(", ");
@@ -1342,7 +1334,7 @@ export default function PurchaseBill() {
           <Card className="p-5">
             <div>
               <h2 className="text-base font-semibold text-slate-900">2. Supplier Details</h2>
-              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 text-sm">
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
                   <p className="text-xs text-slate-500">Name</p>
                   <p className="font-semibold text-slate-900">{party?.name || "-"}</p>
@@ -1356,10 +1348,12 @@ export default function PurchaseBill() {
                   <p className="font-semibold text-slate-900">{party?.country || "-"}</p>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs text-slate-500">City</p>
+                  <p className="font-semibold text-slate-900">{party?.city || "-"}</p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
                   <p className="text-xs text-slate-500">State</p>
-                  <p className="font-semibold text-slate-900">
-                    {party?.state || party?.city || extractCity(supplierAddress || party?.address) || "-"}
-                  </p>
+                  <p className="font-semibold text-slate-900">{party?.state || "-"}</p>
                 </div>
               </div>
               <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-sm">
