@@ -169,7 +169,6 @@ export default function SalesProformaEditor() {
     dueDate: "",
     partyId: "",
     partyName: "",
-    placeOfSupply: "",
     country: "",
     taxMode: "",
     supplyType: "",
@@ -280,7 +279,6 @@ export default function SalesProformaEditor() {
             dueDate: found.dueDate || "",
             partyId: found.partyId || "",
             partyName: found.partyName || "",
-            placeOfSupply: found.placeOfSupply || "",
             country: found.country || "",
             taxMode: found.taxMode || "",
             supplyType: found.supplyType || "",
@@ -361,8 +359,7 @@ export default function SalesProformaEditor() {
     updateForm({
       partyId: nextCustomer.id || "",
       partyName: nextCustomer.name || nextCustomer.displayName || "",
-      country: nextCustomer.country || form.country || "",
-      placeOfSupply: nextCustomer.state || form.placeOfSupply || ""
+      country: nextCustomer.country || form.country || ""
     });
     setCustomerLookupQuery("");
     setCustomerCountryMenuOpen(false);
@@ -385,8 +382,7 @@ export default function SalesProformaEditor() {
       updateForm({
         partyId: "",
         partyName: "",
-        country: form.country || "",
-        placeOfSupply: form.placeOfSupply || ""
+        country: form.country || ""
       });
     }
   }
@@ -533,8 +529,7 @@ export default function SalesProformaEditor() {
     updateForm({
       partyId: "",
       partyName: "",
-      country: "",
-      placeOfSupply: ""
+      country: ""
     });
     setCustomerCreateDraft({
       name: "",
@@ -660,7 +655,6 @@ export default function SalesProformaEditor() {
         ...form,
         partyName: selectedParty?.name || selectedParty?.displayName || form.partyName || "",
         country: selectedParty?.country || form.country || "",
-        placeOfSupply: form.placeOfSupply || selectedParty?.state || "",
         lines: cleanedLines,
         totals
       });
@@ -803,15 +797,6 @@ export default function SalesProformaEditor() {
                     </option>
                   ))}
                 </select>
-              </label>
-              <label className="text-sm text-slate-600">
-                Place of Supply
-                <input
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                  value={form.placeOfSupply || ""}
-                  disabled={locked}
-                  onChange={(event) => updateForm({ placeOfSupply: event.target.value })}
-                />
               </label>
             </div>
 
