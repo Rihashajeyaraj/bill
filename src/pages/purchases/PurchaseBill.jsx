@@ -891,7 +891,7 @@ export default function PurchaseBill() {
     }
     const normalizedBillNumber = String(billNumber || "").trim();
     if (!normalizedBillNumber) {
-      toast.warning("Bill ID required", "Enter Bill ID before saving.");
+      toast.warning("Invoice / Bill ID required", "Enter Invoice / Bill ID before saving.");
       return;
     }
     if (markAsPaid && !paymentDate) {
@@ -1331,11 +1331,11 @@ export default function PurchaseBill() {
           <Card className="p-5">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
           <div>
-            <p className="text-xs text-slate-500">Bill ID</p>
+            <p className="text-xs text-slate-500">Invoice / Bill ID</p>
             <input
               value={billNumber}
               onChange={(e) => setBillNumber(e.target.value)}
-              placeholder="Enter bill ID"
+              placeholder="Enter Invoice / Bill ID"
               className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-blue-100"
             />
           </div>
