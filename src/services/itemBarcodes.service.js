@@ -220,6 +220,55 @@ function buildBarcodeRowsForPurchase({ purchaseId, billDate, lines, mode, existi
   return createdRows;
 }
 
+function buildMissingLinesForRepair(lines, existingRows, mode) {
+  const normalizedMode = String(mode || BARCODE_MODE_BATCH).toLowerCase() === BARCODE_MODE_UNIT
+    ? BARCODE_MODE_UNIT
+    : BARCODE_MODE_BATCH;
+  const safeLines = ensureArray(lines);
+  const safeExisting = ensureArray(existingRows);
+
+  if (normalizedMode !== BARCODE_MODE_UNIT) {
+    if (safeExisting.length) return [];
+    return safeLines;
+  }
+
+  const requiredByItemId = new Map();
+  safeLines.forEach((line) => {
+    const itemId = String(line?.itemId || line?.item_id || "").trim();
+    if (!itemId) return;
+    const qty = Math.max(0, Math.trunc(parseNumber(line?.qty ?? line?.quantity ?? 0)));
+    if (qty <= 0) return;
+    const current = requiredByItemId.get(itemId) || { qty: 0, itemCode: "" };
+    requiredByItemId.set(itemId, {
+      qty: current.qty + qty,
+      itemCode: String(line?.itemCode || line?.item_code || current.itemCode || "").trim()
+    });
+  });
+
+  if (!requiredByItemId.size) return [];
+
+  const existingByItemId = new Map();
+  safeExisting.forEach((entry) => {
+    const itemId = String(entry?.item_id || entry?.itemId || "").trim();
+    if (!itemId) return;
+    existingByItemId.set(itemId, (existingByItemId.get(itemId) || 0) + 1);
+  });
+
+  const missingLines = [];
+  requiredByItemId.forEach((required, itemId) => {
+    const existingCount = Math.max(0, Math.trunc(parseNumber(existingByItemId.get(itemId) || 0)));
+    const missingCount = Math.max(0, required.qty - existingCount);
+    if (missingCount <= 0) return;
+    missingLines.push({
+      itemId,
+      itemCode: required.itemCode || "",
+      qty: missingCount
+    });
+  });
+
+  return missingLines;
+}
+
 async function pushRowsToRemote(rows) {
   if (!isSupabaseConfigured || !supabase) return;
   const organizationId = authGetOrganizationId();
@@ -270,7 +319,8 @@ export async function createItemBarcodesForPurchase({
   billDate,
   lines,
   mode = BARCODE_MODE_UNIT,
-  enabled = true
+  enabled = true,
+  repairMissing = false
 }) {
   if (enabled === false || !purchaseId) return [];
   const organizationId = authGetOrganizationId();
@@ -278,17 +328,22 @@ export async function createItemBarcodesForPurchase({
   const alreadyForPurchase = existing.filter(
     (entry) => String(entry.purchase_id || "") === String(purchaseId)
   );
-  if (alreadyForPurchase.length) return alreadyForPurchase;
+  if (alreadyForPurchase.length && !repairMissing) return alreadyForPurchase;
+
+  const sourceLines = repairMissing
+    ? buildMissingLinesForRepair(lines, alreadyForPurchase, mode)
+    : lines;
+  if (!ensureArray(sourceLines).length) return alreadyForPurchase;
 
   const created = buildBarcodeRowsForPurchase({
     purchaseId,
     billDate,
-    lines,
+    lines: sourceLines,
     mode,
     existingRows: existing,
     organizationId
   });
-  if (!created.length) return [];
+  if (!created.length) return alreadyForPurchase;
 
   setAll(dedupeRows([...created, ...existing]));
   try {

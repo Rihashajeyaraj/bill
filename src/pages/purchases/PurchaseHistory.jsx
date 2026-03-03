@@ -7,6 +7,7 @@ import Modal from "../../components/Modal";
 import { useToast } from "../../context/ToastContext";
 import { purchasesList, purchasesSyncFromRemote } from "../../services/purchases.service";
 import {
+  createItemBarcodesForPurchase,
   getBarcodeImageUrl,
   getQrImageUrl,
   listItemBarcodesByPurchaseIds
@@ -66,6 +67,7 @@ export default function PurchaseHistory() {
   const [barcodeModalBill, setBarcodeModalBill] = useState(null);
   const [barcodeModalRows, setBarcodeModalRows] = useState([]);
   const [barcodeLoading, setBarcodeLoading] = useState(false);
+  const [barcodeActionBillId, setBarcodeActionBillId] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -132,6 +134,60 @@ export default function PurchaseHistory() {
     const rows = barcodesByPurchaseId[String(bill?.id || "").trim()] || [];
     setBarcodeModalBill(bill || null);
     setBarcodeModalRows(sortBarcodeRows(rows));
+  }
+
+  async function regenerateBillBarcodes(bill, { openAfter = false } = {}) {
+    const billId = String(bill?.id || "").trim();
+    if (!billId) return;
+    if (barcodeActionBillId === billId) return;
+
+    const sourceLines = Array.isArray(bill?.lines) ? bill.lines : [];
+    const lineCandidates = sourceLines.filter((line) => {
+      const itemId = String(line?.itemId || line?.item_id || "").trim();
+      const qty = Number(line?.qty ?? line?.quantity ?? 0);
+      return itemId && Number.isFinite(qty) && qty > 0;
+    });
+    if (!lineCandidates.length) {
+      toast.warning("Cannot generate", "No valid item lines found for barcode generation.");
+      return;
+    }
+
+    const previousRows = barcodesByPurchaseId[billId] || [];
+    setBarcodeActionBillId(billId);
+    try {
+      await createItemBarcodesForPurchase({
+        purchaseId: billId,
+        billDate: bill?.billDate || bill?.created_at || new Date().toISOString().slice(0, 10),
+        lines: sourceLines,
+        mode: "unit",
+        enabled: true,
+        repairMissing: true
+      });
+      const refreshedRows = sortBarcodeRows(await listItemBarcodesByPurchaseIds([billId]));
+      setBarcodesByPurchaseId((prev) => ({
+        ...prev,
+        [billId]: refreshedRows
+      }));
+      if (openAfter) {
+        setBarcodeModalBill(bill || null);
+        setBarcodeModalRows(refreshedRows);
+      } else if (barcodeModalBill && String(barcodeModalBill?.id || "").trim() === billId) {
+        setBarcodeModalRows(refreshedRows);
+      }
+
+      const added = Math.max(0, refreshedRows.length - previousRows.length);
+      if (added > 0) {
+        toast.success("Barcodes generated", `${added} barcode(s) added.`);
+      } else if (refreshedRows.length > 0) {
+        toast.info("Barcodes already complete", "No missing barcodes found for this bill.");
+      } else {
+        toast.warning("No barcodes generated", "Could not generate barcodes for this bill.");
+      }
+    } catch (error) {
+      toast.error("Barcode generation failed", error?.message || "Could not regenerate barcodes.");
+    } finally {
+      setBarcodeActionBillId("");
+    }
   }
 
   function printBarcodes(bill, rows) {
@@ -292,11 +348,21 @@ export default function PurchaseHistory() {
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => openBarcodeModal(bill)}
-                          disabled={!hasBarcodes}
+                          onClick={() => {
+                            if (hasBarcodes) {
+                              openBarcodeModal(bill);
+                              return;
+                            }
+                            void regenerateBillBarcodes(bill, { openAfter: true });
+                          }}
+                          disabled={barcodeActionBillId === String(bill?.id || "").trim()}
                           className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          View Barcodes
+                          {barcodeActionBillId === String(bill?.id || "").trim()
+                            ? "Generating..."
+                            : hasBarcodes
+                              ? "View Barcodes"
+                              : "Generate Barcodes"}
                         </button>
                         <button
                           type="button"
@@ -339,7 +405,23 @@ export default function PurchaseHistory() {
           setBarcodeModalRows([]);
         }}
         footer={
-          <div className="flex justify-end">
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (!barcodeModalBill) return;
+                void regenerateBillBarcodes(barcodeModalBill, { openAfter: true });
+              }}
+              disabled={
+                !barcodeModalBill ||
+                barcodeActionBillId === String(barcodeModalBill?.id || "").trim()
+              }
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {barcodeActionBillId === String(barcodeModalBill?.id || "").trim()
+                ? "Regenerating..."
+                : "Regenerate Barcodes"}
+            </button>
             <button
               type="button"
               onClick={() => printBarcodes(barcodeModalBill, barcodeModalRows)}
