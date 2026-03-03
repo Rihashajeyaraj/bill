@@ -11,12 +11,9 @@ import FormSection from "../components/FormSection";
 import { getNextItemCode, upsertItemRemote } from "../modules/items/store";
 import { buildTaxLabel, parseNumber } from "../modules/items/utils";
 import {
-  defaultTrackInventoryForType,
   inferTypeFromCategory,
   normalizeItemTypeValue,
   shouldShowIndiaComplianceFields,
-  shouldShowInventoryFields,
-  shouldShowInventorySection,
   taxHintForCountry,
   taxRateLabelForCountry
 } from "../modules/items/formRules";
@@ -86,10 +83,8 @@ function createDraft(type = "PRODUCT", defaultTaxRate = 0) {
     salePrice: 0,
     purchasePrice: 0,
     taxRate: Number(defaultTaxRate || 0),
-    taxInclusive: true,
     hsnOrSac: "",
-    trackInventory: defaultTrackInventoryForType(normalizedType),
-    openingQty: 0,
+    quantity: 0,
     openingStockValue: 0,
     lowStockQty: 0,
     sku: "",
@@ -181,10 +176,13 @@ export default function ItemCreate() {
     : gstRuntimeEnabled
       ? taxHintForCountry(companyCountry)
       : "Use the standard tax/VAT percentage for this item.";
-  const showInventoryCard = shouldShowInventorySection(form.type, form.trackInventory);
-  const showInventoryInputs = shouldShowInventoryFields(form.type, form.trackInventory);
+  const isProductType = form.type === "PRODUCT";
   const complianceCodeLabel = form.type === "SERVICE" ? "SAC" : "HSN";
   const itemTypeLabel = form.type === "SERVICE" ? "Service" : "Product";
+  const lowStockWarning =
+    isProductType && wholeLike(form.lowStockQty) > wholeLike(form.quantity)
+      ? "Low stock alert is higher than quantity."
+      : "";
   const productIdPreview = String(form.itemCode || form.sku || "").trim();
   const multiCountryEnabled =
     !!organizationProfile?.settings?.numbering?.allowCountryOverride ||
@@ -255,19 +253,12 @@ export default function ItemCreate() {
       const currentCode = String(prev.itemCode || "").trim();
       const expectedPrefix = nextType === "SERVICE" ? "SER-" : "PRD-";
       const keepCurrentCode = !!currentCode && currentCode.toUpperCase().startsWith(expectedPrefix);
-      const nextTrackInventory =
-        nextType === "SERVICE"
-          ? false
-          : prev.type === "SERVICE"
-            ? defaultTrackInventoryForType(nextType)
-            : !!prev.trackInventory;
 
       return {
         ...prev,
         type: nextType,
-        trackInventory: nextTrackInventory,
         itemCode: keepCurrentCode ? currentCode : getNextItemCode(toStoreType(nextType)),
-        openingQty: nextType === "SERVICE" ? 0 : prev.openingQty,
+        quantity: nextType === "SERVICE" ? 0 : prev.quantity,
         openingStockValue: nextType === "SERVICE" ? 0 : prev.openingStockValue,
         lowStockQty: nextType === "SERVICE" ? 0 : prev.lowStockQty
       };
@@ -320,8 +311,8 @@ export default function ItemCreate() {
     if (parseNumber(form.salePrice) < 0) nextErrors.salePrice = "Sales rate cannot be negative.";
     if (parseNumber(form.purchasePrice) < 0) nextErrors.purchasePrice = "Purchase rate cannot be negative.";
     if (parseNumber(form.taxRate) < 0) nextErrors.taxRate = `${taxRateLabel} cannot be negative.`;
-    if (showInventoryInputs && parseNumber(form.openingQty) < 0) nextErrors.openingQty = "Opening stock cannot be negative.";
-    if (showInventoryInputs && parseNumber(form.lowStockQty) < 0) nextErrors.lowStockQty = "Low stock alert cannot be negative.";
+    if (isProductType && parseNumber(form.quantity) < 0) nextErrors.quantity = "Quantity cannot be negative.";
+    if (isProductType && parseNumber(form.lowStockQty) < 0) nextErrors.lowStockQty = "Low stock alert cannot be negative.";
 
     setErrors(nextErrors);
     return !Object.keys(nextErrors).length;
@@ -340,9 +331,9 @@ export default function ItemCreate() {
 
     const numericTaxRate = forceZeroTax ? 0 : parseNumber(form.taxRate);
     const trimmedCode = String(form.hsnOrSac || "").trim();
-    const normalizedOpeningQty = showInventoryInputs ? wholeLike(form.openingQty) : 0;
+    const normalizedQuantity = isProductType ? wholeLike(form.quantity) : 0;
     const normalizedPurchaseRate = parseNumber(form.purchasePrice);
-    const computedOpeningStockValue = showInventoryInputs ? parseNumber(normalizedOpeningQty * normalizedPurchaseRate) : 0;
+    const computedOpeningStockValue = isProductType ? parseNumber(normalizedQuantity * normalizedPurchaseRate) : 0;
     const normalizedPriceLevels = form.priceLevels
       .map((row) => ({
         ...row,
@@ -367,12 +358,13 @@ export default function ItemCreate() {
       purchaseRate: parseNumber(form.purchasePrice),
       taxRate: numericTaxRate,
       taxLabel: buildTaxLabel(companyCountry, numericTaxRate),
-      taxInclusive: !!form.taxInclusive,
       status: form.status === "Inactive" ? "Inactive" : "Active",
-      trackInventory: !!showInventoryInputs,
-      openingStock: normalizedOpeningQty,
+      trackInventory: isProductType,
+      quantity: normalizedQuantity,
+      openingStock: normalizedQuantity,
+      currentStock: normalizedQuantity,
       openingStockValue: computedOpeningStockValue,
-      lowStockAlert: showInventoryInputs ? wholeLike(form.lowStockQty) : 0,
+      lowStockAlert: isProductType ? wholeLike(form.lowStockQty) : 0,
       category: String(form.category || "").trim(),
       itemCode: String(form.itemCode || "").trim(),
       sku: String(form.sku || "").trim() || String(form.itemCode || "").trim(),
@@ -391,16 +383,17 @@ export default function ItemCreate() {
         barcode: String(form.barcode || "").trim(),
         description: String(form.description || "").trim(),
         purchasePrice: parseNumber(form.purchasePrice),
-        taxInclusive: !!form.taxInclusive,
-        salePriceTaxMode: form.taxInclusive ? "WITH_TAX" : form.salePriceTaxMode,
-        purchasePriceTaxMode: form.taxInclusive ? "WITH_TAX" : form.purchasePriceTaxMode,
+        salePriceTaxMode: form.salePriceTaxMode,
+        purchasePriceTaxMode: form.purchasePriceTaxMode,
         discountValue: parseNumber(form.discountValue),
         discountType: form.discountType,
-        trackStock: !!showInventoryInputs,
-        openingStock: normalizedOpeningQty,
-        openingQty: normalizedOpeningQty,
+        trackStock: isProductType,
+        quantity: normalizedQuantity,
+        openingStock: normalizedQuantity,
+        openingQty: normalizedQuantity,
+        currentStock: normalizedQuantity,
         openingStockValue: computedOpeningStockValue,
-        lowStockQty: showInventoryInputs ? wholeLike(form.lowStockQty) : 0,
+        lowStockQty: isProductType ? wholeLike(form.lowStockQty) : 0,
         warehouse: String(form.warehouse || "").trim(),
         imageUrl: String(form.imageUrl || "").trim(),
         gstPercent: showIndiaCompliance ? numericTaxRate : 0,
@@ -575,7 +568,7 @@ export default function ItemCreate() {
             </div>
           </FormSection>
 
-          <FormSection title="2. Pricing" description="Rates and tax inclusion setup.">
+          <FormSection title="2. Pricing" description="Sales, purchase, tax and stock setup.">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <FormField label="Sales Rate">
                 <input
@@ -605,17 +598,34 @@ export default function ItemCreate() {
                 {errors.purchasePrice ? <p className={errorClassName}>{errors.purchasePrice}</p> : null}
               </FormField>
 
-              <FormField label="Tax Inclusive" className="md:col-span-2">
-                <label className="inline-flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
-                  <span>Prices include tax</span>
+              {isProductType ? (
+                <FormField label="Quantity">
                   <input
-                    type="checkbox"
-                    checked={form.taxInclusive}
-                    onChange={(event) => updateField("taxInclusive", event.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300"
+                    type="text"
+                    inputMode="numeric"
+                    value={wholeLike(form.quantity)}
+                    onChange={(event) => updateField("quantity", normalizeWholeInput(event.target.value))}
+                    className={inputClassName}
+                    placeholder="0"
                   />
-                </label>
-              </FormField>
+                  {errors.quantity ? <p className={errorClassName}>{errors.quantity}</p> : null}
+                </FormField>
+              ) : null}
+
+              {isProductType ? (
+                <FormField label="Low Stock Alert">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={wholeLike(form.lowStockQty)}
+                    onChange={(event) => updateField("lowStockQty", normalizeWholeInput(event.target.value))}
+                    className={inputClassName}
+                    placeholder="0"
+                  />
+                  {errors.lowStockQty ? <p className={errorClassName}>{errors.lowStockQty}</p> : null}
+                  {lowStockWarning ? <p className="mt-1 text-xs font-medium text-amber-600">{lowStockWarning}</p> : null}
+                </FormField>
+              ) : null}
             </div>
           </FormSection>
 
@@ -708,63 +718,7 @@ export default function ItemCreate() {
             ) : null}
           </FormSection>
 
-          {showInventoryCard ? (
-            <FormSection
-              title="4. Inventory"
-              description="Visible for products and tracked stock."
-              collapsible
-              defaultOpen={form.type === "PRODUCT"}
-            >
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <FormField label="Track Inventory" className="md:col-span-2">
-                  <label className="inline-flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
-                    <span>Enable stock tracking for this item</span>
-                    <input
-                      type="checkbox"
-                      checked={form.trackInventory}
-                      onChange={(event) => updateField("trackInventory", event.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300"
-                      disabled={form.type === "SERVICE"}
-                    />
-                  </label>
-                </FormField>
-
-                {showInventoryInputs ? (
-                  <>
-                    <FormField label="Opening Stock">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={wholeLike(form.openingQty)}
-                        onChange={(event) => updateField("openingQty", normalizeWholeInput(event.target.value))}
-                        className={inputClassName}
-                        placeholder="0"
-                      />
-                      {errors.openingQty ? <p className={errorClassName}>{errors.openingQty}</p> : null}
-                    </FormField>
-
-                    <FormField label="Low Stock Alert">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={wholeLike(form.lowStockQty)}
-                        onChange={(event) => updateField("lowStockQty", normalizeWholeInput(event.target.value))}
-                        className={inputClassName}
-                        placeholder="0"
-                      />
-                      {errors.lowStockQty ? <p className={errorClassName}>{errors.lowStockQty}</p> : null}
-                    </FormField>
-                  </>
-                ) : (
-                  <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
-                    Opening stock fields are hidden while inventory tracking is off.
-                  </div>
-                )}
-              </div>
-            </FormSection>
-          ) : null}
-
-          <FormSection title="5. Identifiers" description="Optional codes used for scanning and internal lookup." collapsible defaultOpen={false}>
+          <FormSection title="4. Identifiers" description="Optional codes used for scanning and internal lookup." collapsible defaultOpen={false}>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <FormField label="Barcode (EAN / UPC)" className="md:col-span-2">
                 <input
@@ -777,7 +731,7 @@ export default function ItemCreate() {
             </div>
           </FormSection>
 
-          <FormSection title="6. Price Levels" description="Optional wholesale and tier pricing." collapsible defaultOpen={false}>
+          <FormSection title="5. Price Levels" description="Optional wholesale and tier pricing." collapsible defaultOpen={false}>
             <div className="flex items-center justify-end">
               <button
                 type="button"
@@ -831,7 +785,6 @@ export default function ItemCreate() {
                   value={form.salePriceTaxMode}
                   onChange={(event) => updateField("salePriceTaxMode", event.target.value)}
                   className={inputClassName}
-                  disabled={form.taxInclusive}
                 >
                   {PRICE_TAX_MODES.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -846,7 +799,6 @@ export default function ItemCreate() {
                   value={form.purchasePriceTaxMode}
                   onChange={(event) => updateField("purchasePriceTaxMode", event.target.value)}
                   className={inputClassName}
-                  disabled={form.taxInclusive}
                 >
                   {PRICE_TAX_MODES.map((option) => (
                     <option key={option.value} value={option.value}>

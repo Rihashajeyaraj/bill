@@ -69,9 +69,8 @@ function defaultItem(type) {
     salesRate: 0,
     purchaseRate: 0,
     taxRate: 0,
-    taxInclusive: true,
     status: "Active",
-    trackInventory: normalizedType === "Product",
+    quantity: 0,
     openingStock: 0,
     openingStockValue: 0,
     lowStockAlert: 0,
@@ -113,6 +112,7 @@ export default function ItemFormModal({
     initialItem ? { ...defaultItem(initialItem.type), ...initialItem } : defaultItem("Product")
   );
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
   const normalizedCategoryOptions = useMemo(
     () =>
       (Array.isArray(categoryOptions) ? categoryOptions : [])
@@ -127,6 +127,7 @@ export default function ItemFormModal({
   useEffect(() => {
     if (!open) return;
     setError("");
+    setWarning("");
     const next = initialItem ? { ...defaultItem(initialItem.type), ...initialItem } : defaultItem("Product");
     next.type = normalizeItemTypeLabel(next.type);
     if (mode !== "edit" && !String(next.itemCode || "").trim()) {
@@ -139,7 +140,10 @@ export default function ItemFormModal({
     } else if (!hasUomForType(next.type, next.unit)) {
       next.unit = defaultUnitForType(next.type);
     }
-    next.trackInventory = next.type === "Product" ? !!next.trackInventory : false;
+    const normalizedQuantity = next.type === "Product" ? wholeLike(next.quantity ?? next.openingStock) : 0;
+    next.quantity = normalizedQuantity;
+    next.openingStock = normalizedQuantity;
+    next.lowStockAlert = next.type === "Product" ? wholeLike(next.lowStockAlert) : 0;
     const nextCategoryId = String(next.categoryId || "").trim();
     if (nextCategoryId) {
       const matched = normalizedCategoryOptions.find((entry) => entry.id === nextCategoryId);
@@ -161,6 +165,10 @@ export default function ItemFormModal({
   const taxCfg = useMemo(() => taxContext(country, form.type), [country, form.type]);
   const uomOptions = useMemo(() => uomOptionsForType(form.type), [form.type]);
   const showStock = form.type === "Product";
+  const lowStockWarning =
+    showStock && wholeLike(form.lowStockAlert) > wholeLike(form.quantity)
+      ? "Low stock alert is higher than quantity."
+      : "";
   const itemLabel = form.type === "Service" ? "Service" : "Product";
   const modalTitle = mode === "edit" ? `Edit ${itemLabel}` : `Create ${itemLabel}`;
   const submitLabel = mode === "edit" ? `Update ${itemLabel}` : `Create ${itemLabel}`;
@@ -177,9 +185,12 @@ export default function ItemFormModal({
         ...prev,
         type: nextType,
         unit: nextUnit,
-        trackInventory: nextType === "Product" ? !!prev.trackInventory : false
+        quantity: nextType === "Product" ? wholeLike(prev.quantity) : 0,
+        openingStock: nextType === "Product" ? wholeLike(prev.quantity) : 0,
+        lowStockAlert: nextType === "Product" ? wholeLike(prev.lowStockAlert) : 0
       };
     });
+    setWarning("");
   }
 
   function addPriceLevel() {
@@ -234,11 +245,15 @@ export default function ItemFormModal({
       return;
     }
     setError("");
+    setWarning("");
     const normalizedType = normalizeItemTypeLabel(form.type);
-    const normalizedTrackInventory = normalizedType === "Product" ? !!form.trackInventory : false;
-    const normalizedOpeningStock = normalizedTrackInventory ? wholeLike(form.openingStock) : 0;
-    const normalizedOpeningStockValue = normalizedTrackInventory
-      ? parseNumber(normalizedOpeningStock * parseNumber(form.purchaseRate))
+    const normalizedQuantity = normalizedType === "Product" ? wholeLike(form.quantity) : 0;
+    const normalizedLowStock = normalizedType === "Product" ? wholeLike(form.lowStockAlert) : 0;
+    if (normalizedLowStock > normalizedQuantity && normalizedType === "Product") {
+      setWarning("Low stock alert is higher than quantity. Alerts can trigger immediately.");
+    }
+    const normalizedOpeningStockValue = normalizedType === "Product"
+      ? parseNumber(normalizedQuantity * parseNumber(form.purchaseRate))
       : 0;
     const next = {
       ...form,
@@ -253,10 +268,12 @@ export default function ItemFormModal({
       salesRate: parseNumber(form.salesRate),
       purchaseRate: parseNumber(form.purchaseRate),
       taxRate: parseNumber(form.taxRate),
-      trackInventory: normalizedTrackInventory,
-      openingStock: normalizedOpeningStock,
+      trackInventory: normalizedType === "Product",
+      quantity: normalizedQuantity,
+      openingStock: normalizedQuantity,
+      currentStock: normalizedQuantity,
       openingStockValue: normalizedOpeningStockValue,
-      lowStockAlert: normalizedTrackInventory ? wholeLike(form.lowStockAlert) : 0,
+      lowStockAlert: normalizedLowStock,
       categoryId: String(form.categoryId || "").trim(),
       category: String(form.category || "").trim(),
       priceLevels: form.priceLevels.map((level) => ({
@@ -280,7 +297,10 @@ export default function ItemFormModal({
       onClose={onClose}
       footer={
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {error ? <p className="text-xs font-semibold text-rose-600">{error}</p> : <span />}
+          <div className="space-y-1">
+            {error ? <p className="text-xs font-semibold text-rose-600">{error}</p> : null}
+            {!error && warning ? <p className="text-xs font-semibold text-amber-600">{warning}</p> : null}
+          </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -471,47 +491,20 @@ export default function ItemFormModal({
               </p>
             </FormField>
 
-            <FormField label="Tax Inclusive">
-              <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={form.taxInclusive}
-                  onChange={(event) => updateField("taxInclusive", event.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300"
-                />
-                Prices include tax
-              </label>
-            </FormField>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          {showStock ? (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <FormField label="Track Inventory">
-                <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={form.trackInventory}
-                    onChange={(event) => updateField("trackInventory", event.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300"
-                  />
-                  Track stock for this product
-                </label>
-              </FormField>
-
-              <FormField label="Opening Stock">
+            {showStock ? (
+              <FormField label="Quantity">
                 <input
                   type="text"
                   inputMode="numeric"
-                  value={wholeLike(form.openingStock)}
-                  onChange={(event) => updateField("openingStock", normalizeWholeInput(event.target.value))}
+                  value={wholeLike(form.quantity)}
+                  onChange={(event) => updateField("quantity", normalizeWholeInput(event.target.value))}
                   className={inputClassName}
-                  disabled={!form.trackInventory}
                   placeholder="0"
                 />
               </FormField>
+            ) : null}
 
+            {showStock ? (
               <FormField label="Low Stock Alert">
                 <input
                   type="text"
@@ -519,16 +512,12 @@ export default function ItemFormModal({
                   value={wholeLike(form.lowStockAlert)}
                   onChange={(event) => updateField("lowStockAlert", normalizeWholeInput(event.target.value))}
                   className={inputClassName}
-                  disabled={!form.trackInventory}
                   placeholder="0"
                 />
+                {lowStockWarning ? <p className="mt-2 text-xs font-medium text-amber-600">{lowStockWarning}</p> : null}
               </FormField>
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              Inventory is disabled for services.
-            </div>
-          )}
+            ) : null}
+          </div>
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">

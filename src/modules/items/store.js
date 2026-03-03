@@ -229,17 +229,18 @@ function normalizeItem(raw) {
     parseNumber(metadata?.taxRate) ||
     parseNumber(metadata?.gstPercent) ||
     parseNumber(metadata?.taxPercent);
-  const taxInclusive =
-    !!metadata?.taxInclusive ||
-    metadata?.salePriceTaxMode === "WITH_TAX" ||
-    metadata?.purchasePriceTaxMode === "WITH_TAX";
   const status = String(raw?.status || "").toLowerCase() === "inactive" ? "Inactive" : "Active";
-  const trackInventory =
-    type === "Product"
-      ? metadata?.trackStock ?? metadata?.trackInventory ?? true
-      : false;
-  const openingStock = parseNumber(metadata?.openingStock ?? metadata?.openingQty ?? raw?.stockQty);
-  const currentStock = parseNumber(metadata?.currentStock ?? raw?.currentStock ?? openingStock);
+  const trackInventory = type === "Product";
+  const quantity = trackInventory
+    ? Math.max(
+        0,
+        parseNumber(raw?.quantity ?? metadata?.quantity ?? metadata?.openingStock ?? metadata?.openingQty ?? raw?.stockQty)
+      )
+    : 0;
+  const openingStock = trackInventory ? quantity : 0;
+  const currentStock = trackInventory
+    ? Math.max(0, parseNumber(metadata?.currentStock ?? raw?.currentStock ?? openingStock))
+    : 0;
   const categoryId = normalizeCategoryId(
     raw?.categoryId || raw?.category_id || metadata?.categoryId || metadata?.category_id
   );
@@ -264,13 +265,13 @@ function normalizeItem(raw) {
     salesRate: parseNumber(raw?.price ?? raw?.salesRate ?? raw?.salePrice),
     purchaseRate: parseNumber(metadata?.purchasePrice ?? raw?.purchaseRate),
     taxRate,
-    taxInclusive,
     status,
     trackInventory,
+    quantity,
     openingStock,
     currentStock,
-    openingStockValue: parseNumber(metadata?.openingStockValue),
-    lowStockAlert: parseNumber(metadata?.lowStockQty ?? metadata?.lowStockAlert),
+    openingStockValue: Math.max(0, parseNumber(metadata?.openingStockValue)),
+    lowStockAlert: Math.max(0, parseNumber(metadata?.lowStockQty ?? metadata?.lowStockAlert)),
     categoryId,
     category,
     sku: metadata?.sku || metadata?.itemCode || raw?.itemCode || "",
@@ -283,9 +284,9 @@ function normalizeItem(raw) {
 
 function mapRemoteItem(row, categoryById = null) {
   const type = String(row?.item_type || "").toLowerCase() === "service" ? "Service" : "Product";
-  const openingStock = parseNumber(row?.opening_stock);
-  const currentStock = parseNumber(row?.current_stock);
-  const purchasePrice = parseNumber(row?.purchase_price);
+  const openingStock = Math.max(0, parseNumber(row?.opening_stock));
+  const currentStock = Math.max(0, parseNumber(row?.current_stock));
+  const purchasePrice = Math.max(0, parseNumber(row?.purchase_price));
   const { categoryId, categoryName } = extractCategoryFromJoinedRow(row, categoryById);
 
   return normalizeItem({
@@ -296,13 +297,14 @@ function mapRemoteItem(row, categoryById = null) {
     hsn: type === "Product" ? row?.hsn_sac || "" : "",
     sac: type === "Service" ? row?.hsn_sac || "" : "",
     unit: row?.unit || "pcs",
-    salesRate: parseNumber(row?.sale_price),
+    salesRate: Math.max(0, parseNumber(row?.sale_price)),
     purchaseRate: purchasePrice,
     taxRate: parseNumber(row?.tax_rate),
     status: row?.is_active === false ? "Inactive" : "Active",
     trackInventory: type === "Product",
+    quantity: openingStock,
     openingStock,
-    lowStockAlert: parseNumber(row?.reorder_level),
+    lowStockAlert: Math.max(0, parseNumber(row?.reorder_level)),
     categoryId,
     category: categoryName,
     sku: row?.sku || "",
@@ -313,15 +315,13 @@ function mapRemoteItem(row, categoryById = null) {
       purchasePrice,
       categoryId,
       category: categoryName,
-      taxInclusive: !!row?.tax_inclusive,
-      salePriceTaxMode: row?.tax_inclusive ? "WITH_TAX" : "WITHOUT_TAX",
-      purchasePriceTaxMode: row?.tax_inclusive ? "WITH_TAX" : "WITHOUT_TAX",
       trackStock: type === "Product",
+      quantity: openingStock,
       openingStock,
       openingQty: openingStock,
       currentStock,
       stockSource: "db_current_stock",
-      lowStockQty: parseNumber(row?.reorder_level)
+      lowStockQty: Math.max(0, parseNumber(row?.reorder_level))
     },
     created_at: row?.created_at,
     updated_at: row?.updated_at
@@ -331,8 +331,8 @@ function mapRemoteItem(row, categoryById = null) {
 function toRemotePayload(draft) {
   const incoming = normalizeItem(draft);
   const hsnSac = incoming.type === "Service" ? incoming.sac || incoming.hsn : incoming.hsn || incoming.sac;
-  const openingStock = incoming.trackInventory ? parseNumber(incoming.openingStock) : 0;
-  const reorderLevel = incoming.trackInventory ? parseNumber(incoming.lowStockAlert) : null;
+  const quantity = incoming.type === "Product" ? Math.max(0, parseNumber(incoming.quantity ?? incoming.openingStock)) : 0;
+  const reorderLevel = incoming.type === "Product" ? Math.max(0, parseNumber(incoming.lowStockAlert)) : null;
   const categoryId = normalizeCategoryId(incoming.categoryId);
 
   return {
@@ -342,12 +342,11 @@ function toRemotePayload(draft) {
     sku: incoming.sku || null,
     hsn_sac: hsnSac || null,
     unit: incoming.unit || "pcs",
-    sale_price: parseNumber(incoming.salesRate),
-    purchase_price: parseNumber(incoming.purchaseRate),
-    tax_rate: parseNumber(incoming.taxRate),
-    tax_inclusive: !!incoming.taxInclusive,
-    opening_stock: openingStock,
-    current_stock: openingStock,
+    sale_price: Math.max(0, parseNumber(incoming.salesRate)),
+    purchase_price: Math.max(0, parseNumber(incoming.purchaseRate)),
+    tax_rate: Math.max(0, parseNumber(incoming.taxRate)),
+    opening_stock: quantity,
+    current_stock: quantity,
     reorder_level: reorderLevel,
     category_id: categoryId || null,
     is_active: incoming.status !== "Inactive"
@@ -386,6 +385,10 @@ export function upsertItem(draft, country) {
   const duplicateByName = findDuplicateItemByName(list, itemName, id);
   if (duplicateByName) throw new Error("Item name already exists.");
   const taxLabel = buildTaxLabel(country, parseNumber(draft.taxRate));
+  const trackInventory = normalizeItemType(draft?.type) === "Product";
+  const quantity = trackInventory ? Math.max(0, parseNumber(draft.quantity ?? draft.openingStock)) : 0;
+  const lowStockAlert = trackInventory ? Math.max(0, parseNumber(draft.lowStockAlert)) : 0;
+  const openingStockValue = trackInventory ? parseNumber(quantity * parseNumber(draft.purchaseRate)) : 0;
 
   const payload = {
     id,
@@ -396,10 +399,14 @@ export function upsertItem(draft, country) {
     hsn: draft.type === "Product" ? draft.hsn : "",
     sac: draft.type === "Service" ? draft.sac : "",
     unit: draft.unit,
-    price: parseNumber(draft.salesRate),
-    taxRate: parseNumber(draft.taxRate),
+    price: Math.max(0, parseNumber(draft.salesRate)),
+    taxRate: Math.max(0, parseNumber(draft.taxRate)),
     taxLabel,
-    stockQty: draft.trackInventory ? parseNumber(draft.openingStock) : 0,
+    trackInventory,
+    quantity,
+    stockQty: quantity,
+    openingStock: quantity,
+    currentStock: quantity,
     status: draft.status,
     categoryId: normalizeCategoryId(draft.categoryId),
     category: draft.category || "",
@@ -410,14 +417,14 @@ export function upsertItem(draft, country) {
       itemCode,
       sku: draft.sku || itemCode,
       barcode: draft.barcode || "",
-      purchasePrice: parseNumber(draft.purchaseRate),
-      taxInclusive: !!draft.taxInclusive,
-      salePriceTaxMode: draft.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX",
-      purchasePriceTaxMode: draft.taxInclusive ? "WITH_TAX" : "WITHOUT_TAX",
-      trackStock: !!draft.trackInventory,
-      openingStock: parseNumber(draft.openingStock),
-      openingStockValue: parseNumber(draft.openingStockValue),
-      lowStockQty: parseNumber(draft.lowStockAlert),
+      purchasePrice: Math.max(0, parseNumber(draft.purchaseRate)),
+      trackStock: trackInventory,
+      quantity,
+      openingStock: quantity,
+      openingQty: quantity,
+      currentStock: quantity,
+      openingStockValue,
+      lowStockQty: lowStockAlert,
       gstPercent: parseNumber(draft.gstPercent ?? draft.taxRate),
       taxPercent: parseNumber(draft.taxPercent ?? draft.taxRate),
       hsnOrSac:
