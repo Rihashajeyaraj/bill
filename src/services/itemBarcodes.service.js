@@ -269,7 +269,7 @@ export async function createItemBarcodesForPurchase({
   purchaseId,
   billDate,
   lines,
-  mode = BARCODE_MODE_BATCH,
+  mode = BARCODE_MODE_UNIT,
   enabled = true
 }) {
   if (enabled === false || !purchaseId) return [];

@@ -186,7 +186,6 @@ export default function PurchaseBill() {
   const [billNumber, setBillNumber] = useState("");
   const [billDate, setBillDate] = useState(new Date().toISOString().slice(0, 10));
   const [generateBarcodes, setGenerateBarcodes] = useState(true);
-  const [barcodeGenerationMode, setBarcodeGenerationMode] = useState("batch");
   const [lines, setLines] = useState(() => [createLine(defaultLineTaxRate)]);
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
   const [lineItemPopover, setLineItemPopover] = useState({ top: 0, left: 0, width: 280 });
@@ -1004,7 +1003,7 @@ export default function PurchaseBill() {
         supplyType: computed.tax.supplyType || null,
         barcodeOptions: {
           enabled: generateBarcodes,
-          mode: barcodeGenerationMode
+          mode: "unit"
         }
       });
 
@@ -1393,15 +1392,9 @@ export default function PurchaseBill() {
                 />
                 Generate Barcode on Save
               </label>
-              <select
-                value={barcodeGenerationMode}
-                onChange={(event) => setBarcodeGenerationMode(event.target.value)}
-                disabled={!generateBarcodes}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
-              >
-                <option value="batch">One barcode per line (batch)</option>
-                <option value="unit">One barcode per unit</option>
-              </select>
+              <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700">
+                One barcode per unit quantity
+              </span>
             </div>
           </div>
         </div>

@@ -485,7 +485,7 @@ export async function purchasesCreate(bill) {
       billDate: bill?.billDate || now.slice(0, 10),
       lines: next.lines,
       enabled: bill?.barcodeOptions?.enabled !== false,
-      mode: bill?.barcodeOptions?.mode || "batch"
+      mode: bill?.barcodeOptions?.mode || "unit"
     });
   } catch (error) {
     console.warn("Barcode generation failed for purchase", error);

@@ -12,12 +12,14 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
     async function bootstrap() {
-      ensureSeeded();
       try {
+        ensureSeeded();
         const hasSession = await authBootstrapSession();
         if (hasSession) {
           await companyLoadMyOrganization();
         }
+      } catch (error) {
+        console.error("App bootstrap failed", error);
       } finally {
         if (mounted) setReady(true);
       }

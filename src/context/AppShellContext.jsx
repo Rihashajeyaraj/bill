@@ -46,7 +46,11 @@ export function AppShellProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    ensureActivitySeed();
+    try {
+      ensureActivitySeed();
+    } catch (error) {
+      console.warn("Failed to initialize activity seed", error);
+    }
     void maybeRunDailyCreditMonitoringCheck();
     void refreshFeeds();
   }, [refreshFeeds]);
@@ -72,9 +76,13 @@ export function AppShellProvider({ children }) {
     if (!location?.pathname) return;
     if (location.pathname === "/login") return;
 
-    logActivity("Visited page", {
-      path: location.pathname
-    });
+    try {
+      logActivity("Visited page", {
+        path: location.pathname
+      });
+    } catch (error) {
+      console.warn("Failed to log activity", error);
+    }
     void refreshFeeds();
   }, [location.pathname, refreshFeeds]);
 
@@ -108,7 +116,11 @@ export function AppShellProvider({ children }) {
     if (!path) return;
     navigate(path);
     if (options.log !== false) {
-      logActivity("Quick navigation", { path });
+      try {
+        logActivity("Quick navigation", { path });
+      } catch (error) {
+        console.warn("Failed to log activity", error);
+      }
     }
     setCommandOpen(false);
     setNotificationOpen(false);

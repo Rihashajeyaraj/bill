@@ -38,6 +38,24 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function sortBarcodeRows(rows) {
+  return [...(Array.isArray(rows) ? rows : [])].sort((left, right) => {
+    const leftLine = Number(left?.lineIndex ?? left?.line_index ?? 0);
+    const rightLine = Number(right?.lineIndex ?? right?.line_index ?? 0);
+    if (leftLine !== rightLine) return leftLine - rightLine;
+
+    const leftUnit = Number(left?.unitIndex ?? left?.unit_index ?? 0);
+    const rightUnit = Number(right?.unitIndex ?? right?.unit_index ?? 0);
+    if (leftUnit !== rightUnit) return leftUnit - rightUnit;
+
+    const leftCreated = String(left?.created_at || left?.createdAt || "");
+    const rightCreated = String(right?.created_at || right?.createdAt || "");
+    if (leftCreated !== rightCreated) return leftCreated.localeCompare(rightCreated);
+
+    return barcodeValueOf(left).localeCompare(barcodeValueOf(right));
+  });
+}
+
 export default function PurchaseHistory() {
   const navigate = useNavigate();
   const toast = useToast();
@@ -92,6 +110,9 @@ export default function PurchaseHistory() {
           if (!nextMap[purchaseId]) nextMap[purchaseId] = [];
           nextMap[purchaseId].push(entry);
         });
+        Object.keys(nextMap).forEach((purchaseId) => {
+          nextMap[purchaseId] = sortBarcodeRows(nextMap[purchaseId]);
+        });
         setBarcodesByPurchaseId(nextMap);
       } catch (error) {
         if (!mounted) return;
@@ -110,7 +131,7 @@ export default function PurchaseHistory() {
   function openBarcodeModal(bill) {
     const rows = barcodesByPurchaseId[String(bill?.id || "").trim()] || [];
     setBarcodeModalBill(bill || null);
-    setBarcodeModalRows(rows);
+    setBarcodeModalRows(sortBarcodeRows(rows));
   }
 
   function printBarcodes(bill, rows) {
