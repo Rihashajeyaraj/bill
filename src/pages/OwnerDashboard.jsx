@@ -28,6 +28,7 @@ import {
 } from "recharts";
 import { beginPageLoading, endPageLoading } from "../state/pageLoadingStore";
 import { isOrganizationScopedStorageEventKey, LS_KEYS, lsGetOrganizationScoped } from "../services/storage";
+import { resolveCountryIsoCode } from "../lib/geoData";
 
 function money(n) {
   const v = Number(n || 0);
@@ -47,24 +48,73 @@ function buildMonthLabels() {
   return ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
 }
 
-function toLocalIsoDate(date = new Date()) {
+const MONTH_SHORT_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const COUNTRY_TIMEZONE_BY_ISO = {
+  IN: "Asia/Kolkata",
+  LK: "Asia/Colombo",
+  AE: "Asia/Dubai",
+  GB: "Europe/London",
+  IE: "Europe/London",
+  US: "America/New_York"
+};
+
+function resolveCompanyTimeZone(profile, country, countryCode) {
+  const configuredTimeZone = String(profile?.settings?.localization?.timezone || "").trim();
+  if (configuredTimeZone) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: configuredTimeZone }).format(new Date());
+      return configuredTimeZone;
+    } catch {
+      // Fall back to country-derived timezone.
+    }
+  }
+
+  const isoCode = String(countryCode || resolveCountryIsoCode(country) || "")
+    .trim()
+    .toUpperCase();
+  return COUNTRY_TIMEZONE_BY_ISO[isoCode] || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+function toIsoDateParts(date, timeZone = "") {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timeZone || undefined,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(date);
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    if (!year || !month || !day) return "";
+    return `${year}-${month}-${day}`;
+  } catch {
+    return "";
+  }
+}
+
+function toLocalIsoDate(date = new Date(), timeZone = "") {
+  const zonedIso = toIsoDateParts(date, timeZone);
+  if (zonedIso) return zonedIso;
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
-function toIsoDate(value) {
+function toIsoDate(value, timeZone = "") {
   if (!value) return "";
-  const raw = String(value);
-  if (raw.length >= 10 && raw[4] === "-" && raw[7] === "-") return raw.slice(0, 10);
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   const parsed = new Date(raw);
   if (Number.isNaN(parsed.getTime())) return "";
+  const zonedIso = toIsoDateParts(parsed, timeZone);
+  if (zonedIso) return zonedIso;
   return parsed.toISOString().slice(0, 10);
 }
 
-function dateInRange(dateValue, fromDate, toDate) {
-  const iso = toIsoDate(dateValue);
+function dateInRange(dateValue, fromDate, toDate, timeZone = "") {
+  const iso = toIsoDate(dateValue, timeZone);
   if (!iso) return false;
   if (fromDate && iso < fromDate) return false;
   if (toDate && iso > toDate) return false;
@@ -109,9 +159,12 @@ function countryMatches(recordValue, targetCountry) {
 }
 
 export default function Dashboard() {
-  const { currency = "INR", country = "India", countryCode = "IN" } = useOrganization();
-  const todayIso = toLocalIsoDate(new Date());
-  const monthStartIso = toLocalIsoDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const { currency = "INR", country = "India", countryCode = "IN", profile = {} } = useOrganization();
+  const companyTimeZone = useMemo(
+    () => resolveCompanyTimeZone(profile, country, countryCode),
+    [profile, country, countryCode]
+  );
+  const todayIso = useMemo(() => toLocalIsoDate(new Date(), companyTimeZone), [companyTimeZone]);
 
   useEffect(() => {
     const token = beginPageLoading("dashboard");
@@ -133,8 +186,8 @@ export default function Dashboard() {
   const [paymentOutPremium, setPaymentOutPremium] = useState(() =>
     lsGetOrganizationScoped("paymentOutPremiumV1", [])
   );
-  const [fromDate, setFromDate] = useState(monthStartIso);
-  const [toDate, setToDate] = useState(todayIso);
+  const [fromDate, setFromDate] = useState(() => todayIso);
+  const [toDate, setToDate] = useState(() => todayIso);
   const [donutTab, setDonutTab] = useState("income");
 
   const refreshExpenses = useCallback(async () => {
@@ -225,9 +278,9 @@ export default function Dashboard() {
       invoices.filter(
         (entry) =>
           countryMatches(recordCountry(entry), country) &&
-          dateInRange(entry?.invoiceDate || entry?.date || entry?.created_at, fromDate, toDate)
+          dateInRange(entry?.invoiceDate || entry?.date || entry?.created_at, fromDate, toDate, companyTimeZone)
       ),
-    [invoices, country, fromDate, toDate]
+    [invoices, country, fromDate, toDate, companyTimeZone]
   );
 
   const filteredPurchases = useMemo(
@@ -235,14 +288,19 @@ export default function Dashboard() {
       purchases.filter(
         (entry) =>
           countryMatches(recordCountry(entry), country) &&
-          dateInRange(entry?.billDate || entry?.invoiceDate || entry?.date || entry?.created_at, fromDate, toDate)
+          dateInRange(
+            entry?.billDate || entry?.invoiceDate || entry?.date || entry?.created_at,
+            fromDate,
+            toDate,
+            companyTimeZone
+          )
       ),
-    [purchases, country, fromDate, toDate]
+    [purchases, country, fromDate, toDate, companyTimeZone]
   );
 
   const filteredExpenses = useMemo(
-    () => expenses.filter((entry) => dateInRange(entry?.date || entry?.created_at, fromDate, toDate)),
-    [expenses, fromDate, toDate]
+    () => expenses.filter((entry) => dateInRange(entry?.date || entry?.created_at, fromDate, toDate, companyTimeZone)),
+    [expenses, fromDate, toDate, companyTimeZone]
   );
 
   const filteredPaymentInPremium = useMemo(
@@ -251,9 +309,14 @@ export default function Dashboard() {
         (entry) =>
           String(entry?.status || "").toLowerCase() !== "draft" &&
           countryMatches(recordCountry(entry), country) &&
-          dateInRange(entry?.paymentDate || entry?.payment_date || entry?.created_at, fromDate, toDate)
+          dateInRange(
+            entry?.paymentDate || entry?.payment_date || entry?.created_at,
+            fromDate,
+            toDate,
+            companyTimeZone
+          )
       ),
-    [paymentInPremium, country, fromDate, toDate]
+    [paymentInPremium, country, fromDate, toDate, companyTimeZone]
   );
 
   const filteredPaymentOutPremium = useMemo(
@@ -262,9 +325,14 @@ export default function Dashboard() {
         (entry) =>
           String(entry?.status || "").toLowerCase() !== "draft" &&
           countryMatches(recordCountry(entry), country) &&
-          dateInRange(entry?.paymentDate || entry?.payment_date || entry?.created_at, fromDate, toDate)
+          dateInRange(
+            entry?.paymentDate || entry?.payment_date || entry?.created_at,
+            fromDate,
+            toDate,
+            companyTimeZone
+          )
       ),
-    [paymentOutPremium, country, fromDate, toDate]
+    [paymentOutPremium, country, fromDate, toDate, companyTimeZone]
   );
 
   const filteredLegacyPayments = useMemo(
@@ -272,9 +340,9 @@ export default function Dashboard() {
       payments.filter(
         (entry) =>
           countryMatches(recordCountry(entry), country) &&
-          dateInRange(entry?.date || entry?.payment_date || entry?.created_at, fromDate, toDate)
+          dateInRange(entry?.date || entry?.payment_date || entry?.created_at, fromDate, toDate, companyTimeZone)
       ),
-    [payments, country, fromDate, toDate]
+    [payments, country, fromDate, toDate, companyTimeZone]
   );
 
   const partyCounts = useMemo(() => {
@@ -338,10 +406,16 @@ export default function Dashboard() {
     const received = Math.max(0, receivedLegacy + receivedPremium);
     const paid = Math.max(0, paidLegacy + paidPremium);
 
-    const payables = mapOpenBillsByCountry(countryCode || country).reduce(
-      (sum, bill) => sum + Number(bill?.balanceDue || 0),
-      0
-    );
+    const payables = mapOpenBillsByCountry(countryCode || country)
+      .filter((bill) =>
+        dateInRange(
+          bill?.billDate || bill?.invoiceDate || bill?.date || bill?.created_at,
+          fromDate,
+          toDate,
+          companyTimeZone
+        )
+      )
+      .reduce((sum, bill) => sum + Number(bill?.balanceDue || 0), 0);
 
     const receivables = filteredInvoices.reduce((sum, invoice) => {
       const balance = Number(
@@ -368,7 +442,10 @@ export default function Dashboard() {
         )
       );
       if (!balance) return sum;
-      const dueDate = toIsoDate(invoice?.dueDate || invoice?.invoiceDate || invoice?.date || invoice?.created_at);
+      const dueDate = toIsoDate(
+        invoice?.dueDate || invoice?.invoiceDate || invoice?.date || invoice?.created_at,
+        companyTimeZone
+      );
       if (!dueDate) return sum;
       const overdueDays = Math.floor(
         (new Date(`${todayIso}T00:00:00`).getTime() - new Date(`${dueDate}T00:00:00`).getTime()) /
@@ -398,7 +475,8 @@ export default function Dashboard() {
     filteredPaymentOutPremium,
     countryCode,
     country,
-    todayIso
+    todayIso,
+    companyTimeZone
   ]);
 
   const chart = useMemo(() => {
@@ -407,14 +485,22 @@ export default function Dashboard() {
     const expenseMap = new Map();
 
     filteredInvoices.forEach((inv) => {
-      const label = new Date(inv.invoiceDate || Date.now()).toLocaleString(undefined, { month: "short" });
+      const isoDate = toIsoDate(inv?.invoiceDate || inv?.date || inv?.created_at, companyTimeZone);
+      if (!isoDate) return;
+      const monthIndex = Number(isoDate.slice(5, 7)) - 1;
+      const label = MONTH_SHORT_NAMES[monthIndex] || "";
+      if (!label) return;
       incomeMap.set(
         label,
         (incomeMap.get(label) || 0) + Number(inv?.totals?.grandTotal ?? inv?.totals?.total ?? inv?.grandTotal ?? 0)
       );
     });
     filteredPurchases.forEach((bill) => {
-      const label = new Date(bill.billDate || Date.now()).toLocaleString(undefined, { month: "short" });
+      const isoDate = toIsoDate(bill?.billDate || bill?.invoiceDate || bill?.date || bill?.created_at, companyTimeZone);
+      if (!isoDate) return;
+      const monthIndex = Number(isoDate.slice(5, 7)) - 1;
+      const label = MONTH_SHORT_NAMES[monthIndex] || "";
+      if (!label) return;
       expenseMap.set(
         label,
         (expenseMap.get(label) || 0) +
@@ -427,7 +513,7 @@ export default function Dashboard() {
       income: Math.round(incomeMap.get(m) || 0),
       expense: Math.round(expenseMap.get(m) || 0)
     }));
-  }, [filteredInvoices, filteredPurchases]);
+  }, [filteredInvoices, filteredPurchases, companyTimeZone]);
 
   const donutData = useMemo(() => {
     if (donutTab === "expense") {
@@ -489,7 +575,7 @@ export default function Dashboard() {
           <button
             type="button"
             onClick={() => {
-              setFromDate(monthStartIso);
+              setFromDate(todayIso);
               setToDate(todayIso);
             }}
             className="h-8 w-8 rounded-xl border border-slate-200 bg-white flex items-center justify-center"
