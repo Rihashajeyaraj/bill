@@ -6,7 +6,8 @@ const OWNER_ONLY_PREFIXES = [
   "/company-setup",
   "/app/invoice-template-setup",
   "/invoice-template-setup",
-  "/app/backup"
+  "/app/backup",
+  "/app/audit-history"
 ];
 
 const REPORTS_PREFIXES = ["/app/reports"];

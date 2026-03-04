@@ -32,6 +32,7 @@ import Reports from "../pages/Reports";
 import Notifications from "../pages/Notifications";
 import CompanySettings from "../pages/CompanySettings";
 import BackupUtilities from "../pages/BackupUtilities";
+import AuditHistory from "../pages/AuditHistory";
 import NotFound from "../pages/NotFound";
 
 export const routes = [
@@ -116,6 +117,7 @@ export const routes = [
                   { path: "/app/notifications", element: <Notifications /> },
                   { path: "/app/company-settings", element: <CompanySettings /> },
                   { path: "/app/backup", element: <BackupUtilities /> },
+                  { path: "/app/audit-history", element: <AuditHistory /> },
                   { path: "/app/help", element: <Navigate to="/dashboard" replace /> },
 
                   { path: "*", element: <NotFound /> }

@@ -7,6 +7,7 @@ import {
   Building2,
   FileText,
   LayoutDashboard,
+  History,
   Bell,
   ReceiptIndianRupee,
   Settings,
@@ -36,6 +37,7 @@ export const APP_NAV_ITEMS = [
   { to: "/app/reports", icon: BarChart3, label: "Reports", shortcut: "G R", section: "Finance" },
   { to: "/app/company-settings", icon: Settings, label: "Settings", shortcut: "G S", section: "Admin" },
   { to: "/app/backup", icon: ArrowDownToLine, label: "Backup", section: "Admin" },
+  { to: "/app/audit-history", icon: History, label: "Audit History", section: "Admin" },
 ];
 
 export const APP_SHORTCUTS = [

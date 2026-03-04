@@ -16,6 +16,7 @@ import {
   Building2,
   Settings,
   Download,
+  History,
   ChevronDown,
   ChevronLeft,
   ChevronRight
@@ -164,7 +165,8 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
       ...(canOpenSettings
         ? [
             { to: "/app/company-settings", icon: Settings, label: "Settings" },
-            { to: "/app/backup", icon: Download, label: "Backup" }
+            { to: "/app/backup", icon: Download, label: "Backup" },
+            { to: "/app/audit-history", icon: History, label: "Audit History" }
           ]
         : [])
     ];
