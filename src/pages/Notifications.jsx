@@ -10,13 +10,28 @@ import {
 
 const FILTER_OPTIONS = [
   { id: "all", label: "All" },
+  { id: "credit", label: "Credit Alerts" },
+  { id: "stock", label: "Low Stock" },
   { id: "customers", label: "Customers" },
   { id: "suppliers", label: "Suppliers" },
   { id: "amount", label: "Amount Alerts" },
   { id: "days", label: "Overdue Alerts" }
 ];
 
+function notificationType(entry) {
+  const directType = String(entry?.notificationType || "").trim().toLowerCase();
+  if (directType === "stock") return "stock";
+  if (directType === "credit") return "credit";
+  return String(entry?.alertType || "").toLowerCase() === "low_stock" ? "stock" : "credit";
+}
+
 function formatValue(value, alertType) {
+  if (alertType === "low_stock") {
+    return formatNumberByPreference(Number(value || 0), {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 3
+    });
+  }
   if (alertType === "days") return `${Math.trunc(Number(value || 0))} day(s)`;
   return formatNumberByPreference(Number(value || 0), {
     minimumFractionDigits: 2,
@@ -36,6 +51,9 @@ function formatDate(value) {
 }
 
 function matchesFilter(entry, filterId) {
+  const type = notificationType(entry);
+  if (filterId === "credit") return type === "credit";
+  if (filterId === "stock") return type === "stock";
   if (filterId === "customers") return entry.partyType === "customer";
   if (filterId === "suppliers") return entry.partyType === "supplier";
   if (filterId === "amount") return entry.alertType === "amount";
@@ -44,6 +62,7 @@ function matchesFilter(entry, filterId) {
 }
 
 function alertLabel(entry) {
+  if (notificationType(entry) === "stock") return "Low Stock";
   return entry.alertType === "days" ? "Overdue Days" : "Amount";
 }
 
@@ -72,7 +91,7 @@ export default function Notifications() {
           <div>
             <p className="text-lg font-semibold text-slate-900">Notifications</p>
             <p className="text-sm text-slate-500">
-              Credit monitoring alerts for customers and suppliers
+              Credit monitoring and low-stock alerts
             </p>
           </div>
           <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
@@ -106,7 +125,7 @@ export default function Notifications() {
           <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="bg-slate-50">
               <tr>
-                <th className="px-4 py-3 font-semibold text-slate-700">Party Name</th>
+                <th className="px-4 py-3 font-semibold text-slate-700">Entity</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Type</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Alert Type</th>
                 <th className="px-4 py-3 font-semibold text-slate-700">Details</th>
@@ -120,34 +139,55 @@ export default function Notifications() {
             <tbody>
               {rows.length ? (
                 rows.map((entry) => (
-                  <tr key={entry.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                  <tr key={`${notificationType(entry)}_${entry.id}`} className="border-t border-slate-100 hover:bg-slate-50/60">
                     <td className="px-4 py-3 font-semibold text-slate-900">
-                      {entry.partyName || "Unknown Party"}
+                      {notificationType(entry) === "stock"
+                        ? entry.itemName || "Unknown Item"
+                        : entry.partyName || "Unknown Party"}
                     </td>
                     <td className="px-4 py-3 text-slate-700">
-                      {entry.partyType === "supplier" ? "Supplier" : "Customer"}
+                      {notificationType(entry) === "stock"
+                        ? "Inventory"
+                        : entry.partyType === "supplier"
+                          ? "Supplier"
+                          : "Customer"}
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">
-                        {alertLabel(entry)} Exceeded
+                        {notificationType(entry) === "stock" ? `${alertLabel(entry)} Alert` : `${alertLabel(entry)} Exceeded`}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-700">
-                      {entry.documentNo ? (
-                        <p className="font-semibold text-slate-900">
-                          {documentLabel(entry)}: {entry.documentNo}
-                        </p>
-                      ) : null}
-                      {entry.createdBy ? <p>Created by: {entry.createdBy}</p> : null}
-                      {Number(entry.pendingAmount || 0) > 0 ? (
-                        <p>Pending: {formatAmount(entry.pendingAmount)}</p>
-                      ) : null}
-                      {entry.alertType === "amount" ? (
-                        <p>Over by: {formatAmount(entry.exceededBy || 0)}</p>
+                      {notificationType(entry) === "stock" ? (
+                        <>
+                          <p className="font-semibold text-slate-900">
+                            Item Code: {entry.itemCode || "-"}
+                          </p>
+                          <p>
+                            {Number(entry.currentValue || 0) <= 0
+                              ? "Item is out of stock."
+                              : "Available quantity reached reorder level."}
+                          </p>
+                        </>
                       ) : (
                         <>
-                          <p>Over by days: {Math.trunc(Number(entry.overdueByDays || 0))}</p>
-                          <p>Last due date: {formatDate(entry.lastDueDate || entry.dueDate)}</p>
+                          {entry.documentNo ? (
+                            <p className="font-semibold text-slate-900">
+                              {documentLabel(entry)}: {entry.documentNo}
+                            </p>
+                          ) : null}
+                          {entry.createdBy ? <p>Created by: {entry.createdBy}</p> : null}
+                          {Number(entry.pendingAmount || 0) > 0 ? (
+                            <p>Pending: {formatAmount(entry.pendingAmount)}</p>
+                          ) : null}
+                          {entry.alertType === "amount" ? (
+                            <p>Over by: {formatAmount(entry.exceededBy || 0)}</p>
+                          ) : (
+                            <>
+                              <p>Over by days: {Math.trunc(Number(entry.overdueByDays || 0))}</p>
+                              <p>Last due date: {formatDate(entry.lastDueDate || entry.dueDate)}</p>
+                            </>
+                          )}
                         </>
                       )}
                     </td>
@@ -176,12 +216,16 @@ export default function Notifications() {
                         type="button"
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                         onClick={() => {
-                          void readNotification(entry.id);
+                          void readNotification(entry);
+                          if (notificationType(entry) === "stock") {
+                            navigate("/app/items");
+                            return;
+                          }
                           if (entry.partyId) {
                             navigate(`/app/parties/${entry.partyId}/statement`);
                             return;
                           }
-                          navigate("/app/parties");
+                          navigate("/app/notifications");
                         }}
                       >
                         Open

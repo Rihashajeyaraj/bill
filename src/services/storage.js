@@ -27,6 +27,7 @@ export const LS_KEYS = {
   expense_categories: "expense_categories",
   app_notifications: "app_notifications",
   credit_notifications: "credit_notifications",
+  stock_notifications: "stock_notifications",
   activity_logs: "activity_logs",
   auto_backup_reminder: "auto_backup_reminder"
 };
@@ -195,6 +196,48 @@ export function lsGet(key, fallback = null) {
 
 export function lsSet(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function isQuotaExceededError(error) {
+  const name = String(error?.name || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    name.includes("quotaexceeded") ||
+    message.includes("quotaexceeded") ||
+    (message.includes("storage") && message.includes("quota"))
+  );
+}
+
+export function lsSetSafe(key, value, context = "") {
+  try {
+    lsSet(key, value);
+    return true;
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      console.warn(
+        `[Storage] Skipped local write for ${context || key}: browser storage quota exceeded.`
+      );
+      return false;
+    }
+    console.warn(`[Storage] Failed local write for ${context || key}`, error);
+    return false;
+  }
+}
+
+export function lsSetUserScopedSafe(baseKey, value, userId = "", context = "") {
+  try {
+    lsSetUserScoped(baseKey, value, userId);
+    return true;
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      console.warn(
+        `[Storage] Skipped user-scoped write for ${context || baseKey}: browser storage quota exceeded.`
+      );
+      return false;
+    }
+    console.warn(`[Storage] Failed user-scoped write for ${context || baseKey}`, error);
+    return false;
+  }
 }
 
 export function lsRemove(key) {

@@ -3,6 +3,7 @@ import { authGetOrganizationId, authGetRole, authGetUser } from "./auth.service"
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
+import { triggerLowStockNotifications } from "../modules/items/store";
 import { createItemBarcodesForPurchase } from "./itemBarcodes.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -294,6 +295,7 @@ export async function purchasesSyncFromRemote() {
   });
   setAll(mapped);
   await triggerCreditLimitNotifications();
+  await triggerLowStockNotifications();
   return mapped;
 }
 
@@ -491,5 +493,6 @@ export async function purchasesCreate(bill) {
     console.warn("Barcode generation failed for purchase", error);
   }
   await triggerCreditLimitNotifications();
+  await triggerLowStockNotifications();
   return id;
 }

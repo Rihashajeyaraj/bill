@@ -241,7 +241,11 @@ export default function ItemCreate() {
       const exists = prev.some((entry) => entry.toLowerCase() === clean.toLowerCase());
       if (exists) return prev;
       const next = [...prev, clean];
-      localStorage.setItem(CATEGORY_KEY, JSON.stringify(next));
+      try {
+        localStorage.setItem(CATEGORY_KEY, JSON.stringify(next));
+      } catch (error) {
+        console.warn("Failed to remember item category", error);
+      }
       return next;
     });
   }

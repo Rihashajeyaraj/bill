@@ -14,17 +14,34 @@ function formatAmount(value) {
   });
 }
 
+function formatQty(value) {
+  return formatNumberByPreference(Number(value || 0), {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 3
+  });
+}
+
+function notificationType(entry) {
+  const directType = String(entry?.notificationType || "").trim().toLowerCase();
+  if (directType === "stock") return "stock";
+  if (directType === "credit") return "credit";
+  return String(entry?.alertType || "").toLowerCase() === "low_stock" ? "stock" : "credit";
+}
+
 function formatValue(entry) {
+  if (notificationType(entry) === "stock") return formatQty(entry?.currentValue || 0);
   if (entry?.alertType === "days") return `${Math.trunc(Number(entry?.currentValue || 0))}`;
   return formatAmount(entry?.currentValue || 0);
 }
 
 function formatLimit(entry) {
+  if (notificationType(entry) === "stock") return formatQty(entry?.limitValue || 0);
   if (entry?.alertType === "days") return `${Math.trunc(Number(entry?.limitValue || 0))}`;
   return formatAmount(entry?.limitValue || 0);
 }
 
 function alertLabel(entry) {
+  if (notificationType(entry) === "stock") return "Low Stock";
   return entry?.alertType === "days" ? "Overdue Days" : "Amount Limit";
 }
 
@@ -38,6 +55,9 @@ function formatDate(value) {
 }
 
 function alertDescription(entry) {
+  if (notificationType(entry) === "stock") {
+    return `${formatValue(entry)} available. Reorder level is ${formatLimit(entry)}.`;
+  }
   if (entry?.alertType === "days") {
     return `${formatValue(entry)} days crossed ${formatLimit(entry)} allowed days.`;
   }
@@ -65,7 +85,7 @@ export default function NotificationCenter() {
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
             <div>
               <p className="text-sm font-semibold text-slate-900">Notifications</p>
-              <p className="text-xs text-slate-500">Credit monitoring alerts and activity feed</p>
+              <p className="text-xs text-slate-500">Credit and low-stock alerts with activity feed</p>
             </div>
             <button
               type="button"
@@ -96,10 +116,14 @@ export default function NotificationCenter() {
                 {notifications.length ? (
                   notifications.map((entry) => (
                     <button
-                      key={entry.id}
+                      key={`${notificationType(entry)}_${entry.id}`}
                       type="button"
                       onClick={() => {
-                        void readNotification(entry.id);
+                        void readNotification(entry);
+                        if (notificationType(entry) === "stock") {
+                          navigateTo("/app/items", { log: false });
+                          return;
+                        }
                         if (entry.partyId) {
                           navigateTo(`/app/parties/${entry.partyId}/statement`, { log: false });
                           return;
@@ -107,14 +131,20 @@ export default function NotificationCenter() {
                         navigateTo("/app/notifications", { log: false });
                       }}
                       className={`w-full rounded-2xl border px-3 py-2 text-left ${
-                        entry.isRead
-                          ? "border-rose-200 bg-rose-50/40"
-                          : "border-rose-200 bg-rose-50"
+                        notificationType(entry) === "stock"
+                          ? entry.isRead
+                            ? "border-amber-200 bg-amber-50/40"
+                            : "border-amber-200 bg-amber-50"
+                          : entry.isRead
+                            ? "border-rose-200 bg-rose-50/40"
+                            : "border-rose-200 bg-rose-50"
                       } ${entry.isRead ? "opacity-75" : ""}`}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-sm font-semibold text-slate-900">
-                          {entry.partyName || "Party"} ({entry.partyType === "supplier" ? "Supplier" : "Customer"})
+                          {notificationType(entry) === "stock"
+                            ? `${entry.itemName || "Item"} (Inventory)`
+                            : `${entry.partyName || "Party"} (${entry.partyType === "supplier" ? "Supplier" : "Customer"})`}
                         </p>
                         {entry.isRead ? (
                           <Bell className="h-3.5 w-3.5 text-slate-500" />
@@ -122,21 +152,29 @@ export default function NotificationCenter() {
                           <BellRing className="h-3.5 w-3.5 text-rose-600" />
                         )}
                       </div>
-                      <p className="mt-1 text-xs font-semibold text-rose-700">{alertLabel(entry)}</p>
+                      <p className={`mt-1 text-xs font-semibold ${
+                        notificationType(entry) === "stock" ? "text-amber-700" : "text-rose-700"
+                      }`}>{alertLabel(entry)}</p>
                       <p className="mt-1 text-xs text-slate-700">{alertDescription(entry)}</p>
                       <div className="mt-1 space-y-0.5 text-[11px] text-slate-600">
-                        {entry.documentNo ? (
-                          <p>
-                            {documentLabel(entry)}: {entry.documentNo}
-                          </p>
-                        ) : null}
-                        {entry.createdBy ? <p>Created by: {entry.createdBy}</p> : null}
-                        {Number(entry.pendingAmount || 0) > 0 ? (
-                          <p>Pending: {formatAmount(entry.pendingAmount)}</p>
-                        ) : null}
-                        {entry.alertType === "days" ? (
-                          <p>Last due date: {formatDate(entry.lastDueDate || entry.dueDate)}</p>
-                        ) : null}
+                        {notificationType(entry) === "stock" ? (
+                          <p>Item Code: {entry.itemCode || "-"}</p>
+                        ) : (
+                          <>
+                            {entry.documentNo ? (
+                              <p>
+                                {documentLabel(entry)}: {entry.documentNo}
+                              </p>
+                            ) : null}
+                            {entry.createdBy ? <p>Created by: {entry.createdBy}</p> : null}
+                            {Number(entry.pendingAmount || 0) > 0 ? (
+                              <p>Pending: {formatAmount(entry.pendingAmount)}</p>
+                            ) : null}
+                            {entry.alertType === "days" ? (
+                              <p>Last due date: {formatDate(entry.lastDueDate || entry.dueDate)}</p>
+                            ) : null}
+                          </>
+                        )}
                       </div>
                       <p className="mt-1 text-[11px] text-slate-500">
                         {formatDateTimeByPreference(entry.createdAt)}

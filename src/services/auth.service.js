@@ -6,7 +6,9 @@ import {
   lsRemoveOrganizationScoped,
   lsRemoveUserScoped,
   lsSet,
+  lsSetSafe,
   lsSetUserScoped,
+  lsSetUserScopedSafe,
   ssGet,
   ssRemove,
   ssSet
@@ -67,6 +69,7 @@ const ORGANIZATION_SCOPED_KEYS_TO_CLEAR = [
   LS_KEYS.expenses,
   LS_KEYS.app_notifications,
   LS_KEYS.credit_notifications,
+  LS_KEYS.stock_notifications,
   LS_KEYS.activity_logs
 ];
 
@@ -170,15 +173,47 @@ function setAuthState({
   ssSet(LS_KEYS.organization_id, organizationId || "");
   ssSet(LS_KEYS.companyProfileCompleted, !!companySetupCompleted);
   ssSet(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted);
-  lsSet(LS_KEYS.auth_user, safeUser);
-  lsSet(LS_KEYS.role, normalizeRoleLabel(role));
-  lsSet(LS_KEYS.organization_id, organizationId || "");
-  lsSet(LS_KEYS.companyProfileCompleted, !!companySetupCompleted);
-  lsSet(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted);
-  lsSetUserScoped(LS_KEYS.organization_id, organizationId || "", safeUser.id);
-  lsSetUserScoped(LS_KEYS.companyProfileCompleted, !!companySetupCompleted, safeUser.id);
-  lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, !!invoiceTemplateCompleted, safeUser.id);
-  markSharedSessionActivity(Date.now(), true);
+  const localWrites = [
+    lsSetSafe(LS_KEYS.auth_user, safeUser, "auth_user"),
+    lsSetSafe(LS_KEYS.role, normalizeRoleLabel(role), "role"),
+    lsSetSafe(LS_KEYS.organization_id, organizationId || "", "organization_id"),
+    lsSetSafe(
+      LS_KEYS.companyProfileCompleted,
+      !!companySetupCompleted,
+      "companyProfileCompleted"
+    ),
+    lsSetSafe(
+      LS_KEYS.invoiceTemplateCompleted,
+      !!invoiceTemplateCompleted,
+      "invoiceTemplateCompleted"
+    ),
+    lsSetUserScopedSafe(
+      LS_KEYS.organization_id,
+      organizationId || "",
+      safeUser.id,
+      "organization_id(user-scoped)"
+    ),
+    lsSetUserScopedSafe(
+      LS_KEYS.companyProfileCompleted,
+      !!companySetupCompleted,
+      safeUser.id,
+      "companyProfileCompleted(user-scoped)"
+    ),
+    lsSetUserScopedSafe(
+      LS_KEYS.invoiceTemplateCompleted,
+      !!invoiceTemplateCompleted,
+      safeUser.id,
+      "invoiceTemplateCompleted(user-scoped)"
+    )
+  ];
+  if (localWrites.some((ok) => !ok)) {
+    console.warn("[Auth] Some local auth persistence writes were skipped due storage limits.");
+  }
+  try {
+    markSharedSessionActivity(Date.now(), true);
+  } catch (error) {
+    console.warn("Failed to persist shared session activity", error);
+  }
   markCurrentTabAuthSession();
 }
 
@@ -772,16 +807,31 @@ export async function authDeleteOrganization(organizationId) {
   const clearSelectionIfNeeded = () => {
     if (currentOrganizationId !== safeOrganizationId) return;
     ssSet(LS_KEYS.organization_id, "");
-    lsSet(LS_KEYS.organization_id, "");
+    lsSetSafe(LS_KEYS.organization_id, "", "organization_id(clearSelection)");
     if (currentUserId) {
-      lsSetUserScoped(LS_KEYS.organization_id, "", currentUserId);
-      lsSetUserScoped(LS_KEYS.companyProfileCompleted, false, currentUserId);
-      lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, false, currentUserId);
+      lsSetUserScopedSafe(
+        LS_KEYS.organization_id,
+        "",
+        currentUserId,
+        "organization_id(clearSelection-user)"
+      );
+      lsSetUserScopedSafe(
+        LS_KEYS.companyProfileCompleted,
+        false,
+        currentUserId,
+        "companyProfileCompleted(clearSelection-user)"
+      );
+      lsSetUserScopedSafe(
+        LS_KEYS.invoiceTemplateCompleted,
+        false,
+        currentUserId,
+        "invoiceTemplateCompleted(clearSelection-user)"
+      );
       lsRemoveUserScoped(LS_KEYS.company_profile, currentUserId);
     }
-    lsSet(LS_KEYS.companyProfileCompleted, false);
+    lsSetSafe(LS_KEYS.companyProfileCompleted, false, "companyProfileCompleted(clearSelection)");
     ssSet(LS_KEYS.companyProfileCompleted, false);
-    lsSet(LS_KEYS.invoiceTemplateCompleted, false);
+    lsSetSafe(LS_KEYS.invoiceTemplateCompleted, false, "invoiceTemplateCompleted(clearSelection)");
     ssSet(LS_KEYS.invoiceTemplateCompleted, false);
     clearLegacyOrganizationCache();
   };

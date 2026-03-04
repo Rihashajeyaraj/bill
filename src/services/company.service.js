@@ -6,8 +6,10 @@ import {
   lsGetOrganizationScoped,
   lsRemove,
   lsSet,
+  lsSetSafe,
   lsSetOrganizationScoped,
   lsSetUserScoped,
+  lsSetUserScopedSafe,
   ssGet,
   ssSet
 } from "./storage";
@@ -873,11 +875,16 @@ export async function companyLoadMyOrganization(selectedOrganizationId = "") {
     .eq("status", "active")
     .maybeSingle();
 
-  lsSet(LS_KEYS.organization_id, activeOrganizationId);
+  lsSetSafe(LS_KEYS.organization_id, activeOrganizationId, "organization_id(loadMyOrganization)");
   ssSet(LS_KEYS.organization_id, activeOrganizationId);
-  lsSetUserScoped(LS_KEYS.organization_id, activeOrganizationId, authGetUser()?.id);
+  lsSetUserScopedSafe(
+    LS_KEYS.organization_id,
+    activeOrganizationId,
+    authGetUser()?.id,
+    "organization_id(loadMyOrganization-user)"
+  );
   if (membership?.role) {
-    lsSet(LS_KEYS.role, fromDbRole(membership.role));
+    lsSetSafe(LS_KEYS.role, fromDbRole(membership.role), "role(loadMyOrganization)");
     ssSet(LS_KEYS.role, fromDbRole(membership.role));
   }
   const savedProfile = persistProfileLocal(profile, {
@@ -924,13 +931,27 @@ export async function companySaveProfileRemote(profile, options = {}) {
     const localOrganizationId = forceCreate
       ? `org_${Date.now().toString(16)}`
       : authGetOrganizationId() || "";
-    lsSet(LS_KEYS.organization_id, localOrganizationId);
+    lsSetSafe(LS_KEYS.organization_id, localOrganizationId, "organization_id(saveProfile-local)");
     ssSet(LS_KEYS.organization_id, localOrganizationId);
-    lsSetUserScoped(LS_KEYS.organization_id, localOrganizationId, authGetUser()?.id);
+    lsSetUserScopedSafe(
+      LS_KEYS.organization_id,
+      localOrganizationId,
+      authGetUser()?.id,
+      "organization_id(saveProfile-local-user)"
+    );
     if (forceCreate) {
       setInvoiceTemplateCompleted(false);
-      lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, false, authGetUser()?.id);
-      lsSet(LS_KEYS.invoiceTemplateCompleted, false);
+      lsSetUserScopedSafe(
+        LS_KEYS.invoiceTemplateCompleted,
+        false,
+        authGetUser()?.id,
+        "invoiceTemplateCompleted(saveProfile-local-user)"
+      );
+      lsSetSafe(
+        LS_KEYS.invoiceTemplateCompleted,
+        false,
+        "invoiceTemplateCompleted(saveProfile-local)"
+      );
       ssSet(LS_KEYS.invoiceTemplateCompleted, false);
     }
     return { profile: mergedProfile, organizationId: localOrganizationId, logoUrl: mergedProfile.logoBase64 };
@@ -1024,16 +1045,39 @@ export async function companySaveProfileRemote(profile, options = {}) {
     warnings.push(settingsError?.message || "Failed to sync company settings table.");
   }
 
-  lsSet(LS_KEYS.organization_id, organizationId);
+  lsSetSafe(LS_KEYS.organization_id, organizationId, "organization_id(saveProfile-remote)");
   ssSet(LS_KEYS.organization_id, organizationId);
-  lsSetUserScoped(LS_KEYS.organization_id, organizationId, authGetUser()?.id);
-  lsSetUserScoped(LS_KEYS.companyProfileCompleted, true, authGetUser()?.id);
-  lsSet(LS_KEYS.companyProfileCompleted, true);
+  lsSetUserScopedSafe(
+    LS_KEYS.organization_id,
+    organizationId,
+    authGetUser()?.id,
+    "organization_id(saveProfile-remote-user)"
+  );
+  lsSetUserScopedSafe(
+    LS_KEYS.companyProfileCompleted,
+    true,
+    authGetUser()?.id,
+    "companyProfileCompleted(saveProfile-remote-user)"
+  );
+  lsSetSafe(
+    LS_KEYS.companyProfileCompleted,
+    true,
+    "companyProfileCompleted(saveProfile-remote)"
+  );
   ssSet(LS_KEYS.companyProfileCompleted, true);
   if (forceCreate || !existingOrgId) {
     setInvoiceTemplateCompleted(false);
-    lsSetUserScoped(LS_KEYS.invoiceTemplateCompleted, false, authGetUser()?.id);
-    lsSet(LS_KEYS.invoiceTemplateCompleted, false);
+    lsSetUserScopedSafe(
+      LS_KEYS.invoiceTemplateCompleted,
+      false,
+      authGetUser()?.id,
+      "invoiceTemplateCompleted(saveProfile-remote-user)"
+    );
+    lsSetSafe(
+      LS_KEYS.invoiceTemplateCompleted,
+      false,
+      "invoiceTemplateCompleted(saveProfile-remote)"
+    );
     ssSet(LS_KEYS.invoiceTemplateCompleted, false);
   }
 

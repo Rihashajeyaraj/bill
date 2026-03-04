@@ -1,6 +1,7 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped } from "../../services/storage";
 import { authGetRole } from "../../services/auth.service";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
+import { triggerLowStockNotifications } from "../items/store";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW } from "./countryConfig";
 import type { CountryCode, CreditStatus, CreditType } from "./countryConfig";
 
@@ -901,6 +902,7 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
   const nextList = existing ? list.map((entry) => (entry.id === existing.id ? note : entry)) : [note, ...list];
   setAllNotes(nextList);
   applyLocalReturnStockDelta(existing, note);
+  void triggerLowStockNotifications();
   return note;
 }
 
@@ -923,6 +925,7 @@ export function removeCreditNote(noteId: string): CreditNoteRecord {
 
   // Ensure any prior local stock impact is rolled back if status rules evolve.
   applyLocalReturnStockDelta(existing, { ...existing, status: "Draft" });
+  void triggerLowStockNotifications();
   return existing;
 }
 

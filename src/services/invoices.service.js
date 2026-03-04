@@ -3,6 +3,7 @@ import { authGetOrganizationId, authGetRole, authGetUser } from "./auth.service"
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
+import { triggerLowStockNotifications } from "../modules/items/store";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -337,6 +338,7 @@ export async function invoicesSyncFromRemote() {
 
   setAll(mapped);
   await triggerCreditLimitNotifications();
+  await triggerLowStockNotifications();
   return mapped;
 }
 
@@ -530,5 +532,6 @@ export async function invoicesCreate(invoice) {
     partyId: next?.partyId || null
   });
   await triggerCreditLimitNotifications();
+  await triggerLowStockNotifications();
   return id;
 }

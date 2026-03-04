@@ -243,8 +243,8 @@ export default function StaffDashboard() {
         return {
           id: item?.id || "",
           name: item?.name || item?.itemName || "Item",
-          currentStock: parseNumber(item?.currentStock ?? item?.stockQty),
-          reorderLevel: parseNumber(item?.minStock ?? item?.reorderLevel),
+          currentStock: parseNumber(stock?.available),
+          reorderLevel: parseNumber(item?.lowStockAlert),
           lowStock: !!item?.trackInventory && !!stock.lowStock
         };
       })

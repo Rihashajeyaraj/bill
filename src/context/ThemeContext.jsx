@@ -90,15 +90,19 @@ export function ThemeProvider({ children }) {
     applyThemeAppearanceToDocument(normalized);
 
     if (typeof window !== "undefined") {
-      localStorage.setItem(LS_KEYS.theme_config, JSON.stringify(normalized));
-      localStorage.setItem(LS_KEYS.theme_preset, normalized.themePresetId);
-      localStorage.setItem(LS_KEYS.theme_mode, normalized.mode);
-      localStorage.setItem(LS_KEYS.theme_overrides, JSON.stringify({
-        mode: normalized.mode,
-        primaryColor: normalized.primaryColor,
-        accentColor: normalized.accentColor
-      }));
-      localStorage.setItem(LS_KEYS.app_font_family, normalized.fontFamily);
+      try {
+        localStorage.setItem(LS_KEYS.theme_config, JSON.stringify(normalized));
+        localStorage.setItem(LS_KEYS.theme_preset, normalized.themePresetId);
+        localStorage.setItem(LS_KEYS.theme_mode, normalized.mode);
+        localStorage.setItem(LS_KEYS.theme_overrides, JSON.stringify({
+          mode: normalized.mode,
+          primaryColor: normalized.primaryColor,
+          accentColor: normalized.accentColor
+        }));
+        localStorage.setItem(LS_KEYS.app_font_family, normalized.fontFamily);
+      } catch (error) {
+        console.warn("Failed to persist theme config", error);
+      }
     }
   }, [themeAppearance]);
 

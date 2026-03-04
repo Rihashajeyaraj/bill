@@ -7,10 +7,12 @@ import {
 import { authGetOrganizationId, authGetRole, authGetUser } from "../../services/auth.service";
 import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
+import { syncLowStockNotifications } from "../../services/stockNotifications.service";
 import { buildTaxLabel, normalizeItemType, normalizeText, parseNumber } from "./utils";
 
 const CREDIT_NOTES_PREMIUM_KEY = "creditNotesPremiumV1";
 const DEBIT_NOTES_PREMIUM_KEY = "debitNotesPremiumV1";
+const LOW_STOCK_CHECK_KEY = "lowStockMonitoringCheckMinuteV1";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ITEM_CODE_MIN_DIGITS = 4;
 const ITEM_CODE_CONFIG_BY_TYPE = {
@@ -574,15 +576,18 @@ export function upsertItem(draft, country) {
     list.unshift({ ...payload, created_at: now });
   }
   persistItemCache(list, { required: true, context: "upsertItem" });
+  void triggerLowStockNotifications(list.map((entry) => normalizeItem(entry)));
   return id;
 }
 
 export function removeItem(id) {
   assertItemDeletePermission();
-  persistItemCache(listRawItems().filter((item) => item.id !== id), {
+  const nextList = listRawItems().filter((item) => item.id !== id);
+  persistItemCache(nextList, {
     required: true,
     context: "removeItem"
   });
+  void triggerLowStockNotifications(nextList.map((entry) => normalizeItem(entry)));
 }
 
 async function fetchCategoryMapByIds(organizationId, categoryIds = []) {
@@ -679,6 +684,7 @@ export async function syncItemsFromRemote() {
   const categoryById = await fetchCategoryMapByIds(organizationId, categoryIds).catch(() => new Map());
   const mapped = ensureArray(rows).map((row) => mapRemoteItem(row, categoryById));
   persistItemCache(mapped, { required: false, context: "syncItemsFromRemote" });
+  await triggerLowStockNotifications(mapped);
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -803,6 +809,7 @@ export async function upsertItemRemote(draft, country) {
   }
   const nextList = listRawItems().filter((item) => item.id !== incoming.id && item.id !== saved.id);
   persistItemCache([saved, ...nextList], { required: false, context: "upsertItemRemote" });
+  await triggerLowStockNotifications([saved, ...nextList].map((entry) => normalizeItem(entry)));
   return saved.id;
 }
 
@@ -832,6 +839,54 @@ export async function removeItemRemote(id) {
   }
 
   removeItem(id);
+}
+
+function shouldMonitorItemForLowStock(item) {
+  if (!item) return false;
+  const status = String(item?.status || "").trim().toLowerCase();
+  if (status === "inactive") return false;
+  return item?.trackInventory === true;
+}
+
+function toLowStockEvaluation(item) {
+  if (!shouldMonitorItemForLowStock(item)) return null;
+  const limitValue = Math.max(0, parseNumber(item?.lowStockAlert));
+  const stock = computeItemStock(item);
+  const currentValue = Math.max(0, parseNumber(stock?.available));
+  return {
+    itemId: String(item?.id || "").trim(),
+    itemName: String(item?.name || item?.itemName || "").trim(),
+    itemCode: String(item?.itemCode || item?.sku || "").trim(),
+    limitValue,
+    currentValue,
+    exceeded: limitValue > 0 && currentValue <= limitValue,
+    country: String(item?.country || item?.metadata?.country || "").trim()
+  };
+}
+
+export async function triggerLowStockNotifications(itemsInput) {
+  const source = Array.isArray(itemsInput) && itemsInput.length ? itemsInput : listItems();
+  const evaluations = source
+    .map((entry) => normalizeItem(entry))
+    .map((entry) => toLowStockEvaluation(entry))
+    .filter(Boolean);
+
+  try {
+    await syncLowStockNotifications(evaluations, { source: "triggerLowStockNotifications" });
+  } catch (error) {
+    // Notification sync should never block inventory, item, or billing flows.
+    console.warn("Low stock notification sync failed", error);
+  }
+}
+
+export async function maybeRunLowStockMonitoringCheck() {
+  const currentMinute = new Date().toISOString().slice(0, 16);
+  const lastCheckedMinute = String(lsGetOrganizationScoped(LOW_STOCK_CHECK_KEY, "") || "");
+  if (lastCheckedMinute === currentMinute) return false;
+
+  await triggerLowStockNotifications();
+  lsSetOrganizationScoped(LOW_STOCK_CHECK_KEY, currentMinute);
+  return true;
 }
 
 function matchesLine(item, line) {

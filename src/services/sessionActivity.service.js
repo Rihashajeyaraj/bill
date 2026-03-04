@@ -23,7 +23,12 @@ export function markSharedSessionActivity(timestamp = Date.now(), force = false)
   if (!force && safeTimestamp - lastBroadcastAt < BROADCAST_THROTTLE_MS) {
     return safeTimestamp;
   }
-  window.localStorage.setItem(SESSION_ACTIVITY_KEY, String(safeTimestamp));
+  try {
+    window.localStorage.setItem(SESSION_ACTIVITY_KEY, String(safeTimestamp));
+  } catch (error) {
+    console.warn("Failed to persist shared session activity", error);
+    return safeTimestamp;
+  }
   lastBroadcastAt = safeTimestamp;
   return safeTimestamp;
 }

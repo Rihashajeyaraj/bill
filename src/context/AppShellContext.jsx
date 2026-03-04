@@ -17,9 +17,40 @@ import {
   markCreditNotificationRead,
   syncCreditNotificationsFromRemote
 } from "../services/creditNotifications.service";
+import {
+  STOCK_NOTIFICATION_EVENT_NAME,
+  listStockNotificationsCached,
+  markAllStockNotificationsRead,
+  markStockNotificationRead,
+  syncStockNotificationsFromRemote
+} from "../services/stockNotifications.service";
 import { maybeRunDailyCreditMonitoringCheck } from "../modules/parties/store";
+import { maybeRunLowStockMonitoringCheck } from "../modules/items/store";
 
 const AppShellContext = createContext(null);
+
+function resolveNotificationType(entry, fallback = "credit") {
+  const directType = String(entry?.notificationType || "").trim().toLowerCase();
+  if (directType === "stock") return "stock";
+  if (directType === "credit") return "credit";
+  const alertType = String(entry?.alertType || "").trim().toLowerCase();
+  if (alertType === "low_stock") return "stock";
+  return fallback;
+}
+
+function mergeNotifications(creditList, stockList) {
+  const normalizedCredit = (Array.isArray(creditList) ? creditList : []).map((entry) => ({
+    ...entry,
+    notificationType: resolveNotificationType(entry, "credit")
+  }));
+  const normalizedStock = (Array.isArray(stockList) ? stockList : []).map((entry) => ({
+    ...entry,
+    notificationType: resolveNotificationType(entry, "stock")
+  }));
+  return [...normalizedCredit, ...normalizedStock].sort(
+    (a, b) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime()
+  );
+}
 
 export function AppShellProvider({ children }) {
   const navigate = useNavigate();
@@ -35,14 +66,18 @@ export function AppShellProvider({ children }) {
   const showCompanySetup = canAccessSettings(role) && !setupComplete;
 
   const refreshFeeds = useCallback(async () => {
-    setNotifications(listCreditNotificationsCached());
+    const cachedCredit = listCreditNotificationsCached();
+    const cachedStock = listStockNotificationsCached();
+    setNotifications(mergeNotifications(cachedCredit, cachedStock));
     setActivities(listActivities(90));
-    try {
-      const synced = await syncCreditNotificationsFromRemote();
-      setNotifications(synced);
-    } catch {
-      // Continue with local notification cache.
-    }
+
+    const [creditResult, stockResult] = await Promise.allSettled([
+      syncCreditNotificationsFromRemote(),
+      syncStockNotificationsFromRemote()
+    ]);
+    const nextCredit = creditResult.status === "fulfilled" ? creditResult.value : cachedCredit;
+    const nextStock = stockResult.status === "fulfilled" ? stockResult.value : cachedStock;
+    setNotifications(mergeNotifications(nextCredit, nextStock));
   }, []);
 
   useEffect(() => {
@@ -52,12 +87,14 @@ export function AppShellProvider({ children }) {
       console.warn("Failed to initialize activity seed", error);
     }
     void maybeRunDailyCreditMonitoringCheck();
+    void maybeRunLowStockMonitoringCheck();
     void refreshFeeds();
   }, [refreshFeeds]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
       void maybeRunDailyCreditMonitoringCheck();
+      void maybeRunLowStockMonitoringCheck();
       void refreshFeeds();
     }, 60000);
     return () => window.clearInterval(timer);
@@ -69,7 +106,11 @@ export function AppShellProvider({ children }) {
     };
 
     window.addEventListener(CREDIT_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
-    return () => window.removeEventListener(CREDIT_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
+    window.addEventListener(STOCK_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
+    return () => {
+      window.removeEventListener(CREDIT_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
+      window.removeEventListener(STOCK_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
+    };
   }, [refreshFeeds]);
 
   useEffect(() => {
@@ -128,11 +169,41 @@ export function AppShellProvider({ children }) {
     void refreshFeeds();
   }
 
-  async function readNotification(id) {
+  async function readNotification(input) {
+    const id =
+      typeof input === "object" && input !== null
+        ? String(input?.id || "").trim()
+        : String(input || "").trim();
+    if (!id) return;
+
+    const selectedType =
+      typeof input === "object" && input !== null
+        ? resolveNotificationType(input, "")
+        : "";
+    const matched = notifications.find((entry) => String(entry?.id || "") === id);
+    const resolvedType = selectedType || resolveNotificationType(matched, "credit");
+
     try {
-      await markCreditNotificationRead(id);
+      if (resolvedType === "stock") {
+        await markStockNotificationRead(id);
+      } else {
+        await markCreditNotificationRead(id);
+      }
     } catch {
-      // Continue using local cache if remote mark-read fails.
+      // Continue using local cache if remote mark-read fails for selected feed.
+      if (resolvedType === "stock") {
+        try {
+          await markCreditNotificationRead(id);
+        } catch {
+          // noop
+        }
+      } else {
+        try {
+          await markStockNotificationRead(id);
+        } catch {
+          // noop
+        }
+      }
     }
     void refreshFeeds();
   }
@@ -140,8 +211,9 @@ export function AppShellProvider({ children }) {
   async function clearNotificationBadge() {
     try {
       await markAllCreditNotificationsRead();
+      await markAllStockNotificationsRead();
     } catch {
-      // Continue using local cache if remote mark-read fails.
+      // Continue using local cache if remote mark-read fails for either feed.
     }
     void refreshFeeds();
   }
