@@ -636,7 +636,7 @@ export async function removePartyRemote(id: string): Promise<void> {
     .eq("id", id);
 
   if (error) {
-    throw new Error(normalizeSupabaseError(error, "Failed to delete party"));
+    throw new Error(normalizeSupabaseError(error, "Failed to archive party"));
   }
 
   removeParty(id);

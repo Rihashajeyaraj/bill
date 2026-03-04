@@ -708,12 +708,12 @@ export async function removeItemRemote(id) {
 
   const { error } = await supabase
     .from("items")
-    .delete()
+    .update({ is_active: false, updated_at: new Date().toISOString() })
     .eq("organization_id", organizationId)
     .eq("id", id);
 
   if (error) {
-    throw new Error(normalizeSupabaseError(error, "Failed to delete item"));
+    throw new Error(normalizeSupabaseError(error, "Failed to archive item"));
   }
 
   removeItem(id);

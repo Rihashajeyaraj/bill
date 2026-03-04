@@ -475,6 +475,7 @@ export async function creditNotesSyncFromRemote() {
     .from("credit_notes")
     .select("*")
     .eq("organization_id", organizationId)
+    .neq("status", "cancelled")
     .order("credit_note_date", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -660,21 +661,26 @@ export async function creditNotesDeleteRemote(note) {
   }
   if (!noteId) return null;
 
-  const { error: deleteItemsError } = await supabase
-    .from("credit_note_items")
-    .delete()
-    .eq("credit_note_id", noteId);
-  if (deleteItemsError) {
-    throw new Error(normalizeSupabaseError(deleteItemsError, "Failed to delete credit note items"));
-  }
+  const cancelMeta = {
+    cancelledAt: new Date().toISOString(),
+    cancelledBy: authGetUser()?.id || null,
+    cancelledFrom: "credit_notes_delete_remote"
+  };
 
-  const { error: deleteHeaderError } = await supabase
+  const { error: cancelHeaderError } = await supabase
     .from("credit_notes")
-    .delete()
+    .update({
+      status: "cancelled",
+      metadata: {
+        ...(note?.metadata && typeof note.metadata === "object" ? note.metadata : {}),
+        ...cancelMeta
+      },
+      updated_at: new Date().toISOString()
+    })
     .eq("organization_id", organizationId)
     .eq("id", noteId);
-  if (deleteHeaderError) {
-    throw new Error(normalizeSupabaseError(deleteHeaderError, "Failed to delete credit note"));
+  if (cancelHeaderError) {
+    throw new Error(normalizeSupabaseError(cancelHeaderError, "Failed to cancel credit note"));
   }
 
   return noteId;

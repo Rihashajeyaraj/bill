@@ -176,7 +176,7 @@ export default function Parties() {
   }
 
   async function handleDelete(party) {
-    if (!window.confirm(`Delete ${party.name}? This cannot be undone.`)) return;
+    if (!window.confirm(`Archive ${party.name}? You can keep full history in backup and audit logs.`)) return;
     try {
       await removePartyRemote(party.id);
       setRefreshKey((prev) => prev + 1);
@@ -429,7 +429,7 @@ export default function Parties() {
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                Delete
+                Archive
               </button>
             </div>,
             document.body

@@ -545,7 +545,7 @@ export default function Items() {
     }
     const usage = computeItemUsage(item);
     if (usage.used) return;
-    if (!window.confirm(`Delete ${item.name}? This cannot be undone.`)) return;
+    if (!window.confirm(`Archive ${item.name}? You can keep full history in backup and audit logs.`)) return;
     try {
       await removeItemRemote(item.id);
       setRefreshKey((prev) => prev + 1);
@@ -1065,11 +1065,11 @@ export default function Items() {
                   void handleDelete(selectedItem);
                 }}
                 disabled={!actionMenu.canDelete}
-                title={actionMenu.canDelete ? "Delete" : actionMenu.deleteDisabledReason}
+                title={actionMenu.canDelete ? "Archive" : actionMenu.deleteDisabledReason}
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                Delete
+                Archive
               </button>
             </div>,
             document.body

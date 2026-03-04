@@ -1545,7 +1545,7 @@ export default function CompanySettings() {
       return;
     }
     if (action === "export-data") {
-      window.alert("Company data export queued.");
+      nav("/app/backup");
       return;
     }
     if (action === "deactivate") {

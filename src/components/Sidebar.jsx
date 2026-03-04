@@ -15,6 +15,7 @@ import {
   BarChart3,
   Building2,
   Settings,
+  Download,
   ChevronDown,
   ChevronLeft,
   ChevronRight
@@ -160,7 +161,12 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
       },
       { to: "/app/purchase/expense", icon: Wallet, label: "Expense" },
       ...(canOpenReports ? [{ to: "/app/reports", icon: BarChart3, label: "Reports" }] : []),
-      ...(canOpenSettings ? [{ to: "/app/company-settings", icon: Settings, label: "Settings" }] : [])
+      ...(canOpenSettings
+        ? [
+            { to: "/app/company-settings", icon: Settings, label: "Settings" },
+            { to: "/app/backup", icon: Download, label: "Backup" }
+          ]
+        : [])
     ];
     if (showCompanySetup) {
       const insertAt = baseItems.findIndex((item) => item.to === "/app/company-settings");

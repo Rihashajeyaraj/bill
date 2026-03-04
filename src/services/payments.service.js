@@ -231,13 +231,17 @@ export async function syncPaymentInRemote(record) {
   }
 
   if (isSupabaseConfigured && supabase && organizationId) {
-    const { error: deleteError } = await supabase
+    const { error: cancelError } = await supabase
       .from("payments")
-      .delete()
+      .update({
+        status: "cancelled",
+        notes: `Superseded by latest payment-in update (${new Date().toISOString()})`,
+        updated_at: new Date().toISOString()
+      })
       .eq("organization_id", organizationId)
       .ilike("reference_no", `${sourcePrefix}%`);
-    if (deleteError) {
-      throw new Error(normalizeSupabaseError(deleteError, "Failed to refresh payment-in rows"));
+    if (cancelError) {
+      throw new Error(normalizeSupabaseError(cancelError, "Failed to archive previous payment-in rows"));
     }
 
     if (rows.length) {
@@ -336,13 +340,17 @@ export async function syncPaymentOutRemote(record) {
   }
 
   if (isSupabaseConfigured && supabase && organizationId) {
-    const { error: deleteError } = await supabase
+    const { error: cancelError } = await supabase
       .from("payments")
-      .delete()
+      .update({
+        status: "cancelled",
+        notes: `Superseded by latest payment-out update (${new Date().toISOString()})`,
+        updated_at: new Date().toISOString()
+      })
       .eq("organization_id", organizationId)
       .ilike("reference_no", `${sourcePrefix}%`);
-    if (deleteError) {
-      throw new Error(normalizeSupabaseError(deleteError, "Failed to refresh payment-out rows"));
+    if (cancelError) {
+      throw new Error(normalizeSupabaseError(cancelError, "Failed to archive previous payment-out rows"));
     }
 
     if (rows.length) {
@@ -380,11 +388,15 @@ export async function deletePaymentInRemote(recordId) {
   if (isSupabaseConfigured && supabase && organizationId) {
     const { error } = await supabase
       .from("payments")
-      .delete()
+      .update({
+        status: "cancelled",
+        notes: `Cancelled from Payment In (${new Date().toISOString()})`,
+        updated_at: new Date().toISOString()
+      })
       .eq("organization_id", organizationId)
       .ilike("reference_no", `${sourcePrefix}%`);
     if (error) {
-      throw new Error(normalizeSupabaseError(error, "Failed to delete payment-in rows"));
+      throw new Error(normalizeSupabaseError(error, "Failed to cancel payment-in rows"));
     }
   }
 
@@ -401,11 +413,15 @@ export async function deletePaymentOutRemote(recordId) {
   if (isSupabaseConfigured && supabase && organizationId) {
     const { error } = await supabase
       .from("payments")
-      .delete()
+      .update({
+        status: "cancelled",
+        notes: `Cancelled from Payment Out (${new Date().toISOString()})`,
+        updated_at: new Date().toISOString()
+      })
       .eq("organization_id", organizationId)
       .ilike("reference_no", `${sourcePrefix}%`);
     if (error) {
-      throw new Error(normalizeSupabaseError(error, "Failed to delete payment-out rows"));
+      throw new Error(normalizeSupabaseError(error, "Failed to cancel payment-out rows"));
     }
   }
 

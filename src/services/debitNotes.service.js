@@ -276,21 +276,26 @@ export async function debitNotesDeleteRemote(note) {
   }
   if (!noteId) return null;
 
-  const { error: deleteItemsError } = await supabase
-    .from("debit_note_items")
-    .delete()
-    .eq("debit_note_id", noteId);
-  if (deleteItemsError) {
-    throw new Error(normalizeSupabaseError(deleteItemsError, "Failed to delete debit note items"));
-  }
+  const cancelMeta = {
+    cancelledAt: new Date().toISOString(),
+    cancelledBy: authGetUser()?.id || null,
+    cancelledFrom: "debit_notes_delete_remote"
+  };
 
-  const { error: deleteHeaderError } = await supabase
+  const { error: cancelHeaderError } = await supabase
     .from("debit_notes")
-    .delete()
+    .update({
+      status: "cancelled",
+      metadata: {
+        ...(note?.metadata && typeof note.metadata === "object" ? note.metadata : {}),
+        ...cancelMeta
+      },
+      updated_at: new Date().toISOString()
+    })
     .eq("organization_id", organizationId)
     .eq("id", noteId);
-  if (deleteHeaderError) {
-    throw new Error(normalizeSupabaseError(deleteHeaderError, "Failed to delete debit note"));
+  if (cancelHeaderError) {
+    throw new Error(normalizeSupabaseError(cancelHeaderError, "Failed to cancel debit note"));
   }
 
   return noteId;
