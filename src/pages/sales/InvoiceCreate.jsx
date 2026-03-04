@@ -11,7 +11,7 @@ import Badge from "../../components/Badge";
 import InvoicePreview from "../../components/InvoicePreview";
 
 import { useOrganization } from "../../context/OrganizationContext";
-import { invoicesCreate, invoicesSyncFromRemote } from "../../services/invoices.service";
+import { invoicesCreate, invoicesList, invoicesSyncFromRemote } from "../../services/invoices.service";
 import { calculateTaxes } from "../../services/tax";
 import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
 import { authGetRole, authGetUser } from "../../services/auth.service";
@@ -54,6 +54,38 @@ function resolveAutoInvoiceId() {
   const next = String(companyPeekDocumentNumber("invoice") || "").trim();
   if (next) return next;
   return `INV-${Date.now()}`;
+}
+
+function parseInvoiceSequence(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(.+)-(\d{4})-(\d+)$/);
+  if (!match) return null;
+  const counter = Number(match[3]);
+  if (!Number.isFinite(counter) || counter < 0) return null;
+  return {
+    prefix: match[1],
+    year: match[2],
+    counter,
+    width: match[3].length
+  };
+}
+
+function resolveInvoiceNoFromExisting(baseInvoiceNo, invoiceRows) {
+  const parsedBase = parseInvoiceSequence(baseInvoiceNo);
+  if (!parsedBase) return String(baseInvoiceNo || "").trim();
+
+  let existingMax = 0;
+  (Array.isArray(invoiceRows) ? invoiceRows : []).forEach((row) => {
+    const parsed = parseInvoiceSequence(row?.invoiceNo);
+    if (!parsed) return;
+    if (parsed.year !== parsedBase.year) return;
+    if (String(parsed.prefix).toUpperCase() !== String(parsedBase.prefix).toUpperCase()) return;
+    existingMax = Math.max(existingMax, parsed.counter);
+  });
+
+  const nextCounter = Math.max(parsedBase.counter, existingMax + 1);
+  const width = Math.max(4, parsedBase.width);
+  return `${parsedBase.prefix}-${parsedBase.year}-${String(nextCounter).padStart(width, "0")}`;
 }
 
 function formatAddress(address) {
@@ -268,6 +300,7 @@ export default function InvoiceCreate() {
   const [customerSearchPhone, setCustomerSearchPhone] = useState("");
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerSearchError, setCustomerSearchError] = useState("");
+  const [formErrors, setFormErrors] = useState({});
   const [customerCreateLoading, setCustomerCreateLoading] = useState(false);
   const [customerCreateDraft, setCustomerCreateDraft] = useState({
     name: "",
@@ -348,12 +381,21 @@ export default function InvoiceCreate() {
   const suggestionMenuClassName =
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
 
+  function clearFormError(field) {
+    setFormErrors((prev) => {
+      if (!prev?.[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }
+
   const creditStatus = useMemo(() => getPartyCreditStatus(partyId), [partyId]);
 
   useEffect(() => {
     const syncProfiles = () => {
       setTemplateConfig(getInvoiceTemplateConfig());
-      setInvoiceNo(resolveAutoInvoiceId());
+      setInvoiceNo(resolveInvoiceNoFromExisting(resolveAutoInvoiceId(), invoicesList()));
     };
     const onStorage = (event) => {
       if (
@@ -388,6 +430,7 @@ export default function InvoiceCreate() {
         setCustomers(listParties().filter((party) => party.type === "Customer"));
         setItems(listItems());
         setItemBarcodes(listItemBarcodes());
+        setInvoiceNo(resolveInvoiceNoFromExisting(resolveAutoInvoiceId(), invoicesList()));
       }
     }
     loadLookups();
@@ -461,6 +504,12 @@ export default function InvoiceCreate() {
   }, [activeLineItemSearchId]);
 
   useEffect(() => {
+    if (!formErrors?.lines) return;
+    const hasValidLine = lines.some((line) => !!String(line?.itemId || "").trim());
+    if (hasValidLine) clearFormError("lines");
+  }, [formErrors?.lines, lines]);
+
+  useEffect(() => {
     const uniqueItemIds = Array.from(
       new Set(lines.map((line) => String(line?.itemId || "").trim()).filter(Boolean))
     );
@@ -500,6 +549,17 @@ export default function InvoiceCreate() {
 
   useEffect(() => {
     if (!markAsPaid) {
+      setFormErrors((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        delete next.paidAmount;
+        delete next.paymentDate;
+        delete next.chequeNo;
+        delete next.bankName;
+        delete next.bankAccount;
+        delete next.transactionId;
+        return next;
+      });
       setPaidAmount("");
       setReferenceNo("");
       setTransactionId("");
@@ -510,6 +570,15 @@ export default function InvoiceCreate() {
       return;
     }
     if (paymentMode === "Cash") {
+      setFormErrors((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        delete next.chequeNo;
+        delete next.bankName;
+        delete next.bankAccount;
+        delete next.transactionId;
+        return next;
+      });
       setTransactionId("");
       setChequeNo("");
       setBankName("");
@@ -517,21 +586,103 @@ export default function InvoiceCreate() {
       return;
     }
     if (paymentMode === "Cheque") {
+      setFormErrors((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        delete next.bankName;
+        delete next.bankAccount;
+        delete next.transactionId;
+        return next;
+      });
       setTransactionId("");
       setBankName("");
       setBankAccount("");
       return;
     }
     if (paymentMode === "Bank Transfer") {
+      clearFormError("chequeNo");
       setChequeNo("");
       return;
     }
     if (paymentMode === "Card" || paymentMode === "UPI" || paymentMode === "Online Gateway") {
+      setFormErrors((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        delete next.chequeNo;
+        delete next.bankName;
+        delete next.bankAccount;
+        return next;
+      });
       setChequeNo("");
       setBankName("");
       setBankAccount("");
     }
   }, [markAsPaid, paymentMode]);
+
+  useEffect(() => {
+    setFormErrors((prev) => {
+      if (!prev || !Object.keys(prev).length) return prev;
+      const next = { ...prev };
+      let changed = false;
+
+      if (next.customer && partyId) {
+        delete next.customer;
+        changed = true;
+      }
+      if (next.invoiceNo && String(invoiceNo || "").trim()) {
+        delete next.invoiceNo;
+        changed = true;
+      }
+      if (next.invoiceDate && String(invoiceDate || "").trim()) {
+        delete next.invoiceDate;
+        changed = true;
+      }
+      if (next.paidAmount && (!markAsPaid || Number(paidAmount || 0) > 0)) {
+        delete next.paidAmount;
+        changed = true;
+      }
+      if (next.paymentDate && (!markAsPaid || String(paymentDate || "").trim())) {
+        delete next.paymentDate;
+        changed = true;
+      }
+      if (next.chequeNo && (!markAsPaid || paymentMode !== "Cheque" || String(chequeNo || "").trim())) {
+        delete next.chequeNo;
+        changed = true;
+      }
+      if (next.bankName && (!markAsPaid || paymentMode !== "Bank Transfer" || String(bankName || "").trim())) {
+        delete next.bankName;
+        changed = true;
+      }
+      if (next.bankAccount && (!markAsPaid || paymentMode !== "Bank Transfer" || String(bankAccount || "").trim())) {
+        delete next.bankAccount;
+        changed = true;
+      }
+      const needsTransactionId =
+        markAsPaid &&
+        (paymentMode === "Bank Transfer" ||
+          paymentMode === "Card" ||
+          paymentMode === "UPI" ||
+          paymentMode === "Online Gateway");
+      if (next.transactionId && (!needsTransactionId || String(transactionId || "").trim())) {
+        delete next.transactionId;
+        changed = true;
+      }
+
+      return changed ? next : prev;
+    });
+  }, [
+    bankAccount,
+    bankName,
+    chequeNo,
+    invoiceDate,
+    invoiceNo,
+    markAsPaid,
+    paidAmount,
+    partyId,
+    paymentDate,
+    paymentMode,
+    transactionId
+  ]);
 
   function addLine() {
     setLines((p) => [
@@ -609,6 +760,7 @@ export default function InvoiceCreate() {
   function applyCustomerSelection(nextCustomer) {
     if (!nextCustomer) return;
     setCustomerSearchError("");
+    clearFormError("customer");
     setPartyId(nextCustomer.id);
     setCustomerSearchPhone(String(nextCustomer.phone || "").replace(/\D/g, "").slice(-10));
     setCustomerLookupQuery("");
@@ -633,6 +785,7 @@ export default function InvoiceCreate() {
 
   function handleCustomerLookupChange(value) {
     setCustomerLookupQuery(value);
+    clearFormError("customer");
     const draftPhone = extractTenDigitPhone(value);
     setCustomerSearchPhone(draftPhone);
     setCustomerCreateDraft((prev) => ({
@@ -762,6 +915,11 @@ export default function InvoiceCreate() {
 
   function resetCustomer() {
     setPartyId("");
+    setFormErrors((prev) => {
+      const next = { ...prev };
+      delete next.customer;
+      return next;
+    });
     setCustomerSearchPhone("");
     setCustomerLookupQuery("");
     setCustomerSearchError("");
@@ -777,6 +935,7 @@ export default function InvoiceCreate() {
 
   function handleInvoiceDateChange(value) {
     setInvoiceDateInput(value);
+    clearFormError("invoiceDate");
     const parsed = parseDateToIso(value);
     if (parsed) setInvoiceDate(parsed);
   }
@@ -795,13 +954,20 @@ export default function InvoiceCreate() {
     const itemByIdMap = new Map(
       (Array.isArray(sourceItems) ? sourceItems : []).map((item) => [String(item?.id || ""), item])
     );
-    const selectedLines = (Array.isArray(sourceLines) ? sourceLines : []).filter((line) => line?.itemId);
+    const selectedLines = (Array.isArray(sourceLines) ? sourceLines : []).filter((line) => {
+      if (line?.itemId) return true;
+      const typedName = String(line?.itemInput || line?.itemName || "").trim();
+      if (!typedName) return false;
+      return resolveLineItemType(line, itemByIdMap) === "Service";
+    });
     const hasAnyLineTax = forceZeroTax ? false : selectedLines.some((line) => Number(line?.tax || 0) > 0);
     const fallbackRate = forceZeroTax ? 0 : hasAnyLineTax ? 0 : Number(taxRate || 0);
 
     const enrichedBase = selectedLines.map((line) => {
       const item = itemByIdMap.get(String(line?.itemId || "")) || null;
-      const itemType = normalizeInvoiceItemType(item?.type);
+      const itemType = item
+        ? normalizeInvoiceItemType(item?.type)
+        : resolveLineItemType(line, itemByIdMap);
       const qty = Number(line.qty || 0);
       const rate = Number(line.rate || 0);
       const discount = Number(line.discount || 0);
@@ -810,12 +976,13 @@ export default function InvoiceCreate() {
       const lineTax = round2((net * taxRatePerLine) / 100);
       const codeFromItem = itemType === "Service" ? item?.sac || item?.hsn || "" : item?.hsn || item?.sac || "";
       const codeFromLine = String(line?.hsnInput || "").trim();
+      const fallbackItemName = String(line?.itemInput || line?.itemName || "").trim();
 
       return {
         ...line,
         tax: taxRatePerLine,
         priceTaxMode: "WITHOUT_TAX",
-        itemName: item?.name || "XXX",
+        itemName: item?.name || fallbackItemName || "Service",
         itemType,
         hsn: itemType === "Service" ? codeFromLine || codeFromItem : codeFromItem,
         net,
@@ -1455,39 +1622,29 @@ export default function InvoiceCreate() {
       alert("You do not have permission to create invoices.");
       return null;
     }
-    if (!partyId) {
-      alert("Select customer before saving invoice.");
-      return null;
+
+    const normalizedInvoiceNo = resolveInvoiceNoFromExisting(
+      String(invoiceNo || "").trim() || resolveAutoInvoiceId(),
+      invoicesList()
+    );
+    if (normalizedInvoiceNo && normalizedInvoiceNo !== invoiceNo) {
+      setInvoiceNo(normalizedInvoiceNo);
     }
-    const nextAutoInvoiceNo = String(companyPeekDocumentNumber("invoice") || "").trim();
-    const normalizedInvoiceNo = nextAutoInvoiceNo || String(invoiceNo || "").trim();
-    if (nextAutoInvoiceNo && nextAutoInvoiceNo !== invoiceNo) {
-      setInvoiceNo(nextAutoInvoiceNo);
-    }
-    if (!normalizedInvoiceNo) {
-      alert("Invoice ID is required.");
-      return null;
-    }
-    if (markAsPaid && paymentAmount <= 0) {
-      alert("Enter valid paid amount.");
-      return null;
-    }
-    if (markAsPaid && !paymentDate) {
-      alert("Select payment date.");
-      return null;
-    }
+    const nextErrors = {};
+    if (!partyId) nextErrors.customer = "This field is required";
+    if (!normalizedInvoiceNo) nextErrors.invoiceNo = "This field is required";
+    if (!String(invoiceDate || "").trim()) nextErrors.invoiceDate = "This field is required";
+    if (markAsPaid && paymentAmount <= 0) nextErrors.paidAmount = "This field is required";
+    if (markAsPaid && !paymentDate) nextErrors.paymentDate = "This field is required";
     if (markAsPaid && paymentMode === "Cheque" && !String(chequeNo || "").trim()) {
-      alert("Enter cheque number.");
-      return null;
+      nextErrors.chequeNo = "This field is required";
     }
     if (markAsPaid && paymentMode === "Bank Transfer") {
       if (!String(bankName || "").trim()) {
-        alert("Enter bank name.");
-        return null;
+        nextErrors.bankName = "This field is required";
       }
       if (!String(bankAccount || "").trim()) {
-        alert("Enter bank account.");
-        return null;
+        nextErrors.bankAccount = "This field is required";
       }
     }
     if (
@@ -1498,9 +1655,14 @@ export default function InvoiceCreate() {
         paymentMode === "Online Gateway") &&
       !String(transactionId || "").trim()
     ) {
-      alert("Enter transaction ID.");
+      nextErrors.transactionId = "This field is required";
+    }
+    if (Object.keys(nextErrors).length) {
+      setFormErrors(nextErrors);
       return null;
     }
+    setFormErrors({});
+
     let effectiveLines = lines;
     let effectiveItems = items;
     try {
@@ -1518,9 +1680,10 @@ export default function InvoiceCreate() {
     const effectiveComputed = computeInvoiceSummary(effectiveLines, effectiveItems);
     const validComputedLines = effectiveComputed.enriched.filter((line) => line?.itemId);
     if (!validComputedLines.length) {
-      alert("Add at least one line item before saving invoice.");
+      setFormErrors((prev) => ({ ...prev, lines: "This field is required" }));
       return null;
     }
+    clearFormError("lines");
     const effectiveStockByItemId = buildStockMap(effectiveItems);
     const effectiveStockIssues = collectStockValidationIssues(
       effectiveComputed.enriched,
@@ -1754,9 +1917,10 @@ export default function InvoiceCreate() {
       setBankName("");
       setBankAccount("");
       setPaymentNotes("");
+      setFormErrors({});
       companyConsumeDocumentNumber("invoice");
-      setInvoiceNo(resolveAutoInvoiceId());
       await invoicesSyncFromRemote();
+      setInvoiceNo(resolveInvoiceNoFromExisting(resolveAutoInvoiceId(), invoicesList()));
 
       if (!silent) {
         if (paymentSavedAsUnapplied) {
@@ -1777,10 +1941,6 @@ export default function InvoiceCreate() {
       alert("You do not have permission to create invoices.");
       return;
     }
-    if (!partyId) {
-      alert("Select customer before saving and printing.");
-      return;
-    }
 
     const savedInvoiceId = await saveInvoice({ silent: true });
     if (!savedInvoiceId) return;
@@ -1799,7 +1959,7 @@ export default function InvoiceCreate() {
             <div className="flex items-center gap-2">
               <button
                 onClick={handleSaveAndPrint}
-                disabled={!canCreateInvoice || !partyId || !String(invoiceNo || "").trim() || hasStockErrors}
+                disabled={!canCreateInvoice || hasStockErrors}
                 className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
               >
                 <Printer className="h-4 w-4" />
@@ -1807,7 +1967,7 @@ export default function InvoiceCreate() {
               </button>
               <GradientButton
                 onClick={saveInvoice}
-                disabled={!canCreateInvoice || !partyId || !String(invoiceNo || "").trim() || hasStockErrors}
+                disabled={!canCreateInvoice || hasStockErrors}
                 className="disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Save className="h-4 w-4" />
@@ -1849,7 +2009,7 @@ export default function InvoiceCreate() {
           </div>
 
           <div className="mt-4">
-            <FormField label="Customer Search">
+            <FormField label="Customer Search" required error={formErrors.customer}>
               <div className="flex flex-wrap gap-2">
                 <input
                   value={customerLookupQuery}
@@ -1882,6 +2042,7 @@ export default function InvoiceCreate() {
                   </button>
                 ) : null}
               </div>
+              {formErrors.customer ? <p className="mt-2 text-xs text-rose-600">{formErrors.customer}</p> : null}
             </FormField>
           </div>
 
@@ -2180,14 +2341,15 @@ export default function InvoiceCreate() {
             <>
               <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3">
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <FormField label="Invoice ID">
+                  <FormField label="Invoice ID" required error={formErrors.invoiceNo}>
                     <input
                       value={invoiceNo}
                       readOnly
                       className="w-full rounded-2xl border border-slate-200 bg-slate-100 px-3 py-2.5 text-sm font-mono text-slate-700 outline-none"
                     />
+                    {formErrors.invoiceNo ? <p className="mt-1 text-xs text-rose-600">{formErrors.invoiceNo}</p> : null}
                   </FormField>
-                  <FormField label="Invoice Date">
+                  <FormField label="Invoice Date" required error={formErrors.invoiceDate}>
                     <input
                       value={invoiceDateInput}
                       onChange={(e) => handleInvoiceDateChange(e.target.value)}
@@ -2196,6 +2358,7 @@ export default function InvoiceCreate() {
                       className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                       style={{ "--tw-ring-color": UI.COLORS.ring }}
                     />
+                    {formErrors.invoiceDate ? <p className="mt-1 text-xs text-rose-600">{formErrors.invoiceDate}</p> : null}
                   </FormField>
                 </div>
               </div>
@@ -2230,6 +2393,7 @@ export default function InvoiceCreate() {
                   Add line
                 </button>
               </div>
+              {formErrors.lines ? <p className="mt-2 text-xs text-rose-600">{formErrors.lines}</p> : null}
 
               <div className="mt-3 flex items-center gap-3">
                 <div className="relative w-full max-w-sm">
@@ -2603,16 +2767,20 @@ export default function InvoiceCreate() {
 
                 {markAsPaid ? (
                   <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <FormField label="Amount Received">
+                  <FormField label="Amount Received" required error={formErrors.paidAmount}>
                     <input
                       type="number"
                       min="0"
                       value={paidAmount}
-                      onChange={(e) => setPaidAmount(e.target.value)}
+                      onChange={(e) => {
+                        clearFormError("paidAmount");
+                        setPaidAmount(e.target.value);
+                      }}
                       placeholder="Enter received amount"
                       className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                       style={{ "--tw-ring-color": UI.COLORS.ring }}
                     />
+                    {formErrors.paidAmount ? <p className="mt-1 text-xs text-rose-600">{formErrors.paidAmount}</p> : null}
                   </FormField>
                   <FormField label="Payment Mode">
                     <select
@@ -2628,14 +2796,18 @@ export default function InvoiceCreate() {
                       ))}
                     </select>
                   </FormField>
-                  <FormField label="Payment Date">
+                  <FormField label="Payment Date" required error={formErrors.paymentDate}>
                     <input
                       type="date"
                       value={paymentDate}
-                      onChange={(e) => setPaymentDate(e.target.value)}
+                      onChange={(e) => {
+                        clearFormError("paymentDate");
+                        setPaymentDate(e.target.value);
+                      }}
                       className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                       style={{ "--tw-ring-color": UI.COLORS.ring }}
                     />
+                    {formErrors.paymentDate ? <p className="mt-1 text-xs text-rose-600">{formErrors.paymentDate}</p> : null}
                   </FormField>
                   <FormField label="Reference No">
                     <input
@@ -2647,35 +2819,47 @@ export default function InvoiceCreate() {
                     />
                   </FormField>
                   {paymentMode === "Cheque" ? (
-                    <FormField label="Cheque No" className="md:col-span-2">
+                    <FormField label="Cheque No" required error={formErrors.chequeNo} className="md:col-span-2">
                       <input
                         value={chequeNo}
-                        onChange={(e) => setChequeNo(e.target.value)}
+                        onChange={(e) => {
+                          clearFormError("chequeNo");
+                          setChequeNo(e.target.value);
+                        }}
                         placeholder="Enter cheque number"
                         className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                         style={{ "--tw-ring-color": UI.COLORS.ring }}
                       />
+                      {formErrors.chequeNo ? <p className="mt-1 text-xs text-rose-600">{formErrors.chequeNo}</p> : null}
                     </FormField>
                   ) : null}
                   {paymentMode === "Bank Transfer" ? (
                     <>
-                      <FormField label="Bank Name">
+                      <FormField label="Bank Name" required error={formErrors.bankName}>
                         <input
                           value={bankName}
-                          onChange={(e) => setBankName(e.target.value)}
+                          onChange={(e) => {
+                            clearFormError("bankName");
+                            setBankName(e.target.value);
+                          }}
                           placeholder="Enter bank name"
                           className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                           style={{ "--tw-ring-color": UI.COLORS.ring }}
                         />
+                        {formErrors.bankName ? <p className="mt-1 text-xs text-rose-600">{formErrors.bankName}</p> : null}
                       </FormField>
-                      <FormField label="Bank Account">
+                      <FormField label="Bank Account" required error={formErrors.bankAccount}>
                         <input
                           value={bankAccount}
-                          onChange={(e) => setBankAccount(e.target.value)}
+                          onChange={(e) => {
+                            clearFormError("bankAccount");
+                            setBankAccount(e.target.value);
+                          }}
                           placeholder="Enter bank account"
                           className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                           style={{ "--tw-ring-color": UI.COLORS.ring }}
                         />
+                        {formErrors.bankAccount ? <p className="mt-1 text-xs text-rose-600">{formErrors.bankAccount}</p> : null}
                       </FormField>
                     </>
                   ) : null}
@@ -2683,14 +2867,18 @@ export default function InvoiceCreate() {
                   paymentMode === "Card" ||
                   paymentMode === "UPI" ||
                   paymentMode === "Online Gateway" ? (
-                    <FormField label="Transaction ID" className="md:col-span-2">
+                    <FormField label="Transaction ID" required error={formErrors.transactionId} className="md:col-span-2">
                       <input
                         value={transactionId}
-                        onChange={(e) => setTransactionId(e.target.value)}
+                        onChange={(e) => {
+                          clearFormError("transactionId");
+                          setTransactionId(e.target.value);
+                        }}
                         placeholder="Enter transaction ID"
                         className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                         style={{ "--tw-ring-color": UI.COLORS.ring }}
                       />
+                      {formErrors.transactionId ? <p className="mt-1 text-xs text-rose-600">{formErrors.transactionId}</p> : null}
                     </FormField>
                   ) : null}
                   <FormField label="Notes" className="md:col-span-2">
@@ -2765,7 +2953,7 @@ export default function InvoiceCreate() {
                   <GradientButton
                     className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={saveInvoice}
-                    disabled={!canCreateInvoice || !partyId || !String(invoiceNo || "").trim() || hasStockErrors}
+                    disabled={!canCreateInvoice || hasStockErrors}
                   >
                     <Save className="h-4 w-4" />
                     Save Invoice

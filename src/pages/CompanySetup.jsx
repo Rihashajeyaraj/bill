@@ -200,14 +200,57 @@ export default function CompanySetup() {
 
   function validate() {
     const next = {};
-    if (!profile.companyName.trim()) next.companyName = "Company name is required.";
-    if (!profile.country) next.country = "Country is required.";
-    if (!profile.currencies.length) next.currency = "Currency is required.";
-    if (!profile.address.line1.trim()) next.addressLine1 = "Address line 1 is required.";
-    if (!profile.address.city.trim()) next.city = "City is required.";
-    if (isIndia && !profile.address.state.trim()) next.state = "State is required for India.";
+    if (!profile.companyName.trim()) next.companyName = "This field is required";
+    if (!profile.country) next.country = "This field is required";
+    if (!profile.currencies.length) next.currency = "This field is required";
+    if (!profile.address.line1.trim()) next.addressLine1 = "This field is required";
+    if (!profile.address.city.trim()) next.city = "This field is required";
+    if (isIndia && !profile.address.state.trim()) next.state = "This field is required";
     return next;
   }
+
+  useEffect(() => {
+    setErrors((prev) => {
+      if (!prev || !Object.keys(prev).length) return prev;
+      const next = { ...prev };
+      let changed = false;
+
+      if (next.companyName && profile.companyName.trim()) {
+        delete next.companyName;
+        changed = true;
+      }
+      if (next.country && profile.country.trim()) {
+        delete next.country;
+        changed = true;
+      }
+      if (next.currency && profile.currencies.length) {
+        delete next.currency;
+        changed = true;
+      }
+      if (next.addressLine1 && profile.address.line1.trim()) {
+        delete next.addressLine1;
+        changed = true;
+      }
+      if (next.city && profile.address.city.trim()) {
+        delete next.city;
+        changed = true;
+      }
+      if (next.state && (!isIndia || profile.address.state.trim())) {
+        delete next.state;
+        changed = true;
+      }
+
+      return changed ? next : prev;
+    });
+  }, [
+    isIndia,
+    profile.companyName,
+    profile.country,
+    profile.currencies.length,
+    profile.address.line1,
+    profile.address.city,
+    profile.address.state
+  ]);
 
   async function save() {
     const nextErrors = validate();
@@ -319,7 +362,7 @@ export default function CompanySetup() {
             <p className="mt-1 text-sm text-slate-500">These details appear on invoices and reports.</p>
 
             <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField label="Company Name">
+              <FormField label="Company Name" required error={errors.companyName}>
                 <input
                   value={profile.companyName}
                   onChange={(e) => setProfile((p) => ({ ...p, companyName: e.target.value }))}
@@ -339,7 +382,7 @@ export default function CompanySetup() {
                 />
               </FormField>
 
-              <FormField label="Country">
+              <FormField label="Country" required error={errors.country}>
                 <div className="relative">
                   <input
                     value={profile.country}
@@ -423,7 +466,7 @@ export default function CompanySetup() {
                 ) : null}
               </FormField>
 
-              <FormField label="Currency" hint={`Add up to ${MAX_CURRENCIES}`}>
+              <FormField label="Currency" required error={errors.currency} hint={`Add up to ${MAX_CURRENCIES}`}>
                 <CurrencyMultiInput
                   value={profile.currencies}
                   onChange={(currencies) =>
@@ -462,7 +505,7 @@ export default function CompanySetup() {
           <section className="mt-6">
             <h2 className="text-base font-semibold text-slate-900">Address Details</h2>
             <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField label="Address Line 1">
+              <FormField label="Address Line 1" required error={errors.addressLine1}>
                 <input
                   value={profile.address.line1}
                   onChange={(e) => setProfile((p) => ({ ...p, address: { ...p.address, line1: e.target.value } }))}
@@ -484,7 +527,7 @@ export default function CompanySetup() {
                 />
               </FormField>
 
-              <FormField label="City">
+              <FormField label="City" required error={errors.city}>
                 <input
                   value={profile.address.city}
                   onChange={(e) => setProfile((p) => ({ ...p, address: { ...p.address, city: e.target.value } }))}
@@ -498,7 +541,10 @@ export default function CompanySetup() {
               </FormField>
 
               <FormField
-                label={isIndia ? "State (required for India)" : "State / Province"}
+                label="State / Province"
+                required={isIndia}
+                optional={!isIndia}
+                error={errors.state}
                 hint={stateOptions.length ? `${stateOptions.length} options available` : "Type manually"}
               >
                 <div className="relative">

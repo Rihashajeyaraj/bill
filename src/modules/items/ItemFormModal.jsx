@@ -108,6 +108,7 @@ export default function ItemFormModal({
   const [form, setForm] = useState(
     initialItem ? { ...defaultItem(initialItem.type), ...initialItem } : defaultItem("Product")
   );
+  const [fieldErrors, setFieldErrors] = useState({});
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
 
@@ -115,6 +116,7 @@ export default function ItemFormModal({
     if (!open) return;
     setError("");
     setWarning("");
+    setFieldErrors({});
     const next = initialItem ? { ...defaultItem(initialItem.type), ...initialItem } : defaultItem("Product");
     next.type = normalizeItemTypeLabel(next.type);
     if (mode !== "edit" && !String(next.itemCode || "").trim()) {
@@ -149,6 +151,10 @@ export default function ItemFormModal({
     "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100";
 
   function updateField(key, value) {
+    if (key === "type") {
+      const nextType = normalizeItemTypeLabel(value);
+      if (nextType !== "Service") clearFieldError("sac");
+    }
     setForm((prev) => {
       if (key !== "type") return { ...prev, [key]: value };
       const nextType = normalizeItemTypeLabel(value);
@@ -163,6 +169,15 @@ export default function ItemFormModal({
       };
     });
     setWarning("");
+  }
+
+  function clearFieldError(key) {
+    setFieldErrors((prev) => {
+      if (!prev?.[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }
 
   function addPriceLevel() {
@@ -208,14 +223,20 @@ export default function ItemFormModal({
   }
 
   function handleSave() {
+    const nextFieldErrors = {};
     if (!form.name.trim()) {
-      setError("Item name is required.");
-      return;
+      nextFieldErrors.name = "This field is required";
     }
     if (form.type === "Service" && !form.sac?.trim()) {
-      setError("SAC code is required for services.");
+      nextFieldErrors.sac = "This field is required";
+    }
+    if (Object.keys(nextFieldErrors).length) {
+      setFieldErrors(nextFieldErrors);
+      setError("");
       return;
     }
+
+    setFieldErrors({});
     setError("");
     setWarning("");
     const normalizedType = normalizeItemTypeLabel(form.type);
@@ -292,13 +313,17 @@ export default function ItemFormModal({
       <div className="space-y-4">
         <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <FormField label="Item Name">
+            <FormField label="Item Name" required error={fieldErrors.name}>
               <input
                 value={form.name}
-                onChange={(event) => updateField("name", event.target.value)}
+                onChange={(event) => {
+                  clearFieldError("name");
+                  updateField("name", event.target.value);
+                }}
                 className={inputClassName}
                 placeholder="Premium marble, consulting, etc."
               />
+              {fieldErrors.name ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.name}</p> : null}
             </FormField>
 
             <FormField label="Status">
@@ -323,15 +348,24 @@ export default function ItemFormModal({
               </select>
             </FormField>
 
-            <FormField label={taxCfg.codeLabel} hint={form.type === "Service" ? "Required for Service" : "Optional"}>
+            <FormField
+              label={taxCfg.codeLabel}
+              required={form.type === "Service"}
+              optional={form.type !== "Service"}
+              error={fieldErrors.sac}
+            >
               <input
                 value={form.type === "Service" ? form.sac : form.hsn}
                 onChange={(event) =>
-                  updateField(form.type === "Service" ? "sac" : "hsn", event.target.value)
+                  {
+                    if (form.type === "Service") clearFieldError("sac");
+                    updateField(form.type === "Service" ? "sac" : "hsn", event.target.value);
+                  }
                 }
                 className={inputClassName}
                 placeholder={form.type === "Service" ? "SAC code" : "HSN code"}
               />
+              {fieldErrors.sac ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.sac}</p> : null}
             </FormField>
 
             <FormField label="Unit of Measure">

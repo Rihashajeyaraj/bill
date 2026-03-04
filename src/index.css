@@ -125,4 +125,9 @@ body {
   .debit-note-compact textarea {
     min-height: 68px;
   }
+  .form-field[data-invalid="true"] input:not([type="checkbox"]):not([type="radio"]),
+  .form-field[data-invalid="true"] select,
+  .form-field[data-invalid="true"] textarea {
+    @apply border-rose-300;
+  }
 }

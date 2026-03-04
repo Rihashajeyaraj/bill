@@ -648,17 +648,17 @@ function refreshPrefixes(prevPrefixes, prevCountry, nextCountry) {
 
 function validateProfile(profile) {
   const errors = {};
-  if (!profile.companyName?.trim()) errors.companyName = "Company name is required.";
-  if (!profile.email?.trim()) errors.email = "Email is required.";
+  if (!profile.companyName?.trim()) errors.companyName = "This field is required";
+  if (!profile.email?.trim()) errors.email = "This field is required";
   if (profile.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email.trim())) {
     errors.email = "Enter a valid email address.";
   }
-  if (!profile.phone?.trim()) errors.phone = "Phone number is required.";
+  if (!profile.phone?.trim()) errors.phone = "This field is required";
   if (profile.phone && !/^[+\d][\d\s()-]{5,}$/.test(profile.phone.trim())) {
     errors.phone = "Enter a valid phone number.";
   }
-  if (!profile.country?.trim()) errors.country = "Country is required.";
-  if (!profile.address?.line1?.trim()) errors.line1 = "Address line 1 is required.";
+  if (!profile.country?.trim()) errors.country = "This field is required";
+  if (!profile.address?.line1?.trim()) errors.line1 = "This field is required";
   if (profile.website && !/^https?:\/\/|^[a-z0-9.-]+\.[a-z]{2,}/i.test(profile.website.trim())) {
     errors.website = "Enter a valid website URL.";
   }
@@ -667,10 +667,10 @@ function validateProfile(profile) {
 
 function validateLocalization(localization) {
   const errors = {};
-  if (!localization?.defaultCountry?.trim()) errors.defaultCountry = "Default country is required.";
-  if (!localization?.currency?.trim()) errors.currency = "Currency is required.";
-  if (!localization?.dateFormat?.trim()) errors.dateFormat = "Date format is required.";
-  if (!localization?.numberFormat?.trim()) errors.numberFormat = "Number format is required.";
+  if (!localization?.defaultCountry?.trim()) errors.defaultCountry = "This field is required";
+  if (!localization?.currency?.trim()) errors.currency = "This field is required";
+  if (!localization?.dateFormat?.trim()) errors.dateFormat = "This field is required";
+  if (!localization?.numberFormat?.trim()) errors.numberFormat = "This field is required";
   const normalizedPrimary = normalizeCurrencyCode(localization?.currency);
   const currencies = uniqueCurrencyList(
     Array.isArray(localization?.currencies) ? localization.currencies : []
@@ -689,11 +689,11 @@ function validateTax(settings) {
   const country = settings?.localization?.defaultCountry;
   const tax = settings?.tax || {};
   if (country === "India" && tax.enableGst) {
-    if (!tax.gstin?.trim()) errors.gstin = "GSTIN is required when GST is enabled.";
+    if (!tax.gstin?.trim()) errors.gstin = "This field is required";
     if (Number(tax.defaultGstRate) < 0) errors.defaultGstRate = "GST rate cannot be negative.";
   }
   if (VAT_COUNTRIES.includes(country) && tax.enableVat) {
-    if (!tax.vatNumber?.trim()) errors.vatNumber = "VAT number is required when VAT is enabled.";
+    if (!tax.vatNumber?.trim()) errors.vatNumber = "This field is required";
     if (Number(tax.defaultVatRate) < 0) errors.defaultVatRate = "VAT rate cannot be negative.";
   }
   if (country === "USA" && tax.enableSalesTax) {
@@ -710,7 +710,7 @@ function validateNumbering(numbering) {
   DOCUMENT_TYPES.forEach((doc) => {
     const key = doc.key;
     if (!String(prefixes[key] || "").trim()) {
-      errors[`prefix_${key}`] = "Prefix is required.";
+      errors[`prefix_${key}`] = "This field is required";
     }
   });
   const counters = numbering?.counters || {};
@@ -753,8 +753,8 @@ function validateTheme(theme) {
 
 function validateInvoiceTemplate(config) {
   const errors = {};
-  if (!String(config?.templateId || "").trim()) errors.templateId = "Template is required.";
-  if (!String(config?.fontFamily || "").trim()) errors.fontFamily = "Font is required.";
+  if (!String(config?.templateId || "").trim()) errors.templateId = "This field is required";
+  if (!String(config?.fontFamily || "").trim()) errors.fontFamily = "This field is required";
   return errors;
 }
 
@@ -1044,6 +1044,50 @@ export default function CompanySettings() {
       ...prev,
       [section]: { ...prev[section], ...patch }
     }));
+    setErrors((prev) => {
+      const sectionErrors = prev?.[section];
+      if (!sectionErrors || typeof sectionErrors !== "object") return prev;
+      const nextSectionErrors = { ...sectionErrors };
+      let changed = false;
+
+      if (section === "numbering" && patch?.prefixes && typeof patch.prefixes === "object") {
+        Object.entries(patch.prefixes).forEach(([docKey, value]) => {
+          const errorKey = `prefix_${docKey}`;
+          if (nextSectionErrors[errorKey] && String(value || "").trim()) {
+            delete nextSectionErrors[errorKey];
+            changed = true;
+          }
+        });
+      }
+      if (section === "numbering" && patch?.counters && typeof patch.counters === "object") {
+        Object.entries(patch.counters).forEach(([docKey, value]) => {
+          const errorKey = `counter_${docKey}`;
+          if (nextSectionErrors[errorKey] && Number(value) >= 1) {
+            delete nextSectionErrors[errorKey];
+            changed = true;
+          }
+        });
+      }
+
+      Object.keys(patch || {}).forEach((key) => {
+        if (nextSectionErrors[key]) {
+          delete nextSectionErrors[key];
+          changed = true;
+        }
+      });
+      if (!changed) return prev;
+      return { ...prev, [section]: nextSectionErrors };
+    });
+  }
+
+  function clearSectionError(section, key) {
+    setErrors((prev) => {
+      const sectionErrors = prev?.[section];
+      if (!sectionErrors?.[key]) return prev;
+      const nextSectionErrors = { ...sectionErrors };
+      delete nextSectionErrors[key];
+      return { ...prev, [section]: nextSectionErrors };
+    });
   }
 
   function applyCountryChange(nextCountry) {
@@ -1103,6 +1147,19 @@ export default function CompanySettings() {
           templateId: keepCurrentTemplate ? prev.invoiceTemplate.templateId : fallbackTemplateId
         }
       };
+    });
+    setErrors((prev) => {
+      const next = { ...prev };
+      if (next.profile?.country) {
+        next.profile = { ...next.profile };
+        delete next.profile.country;
+      }
+      if (next.localization?.defaultCountry || next.localization?.currency) {
+        next.localization = { ...next.localization };
+        delete next.localization.defaultCountry;
+        delete next.localization.currency;
+      }
+      return next;
     });
   }
 
@@ -1594,7 +1651,7 @@ export default function CompanySettings() {
                   />
 
                   <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <FormField label="Company Name *">
+                    <FormField label="Company Name" required error={sectionErrors.companyName}>
                       <input
                         value={settings.profile.companyName}
                         onChange={(event) =>
@@ -1607,7 +1664,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Logo Upload">
+                    <FormField label="Logo Upload" error={sectionErrors.logo}>
                       <FileUpload
                         value={settings.profile.logoBase64}
                         onChange={(value, file) => {
@@ -1636,7 +1693,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Company Email *">
+                    <FormField label="Company Email" required error={sectionErrors.email}>
                       <input
                         value={settings.profile.email}
                         onChange={(event) => updateSection("profile", { email: event.target.value })}
@@ -1647,7 +1704,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Phone *">
+                    <FormField label="Phone" required error={sectionErrors.phone}>
                       <input
                         value={settings.profile.phone}
                         onChange={(event) => updateSection("profile", { phone: event.target.value })}
@@ -1658,7 +1715,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Website">
+                    <FormField label="Website" error={sectionErrors.website}>
                       <input
                         value={settings.profile.website}
                         onChange={(event) => updateSection("profile", { website: event.target.value })}
@@ -1670,18 +1727,19 @@ export default function CompanySettings() {
                     </FormField>
                   </div>
                   <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <FormField label="Address Line 1 *">
+                    <FormField label="Address Line 1" required error={sectionErrors.line1}>
                       <input
                         value={settings.profile.address.line1}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          clearSectionError("profile", "line1");
                           setSettings((prev) => ({
                             ...prev,
                             profile: {
                               ...prev.profile,
                               address: { ...prev.profile.address, line1: event.target.value }
                             }
-                          }))
-                        }
+                          }));
+                        }}
                         className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
                       />
                       {sectionErrors.line1 ? (
@@ -1721,7 +1779,7 @@ export default function CompanySettings() {
                       />
                     </FormField>
 
-                    <FormField label="Country *">
+                    <FormField label="Country" required error={sectionErrors.country}>
                       <div className="relative">
                         <input
                           value={settings.profile.country}
@@ -1877,7 +1935,7 @@ export default function CompanySettings() {
                   />
 
                   <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <FormField label="Default Country">
+                    <FormField label="Default Country" required error={sectionErrors.defaultCountry} optional={false}>
                       <input
                         value={settings.localization.defaultCountry || settings.profile.country}
                         readOnly
@@ -1891,7 +1949,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Currency (auto from country)">
+                    <FormField label="Currency (auto from country)" required error={sectionErrors.currency} optional={false}>
                       <input
                         value={settings.localization.currency}
                         readOnly
@@ -1904,6 +1962,7 @@ export default function CompanySettings() {
 
                     <FormField
                       label="Additional Currencies"
+                      error={sectionErrors.currencies}
                       hint={`Add up to ${MAX_CURRENCIES - 1}`}
                     >
                       <CurrencyMultiInput
@@ -1939,7 +1998,7 @@ export default function CompanySettings() {
                       </p>
                     </FormField>
 
-                    <FormField label="Date Format">
+                    <FormField label="Date Format" required error={sectionErrors.dateFormat}>
                       <select
                         value={settings.localization.dateFormat}
                         onChange={(event) =>
@@ -1958,7 +2017,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Number Format">
+                    <FormField label="Number Format" required error={sectionErrors.numberFormat}>
                       <select
                         value={settings.localization.numberFormat}
                         onChange={(event) =>
@@ -2003,7 +2062,7 @@ export default function CompanySettings() {
                           onChange={(value) => updateSection("tax", { enableGst: value })}
                         />
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                          <FormField label="GSTIN">
+                          <FormField label="GSTIN" required={settings.tax.enableGst} optional={!settings.tax.enableGst} error={sectionErrors.gstin}>
                             <input
                               value={settings.tax.gstin}
                               onChange={(event) => updateSection("tax", { gstin: event.target.value })}
@@ -2013,7 +2072,7 @@ export default function CompanySettings() {
                               <p className="mt-1 text-xs text-rose-600">{sectionErrors.gstin}</p>
                             ) : null}
                           </FormField>
-                          <FormField label="Default GST %">
+                          <FormField label="Default GST %" error={sectionErrors.defaultGstRate}>
                             <input
                               type="number"
                               value={settings.tax.defaultGstRate}
@@ -2039,7 +2098,7 @@ export default function CompanySettings() {
                           onChange={(value) => updateSection("tax", { enableVat: value })}
                         />
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                          <FormField label="VAT Registration No">
+                          <FormField label="VAT Registration No" required={settings.tax.enableVat} optional={!settings.tax.enableVat} error={sectionErrors.vatNumber}>
                             <input
                               value={settings.tax.vatNumber}
                               onChange={(event) => updateSection("tax", { vatNumber: event.target.value })}
@@ -2049,7 +2108,7 @@ export default function CompanySettings() {
                               <p className="mt-1 text-xs text-rose-600">{sectionErrors.vatNumber}</p>
                             ) : null}
                           </FormField>
-                          <FormField label="Default VAT %">
+                          <FormField label="Default VAT %" error={sectionErrors.defaultVatRate}>
                             <input
                               type="number"
                               value={settings.tax.defaultVatRate}
@@ -2172,7 +2231,7 @@ export default function CompanySettings() {
 
                   <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
                     {DOCUMENT_TYPES.map((doc) => (
-                      <FormField key={doc.key} label={doc.label}>
+                      <FormField key={doc.key} label={doc.label} required error={sectionErrors[`prefix_${doc.key}`]}>
                         <input
                           value={settings.numbering.prefixes[doc.key]}
                           onChange={(event) =>
@@ -2201,7 +2260,7 @@ export default function CompanySettings() {
                       { key: "paymentIn", label: "Payment In Counter" },
                       { key: "paymentOut", label: "Payment Out Counter" }
                     ].map((entry) => (
-                      <FormField key={entry.key} label={entry.label}>
+                      <FormField key={entry.key} label={entry.label} error={sectionErrors[`counter_${entry.key}`]}>
                         <input
                           type="number"
                           min={1}
@@ -2447,7 +2506,7 @@ export default function CompanySettings() {
                       </select>
                     </FormField>
 
-                    <FormField label="Primary Brand Color">
+                    <FormField label="Primary Brand Color" error={sectionErrors.primaryColor}>
                       <div className="flex items-center gap-2">
                         <input
                           type="color"
@@ -2470,7 +2529,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Accent Color">
+                    <FormField label="Accent Color" error={sectionErrors.accentColor}>
                       <div className="flex items-center gap-2">
                         <input
                           type="color"
@@ -2493,7 +2552,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Font Family">
+                    <FormField label="Font Family" error={sectionErrors.fontFamily}>
                       <select
                         value={settings.theme.fontFamily}
                         onChange={(event) => {
@@ -2514,7 +2573,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Font Size">
+                    <FormField label="Font Size" error={sectionErrors.fontSize}>
                       <div className="flex items-center gap-2">
                         <input
                           type="number"
@@ -2539,7 +2598,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Button Style">
+                    <FormField label="Button Style" error={sectionErrors.radiusStyle}>
                       <select
                         value={settings.theme.radiusStyle}
                         onChange={(event) => updateSection("theme", { radiusStyle: event.target.value })}
@@ -2556,7 +2615,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="UI Density">
+                    <FormField label="UI Density" error={sectionErrors.density}>
                       <select
                         value={settings.theme.density}
                         onChange={(event) => updateSection("theme", { density: event.target.value })}
@@ -2573,7 +2632,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Sidebar Style">
+                    <FormField label="Sidebar Style" error={sectionErrors.sidebarStyle}>
                       <select
                         value={settings.theme.sidebarStyle}
                         onChange={(event) => updateSection("theme", { sidebarStyle: event.target.value })}
@@ -2660,7 +2719,7 @@ export default function CompanySettings() {
                   />
 
                   <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <FormField label="Template">
+                    <FormField label="Template" required error={sectionErrors.templateId}>
                       <select
                         value={settings.invoiceTemplate.templateId}
                         onChange={(event) =>
@@ -2679,7 +2738,7 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Font">
+                    <FormField label="Font" required error={sectionErrors.fontFamily}>
                       <select
                         value={settings.invoiceTemplate.fontFamily}
                         onChange={(event) => {

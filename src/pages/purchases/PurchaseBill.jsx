@@ -173,6 +173,7 @@ export default function PurchaseBill() {
   const [supplierSearchPhone, setSupplierSearchPhone] = useState("");
   const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
   const [supplierSearchError, setSupplierSearchError] = useState("");
+  const [formErrors, setFormErrors] = useState({});
   const [supplierCreateLoading, setSupplierCreateLoading] = useState(false);
   const [supplierCreateDraft, setSupplierCreateDraft] = useState({
     name: "",
@@ -200,6 +201,11 @@ export default function PurchaseBill() {
   const [chequeNo, setChequeNo] = useState("");
   const [bankName, setBankName] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
+  const paymentAmount = useMemo(() => {
+    if (!markAsPaid) return 0;
+    const parsedAmount = Number(paidAmount || 0);
+    return round2(Math.max(0, parsedAmount));
+  }, [paidAmount, markAsPaid]);
   const companyCountry = String(country || company?.country || company?.address?.country || "").trim();
   const supplierCountry = String(party?.country || "").trim();
   const purchasableItems = useMemo(
@@ -249,6 +255,15 @@ export default function PurchaseBill() {
   }, [supplierCreateStateOptions, supplierStateQuery]);
   const suggestionMenuClassName =
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
+
+  function clearFormError(field) {
+    setFormErrors((prev) => {
+      if (!prev?.[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -333,6 +348,16 @@ export default function PurchaseBill() {
 
   useEffect(() => {
     if (!markAsPaid) {
+      setFormErrors((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        delete next.paidAmount;
+        delete next.paymentDate;
+        delete next.bankName;
+        delete next.transactionId;
+        delete next.chequeNo;
+        return next;
+      });
       setPaidAmount("");
       setReferenceNo("");
       setTransactionId("");
@@ -342,25 +367,107 @@ export default function PurchaseBill() {
       return;
     }
     if (paymentType === "Cash") {
+      setFormErrors((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        delete next.bankName;
+        delete next.transactionId;
+        delete next.chequeNo;
+        return next;
+      });
       setTransactionId("");
       setChequeNo("");
       setBankName("");
       return;
     }
     if (paymentType === "Bank Transfer") {
+      clearFormError("chequeNo");
       setChequeNo("");
       return;
     }
     if (paymentType === "Cheque") {
+      setFormErrors((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        delete next.bankName;
+        delete next.transactionId;
+        return next;
+      });
       setBankName("");
       setTransactionId("");
       return;
     }
     if (paymentType === "Card" || paymentType === "Online") {
+      setFormErrors((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        delete next.bankName;
+        delete next.chequeNo;
+        return next;
+      });
       setBankName("");
       setChequeNo("");
     }
   }, [markAsPaid, paymentType]);
+
+  useEffect(() => {
+    setFormErrors((prev) => {
+      if (!prev || !Object.keys(prev).length) return prev;
+      const next = { ...prev };
+      let changed = false;
+
+      if (next.supplier && partyId) {
+        delete next.supplier;
+        changed = true;
+      }
+      if (next.billNumber && String(billNumber || "").trim()) {
+        delete next.billNumber;
+        changed = true;
+      }
+      if (next.billDate && String(billDate || "").trim()) {
+        delete next.billDate;
+        changed = true;
+      }
+      if (next.paidAmount && (!markAsPaid || paymentAmount > 0)) {
+        delete next.paidAmount;
+        changed = true;
+      }
+      if (next.paymentDate && (!markAsPaid || String(paymentDate || "").trim())) {
+        delete next.paymentDate;
+        changed = true;
+      }
+      if (next.bankName && (!markAsPaid || paymentType !== "Bank Transfer" || String(bankName || "").trim())) {
+        delete next.bankName;
+        changed = true;
+      }
+      if (
+        next.transactionId &&
+        (!markAsPaid ||
+          !["Bank Transfer", "Card", "Online"].includes(paymentType) ||
+          String(transactionId || "").trim())
+      ) {
+        delete next.transactionId;
+        changed = true;
+      }
+      if (next.chequeNo && (!markAsPaid || paymentType !== "Cheque" || String(chequeNo || "").trim())) {
+        delete next.chequeNo;
+        changed = true;
+      }
+
+      return changed ? next : prev;
+    });
+  }, [
+    bankName,
+    billDate,
+    billNumber,
+    chequeNo,
+    markAsPaid,
+    partyId,
+    paymentAmount,
+    paymentDate,
+    paymentType,
+    transactionId
+  ]);
 
   useEffect(() => {
     if (!activeLineItemSearchId) return undefined;
@@ -372,6 +479,12 @@ export default function PurchaseBill() {
       window.removeEventListener("resize", closePopover);
     };
   }, [activeLineItemSearchId]);
+
+  useEffect(() => {
+    if (!formErrors?.lines) return;
+    const hasValidLine = lines.some((line) => !!String(line?.itemId || "").trim());
+    if (hasValidLine) clearFormError("lines");
+  }, [formErrors?.lines, lines]);
 
   const supplierLookupResults = useMemo(() => {
     const query = String(supplierLookupQuery || "").trim().toLowerCase();
@@ -519,6 +632,7 @@ export default function PurchaseBill() {
   function applySupplierSelection(nextSupplier) {
     if (!nextSupplier) return;
     setSupplierSearchError("");
+    clearFormError("supplier");
     setPartyId(nextSupplier.id);
     setPhone(nextSupplier.phone || "");
     setSupplierAddress(nextSupplier.address || "");
@@ -541,6 +655,7 @@ export default function PurchaseBill() {
 
   function handleSupplierLookupChange(value) {
     setSupplierLookupQuery(value);
+    clearFormError("supplier");
     setSupplierSearchPhone(extractTenDigitPhone(value));
     setSupplierCreateDraft((prev) => ({
       ...prev,
@@ -673,6 +788,7 @@ export default function PurchaseBill() {
 
   function resetSupplier() {
     setPartyId("");
+    clearFormError("supplier");
     setPhone("");
     setSupplierAddress("");
     setSupplierSearchError("");
@@ -741,12 +857,6 @@ export default function PurchaseBill() {
     const finalTotal = round2(grandTotal + roundOff);
     return { detailed, totalQty, subTotal, tax, taxTotal, grandTotal, roundOff, finalTotal, effectiveRate };
   }, [lines, roundOffEnabled, roundOffValue, companyCountry, company?.address?.state, supplierCountry, party?.state, party?.gstin, party?.taxId, isIndiaOrg, gstRuntimeEnabled, forceZeroTax]);
-
-  const paymentAmount = useMemo(() => {
-    if (!markAsPaid) return 0;
-    const parsedAmount = Number(paidAmount || 0);
-    return round2(Math.max(0, parsedAmount));
-  }, [paidAmount, markAsPaid]);
 
   const pendingAmount = useMemo(
     () => round2(Math.max(0, Number(computed.finalTotal || 0) - Number(paymentAmount || 0))),
@@ -914,39 +1024,32 @@ export default function PurchaseBill() {
       toast.error("Permission denied", "You do not have permission to create purchase bills.");
       return;
     }
-    if (!partyId) {
-      toast.warning("Supplier required", "Select a supplier before saving.");
-      return;
-    }
     const normalizedBillNumber = String(billNumber || "").trim();
-    if (!normalizedBillNumber) {
-      toast.warning("Invoice / Bill ID required", "Enter Invoice / Bill ID before saving.");
-      return;
-    }
-    if (markAsPaid && !paymentDate) {
-      toast.warning("Payment date required", "Select payment date for paid amount.");
-      return;
-    }
-    if (markAsPaid && paymentAmount <= 0) {
-      toast.warning("Paid amount required", "Enter how much you paid.");
-      return;
-    }
+    const nextErrors = {};
+    if (!partyId) nextErrors.supplier = "This field is required";
+    if (!normalizedBillNumber) nextErrors.billNumber = "This field is required";
+    if (!String(billDate || "").trim()) nextErrors.billDate = "This field is required";
+    if (markAsPaid && !paymentDate) nextErrors.paymentDate = "This field is required";
+    if (markAsPaid && paymentAmount <= 0) nextErrors.paidAmount = "This field is required";
     if (markAsPaid && paymentType === "Bank Transfer" && !String(bankName || "").trim()) {
-      toast.warning("Bank name required", "Enter bank name for bank transfer.");
-      return;
+      nextErrors.bankName = "This field is required";
     }
     if (
       markAsPaid &&
       (paymentType === "Bank Transfer" || paymentType === "Card" || paymentType === "Online") &&
       !String(transactionId || "").trim()
     ) {
-      toast.warning("Transaction ID required", "Enter transaction ID.");
-      return;
+      nextErrors.transactionId = "This field is required";
     }
     if (markAsPaid && paymentType === "Cheque" && !String(chequeNo || "").trim()) {
-      toast.warning("Cheque number required", "Enter cheque number.");
+      nextErrors.chequeNo = "This field is required";
+    }
+    if (Object.keys(nextErrors).length) {
+      setFormErrors(nextErrors);
       return;
     }
+    setFormErrors({});
+
     setSaving(true);
     try {
       const resolvedLines = await resolveLinesWithItems(computed.detailed);
@@ -975,9 +1078,10 @@ export default function PurchaseBill() {
         .filter((line) => line.itemId)
         .map((line) => (forceZeroTax ? { ...line, tax: 0 } : line));
       if (!validLines.length) {
-        toast.warning("Items required", "Add at least one line item before saving.");
+        setFormErrors((prev) => ({ ...prev, lines: "This field is required" }));
         return;
       }
+      clearFormError("lines");
 
       const effectiveBillNumber = normalizedBillNumber;
       const effectivePaymentType = markAsPaid ? paymentType : "Unpaid";
@@ -1110,6 +1214,7 @@ export default function PurchaseBill() {
       setChequeNo("");
       setBankName("");
       setPaymentNotes("");
+      setFormErrors({});
     } catch (error) {
       toast.error("Failed to save purchase bill", error?.message || "Could not save bill.");
     } finally {
@@ -1142,7 +1247,7 @@ export default function PurchaseBill() {
         </p>
 
         <div className="mt-4">
-          <FormField label="Supplier Search">
+          <FormField label="Supplier Search" required error={formErrors.supplier}>
             <div className="flex flex-wrap items-center gap-2">
               <input
                 value={supplierLookupQuery}
@@ -1176,6 +1281,7 @@ export default function PurchaseBill() {
                 </button>
               ) : null}
             </div>
+            {formErrors.supplier ? <p className="mt-2 text-xs text-rose-600">{formErrors.supplier}</p> : null}
           </FormField>
         </div>
 
@@ -1365,23 +1471,30 @@ export default function PurchaseBill() {
           </Card>
 
           <Card className="p-5">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
-          <div>
-            <p className="text-xs text-slate-500">Invoice / Bill ID</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+          <FormField label="Invoice / Bill ID" required error={formErrors.billNumber}>
             <input
               value={billNumber}
-              onChange={(e) => setBillNumber(e.target.value)}
+              onChange={(e) => {
+                clearFormError("billNumber");
+                setBillNumber(e.target.value);
+              }}
               placeholder="Enter Invoice / Bill ID"
-              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-blue-100"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-blue-100"
             />
-          </div>
-          <FormField label="Bill Date">
+            {formErrors.billNumber ? <p className="mt-1 text-xs text-rose-600">{formErrors.billNumber}</p> : null}
+          </FormField>
+          <FormField label="Bill Date" required error={formErrors.billDate}>
             <input
               type="date"
               value={billDate}
-              onChange={(e) => setBillDate(e.target.value)}
+              onChange={(e) => {
+                clearFormError("billDate");
+                setBillDate(e.target.value);
+              }}
               className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
             />
+            {formErrors.billDate ? <p className="mt-1 text-xs text-rose-600">{formErrors.billDate}</p> : null}
           </FormField>
           <div className="md:col-span-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
             <div className="flex flex-wrap items-center gap-3">
@@ -1416,6 +1529,7 @@ export default function PurchaseBill() {
             Add Row
           </button>
         </div>
+        {formErrors.lines ? <p className="mt-2 text-xs text-rose-600">{formErrors.lines}</p> : null}
 
         <div className="relative mt-4 overflow-x-auto overflow-y-visible rounded-2xl border border-slate-100">
           <table className="min-w-[920px] w-full text-left text-sm">
@@ -1643,15 +1757,19 @@ export default function PurchaseBill() {
 
             {markAsPaid ? (
               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                <FormField label="Amount Paid">
+                <FormField label="Amount Paid" required error={formErrors.paidAmount}>
                   <input
                     type="number"
                     min="0"
                     value={paidAmount}
-                    onChange={(e) => setPaidAmount(e.target.value)}
+                    onChange={(e) => {
+                      clearFormError("paidAmount");
+                      setPaidAmount(e.target.value);
+                    }}
                     placeholder="Enter paid amount"
                     className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
                   />
+                  {formErrors.paidAmount ? <p className="mt-1 text-xs text-rose-600">{formErrors.paidAmount}</p> : null}
                 </FormField>
                 <FormField label="Payment Method">
                   <select
@@ -1666,13 +1784,17 @@ export default function PurchaseBill() {
                     <option>Online</option>
                   </select>
                 </FormField>
-                <FormField label="Payment Date">
+                <FormField label="Payment Date" required error={formErrors.paymentDate}>
                   <input
                     type="date"
                     value={paymentDate}
-                    onChange={(e) => setPaymentDate(e.target.value)}
+                    onChange={(e) => {
+                      clearFormError("paymentDate");
+                      setPaymentDate(e.target.value);
+                    }}
                     className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
                   />
+                  {formErrors.paymentDate ? <p className="mt-1 text-xs text-rose-600">{formErrors.paymentDate}</p> : null}
                 </FormField>
                 <FormField label="Reference No">
                   <input
@@ -1685,55 +1807,75 @@ export default function PurchaseBill() {
 
                 {paymentType === "Bank Transfer" ? (
                   <>
-                    <FormField label="Bank Name">
+                    <FormField label="Bank Name" required error={formErrors.bankName}>
                       <input
                         value={bankName}
-                        onChange={(e) => setBankName(e.target.value)}
+                        onChange={(e) => {
+                          clearFormError("bankName");
+                          setBankName(e.target.value);
+                        }}
                         placeholder="Enter bank name"
                         className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
                       />
+                      {formErrors.bankName ? <p className="mt-1 text-xs text-rose-600">{formErrors.bankName}</p> : null}
                     </FormField>
-                    <FormField label="Transaction ID">
+                    <FormField label="Transaction ID" required error={formErrors.transactionId}>
                       <input
                         value={transactionId}
-                        onChange={(e) => setTransactionId(e.target.value)}
+                        onChange={(e) => {
+                          clearFormError("transactionId");
+                          setTransactionId(e.target.value);
+                        }}
                         placeholder="Enter transaction ID"
                         className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
                       />
+                      {formErrors.transactionId ? <p className="mt-1 text-xs text-rose-600">{formErrors.transactionId}</p> : null}
                     </FormField>
                   </>
                 ) : null}
 
                 {paymentType === "Cheque" ? (
-                  <FormField label="Cheque Number" className="md:col-span-2">
+                  <FormField label="Cheque Number" required error={formErrors.chequeNo} className="md:col-span-2">
                     <input
                       value={chequeNo}
-                      onChange={(e) => setChequeNo(e.target.value)}
+                      onChange={(e) => {
+                        clearFormError("chequeNo");
+                        setChequeNo(e.target.value);
+                      }}
                       placeholder="Enter cheque number"
                       className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
                     />
+                    {formErrors.chequeNo ? <p className="mt-1 text-xs text-rose-600">{formErrors.chequeNo}</p> : null}
                   </FormField>
                 ) : null}
 
                 {paymentType === "Card" ? (
-                  <FormField label="Transaction ID" className="md:col-span-2">
+                  <FormField label="Transaction ID" required error={formErrors.transactionId} className="md:col-span-2">
                     <input
                       value={transactionId}
-                      onChange={(e) => setTransactionId(e.target.value)}
+                      onChange={(e) => {
+                        clearFormError("transactionId");
+                        setTransactionId(e.target.value);
+                      }}
                       placeholder="Enter card transaction ID"
                       className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
                     />
+                    {formErrors.transactionId ? <p className="mt-1 text-xs text-rose-600">{formErrors.transactionId}</p> : null}
                   </FormField>
                 ) : null}
 
                 {paymentType === "Online" ? (
-                  <FormField label="Transaction ID" className="md:col-span-2">
+                  <FormField label="Transaction ID" required error={formErrors.transactionId} className="md:col-span-2">
                     <input
                       value={transactionId}
-                      onChange={(e) => setTransactionId(e.target.value)}
+                      onChange={(e) => {
+                        clearFormError("transactionId");
+                        setTransactionId(e.target.value);
+                      }}
                       placeholder="Enter online transaction ID"
                       className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
                     />
+                    {formErrors.transactionId ? <p className="mt-1 text-xs text-rose-600">{formErrors.transactionId}</p> : null}
                   </FormField>
                 ) : null}
 
@@ -1844,7 +1986,7 @@ export default function PurchaseBill() {
           onClick={() => {
             void save();
           }}
-          disabled={!canCreatePurchase || !partyId || !String(billNumber || "").trim() || saving || loading}
+          disabled={!canCreatePurchase || saving || loading}
           className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Save className="h-4 w-4" />

@@ -25,6 +25,7 @@ import { formatMoney, normalizeText, parseNumber, taxContext } from "../modules/
 import { listItemReturnActions, saveItemReturnAction } from "../services/itemReturns.service";
 import { fetchItemStockHistory, fetchPurchaseBillByBatchId } from "../services/inventory.service";
 import { purchasesList } from "../services/purchases.service";
+import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../services/storage";
 import { useToast } from "../context/ToastContext";
 import { authGetRole } from "../services/auth.service";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../services/roles";
@@ -270,6 +271,48 @@ export default function Items() {
       mounted = false;
     };
   }, [toast]);
+
+  useEffect(() => {
+    let mounted = true;
+    let remoteSyncInProgress = false;
+
+    async function refreshItemsFromEvents() {
+      if (!remoteSyncInProgress) {
+        remoteSyncInProgress = true;
+        try {
+          await syncItemsFromRemote();
+        } catch {
+          // Best-effort refresh for stock counters and low stock badges.
+        } finally {
+          remoteSyncInProgress = false;
+        }
+      }
+      if (mounted) setRefreshKey((prev) => prev + 1);
+    }
+
+    function handleStorage(event) {
+      if (
+        isOrganizationScopedStorageEventKey(LS_KEYS.items, event?.key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.purchases, event?.key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.invoices, event?.key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.creditNotes, event?.key)
+      ) {
+        void refreshItemsFromEvents();
+      }
+    }
+
+    function handleFocus() {
+      void refreshItemsFromEvents();
+    }
+
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      mounted = false;
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -786,9 +829,11 @@ export default function Items() {
                           <span className="text-xs text-slate-400">Inventory disabled</span>
                         ) : item.trackInventory ? (
                           <div className="flex flex-col gap-1">
-                            <span className="font-semibold text-slate-900">{stock.available}</span>
+                            <span className={`font-semibold ${stock.lowStock ? "text-rose-600" : "text-slate-900"}`}>
+                              {stock.available}
+                            </span>
                             {stock.lowStock ? (
-                              <span className="text-[11px] font-semibold text-rose-600">Low stock</span>
+                              <span className="text-[11px] font-semibold text-rose-600">Low Stock</span>
                             ) : (
                               <span className="text-[11px] text-slate-500">In stock</span>
                             )}

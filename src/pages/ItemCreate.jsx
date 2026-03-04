@@ -274,7 +274,7 @@ export default function ItemCreate() {
 
   function validate() {
     const nextErrors = {};
-    if (!String(form.itemName || "").trim()) nextErrors.itemName = "Item name is required.";
+    if (!String(form.itemName || "").trim()) nextErrors.itemName = "This field is required";
     if (!String(form.unit || "").trim()) nextErrors.unit = "Select unit of measure.";
     if (parseNumber(form.salePrice) < 0) nextErrors.salePrice = "Sales rate cannot be negative.";
     if (parseNumber(form.purchasePrice) < 0) nextErrors.purchasePrice = "Purchase rate cannot be negative.";
@@ -417,7 +417,7 @@ export default function ItemCreate() {
           ) : null}
           <FormSection title="1. Essentials" description="Core details for quick creation.">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <FormField label="Item Name *">
+              <FormField label="Item Name" required error={errors.itemName}>
                 <input
                   value={form.itemName}
                   onChange={(event) => updateField("itemName", event.target.value)}
@@ -459,7 +459,7 @@ export default function ItemCreate() {
               </FormField>
 
               {form.type === "PRODUCT" ? (
-                <FormField label="Unit of Measure">
+                <FormField label="Unit of Measure" error={errors.unit}>
                   <div className="relative">
                     <select
                       value={form.unit}
@@ -503,7 +503,7 @@ export default function ItemCreate() {
 
           <FormSection title="2. Pricing" description="Sales, purchase, tax and stock setup.">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <FormField label="Sales Rate">
+              <FormField label="Sales Rate" error={errors.salePrice}>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -517,7 +517,7 @@ export default function ItemCreate() {
                 {errors.salePrice ? <p className={errorClassName}>{errors.salePrice}</p> : null}
               </FormField>
 
-              <FormField label="Purchase Rate">
+              <FormField label="Purchase Rate" error={errors.purchasePrice}>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -532,7 +532,7 @@ export default function ItemCreate() {
               </FormField>
 
               {isProductType ? (
-                <FormField label="Quantity">
+                <FormField label="Quantity" error={errors.quantity}>
                   <input
                     type="text"
                     inputMode="numeric"
@@ -546,7 +546,7 @@ export default function ItemCreate() {
               ) : null}
 
               {isProductType ? (
-                <FormField label="Low Stock Alert">
+                <FormField label="Low Stock Alert" error={errors.lowStockQty}>
                   <input
                     type="text"
                     inputMode="numeric"
@@ -569,7 +569,7 @@ export default function ItemCreate() {
             defaultOpen
           >
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <FormField label={taxRateLabel}>
+              <FormField label={taxRateLabel} error={errors.taxRate}>
                 <input
                   type="number"
                   min={0}

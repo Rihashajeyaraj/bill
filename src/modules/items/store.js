@@ -708,7 +708,7 @@ function toLowStockEvaluation(item) {
     itemCode: String(item?.itemCode || item?.sku || "").trim(),
     limitValue,
     currentValue,
-    exceeded: limitValue > 0 && currentValue <= limitValue,
+    exceeded: currentValue <= limitValue,
     country: String(item?.country || item?.metadata?.country || "").trim()
   };
 }
@@ -1147,8 +1147,8 @@ export function computeItemStock(item) {
   if (stockSource === "db_current_stock") {
     const availableRaw = parseNumber(item?.currentStock ?? item?.metadata?.currentStock);
     const available = Math.max(0, parseNumber(availableRaw));
-    const lowStockAlert = parseNumber(item.lowStockAlert);
-    const lowStock = lowStockAlert > 0 && available <= lowStockAlert;
+    const lowStockAlert = Math.max(0, parseNumber(item.lowStockAlert));
+    const lowStock = available <= lowStockAlert;
     return { available, availableRaw, lowStock };
   }
 
@@ -1196,7 +1196,7 @@ export function computeItemStock(item) {
     });
 
   const available = Math.max(0, parseNumber(availableRaw));
-  const lowStockAlert = parseNumber(item.lowStockAlert);
-  const lowStock = lowStockAlert > 0 && available <= lowStockAlert;
+  const lowStockAlert = Math.max(0, parseNumber(item.lowStockAlert));
+  const lowStock = available <= lowStockAlert;
   return { available, availableRaw, lowStock };
 }

@@ -15,6 +15,48 @@ function setAll(list) {
   lsSetOrganizationScoped(LS_KEYS.invoices, list);
 }
 
+function applyInvoiceStockDelta(lines) {
+  const itemLines = Array.isArray(lines) ? lines : [];
+  if (!itemLines.length) return;
+  const quantityByItemId = new Map();
+
+  itemLines.forEach((line) => {
+    const itemId = String(line?.itemId || line?.item_id || "").trim();
+    if (!itemId) return;
+    const qty = Math.max(0, parseNumber(line?.qty ?? line?.quantity));
+    if (!qty) return;
+    quantityByItemId.set(itemId, (quantityByItemId.get(itemId) || 0) + qty);
+  });
+  if (!quantityByItemId.size) return;
+
+  const items = lsGetOrganizationScoped(LS_KEYS.items, []);
+  if (!Array.isArray(items) || !items.length) return;
+
+  const nextItems = items.map((item) => {
+    const itemId = String(item?.id || "").trim();
+    const delta = quantityByItemId.get(itemId);
+    if (!delta || item?.trackInventory !== true) return item;
+
+    const currentStock = Math.max(
+      0,
+      parseNumber(item?.currentStock ?? item?.stockQty ?? item?.metadata?.currentStock ?? item?.openingStock)
+    );
+    const nextCurrentStock = Math.max(0, currentStock - delta);
+    const metadata = item?.metadata && typeof item.metadata === "object" ? item.metadata : {};
+    return {
+      ...item,
+      currentStock: nextCurrentStock,
+      stockQty: nextCurrentStock,
+      metadata: {
+        ...metadata,
+        currentStock: nextCurrentStock
+      }
+    };
+  });
+
+  lsSetOrganizationScoped(LS_KEYS.items, nextItems);
+}
+
 function parseNumber(value) {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
@@ -526,6 +568,7 @@ export async function invoicesCreate(invoice) {
   };
 
   setAll([next, ...getAll().filter((entry) => entry.id !== id && entry.invoiceNo !== invoiceNo)]);
+  applyInvoiceStockDelta(lines);
   console.log("[CreditMonitoring] Triggering notification check from invoicesCreate", {
     invoiceId: id,
     invoiceNo,

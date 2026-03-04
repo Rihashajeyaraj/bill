@@ -100,6 +100,7 @@ export default function PartyFormModal({
       ? withNormalizedContactType({ ...createDraft(initialParty.type || "Customer"), ...initialParty })
       : createDraft("Customer")
   );
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [openingBalanceInput, setOpeningBalanceInput] = useState(() => formatDecimalAmount(0));
@@ -131,6 +132,7 @@ export default function PartyFormModal({
     setMobileNumber(parsedPhone.mobileNumber || "");
     setCountryMenuOpen(false);
     setStateMenuOpen(false);
+    setFieldErrors({});
     setCreateStep(mode === "create" ? "quick" : "details");
     setForm(nextForm);
   }, [open, initialParty, mode, organizationCountryValue]);
@@ -186,6 +188,15 @@ export default function PartyFormModal({
   const suggestionMenuClassName =
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
 
+  function clearFieldError(fieldKey: string) {
+    setFieldErrors((prev) => {
+      if (!prev?.[fieldKey]) return prev;
+      const next = { ...prev };
+      delete next[fieldKey];
+      return next;
+    });
+  }
+
   function updateField<K extends keyof PartyDraft>(key: K, value: PartyDraft[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
@@ -236,15 +247,30 @@ export default function PartyFormModal({
   }
 
   function handleSave(flow: CreateFlowStep = "details") {
+    const nextFieldErrors: Record<string, string> = {};
     if (!form.name.trim()) {
-      setError("Party name is required.");
+      nextFieldErrors.name = "This field is required";
+    }
+    if (!phoneDigits(mobileNumber)) {
+      nextFieldErrors.mobile = "This field is required";
+    }
+    if (showGSTINField && !String(form.taxId || "").trim()) {
+      nextFieldErrors.taxId = "This field is required";
+    }
+    if (Object.keys(nextFieldErrors).length) {
+      setFieldErrors(nextFieldErrors);
+      setError("");
       return;
     }
+
     const phoneValidation = validateMobileNumber(countryCode, mobileNumber);
     if (phoneValidation.error) {
-      setError(phoneValidation.error);
+      setFieldErrors((prev) => ({ ...prev, mobile: phoneValidation.error }));
+      setError("");
       return;
     }
+
+    setFieldErrors({});
     const normalized: PartyDraft = {
       ...form,
       name: form.name.trim(),
@@ -297,6 +323,9 @@ export default function PartyFormModal({
     const validationOrgContext = shouldValidateGST ? { ...orgContext, country: "India" } : { ...orgContext, country: "" };
     const taxValidation = validateContactTax(normalized, validationOrgContext);
     if (taxValidation.error) {
+      if (showGSTINField && /gstin|tax/i.test(taxValidation.error)) {
+        setFieldErrors((prev) => ({ ...prev, taxId: taxValidation.error }));
+      }
       setError(taxValidation.error);
       return;
     }
@@ -378,10 +407,14 @@ export default function PartyFormModal({
             <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">Basic Details</p>
               <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <FormField label="Name" className="md:col-span-2">
+                <FormField label="Name" required error={fieldErrors.name} className="md:col-span-2">
                   <input
                     value={form.name}
-                    onChange={(event) => updateField("name", event.target.value)}
+                    onChange={(event) => {
+                      setError("");
+                      clearFieldError("name");
+                      updateField("name", event.target.value);
+                    }}
                     className={inputClassName}
                     placeholder="Party legal name"
                   />
@@ -399,6 +432,7 @@ export default function PartyFormModal({
                         updateField("customerType", nextType as PartyDraft["customerType"]);
                       }
                       if (nextType === "Individual") {
+                        clearFieldError("taxId");
                         updateField("taxId", "");
                       }
                     }}
@@ -409,7 +443,7 @@ export default function PartyFormModal({
                   </select>
                 </FormField>
 
-                <FormField label="Mobile Number" hint={phoneHint}>
+                <FormField label="Mobile Number" required error={fieldErrors.mobile} hint={phoneHint}>
                   <div className="grid grid-cols-[130px_1fr] gap-2">
                     <select
                       value={countryCode}
@@ -417,6 +451,7 @@ export default function PartyFormModal({
                         const nextCountryCode = event.target.value;
                         setError("");
                         setWarning("");
+                        clearFieldError("mobile");
                         setCountryCode(nextCountryCode);
                         updateField("phone", composeFullMobileNumber(nextCountryCode, mobileNumber));
                       }}
@@ -434,6 +469,7 @@ export default function PartyFormModal({
                         const nextMobileNumber = phoneDigits(event.target.value);
                         setError("");
                         setWarning("");
+                        clearFieldError("mobile");
                         setMobileNumber(nextMobileNumber);
                         updateField("phone", composeFullMobileNumber(countryCode, nextMobileNumber));
                       }}
@@ -552,12 +588,19 @@ export default function PartyFormModal({
                 </FormField>
 
                 {showGSTINField ? (
-                  <FormField label="GSTIN" hint="Shown only for Business + India" className="md:col-span-2">
+                  <FormField
+                    label="GSTIN"
+                    required
+                    error={fieldErrors.taxId}
+                    hint="Shown only for Business + India"
+                    className="md:col-span-2"
+                  >
                     <input
                       value={form.taxId}
                       onChange={(event) => {
                         setError("");
                         setWarning("");
+                        clearFieldError("taxId");
                         updateField("taxId", event.target.value);
                       }}
                       className={inputClassName}
