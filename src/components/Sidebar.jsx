@@ -105,16 +105,16 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
         label: "Sales",
         children: [
           {
-            to: "/app/sales/invoice",
-            icon: ReceiptIndianRupee,
-            label: "Invoice",
-            activeMatchers: ["/sales/invoices", "/app/sales/invoice"]
-          },
-          {
             to: "/app/sales/proformas/new",
             icon: FileText,
             label: "Pro Forma Invoice",
             activeMatchers: ["/sales/proformas", "/app/sales/proformas"]
+          },
+          {
+            to: "/app/sales/invoice",
+            icon: ReceiptIndianRupee,
+            label: "Invoice",
+            activeMatchers: ["/sales/invoices", "/app/sales/invoice"]
           }
         ]
       },
@@ -125,16 +125,16 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
         label: "Purchase",
         children: [
           {
-            to: "/app/purchase/bill",
-            icon: FileText,
-            label: "Purchase Bill",
-            activeMatchers: ["/purchase/bills", "/app/purchase/bill"]
-          },
-          {
             to: "/app/purchase/proformas/new",
             icon: FileText,
             label: "Pro Forma Purchase Order",
             activeMatchers: ["/purchase/proformas", "/app/purchase/proformas"]
+          },
+          {
+            to: "/app/purchase/bill",
+            icon: FileText,
+            label: "Purchase Bill",
+            activeMatchers: ["/purchase/bills", "/app/purchase/bill"]
           }
         ]
       },
