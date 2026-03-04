@@ -209,7 +209,6 @@ function mapSalesHeader(row, lineRows = []) {
     supplyType: metadata?.supplyType || "",
     notes: row?.notes || "",
     terms: row?.terms || "",
-    status: normalizeStatus(row?.status),
     convertedDocumentId: row?.converted_document_id || "",
     convertedAt: row?.converted_at || "",
     lines,
@@ -525,7 +524,6 @@ export async function salesProformaUpsert(input) {
   const actor = authGetUser();
   const actorUserId = actor?.id || null;
   const actorName = String(actor?.name || actor?.email || "").trim();
-  const status = normalizeStatus(input?.status, "DRAFT");
 
   let id = String(input?.id || "").trim();
   let proformaNo = String(input?.proformaNo || "").trim();
@@ -568,7 +566,6 @@ export async function salesProformaUpsert(input) {
       tax_total: totals.taxTotal,
       round_off: totals.roundOff,
       grand_total: totals.grandTotal,
-      status,
       notes: input?.notes || null,
       terms: input?.terms || null,
       metadata: {
@@ -678,7 +675,6 @@ export async function salesProformaUpsert(input) {
     supplyType: input?.supplyType || "",
     notes: input?.notes || "",
     terms: input?.terms || "",
-    status,
     convertedDocumentId: input?.convertedDocumentId || "",
     convertedAt: input?.convertedAt || "",
     lines: lines.map((line, index) => ({
@@ -926,10 +922,6 @@ export async function convertPurchaseProforma(proformaId) {
     billId: data?.bill_id || "",
     billNo: data?.bill_no || ""
   };
-}
-
-export function getSalesProformaStatusOptions() {
-  return ["DRAFT", "SENT", "APPROVED", "REJECTED", "EXPIRED", "CONVERTED"];
 }
 
 export function getPurchaseProformaStatusOptions() {

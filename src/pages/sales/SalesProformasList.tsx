@@ -18,15 +18,6 @@ function formatDate(value: unknown) {
   return formatDateByPreference(value as string, String(value || "-"));
 }
 
-function statusClass(statusRaw: string) {
-  const status = String(statusRaw || "").toUpperCase();
-  if (status === "CONVERTED") return "bg-emerald-100 text-emerald-700";
-  if (status === "EXPIRED") return "bg-rose-100 text-rose-700";
-  if (status === "APPROVED") return "bg-blue-100 text-blue-700";
-  if (status === "SENT") return "bg-amber-100 text-amber-700";
-  return "bg-slate-100 text-slate-700";
-}
-
 export default function SalesProformasList() {
   const navigate = useNavigate();
   const toast = useToast();
@@ -66,13 +57,8 @@ export default function SalesProformasList() {
   }, [rows]);
 
   async function onConvert(row: any) {
-    const status = String(row?.status || "").toUpperCase();
-    if (status === "CONVERTED") {
+    if (String(row?.convertedDocumentId || "").trim()) {
       toast.warning("Already converted", "This Pro Forma Invoice has already been converted.");
-      return;
-    }
-    if (status === "EXPIRED") {
-      toast.warning("Expired Pro Forma Invoice", "Expired Pro Forma Invoices cannot be converted.");
       return;
     }
     setConvertingId(String(row?.id || ""));
@@ -126,26 +112,25 @@ export default function SalesProformasList() {
                 <th className="px-3 py-3 font-semibold">Valid Till</th>
                 <th className="px-3 py-3 font-semibold">Customer</th>
                 <th className="px-3 py-3 font-semibold text-right">Amount</th>
-                <th className="px-3 py-3 font-semibold">Status</th>
                 <th className="px-3 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={7}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={6}>
                     Loading Pro Forma Invoices...
                   </td>
                 </tr>
               ) : sortedRows.length === 0 ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={7}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={6}>
                     No Pro Forma Invoices yet.
                   </td>
                 </tr>
               ) : (
                 sortedRows.map((row) => {
-                  const status = String(row?.status || "DRAFT").toUpperCase();
+                  const converted = !!String(row?.convertedDocumentId || "").trim();
                   const converting = String(row?.id || "") === convertingId;
                   return (
                     <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50/70">
@@ -155,11 +140,6 @@ export default function SalesProformasList() {
                       <td className="px-3 py-3 text-slate-700">{row.partyName || "-"}</td>
                       <td className="px-3 py-3 text-right font-semibold text-slate-900">
                         {money(row?.totals?.grandTotal)}
-                      </td>
-                      <td className="px-3 py-3">
-                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(status)}`}>
-                          {status}
-                        </span>
                       </td>
                       <td className="px-3 py-3">
                         <div className="flex flex-wrap gap-2">
@@ -172,11 +152,11 @@ export default function SalesProformasList() {
                           </button>
                           <button
                             type="button"
-                            disabled={converting || status === "CONVERTED" || status === "EXPIRED"}
+                            disabled={converting || converted}
                             onClick={() => void onConvert(row)}
                             className="rounded-xl border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {converting ? "Converting..." : "Convert to Invoice"}
+                            {converted ? "Converted" : converting ? "Converting..." : "Convert to Invoice"}
                           </button>
                         </div>
                       </td>

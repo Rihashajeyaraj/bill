@@ -15,7 +15,6 @@ import {
 } from "../../lib/geoData";
 import {
   convertSalesProforma,
-  getSalesProformaStatusOptions,
   salesProformaComputeTotals,
   salesProformaGetByIdRemote,
   salesProformaPeekNumber,
@@ -136,8 +135,6 @@ function createEmptyLine() {
   };
 }
 
-const SALES_STATUS_OPTIONS = getSalesProformaStatusOptions();
-
 export default function SalesProformaEditor() {
   const { id = "new" } = useParams();
   const navigate = useNavigate();
@@ -172,7 +169,8 @@ export default function SalesProformaEditor() {
     country: "",
     taxMode: "",
     supplyType: "",
-    status: "DRAFT",
+    convertedDocumentId: "",
+    convertedAt: "",
     notes: "",
     terms: "",
     lines: [createEmptyLine()]
@@ -182,7 +180,7 @@ export default function SalesProformaEditor() {
     () => customers.find((entry) => String(entry?.id || "") === String(form.partyId || "")) || null,
     [customers, form.partyId]
   );
-  const locked = String(form?.status || "").toUpperCase() === "CONVERTED";
+  const locked = !!String(form?.convertedDocumentId || "").trim();
   const totals = useMemo(
     () => salesProformaComputeTotals(form.lines || [], 0),
     [form.lines]
@@ -282,7 +280,8 @@ export default function SalesProformaEditor() {
             country: found.country || "",
             taxMode: found.taxMode || "",
             supplyType: found.supplyType || "",
-            status: found.status || "DRAFT",
+            convertedDocumentId: found.convertedDocumentId || "",
+            convertedAt: found.convertedAt || "",
             notes: found.notes || "",
             terms: found.terms || "",
             lines:
@@ -667,7 +666,8 @@ export default function SalesProformaEditor() {
           updateForm({
             id: refreshed.id || form.id,
             proformaNo: refreshed.proformaNo || form.proformaNo,
-            status: refreshed.status || form.status
+            convertedDocumentId: refreshed.convertedDocumentId || form.convertedDocumentId,
+            convertedAt: refreshed.convertedAt || form.convertedAt
           });
         }
       }
@@ -679,14 +679,9 @@ export default function SalesProformaEditor() {
   }
 
   async function onConvert() {
-    const status = String(form?.status || "").toUpperCase();
     if (isNew || !form.id) return;
-    if (status === "CONVERTED") {
+    if (String(form?.convertedDocumentId || "").trim()) {
       toast.warning("Already converted", "This Pro Forma Invoice has already been converted.");
-      return;
-    }
-    if (status === "EXPIRED") {
-      toast.warning("Expired Pro Forma Invoice", "Expired Pro Forma Invoices cannot be converted.");
       return;
     }
     setConverting(true);
@@ -724,7 +719,7 @@ export default function SalesProformaEditor() {
               <button
                 type="button"
                 onClick={() => void onConvert()}
-                disabled={converting || locked || String(form?.status || "").toUpperCase() === "EXPIRED"}
+                disabled={converting || locked}
                 className="rounded-2xl border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {converting ? "Converting..." : "Convert to Invoice"}
@@ -782,21 +777,6 @@ export default function SalesProformaEditor() {
                   disabled={locked}
                   onChange={(event) => updateForm({ validTill: event.target.value })}
                 />
-              </label>
-              <label className="text-sm text-slate-600">
-                Status
-                <select
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                  value={form.status || "DRAFT"}
-                  disabled={locked}
-                  onChange={(event) => updateForm({ status: event.target.value })}
-                >
-                  {SALES_STATUS_OPTIONS.map((status) => (
-                    <option key={status} value={status}>
-                      {status}
-                    </option>
-                  ))}
-                </select>
               </label>
             </div>
 
@@ -1204,7 +1184,7 @@ export default function SalesProformaEditor() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                 <p className="text-slate-500">Sub Total</p>
                 <p className="font-semibold text-slate-900">{totals.subTotal.toFixed(2)}</p>
@@ -1216,10 +1196,6 @@ export default function SalesProformaEditor() {
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                 <p className="text-slate-500">Grand Total</p>
                 <p className="font-semibold text-slate-900">{totals.grandTotal.toFixed(2)}</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                <p className="text-slate-500">Status</p>
-                <p className="font-semibold text-slate-900">{String(form.status || "DRAFT").toUpperCase()}</p>
               </div>
             </div>
 
