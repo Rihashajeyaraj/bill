@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { APP_NAV_ITEMS } from "../config/navigation";
 import { authGetRole } from "../services/auth.service";
@@ -24,10 +24,9 @@ import {
   markStockNotificationRead,
   syncStockNotificationsFromRemote
 } from "../services/stockNotifications.service";
-import { maybeRunDailyCreditMonitoringCheck } from "../modules/parties/store";
-import { maybeRunLowStockMonitoringCheck } from "../modules/items/store";
 
 const AppShellContext = createContext(null);
+const REMOTE_NOTIFICATION_REFRESH_COOLDOWN_MS = 30 * 1000;
 
 function resolveNotificationType(entry, fallback = "credit") {
   const directType = String(entry?.notificationType || "").trim().toLowerCase();
@@ -61,23 +60,46 @@ export function AppShellProvider({ children }) {
   const [shortcutHintOpen, setShortcutHintOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [activities, setActivities] = useState([]);
+  const lastRemoteRefreshAtRef = useRef(0);
+  const remoteRefreshPromiseRef = useRef(null);
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
   const showCompanySetup = canAccessSettings(role) && !setupComplete;
 
-  const refreshFeeds = useCallback(async () => {
+  const refreshFeeds = useCallback(async (options = {}) => {
+    const remote = options?.remote === true;
+    const force = options?.force === true;
     const cachedCredit = listCreditNotificationsCached();
     const cachedStock = listStockNotificationsCached();
-    setNotifications(mergeNotifications(cachedCredit, cachedStock));
+    const cachedMerged = mergeNotifications(cachedCredit, cachedStock);
+    setNotifications(cachedMerged);
     setActivities(listActivities(90));
 
-    const [creditResult, stockResult] = await Promise.allSettled([
-      syncCreditNotificationsFromRemote(),
-      syncStockNotificationsFromRemote()
-    ]);
-    const nextCredit = creditResult.status === "fulfilled" ? creditResult.value : cachedCredit;
-    const nextStock = stockResult.status === "fulfilled" ? stockResult.value : cachedStock;
-    setNotifications(mergeNotifications(nextCredit, nextStock));
+    if (!remote) return cachedMerged;
+
+    if (!force && Date.now() - lastRemoteRefreshAtRef.current < REMOTE_NOTIFICATION_REFRESH_COOLDOWN_MS) {
+      return cachedMerged;
+    }
+    if (remoteRefreshPromiseRef.current) return remoteRefreshPromiseRef.current;
+
+    const remotePromise = (async () => {
+      const [creditResult, stockResult] = await Promise.allSettled([
+        syncCreditNotificationsFromRemote(),
+        syncStockNotificationsFromRemote()
+      ]);
+      const nextCredit = creditResult.status === "fulfilled" ? creditResult.value : cachedCredit;
+      const nextStock = stockResult.status === "fulfilled" ? stockResult.value : cachedStock;
+      const merged = mergeNotifications(nextCredit, nextStock);
+      setNotifications(merged);
+      lastRemoteRefreshAtRef.current = Date.now();
+      return merged;
+    })();
+
+    remoteRefreshPromiseRef.current = remotePromise.finally(() => {
+      remoteRefreshPromiseRef.current = null;
+    });
+
+    return remoteRefreshPromiseRef.current;
   }, []);
 
   useEffect(() => {
@@ -86,18 +108,7 @@ export function AppShellProvider({ children }) {
     } catch (error) {
       console.warn("Failed to initialize activity seed", error);
     }
-    void maybeRunDailyCreditMonitoringCheck();
-    void maybeRunLowStockMonitoringCheck();
     void refreshFeeds();
-  }, [refreshFeeds]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void maybeRunDailyCreditMonitoringCheck();
-      void maybeRunLowStockMonitoringCheck();
-      void refreshFeeds();
-    }, 60000);
-    return () => window.clearInterval(timer);
   }, [refreshFeeds]);
 
   useEffect(() => {

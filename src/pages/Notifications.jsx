@@ -76,7 +76,7 @@ export default function Notifications() {
   const [activeFilter, setActiveFilter] = useState("all");
 
   useEffect(() => {
-    void refreshFeeds();
+    void refreshFeeds({ remote: true, force: true });
   }, [refreshFeeds]);
 
   const rows = useMemo(

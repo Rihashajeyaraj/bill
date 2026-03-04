@@ -544,7 +544,6 @@ export async function syncItemsFromRemote() {
   const rows = await fetchRemoteItems(organizationId);
   const mapped = ensureArray(rows).map((row) => mapRemoteItem(row));
   persistItemCache(mapped, { required: false, context: "syncItemsFromRemote" });
-  await triggerLowStockNotifications(mapped);
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
 }
 

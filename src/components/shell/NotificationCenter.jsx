@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { Bell, BellRing, CheckCheck, Clock3, X } from "lucide-react";
 import { useAppShell } from "../../context/AppShellContext";
 import {
@@ -72,8 +72,14 @@ export default function NotificationCenter() {
     activities,
     readNotification,
     clearNotificationBadge,
-    navigateTo
+    navigateTo,
+    refreshFeeds
   } = useAppShell();
+
+  useEffect(() => {
+    if (!notificationOpen) return;
+    void refreshFeeds({ remote: true });
+  }, [notificationOpen, refreshFeeds]);
 
   if (!notificationOpen) return null;
 

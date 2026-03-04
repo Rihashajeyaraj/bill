@@ -506,7 +506,6 @@ export async function syncPartiesFromRemote(): Promise<PartyRecord[]> {
     });
   });
   lsSetOrganizationScoped(LS_KEYS.parties, mapped);
-  await triggerCreditLimitNotifications(mapped);
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
 }
 
