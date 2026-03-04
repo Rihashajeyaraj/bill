@@ -115,45 +115,6 @@ function parseTaxRate(label) {
   return Number(match[1]) || 0;
 }
 
-function normalizeCategoryId(value) {
-  const id = String(value || "").trim();
-  if (!id) return "";
-  if (looksLikeUuid(id)) return id;
-  if (/^\d+$/.test(id)) return id;
-  return "";
-}
-
-function normalizeCategoryName(value) {
-  return String(value || "").trim();
-}
-
-function extractCategoryFromJoinedRow(row, categoryById = null) {
-  const joined = row?.category || row?.categories || row?.item_category || row?.item_categories || null;
-  const joinedRow = Array.isArray(joined) ? joined[0] || null : joined;
-  const categoryId = normalizeCategoryId(
-    row?.category_id ||
-      joinedRow?.id ||
-      row?.metadata?.categoryId ||
-      row?.metadata?.category_id
-  );
-  const joinedName = normalizeCategoryName(
-    joinedRow?.name || joinedRow?.category_name || joinedRow?.title
-  );
-  const mappedName = categoryId && categoryById instanceof Map ? normalizeCategoryName(categoryById.get(categoryId)) : "";
-  const categoryName = normalizeCategoryName(
-    joinedName ||
-      mappedName ||
-      row?.category_name ||
-      row?.category ||
-      row?.metadata?.category
-  );
-
-  return {
-    categoryId,
-    categoryName
-  };
-}
-
 function extractRawItemCode(item) {
   return item?.itemCode || item?.item_code || item?.metadata?.itemCode || "";
 }
@@ -254,17 +215,6 @@ function normalizeItem(raw) {
   const currentStock = trackInventory
     ? Math.max(0, parseNumber(metadata?.currentStock ?? raw?.currentStock ?? openingStock))
     : 0;
-  const categoryId = normalizeCategoryId(
-    raw?.categoryId || raw?.category_id || metadata?.categoryId || metadata?.category_id
-  );
-  const category = normalizeCategoryName(
-    raw?.categoryName ||
-      raw?.category_name ||
-      raw?.category?.name ||
-      raw?.categories?.name ||
-      metadata?.category ||
-      raw?.category
-  );
 
   return {
     id: raw?.id || uid("itm_"),
@@ -285,8 +235,6 @@ function normalizeItem(raw) {
     currentStock,
     openingStockValue: Math.max(0, parseNumber(metadata?.openingStockValue)),
     lowStockAlert: Math.max(0, parseNumber(metadata?.lowStockQty ?? metadata?.lowStockAlert)),
-    categoryId,
-    category,
     sku: metadata?.sku || metadata?.itemCode || raw?.itemCode || "",
     barcode: metadata?.barcode || "",
     priceLevels: ensureArray(metadata?.priceLevels),
@@ -295,12 +243,11 @@ function normalizeItem(raw) {
   };
 }
 
-function mapRemoteItem(row, categoryById = null) {
+function mapRemoteItem(row) {
   const type = String(row?.item_type || "").toLowerCase() === "service" ? "Service" : "Product";
   const openingStock = Math.max(0, parseNumber(row?.opening_stock));
   const currentStock = Math.max(0, parseNumber(row?.current_stock));
   const purchasePrice = Math.max(0, parseNumber(row?.purchase_price));
-  const { categoryId, categoryName } = extractCategoryFromJoinedRow(row, categoryById);
 
   return normalizeItem({
     id: row?.id,
@@ -318,16 +265,12 @@ function mapRemoteItem(row, categoryById = null) {
     quantity: openingStock,
     openingStock,
     lowStockAlert: Math.max(0, parseNumber(row?.reorder_level)),
-    categoryId,
-    category: categoryName,
     sku: row?.sku || "",
     price: parseNumber(row?.sale_price),
     stockQty: currentStock,
     currentStock,
     metadata: {
       purchasePrice,
-      categoryId,
-      category: categoryName,
       trackStock: type === "Product",
       quantity: openingStock,
       openingStock,
@@ -346,7 +289,6 @@ function toRemotePayload(draft) {
   const hsnSac = incoming.type === "Service" ? incoming.sac || incoming.hsn : incoming.hsn || incoming.sac;
   const quantity = incoming.type === "Product" ? Math.max(0, parseNumber(incoming.quantity ?? incoming.openingStock)) : 0;
   const reorderLevel = incoming.type === "Product" ? Math.max(0, parseNumber(incoming.lowStockAlert)) : null;
-  const categoryId = normalizeCategoryId(incoming.categoryId);
 
   return {
     item_type: incoming.type === "Service" ? "service" : "product",
@@ -361,7 +303,6 @@ function toRemotePayload(draft) {
     opening_stock: quantity,
     current_stock: quantity,
     reorder_level: reorderLevel,
-    category_id: categoryId || null,
     is_active: incoming.status !== "Inactive"
   };
 }
@@ -373,8 +314,6 @@ function listRawItems() {
 function compactItemForStorage(raw) {
   const normalized = normalizeItem(raw);
   const metadata = normalized?.metadata && typeof normalized.metadata === "object" ? normalized.metadata : {};
-  const categoryId = normalizeCategoryId(normalized?.categoryId || metadata?.categoryId || metadata?.category_id);
-  const category = normalizeCategoryName(normalized?.category || metadata?.category || "");
   const itemCode = normalizeItemCodeValue(normalized?.itemCode || metadata?.itemCode || "");
   const sku = String(normalized?.sku || metadata?.sku || itemCode || "").trim();
   const barcode = String(normalized?.barcode || metadata?.barcode || "").trim();
@@ -408,16 +347,12 @@ function compactItemForStorage(raw) {
     currentStock,
     openingStockValue: Math.max(0, parseNumber(metadata?.openingStockValue)),
     lowStockAlert,
-    categoryId,
-    category,
     sku,
     barcode,
     priceLevels: [],
     taxMappings: [],
     metadata: {
       description: normalized.description || "",
-      categoryId,
-      category,
       itemCode,
       sku,
       barcode,
@@ -540,12 +475,8 @@ export function upsertItem(draft, country) {
     openingStock: quantity,
     currentStock: quantity,
     status: draft.status,
-    categoryId: normalizeCategoryId(draft.categoryId),
-    category: draft.category || "",
     metadata: {
       description: draft.description || "",
-      categoryId: normalizeCategoryId(draft.categoryId),
-      category: draft.category || "",
       itemCode,
       sku: draft.sku || itemCode,
       barcode: draft.barcode || "",
@@ -590,87 +521,18 @@ export function removeItem(id) {
   void triggerLowStockNotifications(nextList.map((entry) => normalizeItem(entry)));
 }
 
-async function fetchCategoryMapByIds(organizationId, categoryIds = []) {
-  const uniqueIds = Array.from(new Set(ensureArray(categoryIds).map((id) => normalizeCategoryId(id)).filter(Boolean)));
-  if (!uniqueIds.length) return new Map();
+async function fetchRemoteItems(organizationId) {
+  const { data, error } = await supabase
+    .from("items")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .order("item_name", { ascending: true });
 
-  const tableCandidates = ["categories", "item_categories"];
-  for (const table of tableCandidates) {
-    const { data, error } = await supabase
-      .from(table)
-      .select("id,name")
-      .eq("organization_id", organizationId)
-      .in("id", uniqueIds);
-
-    if (error) {
-      if (isMissingRelationError(error)) continue;
-      throw new Error(normalizeSupabaseError(error, "Failed to load item categories"));
-    }
-
-    return ensureArray(data).reduce((map, row) => {
-      const id = normalizeCategoryId(row?.id);
-      if (!id) return map;
-      const name = normalizeCategoryName(row?.name);
-      if (!name) return map;
-      map.set(id, name);
-      return map;
-    }, new Map());
-  }
-
-  return new Map();
-}
-
-async function fetchRemoteItemsWithOptionalCategoryJoin(organizationId) {
-  const queryCandidates = [
-    "*, category:categories(id,name)",
-    "*, categories(id,name)",
-    "*"
-  ];
-
-  for (const query of queryCandidates) {
-    const { data, error } = await supabase
-      .from("items")
-      .select(query)
-      .eq("organization_id", organizationId)
-      .order("item_name", { ascending: true });
-
-    if (!error) return ensureArray(data);
-    if (query !== "*" && isMissingRelationError(error)) continue;
+  if (error) {
     throw new Error(normalizeSupabaseError(error, "Failed to load items"));
   }
 
-  return [];
-}
-
-export async function listItemCategoryOptionsRemote() {
-  if (!isSupabaseConfigured || !supabase) return [];
-  const organizationId = authGetOrganizationId();
-  if (!organizationId) return [];
-
-  const tableCandidates = ["categories", "item_categories"];
-  for (const table of tableCandidates) {
-    const { data, error } = await supabase
-      .from(table)
-      .select("id,name")
-      .eq("organization_id", organizationId);
-
-    if (error) {
-      if (isMissingRelationError(error)) continue;
-      throw new Error(normalizeSupabaseError(error, "Failed to load item categories"));
-    }
-
-    const options = ensureArray(data)
-      .map((row) => ({
-        id: normalizeCategoryId(row?.id),
-        name: normalizeCategoryName(row?.name)
-      }))
-      .filter((row) => row.id && row.name)
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    return options;
-  }
-
-  return [];
+  return ensureArray(data);
 }
 
 export async function syncItemsFromRemote() {
@@ -679,10 +541,8 @@ export async function syncItemsFromRemote() {
   const organizationId = authGetOrganizationId();
   if (!organizationId) return listItems();
 
-  const rows = await fetchRemoteItemsWithOptionalCategoryJoin(organizationId);
-  const categoryIds = rows.map((row) => normalizeCategoryId(row?.category_id)).filter(Boolean);
-  const categoryById = await fetchCategoryMapByIds(organizationId, categoryIds).catch(() => new Map());
-  const mapped = ensureArray(rows).map((row) => mapRemoteItem(row, categoryById));
+  const rows = await fetchRemoteItems(organizationId);
+  const mapped = ensureArray(rows).map((row) => mapRemoteItem(row));
   persistItemCache(mapped, { required: false, context: "syncItemsFromRemote" });
   await triggerLowStockNotifications(mapped);
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
@@ -692,7 +552,6 @@ function stripUnsupportedItemColumns(payload, error) {
   const next = { ...(payload || {}) };
   const message = String(error?.message || "").toLowerCase();
   if (message.includes("item_code")) delete next.item_code;
-  if (message.includes("category_id")) delete next.category_id;
   return next;
 }
 
@@ -798,15 +657,6 @@ export async function upsertItemRemote(draft, country) {
   }
 
   const saved = mapRemoteItem(remoteRow);
-  const persistedCategoryId = normalizeCategoryId(remoteRow?.category_id || payload?.category_id);
-  if (persistedCategoryId) {
-    if (!saved.categoryId) saved.categoryId = persistedCategoryId;
-    if (!saved.category && incoming.category) {
-      saved.category = incoming.category;
-    }
-  } else if (!saved.categoryId) {
-    saved.category = "";
-  }
   const nextList = listRawItems().filter((item) => item.id !== incoming.id && item.id !== saved.id);
   persistItemCache([saved, ...nextList], { required: false, context: "upsertItemRemote" });
   await triggerLowStockNotifications([saved, ...nextList].map((entry) => normalizeItem(entry)));

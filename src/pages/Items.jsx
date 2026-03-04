@@ -16,7 +16,6 @@ import {
   computeItemUsage,
   getItemPurchaseHistoryRemote,
   getItemTradeSummaryRemote,
-  listItemCategoryOptionsRemote,
   listItems,
   removeItemRemote,
   syncItemsFromRemote,
@@ -73,7 +72,6 @@ export default function Items() {
     purchaseQty: 0
   });
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [categoryOptions, setCategoryOptions] = useState([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -132,25 +130,6 @@ export default function Items() {
       lowStock
     };
   }, [items, tab]);
-
-  const resolvedCategoryOptions = useMemo(() => {
-    const map = new Map();
-    (Array.isArray(categoryOptions) ? categoryOptions : []).forEach((entry) => {
-      const id = String(entry?.id || "").trim();
-      const name = String(entry?.name || "").trim();
-      if (!id || !name) return;
-      map.set(id, name);
-    });
-    items.forEach((item) => {
-      const id = String(item?.categoryId || "").trim();
-      const name = String(item?.category || "").trim();
-      if (!id || !name || map.has(id)) return;
-      map.set(id, name);
-    });
-    return Array.from(map.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [categoryOptions, items]);
 
   const returnActionsByRef = useMemo(() => {
     const map = new Map();
@@ -276,12 +255,8 @@ export default function Items() {
     async function loadItems() {
       setLoading(true);
       try {
-        const [, fetchedCategories] = await Promise.all([
-          syncItemsFromRemote(),
-          listItemCategoryOptionsRemote().catch(() => [])
-        ]);
+        await syncItemsFromRemote();
         if (mounted) {
-          setCategoryOptions(Array.isArray(fetchedCategories) ? fetchedCategories : []);
           setRefreshKey((prev) => prev + 1);
         }
       } catch (error) {
@@ -768,7 +743,6 @@ export default function Items() {
                 visibleItems.map((item) => {
                   const usage = computeItemUsage(item);
                   const stock = computeItemStock(item);
-                  const categoryLabel = item?.categoryId ? item.category || "Uncategorized" : "Uncategorized";
                   const canDeleteByUsage = !usage.used;
                   const canDelete = canDeleteItem && canDeleteByUsage;
                   const deleteDisabledReason = !canDeleteItem
@@ -792,7 +766,6 @@ export default function Items() {
                           >
                             {item.name}
                           </button>
-                          <p className="text-xs text-slate-500">{categoryLabel}</p>
                           {usage.used ? (
                             <span className="inline-flex w-fit items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
                               <BarChart3 className="h-3 w-3" />
@@ -987,7 +960,6 @@ export default function Items() {
         open={modalOpen}
         mode={modalMode}
         country={country}
-        categoryOptions={resolvedCategoryOptions}
         initialItem={activeItem}
         onClose={closeModal}
         onSave={(item) => {

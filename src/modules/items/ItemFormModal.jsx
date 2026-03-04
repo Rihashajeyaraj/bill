@@ -74,8 +74,6 @@ function defaultItem(type) {
     openingStock: 0,
     openingStockValue: 0,
     lowStockAlert: 0,
-    categoryId: "",
-    category: "",
     sku: "",
     barcode: "",
     priceLevels: [],
@@ -103,7 +101,6 @@ export default function ItemFormModal({
   open,
   mode,
   country,
-  categoryOptions = [],
   initialItem,
   onClose,
   onSave
@@ -113,16 +110,6 @@ export default function ItemFormModal({
   );
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
-  const normalizedCategoryOptions = useMemo(
-    () =>
-      (Array.isArray(categoryOptions) ? categoryOptions : [])
-        .map((entry) => ({
-          id: String(entry?.id || "").trim(),
-          name: String(entry?.name || "").trim()
-        }))
-        .filter((entry) => entry.id && entry.name),
-    [categoryOptions]
-  );
 
   useEffect(() => {
     if (!open) return;
@@ -144,23 +131,8 @@ export default function ItemFormModal({
     next.quantity = normalizedQuantity;
     next.openingStock = normalizedQuantity;
     next.lowStockAlert = next.type === "Product" ? wholeLike(next.lowStockAlert) : 0;
-    const nextCategoryId = String(next.categoryId || "").trim();
-    if (nextCategoryId) {
-      const matched = normalizedCategoryOptions.find((entry) => entry.id === nextCategoryId);
-      if (matched?.name) {
-        next.category = matched.name;
-      }
-    } else {
-      const byName = normalizedCategoryOptions.find(
-        (entry) => entry.name.toLowerCase() === String(next.category || "").trim().toLowerCase()
-      );
-      if (byName?.id) {
-        next.categoryId = byName.id;
-        next.category = byName.name;
-      }
-    }
     setForm(next);
-  }, [open, initialItem, mode, normalizedCategoryOptions]);
+  }, [open, initialItem, mode]);
 
   const taxCfg = useMemo(() => taxContext(country, form.type), [country, form.type]);
   const uomOptions = useMemo(() => uomOptionsForType(form.type), [form.type]);
@@ -255,8 +227,11 @@ export default function ItemFormModal({
     const normalizedOpeningStockValue = normalizedType === "Product"
       ? parseNumber(normalizedQuantity * parseNumber(form.purchaseRate))
       : 0;
+    const restForm = { ...form };
+    delete restForm.categoryId;
+    delete restForm.category;
     const next = {
-      ...form,
+      ...restForm,
       type: normalizedType,
       itemCode: form.itemCode?.trim() || "",
       sku: form.sku?.trim() || form.itemCode?.trim() || "",
@@ -274,8 +249,6 @@ export default function ItemFormModal({
       currentStock: normalizedQuantity,
       openingStockValue: normalizedOpeningStockValue,
       lowStockAlert: normalizedLowStock,
-      categoryId: String(form.categoryId || "").trim(),
-      category: String(form.category || "").trim(),
       priceLevels: form.priceLevels.map((level) => ({
         ...level,
         label: level.label.trim(),
@@ -373,38 +346,6 @@ export default function ItemFormModal({
                   </option>
                 ))}
               </select>
-            </FormField>
-
-            <FormField label="Category">
-              {normalizedCategoryOptions.length ? (
-                <select
-                  value={form.categoryId || ""}
-                  onChange={(event) => {
-                    const nextId = String(event.target.value || "").trim();
-                    const matched = normalizedCategoryOptions.find((entry) => entry.id === nextId);
-                    setForm((prev) => ({
-                      ...prev,
-                      categoryId: nextId,
-                      category: matched?.name || ""
-                    }));
-                  }}
-                  className={inputClassName}
-                >
-                  <option value="">Select category</option>
-                  {normalizedCategoryOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={form.category}
-                  onChange={(event) => updateField("category", event.target.value)}
-                  className={inputClassName}
-                  placeholder="Tiles, Services, Hardware"
-                />
-              )}
             </FormField>
 
             <FormField label="Product ID (Auto)">

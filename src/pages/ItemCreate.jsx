@@ -6,12 +6,10 @@ import { ArrowLeft, ChevronDown, Plus, Trash2 } from "lucide-react";
 import Card from "../components/Card";
 import FormField from "../components/FormField";
 import GradientButton from "../components/GradientButton";
-import Modal from "../components/Modal";
 import FormSection from "../components/FormSection";
 import { getNextItemCode, upsertItemRemote } from "../modules/items/store";
 import { buildTaxLabel, parseNumber } from "../modules/items/utils";
 import {
-  inferTypeFromCategory,
   normalizeItemTypeValue,
   shouldShowIndiaComplianceFields,
   taxHintForCountry,
@@ -22,8 +20,6 @@ import { useToast } from "../context/ToastContext";
 import { authGetRole } from "../services/auth.service";
 import { canCreateEntries } from "../services/roles";
 
-const CATEGORY_KEY = "itemCategories";
-const DEFAULT_CATEGORIES = ["General", "Granite", "Services", "Hardware"];
 const UNITS = ["pcs", "kg", "box", "litre", "mtr", "set", "hr"];
 const PRICE_TAX_MODES = [
   { value: "WITH_TAX", label: "With Tax" },
@@ -76,7 +72,6 @@ function createDraft(type = "PRODUCT", defaultTaxRate = 0) {
   return {
     type: normalizedType,
     itemName: "",
-    category: "",
     unit: "pcs",
     status: "Active",
     description: "",
@@ -99,17 +94,6 @@ function createDraft(type = "PRODUCT", defaultTaxRate = 0) {
     imageUrl: "",
     itemCode: getNextItemCode(toStoreType(normalizedType))
   };
-}
-
-function readInitialCategories() {
-  try {
-    const raw = localStorage.getItem(CATEGORY_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    const list = Array.isArray(parsed) ? parsed : [];
-    return Array.from(new Set([...DEFAULT_CATEGORIES, ...list]));
-  } catch {
-    return DEFAULT_CATEGORIES;
-  }
 }
 
 function moneyLike(value) {
@@ -165,9 +149,6 @@ export default function ItemCreate() {
   const [errors, setErrors] = useState({});
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [categories, setCategories] = useState(readInitialCategories);
-  const [newCategory, setNewCategory] = useState("");
-  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
 
   const showIndiaCompliance = shouldShowIndiaComplianceFields(companyCountry) && gstRuntimeEnabled;
   const taxRateLabel = gstRuntimeEnabled ? taxRateLabelForCountry(companyCountry) : "Tax / VAT %";
@@ -199,7 +180,6 @@ export default function ItemCreate() {
     setForm((prev) => {
       const isPristine =
         !String(prev.itemName || "").trim() &&
-        !String(prev.category || "").trim() &&
         !String(prev.description || "").trim() &&
         parseNumber(prev.salePrice) === 0 &&
         parseNumber(prev.purchasePrice) === 0 &&
@@ -230,22 +210,6 @@ export default function ItemCreate() {
       if (!prev?.[key]) return prev;
       const next = { ...prev };
       delete next[key];
-      return next;
-    });
-  }
-
-  function rememberCategory(name) {
-    const clean = String(name || "").trim();
-    if (!clean) return;
-    setCategories((prev) => {
-      const exists = prev.some((entry) => entry.toLowerCase() === clean.toLowerCase());
-      if (exists) return prev;
-      const next = [...prev, clean];
-      try {
-        localStorage.setItem(CATEGORY_KEY, JSON.stringify(next));
-      } catch (error) {
-        console.warn("Failed to remember item category", error);
-      }
       return next;
     });
   }
@@ -369,7 +333,6 @@ export default function ItemCreate() {
       currentStock: normalizedQuantity,
       openingStockValue: computedOpeningStockValue,
       lowStockAlert: isProductType ? wholeLike(form.lowStockQty) : 0,
-      category: String(form.category || "").trim(),
       itemCode: String(form.itemCode || "").trim(),
       sku: String(form.sku || "").trim() || String(form.itemCode || "").trim(),
       barcode: String(form.barcode || "").trim(),
@@ -381,7 +344,6 @@ export default function ItemCreate() {
       taxPercent: showIndiaCompliance ? 0 : numericTaxRate,
       hsnOrSac: showIndiaCompliance ? trimmedCode : "",
       metadata: {
-        category: String(form.category || "").trim(),
         itemCode: String(form.itemCode || "").trim(),
         sku: String(form.sku || "").trim() || String(form.itemCode || "").trim(),
         barcode: String(form.barcode || "").trim(),
@@ -484,39 +446,6 @@ export default function ItemCreate() {
                     </button>
                   ))}
                 </div>
-              </FormField>
-
-              <FormField label="Category">
-                <div className="flex items-center gap-2">
-                  <input
-                    list="item-category-options"
-                    value={form.category}
-                    onChange={(event) => updateField("category", event.target.value)}
-                    onBlur={() => {
-                      const clean = String(form.category || "").trim();
-                      if (!clean) return;
-                      rememberCategory(clean);
-                      const inferredType = inferTypeFromCategory(clean, form.type);
-                      if (inferredType !== form.type) applyType(inferredType);
-                      updateField("category", clean);
-                    }}
-                    className={inputClassName}
-                    placeholder="Tiles, Hardware, Services"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setCategoryModalOpen(true)}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                    title="Add category"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
-                </div>
-                <datalist id="item-category-options">
-                  {categories.map((category) => (
-                    <option key={category} value={category} />
-                  ))}
-                </datalist>
               </FormField>
 
               <FormField label="Product ID (Auto)">
@@ -903,40 +832,6 @@ export default function ItemCreate() {
         </div>
       </div>
 
-      <Modal
-        open={categoryModalOpen}
-        title="Add Category"
-        onClose={() => {
-          setCategoryModalOpen(false);
-          setNewCategory("");
-        }}
-        footer={
-          <div className="flex justify-end">
-            <GradientButton
-              disabled={!newCategory.trim()}
-              onClick={() => {
-                const clean = newCategory.trim();
-                if (!clean) return;
-                rememberCategory(clean);
-                updateField("category", clean);
-                setNewCategory("");
-                setCategoryModalOpen(false);
-              }}
-            >
-              Create Category
-            </GradientButton>
-          </div>
-        }
-      >
-        <FormField label="Category Name">
-          <input
-            value={newCategory}
-            onChange={(event) => setNewCategory(event.target.value)}
-            className={inputClassName}
-            placeholder="e.g., Electrical"
-          />
-        </FormField>
-      </Modal>
     </div>
   );
 }
