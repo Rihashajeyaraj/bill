@@ -26,8 +26,8 @@ import { outstandingByCustomer, savePaymentIn } from "../../modules/paymentIn/st
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE } from "../../modules/paymentIn/countryConfig";
 import { getInvoiceTemplateConfig } from "../../lib/templateStore";
 import {
-  companyGetProfile,
   companyConsumeDocumentNumber,
+  companyPeekDocumentNumber,
 } from "../../services/company.service";
 import {
   getCanonicalCountryName,
@@ -50,24 +50,10 @@ function round2(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
-function normalizeInvoiceCode(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "INV";
-  const withoutTrailingDigits = raw.replace(/\d+$/, "").replace(/[-\s_]+$/, "").trim();
-  return withoutTrailingDigits || "INV";
-}
-
-function toInvoiceCounter(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric < 1) return 1;
-  return Math.trunc(numeric);
-}
-
-function buildInvoiceId(code, year, counter) {
-  const safeCode = normalizeInvoiceCode(code);
-  const safeYear = String(year || new Date().getFullYear());
-  const safeCounter = String(toInvoiceCounter(counter)).padStart(4, "0");
-  return `${safeCode}-${safeYear}-${safeCounter}`;
+function resolveAutoInvoiceId() {
+  const next = String(companyPeekDocumentNumber("invoice") || "").trim();
+  if (next) return next;
+  return `INV-${Date.now()}`;
 }
 
 function formatAddress(address) {
@@ -274,16 +260,9 @@ export default function InvoiceCreate() {
   const [lineItemMode, setLineItemMode] = useState("Product");
 
   const initialInvoiceDate = new Date().toISOString().slice(0, 10);
-  const invoiceYear = new Date().getFullYear();
-  const initialInvoiceCode = normalizeInvoiceCode(company?.settings?.numbering?.prefixes?.invoice || "INV");
-  const initialInvoiceCounter = toInvoiceCounter(company?.settings?.numbering?.counters?.invoice || 1);
   const [invoiceDate, setInvoiceDate] = useState(initialInvoiceDate);
   const [invoiceDateInput, setInvoiceDateInput] = useState(() => formatIsoToDayMonthYear(initialInvoiceDate));
-  const [invoiceCode, setInvoiceCode] = useState(initialInvoiceCode);
-  const [invoiceCounter, setInvoiceCounter] = useState(initialInvoiceCounter);
-  const [invoiceNo, setInvoiceNo] = useState(() =>
-    buildInvoiceId(initialInvoiceCode, invoiceYear, initialInvoiceCounter)
-  );
+  const [invoiceNo, setInvoiceNo] = useState(() => resolveAutoInvoiceId());
   const [partyId, setPartyId] = useState("");
   const party = useMemo(() => customers.find((c) => c.id === partyId) || null, [customers, partyId]);
   const [customerSearchPhone, setCustomerSearchPhone] = useState("");
@@ -374,6 +353,7 @@ export default function InvoiceCreate() {
   useEffect(() => {
     const syncProfiles = () => {
       setTemplateConfig(getInvoiceTemplateConfig());
+      setInvoiceNo(resolveAutoInvoiceId());
     };
     const onStorage = (event) => {
       if (
@@ -433,10 +413,6 @@ export default function InvoiceCreate() {
       })
     );
   }, [forceZeroTax]);
-
-  useEffect(() => {
-    setInvoiceNo(buildInvoiceId(invoiceCode, invoiceYear, invoiceCounter));
-  }, [invoiceCode, invoiceCounter, invoiceYear]);
 
   useEffect(() => {
     if (!party?.phone) return;
@@ -1483,7 +1459,11 @@ export default function InvoiceCreate() {
       alert("Select customer before saving invoice.");
       return null;
     }
-    const normalizedInvoiceNo = String(invoiceNo || "").trim();
+    const nextAutoInvoiceNo = String(companyPeekDocumentNumber("invoice") || "").trim();
+    const normalizedInvoiceNo = nextAutoInvoiceNo || String(invoiceNo || "").trim();
+    if (nextAutoInvoiceNo && nextAutoInvoiceNo !== invoiceNo) {
+      setInvoiceNo(nextAutoInvoiceNo);
+    }
     if (!normalizedInvoiceNo) {
       alert("Invoice ID is required.");
       return null;
@@ -1775,16 +1755,7 @@ export default function InvoiceCreate() {
       setBankAccount("");
       setPaymentNotes("");
       companyConsumeDocumentNumber("invoice");
-      const latestProfile = companyGetProfile() || {};
-      const nextInvoiceCode = normalizeInvoiceCode(
-        latestProfile?.settings?.numbering?.prefixes?.invoice || invoiceCode
-      );
-      const nextInvoiceCounter = toInvoiceCounter(
-        latestProfile?.settings?.numbering?.counters?.invoice || invoiceCounter + 1
-      );
-      setInvoiceCode(nextInvoiceCode);
-      setInvoiceCounter(nextInvoiceCounter);
-      setInvoiceNo(buildInvoiceId(nextInvoiceCode, invoiceYear, nextInvoiceCounter));
+      setInvoiceNo(resolveAutoInvoiceId());
       await invoicesSyncFromRemote();
 
       if (!silent) {
@@ -2208,42 +2179,12 @@ export default function InvoiceCreate() {
 
             <>
               <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <FormField label="Invoice Code">
-                    <input
-                      value={invoiceCode}
-                      onChange={(event) => setInvoiceCode(event.target.value.toUpperCase())}
-                      placeholder="INV"
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-mono outline-none focus:ring-4"
-                      style={{ "--tw-ring-color": UI.COLORS.ring }}
-                    />
-                  </FormField>
-                  <FormField label="Year">
-                    <input
-                      value={invoiceYear}
-                      readOnly
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-100 px-3 py-2.5 text-sm font-mono text-slate-700 outline-none"
-                    />
-                  </FormField>
-                  <FormField label="Invoice Counter">
-                    <input
-                      type="number"
-                      min={1}
-                      value={invoiceCounter}
-                      onChange={(event) => setInvoiceCounter(toInvoiceCounter(event.target.value))}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-mono outline-none focus:ring-4"
-                      style={{ "--tw-ring-color": UI.COLORS.ring }}
-                    />
-                  </FormField>
-                </div>
-                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <FormField label="Invoice ID (Editable)">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <FormField label="Invoice ID">
                     <input
                       value={invoiceNo}
-                      onChange={(event) => setInvoiceNo(event.target.value)}
-                      placeholder="Invoice ID"
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-mono outline-none focus:ring-4"
-                      style={{ "--tw-ring-color": UI.COLORS.ring }}
+                      readOnly
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-100 px-3 py-2.5 text-sm font-mono text-slate-700 outline-none"
                     />
                   </FormField>
                   <FormField label="Invoice Date">

@@ -88,14 +88,35 @@ function formatDocumentNumber(prefix, counter) {
   return `${safePrefix}${safeCounter}`;
 }
 
-function nextNumberingStateForYear(numbering = {}) {
+function normalizeInvoicePrefix(prefix) {
+  const raw = String(prefix || "").trim();
+  if (!raw) return "INV";
+  const withoutTrailingDigits = raw.replace(/\d+$/, "").replace(/[-\s_]+$/, "").trim();
+  return withoutTrailingDigits || "INV";
+}
+
+function formatInvoiceNumber(prefix, counter, year = new Date().getFullYear()) {
+  const safePrefix = normalizeInvoicePrefix(prefix);
+  const safeYear = String(year || new Date().getFullYear());
+  const safeCounter = String(Math.max(1, Number(counter) || 1)).padStart(4, "0");
+  return `${safePrefix}-${safeYear}-${safeCounter}`;
+}
+
+function nextNumberingStateForYear(numbering = {}, options = {}) {
+  const forceResetYearly = options?.forceResetYearly === true;
+  const resetKeys = Array.isArray(options?.resetKeys) ? options.resetKeys : [];
   const next = numbering && typeof numbering === "object" ? { ...numbering } : {};
+  if (forceResetYearly) next.resetYearly = true;
   if (!next.resetYearly) return next;
   const nowYear = new Date().getFullYear();
   const lastResetYear = Number(next.lastResetYear || 0);
   if (lastResetYear === nowYear) return next;
   const counters = next.counters && typeof next.counters === "object" ? { ...next.counters } : {};
-  Object.keys(DOCUMENT_PREFIX_BASE).forEach((key) => {
+  const keysToReset =
+    resetKeys
+      .map((entry) => normalizeDocumentType(entry))
+      .filter(Boolean) || [];
+  (keysToReset.length ? keysToReset : Object.keys(DOCUMENT_PREFIX_BASE)).forEach((key) => {
     counters[key] = 1;
   });
   next.counters = counters;
@@ -551,11 +572,15 @@ export function companyPeekDocumentNumber(documentType) {
   const profile = companyGetProfile() || {};
   const settings = profile?.settings && typeof profile.settings === "object" ? profile.settings : {};
   const numberingBase = settings?.numbering && typeof settings.numbering === "object" ? settings.numbering : {};
-  const numbering = nextNumberingStateForYear(numberingBase);
+  const numbering = nextNumberingStateForYear(numberingBase, {
+    forceResetYearly: key === "invoice",
+    resetKeys: key === "invoice" ? ["invoice"] : []
+  });
   const prefixes = numbering?.prefixes && typeof numbering.prefixes === "object" ? numbering.prefixes : {};
   const counters = numbering?.counters && typeof numbering.counters === "object" ? numbering.counters : {};
   const prefix = String(prefixes[key] || buildDefaultDocumentPrefix(key, profile?.country || "India"));
   const counter = toPositiveCounter(counters[key], 1);
+  if (key === "invoice") return formatInvoiceNumber(prefix, counter);
   return formatDocumentNumber(prefix, counter);
 }
 
@@ -565,14 +590,18 @@ export function companyConsumeDocumentNumber(documentType) {
   const profile = companyGetProfile() || {};
   const settings = profile?.settings && typeof profile.settings === "object" ? profile.settings : {};
   const numberingBase = settings?.numbering && typeof settings.numbering === "object" ? settings.numbering : {};
-  const numbering = nextNumberingStateForYear(numberingBase);
+  const numbering = nextNumberingStateForYear(numberingBase, {
+    forceResetYearly: key === "invoice",
+    resetKeys: key === "invoice" ? ["invoice"] : []
+  });
   const prefixes = numbering?.prefixes && typeof numbering.prefixes === "object" ? numbering.prefixes : {};
   const counters = numbering?.counters && typeof numbering.counters === "object" ? numbering.counters : {};
   const prefix = String(prefixes[key] || buildDefaultDocumentPrefix(key, profile?.country || "India"));
   const currentCounter = toPositiveCounter(counters[key], 1);
-  const currentNumber = formatDocumentNumber(prefix, currentCounter);
+  const currentNumber =
+    key === "invoice" ? formatInvoiceNumber(prefix, currentCounter) : formatDocumentNumber(prefix, currentCounter);
 
-  if (numbering.autoIncrement === false) {
+  if (key !== "invoice" && numbering.autoIncrement === false) {
     return currentNumber;
   }
 
