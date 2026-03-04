@@ -45,7 +45,7 @@ export default function SalesProformasList() {
       } catch (error: any) {
         if (!mounted) return;
         setRows(salesProformasList());
-        toast.error("Failed to load sales proformas", error?.message || "Showing local data.");
+        toast.error("Failed to load Pro Forma Invoices", error?.message || "Showing local data.");
       } finally {
         if (mounted) setLoading(false);
       }
@@ -68,11 +68,11 @@ export default function SalesProformasList() {
   async function onConvert(row: any) {
     const status = String(row?.status || "").toUpperCase();
     if (status === "CONVERTED") {
-      toast.warning("Already converted", "This proforma has already been converted.");
+      toast.warning("Already converted", "This Pro Forma Invoice has already been converted.");
       return;
     }
     if (status === "EXPIRED") {
-      toast.warning("Expired proforma", "Expired proformas cannot be converted.");
+      toast.warning("Expired Pro Forma Invoice", "Expired Pro Forma Invoices cannot be converted.");
       return;
     }
     setConvertingId(String(row?.id || ""));
@@ -87,7 +87,7 @@ export default function SalesProformasList() {
         `/app/sales/invoice/history${result?.invoiceId ? `?invoiceId=${encodeURIComponent(result.invoiceId)}` : ""}`
       );
     } catch (error: any) {
-      toast.error("Conversion failed", error?.message || "Could not convert sales proforma.");
+      toast.error("Conversion failed", error?.message || "Could not convert Pro Forma Invoice.");
     } finally {
       setConvertingId("");
     }
@@ -96,24 +96,24 @@ export default function SalesProformasList() {
   return (
     <div className="max-w-6xl space-y-6">
       <PageHeader
-        title="Sales Proformas"
-        subtitle="Proforma invoices do not affect stock or accounting until converted."
+        title="Pro Forma Invoices"
+        subtitle="Pro Forma Invoices do not affect stock or accounting until converted."
         right={
           <button
             type="button"
             onClick={() => navigate("/app/sales/proformas/new")}
             className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
           >
-            New Proforma
+            New Pro Forma Invoice
           </button>
         }
       />
 
       <Card className="p-5">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-slate-600">Header: PROFORMA INVOICE (Not a Tax Invoice)</p>
+          <p className="text-sm text-slate-600">Header: PRO FORMA INVOICE (Not a Tax Invoice)</p>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {sortedRows.length} proformas
+            {sortedRows.length} pro forma invoices
           </span>
         </div>
 
@@ -121,7 +121,7 @@ export default function SalesProformasList() {
           <table className="min-w-[920px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
-                <th className="px-3 py-3 font-semibold">Proforma No</th>
+                <th className="px-3 py-3 font-semibold">Pro Forma Invoice No</th>
                 <th className="px-3 py-3 font-semibold">Date</th>
                 <th className="px-3 py-3 font-semibold">Valid Till</th>
                 <th className="px-3 py-3 font-semibold">Customer</th>
@@ -134,13 +134,13 @@ export default function SalesProformasList() {
               {loading ? (
                 <tr className="border-t border-slate-100">
                   <td className="px-3 py-6 text-center text-slate-500" colSpan={7}>
-                    Loading sales proformas...
+                    Loading Pro Forma Invoices...
                   </td>
                 </tr>
               ) : sortedRows.length === 0 ? (
                 <tr className="border-t border-slate-100">
                   <td className="px-3 py-6 text-center text-slate-500" colSpan={7}>
-                    No sales proformas yet.
+                    No Pro Forma Invoices yet.
                   </td>
                 </tr>
               ) : (

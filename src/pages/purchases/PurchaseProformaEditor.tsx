@@ -257,7 +257,7 @@ export default function PurchaseProformaEditor() {
           const found = await purchaseProformaGetByIdRemote(id);
           if (!mounted) return;
           if (!found) {
-            toast.warning("Not found", "Purchase proforma does not exist.");
+            toast.warning("Not found", "Pro Forma Purchase Order does not exist.");
             navigate("/app/purchase/proformas/history", { replace: true });
             return;
           }
@@ -293,7 +293,7 @@ export default function PurchaseProformaEditor() {
         }
       } catch (error: any) {
         if (!mounted) return;
-        toast.error("Failed to load purchase proforma", error?.message || "Please retry.");
+        toast.error("Failed to load Pro Forma Purchase Order", error?.message || "Please retry.");
       } finally {
         if (mounted) setLoading(false);
       }
@@ -624,7 +624,7 @@ export default function PurchaseProformaEditor() {
         lines: cleanedLines,
         totals
       });
-      toast.success("Purchase proforma saved", result?.proformaNo || "Saved successfully.");
+      toast.success("Pro Forma Purchase Order saved", result?.proformaNo || "Saved successfully.");
       if (isNew && result?.id) {
         navigate(`/app/purchase/proformas/${encodeURIComponent(result.id)}`, { replace: true });
       } else {
@@ -638,7 +638,7 @@ export default function PurchaseProformaEditor() {
         }
       }
     } catch (error: any) {
-      toast.error("Save failed", error?.message || "Could not save purchase proforma.");
+      toast.error("Save failed", error?.message || "Could not save Pro Forma Purchase Order.");
     } finally {
       setSaving(false);
     }
@@ -648,11 +648,11 @@ export default function PurchaseProformaEditor() {
     const status = String(form?.status || "").toUpperCase();
     if (isNew || !form.id) return;
     if (status === "CONVERTED") {
-      toast.warning("Already converted", "This proforma has already been converted.");
+      toast.warning("Already converted", "This Pro Forma Purchase Order has already been converted.");
       return;
     }
     if (status === "EXPIRED") {
-      toast.warning("Expired proforma", "Expired proformas cannot be converted.");
+      toast.warning("Expired Pro Forma Purchase Order", "Expired Pro Forma Purchase Orders cannot be converted.");
       return;
     }
     setConverting(true);
@@ -664,7 +664,7 @@ export default function PurchaseProformaEditor() {
       );
       navigate(`/app/purchase/history${result?.billId ? `?billId=${encodeURIComponent(result.billId)}` : ""}`);
     } catch (error: any) {
-      toast.error("Conversion failed", error?.message || "Could not convert purchase proforma.");
+      toast.error("Conversion failed", error?.message || "Could not convert Pro Forma Purchase Order.");
     } finally {
       setConverting(false);
     }
@@ -673,8 +673,8 @@ export default function PurchaseProformaEditor() {
   return (
     <div className="max-w-6xl space-y-5">
       <PageHeader
-        title="Purchase Proforma"
-        subtitle="Draft purchase intent until converted to final bill"
+        title="Pro Forma Purchase Order"
+        subtitle="Draft Pro Forma Purchase Order until converted to final bill"
         right={
           <div className="flex gap-2">
             <button
@@ -699,7 +699,7 @@ export default function PurchaseProformaEditor() {
               disabled={saving || loading || locked}
               className="disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {saving ? "Saving..." : "Save Proforma"}
+              {saving ? "Saving..." : "Save Pro Forma Purchase Order"}
             </GradientButton>
           </div>
         }
@@ -707,18 +707,18 @@ export default function PurchaseProformaEditor() {
 
       {locked ? (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          This proforma is converted and is read-only.
+          This Pro Forma Purchase Order is converted and is read-only.
         </div>
       ) : null}
 
       <Card className="p-5">
         {loading ? (
-          <p className="text-sm text-slate-500">Loading proforma details...</p>
+          <p className="text-sm text-slate-500">Loading Pro Forma Purchase Order details...</p>
         ) : (
           <div className="space-y-5">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <label className="text-sm text-slate-600">
-                Proforma No
+                Pro Forma Purchase Order No
                 <input
                   className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600"
                   value={form.proformaNo || ""}
@@ -728,7 +728,7 @@ export default function PurchaseProformaEditor() {
                 />
               </label>
               <label className="text-sm text-slate-600">
-                Proforma Date
+                Pro Forma Date
                 <input
                   type="date"
                   className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"

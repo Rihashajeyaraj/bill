@@ -267,7 +267,7 @@ export default function SalesProformaEditor() {
           const found = await salesProformaGetByIdRemote(id);
           if (!mounted) return;
           if (!found) {
-            toast.warning("Not found", "Sales proforma does not exist.");
+            toast.warning("Not found", "Pro Forma Invoice does not exist.");
             navigate("/app/sales/proformas/history", { replace: true });
             return;
           }
@@ -308,7 +308,7 @@ export default function SalesProformaEditor() {
         }
       } catch (error: any) {
         if (!mounted) return;
-        toast.error("Failed to load sales proforma", error?.message || "Please retry.");
+        toast.error("Failed to load Pro Forma Invoice", error?.message || "Please retry.");
       } finally {
         if (mounted) setLoading(false);
       }
@@ -658,7 +658,7 @@ export default function SalesProformaEditor() {
         lines: cleanedLines,
         totals
       });
-      toast.success("Sales proforma saved", result?.proformaNo || "Saved successfully.");
+      toast.success("Pro Forma Invoice saved", result?.proformaNo || "Saved successfully.");
       if (isNew && result?.id) {
         navigate(`/app/sales/proformas/${encodeURIComponent(result.id)}`, { replace: true });
       } else {
@@ -672,7 +672,7 @@ export default function SalesProformaEditor() {
         }
       }
     } catch (error: any) {
-      toast.error("Save failed", error?.message || "Could not save sales proforma.");
+      toast.error("Save failed", error?.message || "Could not save Pro Forma Invoice.");
     } finally {
       setSaving(false);
     }
@@ -682,11 +682,11 @@ export default function SalesProformaEditor() {
     const status = String(form?.status || "").toUpperCase();
     if (isNew || !form.id) return;
     if (status === "CONVERTED") {
-      toast.warning("Already converted", "This proforma has already been converted.");
+      toast.warning("Already converted", "This Pro Forma Invoice has already been converted.");
       return;
     }
     if (status === "EXPIRED") {
-      toast.warning("Expired proforma", "Expired proformas cannot be converted.");
+      toast.warning("Expired Pro Forma Invoice", "Expired Pro Forma Invoices cannot be converted.");
       return;
     }
     setConverting(true);
@@ -700,7 +700,7 @@ export default function SalesProformaEditor() {
         `/app/sales/invoice/history${result?.invoiceId ? `?invoiceId=${encodeURIComponent(result.invoiceId)}` : ""}`
       );
     } catch (error: any) {
-      toast.error("Conversion failed", error?.message || "Could not convert sales proforma.");
+      toast.error("Conversion failed", error?.message || "Could not convert Pro Forma Invoice.");
     } finally {
       setConverting(false);
     }
@@ -709,8 +709,8 @@ export default function SalesProformaEditor() {
   return (
     <div className="max-w-6xl space-y-5">
       <PageHeader
-        title="Sales Proforma"
-        subtitle="PROFORMA INVOICE (Not a Tax Invoice)"
+        title="Pro Forma Invoice"
+        subtitle="PRO FORMA INVOICE (Not a Tax Invoice)"
         right={
           <div className="flex gap-2">
             <button
@@ -735,7 +735,7 @@ export default function SalesProformaEditor() {
               disabled={saving || loading || locked}
               className="disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {saving ? "Saving..." : "Save Proforma"}
+              {saving ? "Saving..." : "Save Pro Forma Invoice"}
             </GradientButton>
           </div>
         }
@@ -743,18 +743,18 @@ export default function SalesProformaEditor() {
 
       {locked ? (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          This proforma is converted and is read-only.
+          This Pro Forma Invoice is converted and is read-only.
         </div>
       ) : null}
 
       <Card className="p-5">
         {loading ? (
-          <p className="text-sm text-slate-500">Loading proforma details...</p>
+          <p className="text-sm text-slate-500">Loading Pro Forma Invoice details...</p>
         ) : (
           <div className="space-y-5">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <label className="text-sm text-slate-600">
-                Proforma No
+                Pro Forma Invoice No
                 <input
                   className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600"
                   value={form.proformaNo || ""}
@@ -764,7 +764,7 @@ export default function SalesProformaEditor() {
                 />
               </label>
               <label className="text-sm text-slate-600">
-                Proforma Date
+                Pro Forma Date
                 <input
                   type="date"
                   className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"

@@ -113,7 +113,7 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
           {
             to: "/app/sales/proformas/new",
             icon: FileText,
-            label: "Proforma Invoice",
+            label: "Pro Forma Invoice",
             activeMatchers: ["/sales/proformas", "/app/sales/proformas"]
           }
         ]
@@ -133,7 +133,7 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
           {
             to: "/app/purchase/proformas/new",
             icon: FileText,
-            label: "Purchase Order",
+            label: "Pro Forma Purchase Order",
             activeMatchers: ["/purchase/proformas", "/app/purchase/proformas"]
           }
         ]

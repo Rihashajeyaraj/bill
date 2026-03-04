@@ -45,7 +45,7 @@ export default function PurchaseProformasList() {
       } catch (error: any) {
         if (!mounted) return;
         setRows(purchaseProformasList());
-        toast.error("Failed to load purchase proformas", error?.message || "Showing local data.");
+        toast.error("Failed to load Pro Forma Purchase Orders", error?.message || "Showing local data.");
       } finally {
         if (mounted) setLoading(false);
       }
@@ -68,11 +68,11 @@ export default function PurchaseProformasList() {
   async function onConvert(row: any) {
     const status = String(row?.status || "").toUpperCase();
     if (status === "CONVERTED") {
-      toast.warning("Already converted", "This proforma has already been converted.");
+      toast.warning("Already converted", "This Pro Forma Purchase Order has already been converted.");
       return;
     }
     if (status === "EXPIRED") {
-      toast.warning("Expired proforma", "Expired proformas cannot be converted.");
+      toast.warning("Expired Pro Forma Purchase Order", "Expired Pro Forma Purchase Orders cannot be converted.");
       return;
     }
     setConvertingId(String(row?.id || ""));
@@ -87,7 +87,7 @@ export default function PurchaseProformasList() {
         `/app/purchase/history${result?.billId ? `?billId=${encodeURIComponent(result.billId)}` : ""}`
       );
     } catch (error: any) {
-      toast.error("Conversion failed", error?.message || "Could not convert purchase proforma.");
+      toast.error("Conversion failed", error?.message || "Could not convert Pro Forma Purchase Order.");
     } finally {
       setConvertingId("");
     }
@@ -96,24 +96,24 @@ export default function PurchaseProformasList() {
   return (
     <div className="max-w-6xl space-y-6">
       <PageHeader
-        title="Purchase Proformas"
-        subtitle="Purchase proformas do not affect stock or accounting until converted."
+        title="Pro Forma Purchase Orders"
+        subtitle="Pro Forma Purchase Orders do not affect stock or accounting until converted."
         right={
           <button
             type="button"
             onClick={() => navigate("/app/purchase/proformas/new")}
             className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
           >
-            New Proforma
+            New Pro Forma Purchase Order
           </button>
         }
       />
 
       <Card className="p-5">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-slate-600">Header: PURCHASE PROFORMA (Not a Final Bill)</p>
+          <p className="text-sm text-slate-600">Header: PRO FORMA PURCHASE ORDER (Not a Final Bill)</p>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {sortedRows.length} proformas
+            {sortedRows.length} pro forma purchase orders
           </span>
         </div>
 
@@ -121,7 +121,7 @@ export default function PurchaseProformasList() {
           <table className="min-w-[940px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
-                <th className="px-3 py-3 font-semibold">Proforma No</th>
+                <th className="px-3 py-3 font-semibold">Pro Forma Purchase Order No</th>
                 <th className="px-3 py-3 font-semibold">Date</th>
                 <th className="px-3 py-3 font-semibold">Valid Till</th>
                 <th className="px-3 py-3 font-semibold">Supplier</th>
@@ -134,13 +134,13 @@ export default function PurchaseProformasList() {
               {loading ? (
                 <tr className="border-t border-slate-100">
                   <td className="px-3 py-6 text-center text-slate-500" colSpan={7}>
-                    Loading purchase proformas...
+                    Loading Pro Forma Purchase Orders...
                   </td>
                 </tr>
               ) : sortedRows.length === 0 ? (
                 <tr className="border-t border-slate-100">
                   <td className="px-3 py-6 text-center text-slate-500" colSpan={7}>
-                    No purchase proformas yet.
+                    No Pro Forma Purchase Orders yet.
                   </td>
                 </tr>
               ) : (
