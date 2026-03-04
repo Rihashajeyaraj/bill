@@ -76,6 +76,10 @@ import {
   resolveCountryIsoCode
 } from "../lib/geoData";
 import { formatDateByPreference } from "../lib/formatPreferences";
+import {
+  phoneDigitRangeLabel,
+  validateInternationalPhone
+} from "../lib/phoneValidation";
 
 const SECTION_ITEMS = [
   {
@@ -653,9 +657,12 @@ function validateProfile(profile) {
   if (profile.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email.trim())) {
     errors.email = "Enter a valid email address.";
   }
-  if (!profile.phone?.trim()) errors.phone = "This field is required";
-  if (profile.phone && !/^[+\d][\d\s()-]{5,}$/.test(profile.phone.trim())) {
-    errors.phone = "Enter a valid phone number.";
+  const phoneValidation = validateInternationalPhone(profile.phone, {
+    required: true,
+    label: "Phone number"
+  });
+  if (phoneValidation.error) {
+    errors.phone = phoneValidation.error;
   }
   if (!profile.country?.trim()) errors.country = "This field is required";
   if (!profile.address?.line1?.trim()) errors.line1 = "This field is required";
@@ -1704,11 +1711,17 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Phone" required error={sectionErrors.phone}>
+                    <FormField
+                      label="Phone"
+                      required
+                      error={sectionErrors.phone}
+                      hint={`Use international format (${phoneDigitRangeLabel()})`}
+                    >
                       <input
                         value={settings.profile.phone}
                         onChange={(event) => updateSection("profile", { phone: event.target.value })}
                         className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                        placeholder="+1 202 555 0147"
                       />
                       {sectionErrors.phone ? (
                         <p className="mt-1 text-xs text-rose-600">{sectionErrors.phone}</p>

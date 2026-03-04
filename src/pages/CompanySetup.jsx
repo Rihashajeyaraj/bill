@@ -21,6 +21,10 @@ import {
   listStatesByCountry,
   resolveCountryIsoCode
 } from "../lib/geoData";
+import {
+  phoneDigitRangeLabel,
+  validateInternationalPhone
+} from "../lib/phoneValidation";
 
 const MAX_CURRENCIES = 3;
 
@@ -201,6 +205,11 @@ export default function CompanySetup() {
   function validate() {
     const next = {};
     if (!profile.companyName.trim()) next.companyName = "This field is required";
+    const phoneValidation = validateInternationalPhone(profile.phone, {
+      required: true,
+      label: "Phone number"
+    });
+    if (phoneValidation.error) next.phone = phoneValidation.error;
     if (!profile.country) next.country = "This field is required";
     if (!profile.currencies.length) next.currency = "This field is required";
     if (!profile.address.line1.trim()) next.addressLine1 = "This field is required";
@@ -218,6 +227,16 @@ export default function CompanySetup() {
       if (next.companyName && profile.companyName.trim()) {
         delete next.companyName;
         changed = true;
+      }
+      if (next.phone) {
+        const phoneValidation = validateInternationalPhone(profile.phone, {
+          required: true,
+          label: "Phone number"
+        });
+        if (!phoneValidation.error) {
+          delete next.phone;
+          changed = true;
+        }
       }
       if (next.country && profile.country.trim()) {
         delete next.country;
@@ -245,6 +264,7 @@ export default function CompanySetup() {
   }, [
     isIndia,
     profile.companyName,
+    profile.phone,
     profile.country,
     profile.currencies.length,
     profile.address.line1,
@@ -480,14 +500,22 @@ export default function CompanySetup() {
                 {errors.currency ? <p className="mt-1 text-xs text-rose-600">{errors.currency}</p> : null}
               </FormField>
 
-              <FormField label="Company Phone">
+              <FormField
+                label="Company Phone"
+                required
+                error={errors.phone}
+                hint={`Use international format (${phoneDigitRangeLabel()})`}
+              >
                 <input
                   value={profile.phone}
                   onChange={(e) => setProfile((p) => ({ ...p, phone: e.target.value }))}
-                  className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
+                  className={`w-full rounded-2xl border px-3 py-2.5 text-sm outline-none focus:ring-4 ${
+                    errors.phone ? "border-rose-300" : "border-slate-100"
+                  }`}
                   style={{ "--tw-ring-color": UI.COLORS.ring }}
-                  placeholder="+91 98765 43210"
+                  placeholder="+1 202 555 0147"
                 />
+                {errors.phone ? <p className="mt-1 text-xs text-rose-600">{errors.phone}</p> : null}
               </FormField>
 
               <FormField label="Company Email">

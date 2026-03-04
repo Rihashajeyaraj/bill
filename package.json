@@ -14,6 +14,7 @@
     "test:customer-tax": "node tests/customerTaxValidation.test.mjs",
     "test:item-form-rules": "node tests/itemFormRules.test.mjs",
     "test:item-low-stock": "node tests/itemLowStockRegression.test.mjs",
+    "test:phone-validation": "node tests/phoneValidation.test.mjs",
     "test:fifo-tax-profit": "node tests/fifoTaxProfit.test.mjs"
   },
   "dependencies": {

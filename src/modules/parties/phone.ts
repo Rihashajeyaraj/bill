@@ -1,4 +1,9 @@
 import { resolveCountryIsoCode } from "../../lib/geoData";
+import {
+  PHONE_MAX_DIGITS,
+  PHONE_MIN_DIGITS,
+  phoneDigitRangeLabel
+} from "../../lib/phoneValidation";
 
 export interface CountryDialOption {
   isoCode: string;
@@ -31,18 +36,6 @@ export const COUNTRY_DIAL_OPTIONS: CountryDialOption[] = [
   { isoCode: "SG", country: "Singapore", dialCode: "+65" },
   { isoCode: "ZA", country: "South Africa", dialCode: "+27" }
 ];
-
-const MOBILE_LENGTH_BY_DIAL: Record<string, MobileLengthRule> = {
-  "+91": { min: 10, max: 10 },
-  "+94": { min: 9, max: 9 },
-  "+1": { min: 10, max: 10 },
-  "+44": { min: 10, max: 10 },
-  "+971": { min: 9, max: 9 },
-  "+353": { min: 9, max: 9 },
-  "+61": { min: 9, max: 9 },
-  "+65": { min: 8, max: 8 },
-  "+27": { min: 9, max: 9 }
-};
 
 const ISO_TO_DIAL = COUNTRY_DIAL_OPTIONS.reduce<Record<string, string>>((acc, option) => {
   acc[option.isoCode] = option.dialCode;
@@ -81,7 +74,7 @@ function resolveDialCodeFromPrefixedDigits(digitsWithCountryCode: string, fallba
 
   for (let codeLength = 3; codeLength >= 1; codeLength -= 1) {
     const mobileLength = digitsWithCountryCode.length - codeLength;
-    if (mobileLength >= 6 && mobileLength <= 15) {
+    if (mobileLength >= PHONE_MIN_DIGITS && mobileLength <= PHONE_MAX_DIGITS) {
       return {
         countryCode: `+${digitsWithCountryCode.slice(0, codeLength)}`,
         mobileNumber: digitsWithCountryCode.slice(codeLength)
@@ -139,13 +132,13 @@ export function splitFullMobileNumber(value: unknown, fallbackDialCode = DEFAULT
 }
 
 export function mobileLengthRule(countryCode: unknown): MobileLengthRule {
-  const normalizedCountryCode = normalizeCountryDialCode(countryCode);
-  return MOBILE_LENGTH_BY_DIAL[normalizedCountryCode] || { min: 6, max: 15 };
+  normalizeCountryDialCode(countryCode);
+  return { min: PHONE_MIN_DIGITS, max: PHONE_MAX_DIGITS };
 }
 
 export function mobileLengthHint(countryCode: unknown) {
-  const rule = mobileLengthRule(countryCode);
-  return rule.min === rule.max ? `${rule.min} digits` : `${rule.min}-${rule.max} digits`;
+  mobileLengthRule(countryCode);
+  return `${phoneDigitRangeLabel()} (international)`;
 }
 
 export function validateMobileNumber(countryCode: unknown, mobileNumber: unknown) {
@@ -163,10 +156,8 @@ export function validateMobileNumber(countryCode: unknown, mobileNumber: unknown
 
   const rule = mobileLengthRule(normalizedCountryCode);
   if (normalizedMobile.length < rule.min || normalizedMobile.length > rule.max) {
-    const rangeMessage =
-      rule.min === rule.max ? `exactly ${rule.min} digits` : `${rule.min}-${rule.max} digits`;
     return {
-      error: `Mobile number must be ${rangeMessage} for ${normalizedCountryCode}.`,
+      error: `Mobile number must be between ${rule.min} and ${rule.max} digits.`,
       countryCode: normalizedCountryCode,
       mobileNumber: normalizedMobile,
       fullNumber: composeFullMobileNumber(normalizedCountryCode, normalizedMobile)
