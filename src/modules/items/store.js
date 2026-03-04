@@ -193,7 +193,7 @@ function resolveItemCodeForUpsert({ draftItemCode, id, list, type }) {
 
 function normalizeItem(raw) {
   const type = normalizeItemType(raw?.type);
-  const metadata = raw?.metadata || {};
+  const metadata = raw?.metadata && typeof raw.metadata === "object" ? raw.metadata : {};
   const rawHsnOrSac = raw?.hsnOrSac || metadata?.hsnOrSac || "";
   const taxRate =
     parseNumber(raw?.taxRate) ||
@@ -208,25 +208,34 @@ function normalizeItem(raw) {
   const quantity = trackInventory
     ? Math.max(
         0,
-        parseNumber(raw?.quantity ?? metadata?.quantity ?? metadata?.openingStock ?? metadata?.openingQty ?? raw?.stockQty)
+        parseNumber(
+          raw?.quantity ??
+            raw?.currentStock ??
+            raw?.openingStock ??
+            metadata?.quantity ??
+            metadata?.currentStock ??
+            metadata?.openingStock ??
+            metadata?.openingQty ??
+            raw?.stockQty
+        )
       )
     : 0;
-  const openingStock = trackInventory ? quantity : 0;
+  const openingStock = trackInventory ? Math.max(0, parseNumber(raw?.openingStock ?? metadata?.openingStock ?? quantity)) : 0;
   const currentStock = trackInventory
-    ? Math.max(0, parseNumber(metadata?.currentStock ?? raw?.currentStock ?? openingStock))
+    ? Math.max(0, parseNumber(raw?.currentStock ?? metadata?.currentStock ?? raw?.stockQty ?? openingStock))
     : 0;
 
   return {
     id: raw?.id || uid("itm_"),
     itemCode: normalizeItemCodeValue(raw?.itemCode || raw?.item_code || metadata?.itemCode || ""),
     type,
-    name: raw?.name || raw?.itemName || "",
+    name: raw?.name || raw?.itemName || raw?.item_name || "",
     description: raw?.description || metadata?.description || "",
     hsn: raw?.hsn || metadata?.hsn || (type === "Product" ? rawHsnOrSac : ""),
     sac: raw?.sac || metadata?.sac || (type === "Service" ? rawHsnOrSac : ""),
     unit: raw?.unit || metadata?.unit || "pcs",
     salesRate: parseNumber(raw?.price ?? raw?.salesRate ?? raw?.salePrice),
-    purchaseRate: parseNumber(metadata?.purchasePrice ?? raw?.purchaseRate),
+    purchaseRate: parseNumber(raw?.purchaseRate ?? raw?.purchase_price ?? metadata?.purchasePrice),
     taxRate,
     status,
     trackInventory,
@@ -234,9 +243,12 @@ function normalizeItem(raw) {
     openingStock,
     currentStock,
     openingStockValue: Math.max(0, parseNumber(metadata?.openingStockValue)),
-    lowStockAlert: Math.max(0, parseNumber(metadata?.lowStockQty ?? metadata?.lowStockAlert)),
-    sku: metadata?.sku || metadata?.itemCode || raw?.itemCode || "",
-    barcode: metadata?.barcode || "",
+    lowStockAlert: Math.max(
+      0,
+      parseNumber(raw?.lowStockAlert ?? raw?.lowStockQty ?? metadata?.lowStockQty ?? metadata?.lowStockAlert)
+    ),
+    sku: raw?.sku || metadata?.sku || metadata?.itemCode || raw?.itemCode || "",
+    barcode: raw?.barcode || metadata?.barcode || "",
     priceLevels: ensureArray(metadata?.priceLevels),
     taxMappings: ensureArray(metadata?.taxMappings),
     metadata
@@ -439,6 +451,7 @@ export function upsertItem(draft, country) {
   const now = new Date().toISOString();
   const id = draft.id || uid("itm_");
   const isEdit = !!draft?.id && list.some((item) => String(item?.id) === String(draft.id));
+  const preserveStockOnEdit = isEdit && draft?.preserveStockOnEdit === true;
   assertItemWritePermission({ isEdit });
   const itemName = String(draft?.name || draft?.itemName || "").trim();
   if (!itemName) throw new Error("Item name is required.");
@@ -453,9 +466,21 @@ export function upsertItem(draft, country) {
   if (duplicateByName) throw new Error("Item name already exists.");
   const taxLabel = buildTaxLabel(country, parseNumber(draft.taxRate));
   const trackInventory = normalizeItemType(draft?.type) === "Product";
-  const quantity = trackInventory ? Math.max(0, parseNumber(draft.quantity ?? draft.openingStock)) : 0;
+  const existingItem = list.find((item) => String(item?.id) === String(id));
+  const existingNormalized = existingItem ? normalizeItem(existingItem) : null;
+  const quantity = trackInventory ? Math.max(0, parseNumber(draft.quantity ?? draft.currentStock ?? draft.openingStock)) : 0;
+  const openingStock = trackInventory
+    ? preserveStockOnEdit
+      ? Math.max(0, parseNumber(existingNormalized?.openingStock ?? quantity))
+      : quantity
+    : 0;
+  const currentStock = trackInventory
+    ? preserveStockOnEdit
+      ? Math.max(0, parseNumber(existingNormalized?.currentStock ?? existingNormalized?.stockQty ?? quantity))
+      : quantity
+    : 0;
   const lowStockAlert = trackInventory ? Math.max(0, parseNumber(draft.lowStockAlert)) : 0;
-  const openingStockValue = trackInventory ? parseNumber(quantity * parseNumber(draft.purchaseRate)) : 0;
+  const openingStockValue = trackInventory ? parseNumber(openingStock * parseNumber(draft.purchaseRate)) : 0;
 
   const payload = {
     id,
@@ -470,10 +495,11 @@ export function upsertItem(draft, country) {
     taxRate: Math.max(0, parseNumber(draft.taxRate)),
     taxLabel,
     trackInventory,
-    quantity,
-    stockQty: quantity,
-    openingStock: quantity,
-    currentStock: quantity,
+    quantity: currentStock,
+    stockQty: currentStock,
+    openingStock,
+    currentStock,
+    lowStockAlert,
     status: draft.status,
     metadata: {
       description: draft.description || "",
@@ -482,10 +508,10 @@ export function upsertItem(draft, country) {
       barcode: draft.barcode || "",
       purchasePrice: Math.max(0, parseNumber(draft.purchaseRate)),
       trackStock: trackInventory,
-      quantity,
-      openingStock: quantity,
-      openingQty: quantity,
-      currentStock: quantity,
+      quantity: currentStock,
+      openingStock,
+      openingQty: openingStock,
+      currentStock,
       openingStockValue,
       lowStockQty: lowStockAlert,
       gstPercent: parseNumber(draft.gstPercent ?? draft.taxRate),
@@ -557,6 +583,7 @@ function stripUnsupportedItemColumns(payload, error) {
 export async function upsertItemRemote(draft, country) {
   const existing = listRawItems().some((item) => String(item?.id) === String(draft?.id || ""));
   const isEdit = !!draft?.id && (looksLikeUuid(draft.id) || existing);
+  const preserveStockOnEdit = isEdit && draft?.preserveStockOnEdit === true;
   assertItemWritePermission({ isEdit });
 
   if (!isSupabaseConfigured || !supabase) {
@@ -594,6 +621,10 @@ export async function upsertItemRemote(draft, country) {
   const duplicateRemoteByName = await findRemoteDuplicateItemByName(organizationId, incoming.name, incoming.id);
   if (duplicateRemoteByName) throw new Error("Item name already exists.");
   let payload = toRemotePayload(incoming);
+  if (preserveStockOnEdit) {
+    delete payload.opening_stock;
+    delete payload.current_stock;
+  }
   const actorUserId = authGetUser()?.id || null;
   let remoteRow = null;
 

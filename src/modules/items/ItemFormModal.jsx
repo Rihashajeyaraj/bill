@@ -129,10 +129,11 @@ export default function ItemFormModal({
     } else if (!hasUomForType(next.type, next.unit)) {
       next.unit = defaultUnitForType(next.type);
     }
-    const normalizedQuantity = next.type === "Product" ? wholeLike(next.quantity ?? next.openingStock) : 0;
+    const normalizedQuantity = next.type === "Product" ? wholeLike(next.currentStock ?? next.quantity ?? next.openingStock) : 0;
     next.quantity = normalizedQuantity;
-    next.openingStock = normalizedQuantity;
-    next.lowStockAlert = next.type === "Product" ? wholeLike(next.lowStockAlert) : 0;
+    next.openingStock = next.type === "Product" ? wholeLike(next.openingStock ?? normalizedQuantity) : 0;
+    next.currentStock = normalizedQuantity;
+    next.lowStockAlert = next.type === "Product" ? wholeLike(next.lowStockAlert ?? next?.metadata?.lowStockQty) : 0;
     setForm(next);
   }, [open, initialItem, mode]);
 
@@ -270,6 +271,7 @@ export default function ItemFormModal({
       currentStock: normalizedQuantity,
       openingStockValue: normalizedOpeningStockValue,
       lowStockAlert: normalizedLowStock,
+      preserveStockOnEdit: mode === "edit",
       priceLevels: form.priceLevels.map((level) => ({
         ...level,
         label: level.label.trim(),
