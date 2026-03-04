@@ -9,6 +9,7 @@ import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { syncLowStockNotifications } from "../../services/stockNotifications.service";
 import { buildTaxLabel, normalizeItemType, normalizeText, parseNumber } from "./utils";
+import { resolveLowStockAlertValue, resolveUpsertStockValues } from "./stockPersistence";
 
 const CREDIT_NOTES_PREMIUM_KEY = "creditNotesPremiumV1";
 const DEBIT_NOTES_PREMIUM_KEY = "debitNotesPremiumV1";
@@ -243,10 +244,7 @@ function normalizeItem(raw) {
     openingStock,
     currentStock,
     openingStockValue: Math.max(0, parseNumber(metadata?.openingStockValue)),
-    lowStockAlert: Math.max(
-      0,
-      parseNumber(raw?.lowStockAlert ?? raw?.lowStockQty ?? metadata?.lowStockQty ?? metadata?.lowStockAlert)
-    ),
+    lowStockAlert: resolveLowStockAlertValue(raw, metadata),
     sku: raw?.sku || metadata?.sku || metadata?.itemCode || raw?.itemCode || "",
     barcode: raw?.barcode || metadata?.barcode || "",
     priceLevels: ensureArray(metadata?.priceLevels),
@@ -468,17 +466,17 @@ export function upsertItem(draft, country) {
   const trackInventory = normalizeItemType(draft?.type) === "Product";
   const existingItem = list.find((item) => String(item?.id) === String(id));
   const existingNormalized = existingItem ? normalizeItem(existingItem) : null;
-  const quantity = trackInventory ? Math.max(0, parseNumber(draft.quantity ?? draft.currentStock ?? draft.openingStock)) : 0;
-  const openingStock = trackInventory
-    ? preserveStockOnEdit
-      ? Math.max(0, parseNumber(existingNormalized?.openingStock ?? quantity))
-      : quantity
-    : 0;
-  const currentStock = trackInventory
-    ? preserveStockOnEdit
-      ? Math.max(0, parseNumber(existingNormalized?.currentStock ?? existingNormalized?.stockQty ?? quantity))
-      : quantity
-    : 0;
+  const stockValues = resolveUpsertStockValues({
+    trackInventory,
+    preserveStockOnEdit,
+    draftQuantity: draft.quantity,
+    draftCurrentStock: draft.currentStock,
+    draftOpeningStock: draft.openingStock,
+    existingCurrentStock: existingNormalized?.currentStock ?? existingNormalized?.stockQty,
+    existingOpeningStock: existingNormalized?.openingStock
+  });
+  const openingStock = stockValues.openingStock;
+  const currentStock = stockValues.currentStock;
   const lowStockAlert = trackInventory ? Math.max(0, parseNumber(draft.lowStockAlert)) : 0;
   const openingStockValue = trackInventory ? parseNumber(openingStock * parseNumber(draft.purchaseRate)) : 0;
 
