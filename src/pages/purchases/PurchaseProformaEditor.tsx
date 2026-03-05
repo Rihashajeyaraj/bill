@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Plus, Search, X } from "lucide-react";
 import Card from "../../components/Card";
 import GradientButton from "../../components/GradientButton";
@@ -15,7 +15,6 @@ import {
 } from "../../lib/geoData";
 import {
   convertPurchaseProforma,
-  getPurchaseProformaStatusOptions,
   purchaseProformaComputeTotals,
   purchaseProformaGetByIdRemote,
   purchaseProformaPeekNumber,
@@ -131,10 +130,9 @@ function createEmptyLine() {
   };
 }
 
-const PURCHASE_STATUS_OPTIONS = getPurchaseProformaStatusOptions();
-
 export default function PurchaseProformaEditor() {
   const { id = "new" } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
   const isNew = String(id || "") === "new";
@@ -178,7 +176,9 @@ export default function PurchaseProformaEditor() {
     () => suppliers.find((entry) => String(entry?.id || "") === String(form.supplierId || "")) || null,
     [suppliers, form.supplierId]
   );
-  const locked = String(form?.status || "").toUpperCase() === "CONVERTED";
+  const isReadOnlyView = String(searchParams.get("mode") || "").toLowerCase() === "view";
+  const isConverted = String(form?.status || "").toUpperCase() === "CONVERTED";
+  const locked = isConverted || isReadOnlyView;
   const totals = useMemo(() => purchaseProformaComputeTotals(form.lines || []), [form.lines]);
   const allCountryOptions = useMemo(() => listAllCountries(), []);
   const supplierCreateStateOptions = useMemo(
@@ -625,6 +625,7 @@ export default function PurchaseProformaEditor() {
 
       const result = await purchaseProformaUpsert({
         ...form,
+        status: "DRAFT",
         partyName: selectedSupplier?.name || selectedSupplier?.displayName || form.partyName || "",
         partyAddress: selectedSupplier?.address || form.partyAddress || "",
         phone: selectedSupplier?.phone || form.phone || "",
@@ -712,9 +713,14 @@ export default function PurchaseProformaEditor() {
         }
       />
 
-      {locked ? (
+      {isConverted ? (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           This Pro Forma Purchase Order is converted and is read-only.
+        </div>
+      ) : null}
+      {!isConverted && isReadOnlyView ? (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+          Read-only view mode. Use Edit from history to modify this Pro Forma Purchase Order.
         </div>
       ) : null}
 
@@ -753,21 +759,6 @@ export default function PurchaseProformaEditor() {
                   disabled={locked}
                   onChange={(event) => updateForm({ validTill: event.target.value })}
                 />
-              </label>
-              <label className="text-sm text-slate-600">
-                Status
-                <select
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                  value={form.status || "DRAFT"}
-                  disabled={locked}
-                  onChange={(event) => updateForm({ status: event.target.value })}
-                >
-                  {PURCHASE_STATUS_OPTIONS.map((status) => (
-                    <option key={status} value={status}>
-                      {status}
-                    </option>
-                  ))}
-                </select>
               </label>
               <label className="text-sm text-slate-600">
                 Payment Type
@@ -1156,7 +1147,7 @@ export default function PurchaseProformaEditor() {
               </datalist>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                 <p className="text-slate-500">Sub Total</p>
                 <p className="font-semibold text-slate-900">{totals.subTotal.toFixed(2)}</p>
@@ -1168,10 +1159,6 @@ export default function PurchaseProformaEditor() {
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                 <p className="text-slate-500">Grand Total</p>
                 <p className="font-semibold text-slate-900">{totals.grandTotal.toFixed(2)}</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                <p className="text-slate-500">Status</p>
-                <p className="font-semibold text-slate-900">{String(form.status || "DRAFT").toUpperCase()}</p>
               </div>
             </div>
           </div>
