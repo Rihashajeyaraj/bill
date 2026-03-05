@@ -139,7 +139,7 @@ function createEmptyLine() {
     itemCode: "",
     itemInput: "",
     description: "",
-    qty: 1,
+    qty: 0,
     unit: "pcs",
     rate: 0,
     discountAmount: 0,
@@ -371,7 +371,7 @@ export default function SalesProformaEditor() {
                       itemCode: line?.itemCode || item?.itemCode || "",
                       itemInput: item?.name || line?.description || "",
                       description: line?.description || item?.name || "",
-                      qty: parseNumber(line?.qty) || 1,
+                      qty: parseNumber(line?.qty),
                       unit: line?.unit ?? "pcs",
                       rate: parseNumber(line?.rate),
                       discountAmount: parseNumber(line?.discountAmount),
@@ -1174,9 +1174,10 @@ export default function SalesProformaEditor() {
                             className={`${lineItemInputRightClassName} ${
                               lineError?.qty ? "border-rose-300" : "border-slate-200"
                             }`}
-                            value={line.qty}
+                            value={typeof line.qty === "number" ? (line.qty === 0 ? "" : line.qty) : (line.qty ?? "")}
                             disabled={locked}
-                            onChange={(event) => updateLine(line.id, { qty: parseNumber(event.target.value) })}
+                            placeholder="0"
+                            onChange={(event) => updateLine(line.id, { qty: event.target.value })}
                           />
                           {lineError?.qty ? (
                             <p className="mt-1 text-[11px] font-medium text-rose-600">{lineError.qty}</p>
@@ -1198,9 +1199,10 @@ export default function SalesProformaEditor() {
                             min={0}
                             step="0.01"
                             className={lineItemInputRightClassName}
-                            value={line.rate}
+                            value={typeof line.rate === "number" ? (line.rate === 0 ? "" : line.rate) : (line.rate ?? "")}
                             disabled={locked}
-                            onChange={(event) => updateLine(line.id, { rate: parseNumber(event.target.value) })}
+                            placeholder="0"
+                            onChange={(event) => updateLine(line.id, { rate: event.target.value })}
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -1242,9 +1244,10 @@ export default function SalesProformaEditor() {
                             min={0}
                             step="0.01"
                             className={lineItemInputRightClassName}
-                            value={line.taxRate}
+                            value={typeof line.taxRate === "number" ? (line.taxRate === 0 ? "" : line.taxRate) : (line.taxRate ?? "")}
                             disabled={locked}
-                            onChange={(event) => updateLine(line.id, { taxRate: parseNumber(event.target.value) })}
+                            placeholder="0"
+                            onChange={(event) => updateLine(line.id, { taxRate: event.target.value })}
                           />
                         </td>
                         <td className="px-3 py-2">
