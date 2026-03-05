@@ -187,6 +187,7 @@ export default function PartyFormModal({
   const mutedInputClassName = `${inputClassName} disabled:bg-slate-50 disabled:text-slate-500`;
   const suggestionMenuClassName =
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
+  const creditLimitDaysValue = Math.max(0, Math.trunc(parseNumber(form.creditLimitDays)));
 
   function clearFieldError(fieldKey: string) {
     setFieldErrors((prev) => {
@@ -687,7 +688,7 @@ export default function PartyFormModal({
                       min={0}
                       step={1}
                       inputMode="numeric"
-                      value={Math.max(0, Math.trunc(parseNumber(form.creditLimitDays)))}
+                      value={creditLimitDaysValue === 0 ? "" : creditLimitDaysValue}
                       onChange={(event) =>
                         updateField("creditLimitDays", Math.max(0, Math.trunc(parseNumber(event.target.value))))
                       }
