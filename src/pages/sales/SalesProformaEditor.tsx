@@ -135,6 +135,56 @@ function createEmptyLine() {
   };
 }
 
+function validateSalesProformaForm(form: any) {
+  const errors: any = {};
+  const lineErrors: Record<string, { item?: string; qty?: string }> = {};
+
+  const proformaDate = String(form?.proformaDate || "").trim();
+  if (!proformaDate) {
+    errors.proformaDate = "Pro Forma Date is required.";
+  }
+
+  if (!String(form?.partyId || "").trim()) {
+    errors.partyId = "Customer is required.";
+  }
+
+  let validLineCount = 0;
+  const lines = Array.isArray(form?.lines) ? form.lines : [];
+  lines.forEach((line: any, index: number) => {
+    const lineId = String(line?.id || `line_${index + 1}`);
+    const itemText = String(line?.itemId || line?.itemInput || line?.description || "").trim();
+    const qty = Math.max(0, parseNumber(line?.qty));
+    const nextLineErrors: { item?: string; qty?: string } = {};
+
+    if (!itemText && qty > 0) {
+      nextLineErrors.item = "Item is required.";
+    }
+    if (itemText && qty <= 0) {
+      nextLineErrors.qty = "Qty must be greater than 0.";
+    }
+
+    if (itemText && qty > 0) {
+      validLineCount += 1;
+    }
+
+    if (nextLineErrors.item || nextLineErrors.qty) {
+      lineErrors[lineId] = nextLineErrors;
+    }
+  });
+
+  if (!validLineCount) {
+    errors.lines = "Add at least one line item with item and qty.";
+  }
+
+  if (Object.keys(lineErrors).length) {
+    errors.lineErrors = lineErrors;
+  }
+
+  const hasErrors = Object.keys(errors).length > 0;
+  errors.hasErrors = hasErrors;
+  return errors;
+}
+
 export default function SalesProformaEditor() {
   const { id = "new" } = useParams();
   const navigate = useNavigate();
@@ -185,6 +235,8 @@ export default function SalesProformaEditor() {
     () => salesProformaComputeTotals(form.lines || [], 0),
     [form.lines]
   );
+  const validation = useMemo(() => validateSalesProformaForm(form), [form]);
+  const canSave = !saving && !loading && !locked && !validation.hasErrors;
   const allCountryOptions = useMemo(() => listAllCountries(), []);
   const customerCreateStateOptions = useMemo(
     () => listStatesByCountry(customerCreateDraft.country),
@@ -604,8 +656,8 @@ export default function SalesProformaEditor() {
 
   async function onSave() {
     if (locked) return;
-    if (!form.partyId) {
-      toast.warning("Customer required", "Select a customer before saving.");
+    if (validation.hasErrors) {
+      toast.warning("Missing required fields", "Fix the highlighted fields before saving.");
       return;
     }
     setSaving(true);
@@ -727,7 +779,7 @@ export default function SalesProformaEditor() {
             ) : null}
             <GradientButton
               onClick={() => void onSave()}
-              disabled={saving || loading || locked}
+              disabled={!canSave}
               className="disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving ? "Saving..." : "Save Pro Forma Invoice"}
@@ -762,11 +814,16 @@ export default function SalesProformaEditor() {
                 Pro Forma Date
                 <input
                   type="date"
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm ${
+                    validation?.proformaDate ? "border-rose-300" : "border-slate-200"
+                  }`}
                   value={form.proformaDate || ""}
                   disabled={locked}
                   onChange={(event) => updateForm({ proformaDate: event.target.value })}
                 />
+                {validation?.proformaDate ? (
+                  <p className="mt-1 text-xs font-medium text-rose-600">{validation.proformaDate}</p>
+                ) : null}
               </label>
               <label className="text-sm text-slate-600">
                 Valid Till
@@ -833,6 +890,9 @@ export default function SalesProformaEditor() {
 
               {customerSearchError ? (
                 <p className="mt-2 text-xs font-medium text-rose-600">{customerSearchError}</p>
+              ) : null}
+              {validation?.partyId ? (
+                <p className="mt-2 text-xs font-medium text-rose-600">{validation.partyId}</p>
               ) : null}
 
               {selectedParty ? (
@@ -1001,6 +1061,9 @@ export default function SalesProformaEditor() {
                 <div>
                   <p className="text-sm font-semibold text-slate-900">Line Items</p>
                   <p className="text-xs text-slate-500">Invoice-style editable line item table.</p>
+                  {validation?.lines ? (
+                    <p className="mt-1 text-xs font-medium text-rose-600">{validation.lines}</p>
+                  ) : null}
                 </div>
                 <button
                   type="button"
@@ -1028,12 +1091,16 @@ export default function SalesProformaEditor() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(form.lines || []).map((line: any) => (
+                    {(form.lines || []).map((line: any) => {
+                      const lineError = validation?.lineErrors?.[String(line.id)] || {};
+                      return (
                       <tr key={line.id} className="border-t border-slate-100">
                         <td className="px-2 py-2">
                           <div className="relative">
                             <input
-                              className="w-full rounded-lg border border-slate-200 px-2 py-1.5 pr-8 text-sm"
+                              className={`w-full rounded-lg border px-2 py-1.5 pr-8 text-sm ${
+                                lineError?.item ? "border-rose-300" : "border-slate-200"
+                              }`}
                               value={line.itemInput || ""}
                               disabled={locked}
                               placeholder="Search by item name or code"
@@ -1088,6 +1155,9 @@ export default function SalesProformaEditor() {
                             {line.itemCode ? (
                               <p className="mt-1 text-[11px] text-slate-500">Code: {line.itemCode}</p>
                             ) : null}
+                            {lineError?.item ? (
+                              <p className="mt-1 text-[11px] font-medium text-rose-600">{lineError.item}</p>
+                            ) : null}
                           </div>
                         </td>
                         <td className="px-2 py-2">
@@ -1095,11 +1165,16 @@ export default function SalesProformaEditor() {
                             type="number"
                             min={0}
                             step="0.001"
-                            className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
+                            className={`w-full rounded-lg border px-2 py-1.5 text-right text-sm ${
+                              lineError?.qty ? "border-rose-300" : "border-slate-200"
+                            }`}
                             value={line.qty}
                             disabled={locked}
                             onChange={(event) => updateLine(line.id, { qty: parseNumber(event.target.value) })}
                           />
+                          {lineError?.qty ? (
+                            <p className="mt-1 text-[11px] font-medium text-rose-600">{lineError.qty}</p>
+                          ) : null}
                         </td>
                         <td className="px-2 py-2">
                           <input
@@ -1178,7 +1253,8 @@ export default function SalesProformaEditor() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
