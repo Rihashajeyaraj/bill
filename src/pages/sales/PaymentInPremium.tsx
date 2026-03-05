@@ -126,6 +126,8 @@ export default function PaymentInPremium() {
   const [statusFilter, setStatusFilter] = useState<PaymentStatus | "">("");
   const [customerFilter, setCustomerFilter] = useState("");
   const [modeFilter, setModeFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerSearchError, setCustomerSearchError] = useState("");
   useGlobalLoadingBridge(loading, "payment-in");
@@ -142,8 +144,10 @@ export default function PaymentInPremium() {
   const filteredPayments = useMemo(() => payments.filter((entry) => {
     const haystack = `${entry.customerName} ${entry.receiptNo} ${entry.referenceNo || ""} ${entry.transactionId || ""}`.toLowerCase();
     const q = search.trim().toLowerCase();
-    return (!q || haystack.includes(q)) && (!statusFilter || entry.status === statusFilter) && (!customerFilter || entry.customerId === customerFilter) && (!modeFilter || entry.paymentMode === modeFilter);
-  }), [payments, search, statusFilter, customerFilter, modeFilter]);
+    const matchFrom = fromDate ? entry.paymentDate >= fromDate : true;
+    const matchTo = toDate ? entry.paymentDate <= toDate : true;
+    return (!q || haystack.includes(q)) && (!statusFilter || entry.status === statusFilter) && (!customerFilter || entry.customerId === customerFilter) && (!modeFilter || entry.paymentMode === modeFilter) && matchFrom && matchTo;
+  }), [payments, search, statusFilter, customerFilter, modeFilter, fromDate, toDate]);
   const customerLookupResults = useMemo(() => {
     const query = String(customerLookupQuery || "").trim().toLowerCase();
     if (!query) return [];
@@ -604,11 +608,13 @@ export default function PaymentInPremium() {
               </div>
 
               <FlowCard>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search customer, receipt, reference" className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200" />
-                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PaymentStatus | "")} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All Status</option><option value="Draft">Draft</option><option value="Received">Received</option><option value="Applied">Applied</option></select>
-                  <select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All Customers</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select>
-                  <select value={modeFilter} onChange={(event) => setModeFilter(event.target.value)} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All Modes</option>{COUNTRY_CONFIG[country].paymentModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6 2xl:grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr]">
+                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search customer, receipt, reference" className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
+                  <select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Customers</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select>
+                  <select value={modeFilter} onChange={(event) => setModeFilter(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Modes</option>{COUNTRY_CONFIG[country].paymentModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select>
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PaymentStatus | "")} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Status</option><option value="Draft">Draft</option><option value="Received">Received</option><option value="Applied">Applied</option></select>
+                  <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
+                  <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <button onClick={() => exportPaymentInSummaryPdf(filteredPayments, country)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"><FileDown className="h-3.5 w-3.5" />Summary PDF</button>

@@ -1,5 +1,105 @@
 import { jsPDF } from "jspdf";
-import { formatMoney } from "./utils";
+import { formatDateTimeByPreference } from "../../lib/formatPreferences";
+import { countryCodeFromName, formatMoney, parseNumber } from "./utils";
+
+function downloadBlob(content, filename) {
+  const url = URL.createObjectURL(content);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export function exportPaymentOutCsv(records, currency = "", country = "") {
+  const safeRecords = Array.isArray(records) ? records : [];
+  const resolvedCountry = country || safeRecords[0]?.country || "GLOBAL";
+  const resolvedCurrency = currency || safeRecords[0]?.currency || "";
+  const rows = [
+    [
+      "Payment No",
+      "Date",
+      "Supplier",
+      "Payment Mode",
+      "Reference No",
+      "Amount Paid",
+      "Applied Amount",
+      "Unapplied Amount",
+      "Status",
+      "Currency"
+    ],
+    ...safeRecords.map((entry) => [
+      entry?.paymentNo || "",
+      entry?.paymentDate || "",
+      entry?.supplierName || "",
+      entry?.paymentMode || "",
+      entry?.referenceNo || "",
+      parseNumber(entry?.totals?.amountPaid).toFixed(2),
+      parseNumber(entry?.totals?.amountApplied).toFixed(2),
+      parseNumber(entry?.totals?.unappliedAmount).toFixed(2),
+      entry?.status || "",
+      entry?.currency || resolvedCurrency
+    ])
+  ];
+
+  const csv = rows
+    .map((row) =>
+      row
+        .map((cell) => String(cell).replace(/"/g, "\"\""))
+        .map((cell) => `"${cell}"`)
+        .join(",")
+    )
+    .join("\n");
+
+  const code = countryCodeFromName(resolvedCountry);
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8;" }), `payment-out-${code}.csv`);
+}
+
+export function exportPaymentOutSummaryPdf(records, country = "", currency = "") {
+  const safeRecords = Array.isArray(records) ? records : [];
+  const resolvedCountry = country || safeRecords[0]?.country || "Global";
+  const resolvedCurrency = currency || safeRecords[0]?.currency || "";
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  let y = 14;
+
+  doc.setFontSize(16);
+  doc.text("Payment Out Summary", 14, y);
+  y += 7;
+  doc.setFontSize(10);
+  doc.text(`Country: ${resolvedCountry}`, 14, y);
+  y += 5;
+  doc.text(`Generated: ${formatDateTimeByPreference(new Date())}`, 14, y);
+  y += 8;
+
+  doc.setFontSize(9);
+  doc.text("Payment", 14, y);
+  doc.text("Date", 48, y);
+  doc.text("Supplier", 74, y);
+  doc.text("Status", 140, y);
+  doc.text("Paid", 186, y, { align: "right" });
+  y += 4;
+  doc.line(14, y, 196, y);
+  y += 5;
+
+  safeRecords.slice(0, 28).forEach((entry) => {
+    doc.text(String(entry?.paymentNo || "").slice(0, 22), 14, y);
+    doc.text(String(entry?.paymentDate || "-"), 48, y);
+    doc.text(String(entry?.supplierName || "").slice(0, 30), 74, y);
+    doc.text(String(entry?.status || ""), 140, y);
+    doc.text(formatMoney(entry?.totals?.amountPaid, entry?.currency || resolvedCurrency), 186, y, { align: "right" });
+    y += 6;
+  });
+
+  const totalPaid = safeRecords.reduce((sum, entry) => sum + parseNumber(entry?.totals?.amountPaid), 0);
+  y += 4;
+  doc.line(14, y, 196, y);
+  y += 6;
+  doc.setFontSize(11);
+  doc.text(`Total Paid: ${formatMoney(totalPaid, resolvedCurrency)}`, 14, y);
+
+  const code = countryCodeFromName(resolvedCountry);
+  doc.save(`payment-out-summary-${code}.pdf`);
+}
 
 export function exportPaymentOutPdf(record) {
   if (!record) return;

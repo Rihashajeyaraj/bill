@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ChevronDown,
   FileDown,
+  FileSpreadsheet,
   Mail,
   Plus,
   Search,
@@ -36,7 +37,7 @@ import {
   summarizePaymentOut,
   updateAllocationAmount
 } from "../../modules/paymentOut/store";
-import { exportPaymentOutPdf } from "../../modules/paymentOut/pdf";
+import { exportPaymentOutCsv, exportPaymentOutPdf, exportPaymentOutSummaryPdf } from "../../modules/paymentOut/pdf";
 import { formatMoney, normalizeText, parseNumber } from "../../modules/paymentOut/utils";
 
 const PAYMENT_MODES = ["Cash", "Bank Transfer", "Cheque", "Card", "Online"];
@@ -511,22 +512,18 @@ export default function PaymentOutPremium() {
           </div>
 
           <FlowCard title="Supplier Payments" subtitle="Search by supplier, payment number, or reference.">
-            <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">Filters</p>
-                <p className="text-xs text-slate-500">Refine by supplier, mode, status, and date.</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="space-y-3 border-b border-slate-100 px-4 py-4">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Search supplier, payment number, reference"
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 sm:max-w-xs"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 />
                 <select
                   value={supplierFilter}
                   onChange={(event) => setSupplierFilter(event.target.value)}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 >
                   <option value="">All Suppliers</option>
                   {suppliers.map((entry) => (
@@ -538,7 +535,7 @@ export default function PaymentOutPremium() {
                 <select
                   value={modeFilter}
                   onChange={(event) => setModeFilter(event.target.value)}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 >
                   <option value="">All Modes</option>
                   {PAYMENT_MODES.map((mode) => (
@@ -550,7 +547,7 @@ export default function PaymentOutPremium() {
                 <select
                   value={statusFilter}
                   onChange={(event) => setStatusFilter(event.target.value)}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 >
                   <option value="">All Status</option>
                   {STATUSES.map((status) => (
@@ -563,14 +560,34 @@ export default function PaymentOutPremium() {
                   type="date"
                   value={fromDate}
                   onChange={(event) => setFromDate(event.target.value)}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 />
                 <input
                   type="date"
                   value={toDate}
                   onChange={(event) => setToDate(event.target.value)}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => exportPaymentOutSummaryPdf(filteredPayments, country, currency)}
+                  disabled={!filteredPayments.length}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                  Summary PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => exportPaymentOutCsv(filteredPayments, currency, country)}
+                  disabled={!filteredPayments.length}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                  CSV
+                </button>
               </div>
             </div>
 
