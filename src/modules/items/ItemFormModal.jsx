@@ -452,17 +452,13 @@ export default function ItemFormModal({
 
             <FormField label={taxCfg.label}>
               <input
-                list="tax-rate-options"
+                type="text"
+                inputMode="decimal"
                 value={form.taxRate}
                 onChange={(event) => updateField("taxRate", parseNumber(event.target.value))}
                 className={inputClassName}
                 placeholder="0"
               />
-              <datalist id="tax-rate-options">
-                {taxCfg.rates.map((rate) => (
-                  <option key={rate} value={rate} />
-                ))}
-              </datalist>
               <p className="mt-2 text-xs text-slate-500">
                 Default label: {buildTaxLabel(country, parseNumber(form.taxRate))}
               </p>
