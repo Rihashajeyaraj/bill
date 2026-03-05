@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Plus, Search, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
+import { createPortal } from "react-dom";
 import Card from "../../components/Card";
 import GradientButton from "../../components/GradientButton";
 import PageHeader from "../../components/PageHeader";
 import { useToast } from "../../context/ToastContext";
 import { listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../modules/parties/store";
-import { listItems, syncItemsFromRemote } from "../../modules/items/store";
+import { computeItemStock, listItems, syncItemsFromRemote } from "../../modules/items/store";
 import {
   getCanonicalCountryName,
   listAllCountries,
@@ -83,6 +84,16 @@ function formatItemSearchLabel(item: any) {
   const name = String(item?.name || "").trim();
   if (identifier && name) return `${identifier} | ${name}`;
   return name || identifier;
+}
+
+function normalizeInvoiceItemType(value: unknown) {
+  return String(value || "").trim().toLowerCase() === "service" ? "Service" : "Product";
+}
+
+function itemTypeBadgeClassName(type: unknown) {
+  return normalizeInvoiceItemType(type) === "Service"
+    ? "rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700"
+    : "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700";
 }
 
 function findItemBySearchInput(items: any[], value: unknown) {
@@ -207,6 +218,13 @@ export default function SalesProformaEditor() {
   const [customerCountryMenuOpen, setCustomerCountryMenuOpen] = useState(false);
   const [customerStateMenuOpen, setCustomerStateMenuOpen] = useState(false);
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
+  const [lineItemPopover, setLineItemPopover] = useState({
+    top: 0,
+    left: 0,
+    width: 280,
+    openUpward: false,
+    maxHeight: 200
+  });
   const [form, setForm] = useState<any>({
     id: "",
     proformaNo: "",
@@ -234,6 +252,14 @@ export default function SalesProformaEditor() {
     () => salesProformaComputeTotals(form.lines || [], 0),
     [form.lines]
   );
+  const stockByItemId = useMemo(() => {
+    const lookup = new Map<string, { available: number; availableRaw: number; lowStock: boolean }>();
+    (items || []).forEach((item: any) => {
+      if (normalizeInvoiceItemType(item?.type) !== "Product") return;
+      lookup.set(String(item?.id || ""), computeItemStock(item));
+    });
+    return lookup;
+  }, [items]);
   const validation = useMemo(() => validateSalesProformaForm(form), [form]);
   const canSave = !saving && !loading && !locked && !validation.hasErrors;
   const allCountryOptions = useMemo(() => listAllCountries(), []);
@@ -591,6 +617,37 @@ export default function SalesProformaEditor() {
     return (items || []).filter((item) => itemMatchesSearchQuery(item, query)).slice(0, 8);
   }
 
+  function updateLineItemPopoverPosition(inputElement?: HTMLInputElement | null) {
+    const target =
+      inputElement ||
+      (activeLineItemSearchId
+        ? (document.getElementById(`sales-proforma-item-input-${activeLineItemSearchId}`) as HTMLInputElement | null)
+        : null);
+    if (!target) return;
+    const rect = target.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const margin = 8;
+    const gap = 6;
+    const desiredHeight = 200;
+    const width = Math.max(260, Math.round(rect.width));
+    const left = Math.max(margin, Math.min(rect.left, viewportWidth - width - margin));
+    const spaceBelow = Math.max(0, viewportHeight - rect.bottom - margin - gap);
+    const spaceAbove = Math.max(0, rect.top - margin - gap);
+    const openUpward = spaceBelow < desiredHeight && spaceAbove > spaceBelow;
+    const availableSpace = openUpward ? spaceAbove : spaceBelow;
+    const fallbackSpace = Math.max(spaceAbove, spaceBelow);
+    const effectiveSpace = availableSpace > 0 ? availableSpace : fallbackSpace;
+    const maxHeight = Math.max(80, Math.min(desiredHeight, Math.floor(effectiveSpace || desiredHeight)));
+    setLineItemPopover({
+      top: openUpward ? Math.round(rect.top - gap) : Math.round(rect.bottom + gap),
+      left: Math.round(left),
+      width,
+      openUpward,
+      maxHeight
+    });
+  }
+
   const activeLineForSearch = useMemo(
     () => (form.lines || []).find((line: any) => String(line?.id || "") === String(activeLineItemSearchId || "")) || null,
     [form.lines, activeLineItemSearchId]
@@ -599,6 +656,20 @@ export default function SalesProformaEditor() {
     if (!activeLineForSearch) return [];
     return getLineItemSearchResults(activeLineForSearch);
   }, [activeLineForSearch, items]);
+
+  useEffect(() => {
+    if (!activeLineItemSearchId) return undefined;
+    updateLineItemPopoverPosition();
+    const syncPopoverPosition = () => {
+      updateLineItemPopoverPosition();
+    };
+    window.addEventListener("resize", syncPopoverPosition);
+    window.addEventListener("scroll", syncPopoverPosition, true);
+    return () => {
+      window.removeEventListener("resize", syncPopoverPosition);
+      window.removeEventListener("scroll", syncPopoverPosition, true);
+    };
+  }, [activeLineItemSearchId, activeLineForSearch?.itemInput, activeLineSearchResults.length]);
 
   async function onSave() {
     if (locked) return;
@@ -1034,13 +1105,17 @@ export default function SalesProformaEditor() {
                         <td className="px-2 py-2">
                           <div className="relative">
                             <input
+                              id={`sales-proforma-item-input-${line.id}`}
                               className={`w-full rounded-lg border px-2 py-1.5 pr-8 text-sm ${
                                 lineError?.item ? "border-rose-300" : "border-slate-200"
                               }`}
                               value={line.itemInput || ""}
                               disabled={locked}
-                              placeholder="Search by item name or code"
-                              onFocus={() => setActiveLineItemSearchId(line.id)}
+                              placeholder="Search by product ID or name"
+                              onFocus={(event) => {
+                                setActiveLineItemSearchId(line.id);
+                                updateLineItemPopoverPosition(event.currentTarget);
+                              }}
                               onBlur={() => {
                                 window.setTimeout(() => {
                                   setActiveLineItemSearchId((current) => (current === line.id ? "" : current));
@@ -1049,6 +1124,7 @@ export default function SalesProformaEditor() {
                               onChange={(event) => {
                                 setActiveLineItemSearchId(line.id);
                                 handleItemInput(line.id, event.target.value);
+                                updateLineItemPopoverPosition(event.currentTarget);
                               }}
                             />
                             {(line.itemId || line.itemInput) ? (
@@ -1065,28 +1141,6 @@ export default function SalesProformaEditor() {
                               >
                                 <X className="h-3.5 w-3.5" />
                               </button>
-                            ) : null}
-                            {activeLineItemSearchId === line.id && normalizeItemName(line.itemInput).length ? (
-                              <div className="absolute z-20 mt-1 w-full rounded-xl border border-slate-100 bg-white p-1.5 shadow-soft">
-                                {activeLineSearchResults.length ? (
-                                  activeLineSearchResults.map((item) => (
-                                    <button
-                                      key={`sales-proforma-line-${line.id}-${item.id}`}
-                                      type="button"
-                                      onMouseDown={(event) => {
-                                        event.preventDefault();
-                                        selectLineItem(line, item);
-                                        setActiveLineItemSearchId("");
-                                      }}
-                                      className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                                    >
-                                      {formatItemSearchLabel(item)}
-                                    </button>
-                                  ))
-                                ) : (
-                                  <div className="px-2 py-1.5 text-xs text-slate-500">No items found</div>
-                                )}
-                              </div>
                             ) : null}
                             {line.itemCode ? (
                               <p className="mt-1 text-[11px] text-slate-500">Code: {line.itemCode}</p>
@@ -1194,6 +1248,64 @@ export default function SalesProformaEditor() {
                   </tbody>
                 </table>
               </div>
+              {activeLineForSearch &&
+              activeLineItemSearchId &&
+              normalizeItemName(activeLineForSearch.itemInput).length
+                ? createPortal(
+                    <div
+                      className="fixed z-[130] overflow-auto rounded-xl border border-slate-100 bg-white p-1.5 shadow-soft"
+                      style={{
+                        top: `${lineItemPopover.top}px`,
+                        left: `${lineItemPopover.left}px`,
+                        width: `${lineItemPopover.width}px`,
+                        maxHeight: `${lineItemPopover.maxHeight}px`,
+                        transform: lineItemPopover.openUpward ? "translateY(-100%)" : "none"
+                      }}
+                    >
+                      {activeLineSearchResults.length ? (
+                        activeLineSearchResults.map((item) => {
+                          const itemType = normalizeInvoiceItemType(item?.type);
+                          const stockInfo = stockByItemId.get(String(item?.id || ""));
+                          const outOfStock = itemType === "Product" && Number(stockInfo?.available || 0) <= 0;
+                          const selected = String(activeLineForSearch?.itemId || "") === String(item?.id || "");
+                          return (
+                            <button
+                              key={`sales-proforma-floating-${activeLineForSearch.id}-${item.id}`}
+                              type="button"
+                              disabled={outOfStock}
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                if (outOfStock) return;
+                                selectLineItem(activeLineForSearch, item);
+                                setActiveLineItemSearchId("");
+                              }}
+                              className={`w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${
+                                selected ? "ring-1 ring-slate-200" : ""
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex min-w-0 flex-col gap-1">
+                                  <span className="truncate text-sm text-slate-800">{formatItemSearchLabel(item)}</span>
+                                  <span className={itemTypeBadgeClassName(itemType)}>{itemType}</span>
+                                </div>
+                                {stockInfo ? (
+                                  <span className={`text-[11px] font-semibold ${outOfStock ? "text-rose-600" : "text-slate-500"}`}>
+                                    Remaining: {stockInfo.available}
+                                  </span>
+                                ) : (
+                                  <span className="text-[11px] text-slate-400">Service / Not tracked</span>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <div className="px-2 py-1.5 text-xs text-slate-500">No items found</div>
+                      )}
+                    </div>,
+                    document.body
+                  )
+                : null}
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
