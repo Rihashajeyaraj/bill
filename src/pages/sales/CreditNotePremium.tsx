@@ -75,6 +75,10 @@ function computePurchaseRateFromAllocations(allocations: any[], qty: number) {
   return Number((totalCost / usedQty).toFixed(6));
 }
 
+function resolveCreditLineKey(line: any, index: number) {
+  return String(line?.id || line?.sourceInvoiceItemId || `line_${index + 1}`);
+}
+
 export default function CreditNotePremium() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
@@ -522,21 +526,26 @@ export default function CreditNotePremium() {
   }
 
   function updateLine(id: string, patch: any) {
+    const targetId = String(id || "");
     setForm((prev) =>
       prev
         ? {
             ...prev,
-            lines: prev.lines.map((line) =>
-              line.id === id
-                ? {
-                    ...line,
-                    ...patch,
-                    taxRate: forceZeroTax ? 0 : parseNumber((patch as any)?.taxRate ?? line.taxRate),
-                    creditType: "Percentage",
-                    creditValue: 0
-                  }
-                : line
-            )
+            lines: prev.lines.map((line, index) => {
+              const lineId = resolveCreditLineKey(line, index);
+              if (lineId !== targetId) {
+                return line;
+              }
+              return {
+                ...line,
+                id: lineId,
+                sourceInvoiceItemId: String((line as any)?.sourceInvoiceItemId || lineId),
+                ...patch,
+                taxRate: forceZeroTax ? 0 : parseNumber((patch as any)?.taxRate ?? line.taxRate),
+                creditType: "Percentage",
+                creditValue: 0
+              };
+            })
           }
         : prev
     );
@@ -572,7 +581,15 @@ export default function CreditNotePremium() {
   }
 
   function removeLine(id: string) {
-    setForm((prev) => (prev ? { ...prev, lines: prev.lines.filter((line) => line.id !== id) } : prev));
+    const targetId = String(id || "");
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            lines: prev.lines.filter((line, index) => resolveCreditLineKey(line, index) !== targetId)
+          }
+        : prev
+    );
     setDirty(true);
   }
 

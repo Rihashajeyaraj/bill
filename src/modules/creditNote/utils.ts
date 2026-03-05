@@ -51,36 +51,39 @@ export function defaultForm(country: CountryCode, company: any): CreditNoteFormS
 }
 
 export function draftLinesFromInvoice(invoice: CreditInvoice): CreditLineDraft[] {
-  return invoice.lines.map((line) => ({
-    id: line.id,
-    sourceInvoiceItemId: line.sourceInvoiceItemId || line.id,
-    itemId: line.itemId || "",
-    sourceInvoiceQty: Math.max(
-      0,
-      parseNumber(
-        line.availableReturnQty !== undefined && line.availableReturnQty !== null
-          ? line.availableReturnQty
-          : line.quantity
-      )
-    ),
-    sourceInvoiceAmountAfterTax: Math.max(0, parseNumber(line.amountAfterTax)),
-    priceTaxMode:
-      String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX"
-        ? "WITH_TAX"
-        : "WITHOUT_TAX",
-    taxInclusive:
-      line.taxInclusive === true ||
-      String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX",
-    returnCondition: "",
-    purchaseRate: 0,
-    itemName: line.itemName,
-    quantity: 0,
-    rate: Math.max(0, line.rate),
-    taxRate: Math.max(0, line.taxRate),
-    hsnSac: line.hsnSac || "",
-    creditType: "Percentage",
-    creditValue: 0
-  }));
+  return invoice.lines.map((line, index) => {
+    const stableLineId = String(line.id || line.sourceInvoiceItemId || `line_${index + 1}`);
+    return {
+      id: stableLineId,
+      sourceInvoiceItemId: String(line.sourceInvoiceItemId || line.id || stableLineId),
+      itemId: line.itemId || "",
+      sourceInvoiceQty: Math.max(
+        0,
+        parseNumber(
+          line.availableReturnQty !== undefined && line.availableReturnQty !== null
+            ? line.availableReturnQty
+            : line.quantity
+        )
+      ),
+      sourceInvoiceAmountAfterTax: Math.max(0, parseNumber(line.amountAfterTax)),
+      priceTaxMode:
+        String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX"
+          ? "WITH_TAX"
+          : "WITHOUT_TAX",
+      taxInclusive:
+        line.taxInclusive === true ||
+        String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX",
+      returnCondition: "",
+      purchaseRate: 0,
+      itemName: line.itemName,
+      quantity: 0,
+      rate: Math.max(0, line.rate),
+      taxRate: Math.max(0, line.taxRate),
+      hsnSac: line.hsnSac || "",
+      creditType: "Percentage",
+      creditValue: 0
+    };
+  });
 }
 
 export function formFromNote(note: CreditNoteRecord): CreditNoteFormState {
@@ -107,35 +110,38 @@ export function formFromNote(note: CreditNoteRecord): CreditNoteFormState {
     discountPercent: String(note.discountPercent || ""),
     partialAmountCap: String(note.partialAmountCap || ""),
     priceAdjustmentAmount: String(note.priceAdjustmentAmount || ""),
-    lines: note.lines.map((line) => ({
-      id: line.id,
-      sourceInvoiceItemId: (line as any).sourceInvoiceItemId || line.id,
-      itemId: (line as any).itemId || "",
-      sourceInvoiceQty: parseNumber((line as any).sourceInvoiceQty ?? line.quantity),
-      sourceInvoiceAmountAfterTax: parseNumber(
-        (line as any).sourceInvoiceAmountAfterTax ?? (line as any).amountAfterTax
-      ),
-      priceTaxMode:
-        String((line as any).priceTaxMode || "").toUpperCase() === "WITH_TAX"
-          ? "WITH_TAX"
-          : "WITHOUT_TAX",
-      taxInclusive:
-        (line as any).taxInclusive === true ||
-        String((line as any).priceTaxMode || "").toUpperCase() === "WITH_TAX",
-      returnCondition:
-        (line as any).returnCondition === "REUSABLE" ||
-        (line as any).returnCondition === "NOT_REUSABLE"
-          ? (line as any).returnCondition
-          : "",
-      purchaseRate: parseNumber((line as any).purchaseRate),
-      itemName: line.itemName,
-      quantity: line.quantity,
-      rate: line.rate,
-      taxRate: line.taxRate,
-      hsnSac: line.hsnSac || "",
-      creditType: line.creditType === "Fixed" ? "Fixed" : "Percentage",
-      creditValue: parseNumber(line.creditValue)
-    }))
+    lines: note.lines.map((line, index) => {
+      const stableLineId = String(line.id || (line as any).sourceInvoiceItemId || `line_${index + 1}`);
+      return {
+        id: stableLineId,
+        sourceInvoiceItemId: String((line as any).sourceInvoiceItemId || line.id || stableLineId),
+        itemId: (line as any).itemId || "",
+        sourceInvoiceQty: parseNumber((line as any).sourceInvoiceQty ?? line.quantity),
+        sourceInvoiceAmountAfterTax: parseNumber(
+          (line as any).sourceInvoiceAmountAfterTax ?? (line as any).amountAfterTax
+        ),
+        priceTaxMode:
+          String((line as any).priceTaxMode || "").toUpperCase() === "WITH_TAX"
+            ? "WITH_TAX"
+            : "WITHOUT_TAX",
+        taxInclusive:
+          (line as any).taxInclusive === true ||
+          String((line as any).priceTaxMode || "").toUpperCase() === "WITH_TAX",
+        returnCondition:
+          (line as any).returnCondition === "REUSABLE" ||
+          (line as any).returnCondition === "NOT_REUSABLE"
+            ? (line as any).returnCondition
+            : "",
+        purchaseRate: parseNumber((line as any).purchaseRate),
+        itemName: line.itemName,
+        quantity: line.quantity,
+        rate: line.rate,
+        taxRate: line.taxRate,
+        hsnSac: line.hsnSac || "",
+        creditType: line.creditType === "Fixed" ? "Fixed" : "Percentage",
+        creditValue: parseNumber(line.creditValue)
+      };
+    })
   };
 }
 
@@ -154,16 +160,21 @@ export function computeEditorTotals(
     companyState.trim().toLowerCase() === form.placeOfSupply.trim().toLowerCase();
 
   const detailed = form.lines.map((line, index) => {
+    const stableLineId = String(line.id || (line as any).sourceInvoiceItemId || `line_${index + 1}`);
     const quantity = Math.max(0, parseNumber(line.quantity));
     const rate = Math.max(0, parseNumber(line.rate));
     const taxRate = Math.max(0, parseNumber(line.taxRate));
+    const lineDiscount = Math.max(
+      0,
+      parseNumber((line as any).discountAmount ?? (line as any).discount ?? 0)
+    );
     const taxInclusive =
       line.taxInclusive === true ||
       String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX";
     const priceTaxMode = taxInclusive ? "WITH_TAX" : "WITHOUT_TAX";
     const creditType = line.creditType === "Fixed" ? "Fixed" : "Percentage";
     const creditValue = Math.max(0, parseNumber(line.creditValue));
-    const grossCents = toCents(quantity * rate);
+    const grossCents = Math.max(0, toCents(quantity * rate) - toCents(lineDiscount));
     let baseCents = grossCents;
     let taxCents = 0;
     let amountAfterTaxCents = grossCents;
@@ -190,7 +201,8 @@ export function computeEditorTotals(
 
     return {
       ...line,
-      id: line.id || `line_${index + 1}`,
+      id: stableLineId,
+      sourceInvoiceItemId: String((line as any).sourceInvoiceItemId || stableLineId),
       returnCondition:
         line.returnCondition === "REUSABLE" || line.returnCondition === "NOT_REUSABLE"
           ? line.returnCondition
