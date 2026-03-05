@@ -81,11 +81,10 @@ export default function DebitNoteEditor({
   );
   const [availableInvoices, setAvailableInvoices] = useState<PurchaseInvoice[]>([]);
   const [invoiceLoading, setInvoiceLoading] = useState(false);
-  const [supplierSearchPhone, setSupplierSearchPhone] = useState("");
-  const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
+  const [supplierSearchQuery, setSupplierSearchQuery] = useState("");
   const [supplierSearchError, setSupplierSearchError] = useState("");
   const supplierLookupResults = useMemo(() => {
-    const query = String(supplierLookupQuery || "").trim().toLowerCase();
+    const query = String(supplierSearchQuery || "").trim().toLowerCase();
     if (!query) return [];
     const normalizedPhoneQuery = normalizePhoneForLookup(query);
     return suppliers
@@ -97,7 +96,7 @@ export default function DebitNoteEditor({
         return text.includes(query) || (normalizedPhoneQuery && supplierPhone && supplierPhone.includes(normalizedPhoneQuery));
       })
       .slice(0, 8);
-  }, [suppliers, supplierLookupQuery]);
+  }, [suppliers, supplierSearchQuery]);
 
   useEffect(() => {
     if (!selectedSupplierId) {
@@ -126,11 +125,11 @@ export default function DebitNoteEditor({
 
   useEffect(() => {
     if (!selectedSupplierId) {
-      setSupplierSearchPhone("");
+      setSupplierSearchQuery("");
       return;
     }
-    setSupplierSearchPhone(String(selectedSupplier?.phone || "").replace(/\D/g, "").slice(-10));
-  }, [selectedSupplierId, selectedSupplier?.phone]);
+    setSupplierSearchQuery(String(selectedSupplier?.name || "").trim());
+  }, [selectedSupplierId, selectedSupplier?.name]);
 
   function resetInvoiceSelection() {
     onUpdateForm("linkedPurchaseInvoiceId", "");
@@ -151,49 +150,27 @@ export default function DebitNoteEditor({
     if (supplierChanged) {
       resetInvoiceSelection();
     }
-    setSupplierSearchPhone(String(supplier.phone || "").replace(/\D/g, "").slice(-10));
-    setSupplierLookupQuery("");
+    setSupplierSearchQuery(String(supplier.name || "").trim());
     setSupplierSearchError("");
   }
 
-  function handleSupplierPhoneChange(value: string) {
-    const digits = String(value || "").replace(/\D/g, "").slice(0, 10);
-    setSupplierSearchPhone(digits);
+  function handleSupplierSearchInputChange(value: string) {
+    setSupplierSearchQuery(value);
     setSupplierSearchError("");
-    if (selectedSupplierId && normalizePhoneForLookup(digits) !== normalizePhoneForLookup(selectedSupplier?.phone)) {
+    if (
+      selectedSupplierId &&
+      String(value || "").trim().toLowerCase() !== String(selectedSupplier?.name || "").trim().toLowerCase()
+    ) {
       onUpdateForm("supplierId", "");
       onUpdateForm("supplierInput", "");
       resetInvoiceSelection();
     }
   }
 
-  function handleSupplierLookupChange(value: string) {
-    setSupplierLookupQuery(value);
-    setSupplierSearchError("");
-  }
-
   function handleSupplierSearch() {
-    const phoneDigits = String(supplierSearchPhone || "").replace(/\D/g, "");
-    if (phoneDigits) {
-      if (phoneDigits.length !== 10) {
-        setSupplierSearchError("Enter a valid 10-digit supplier mobile number.");
-        return;
-      }
-      const normalizedPhone = normalizePhoneForLookup(phoneDigits);
-      const matchedSupplier = suppliers.find(
-        (supplier) => normalizePhoneForLookup(supplier?.phone) === normalizedPhone
-      );
-      if (!matchedSupplier) {
-        setSupplierSearchError("No supplier found for this mobile number.");
-        return;
-      }
-      applySupplierSelection(matchedSupplier);
-      return;
-    }
-
-    const query = String(supplierLookupQuery || "").trim();
+    const query = String(supplierSearchQuery || "").trim();
     if (query.length < 2) {
-      setSupplierSearchError("Enter mobile number or name/email/address to search.");
+      setSupplierSearchError("Enter name, phone, email, or address to search.");
       return;
     }
     if (!supplierLookupResults.length) {
@@ -211,8 +188,7 @@ export default function DebitNoteEditor({
     onUpdateForm("supplierId", "");
     onUpdateForm("supplierInput", "");
     resetInvoiceSelection();
-    setSupplierSearchPhone("");
-    setSupplierLookupQuery("");
+    setSupplierSearchQuery("");
     setSupplierSearchError("");
   }
 
@@ -264,58 +240,32 @@ export default function DebitNoteEditor({
               </label>
               <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 md:col-span-2 xl:col-span-2">
                 <p className="text-xs font-semibold text-slate-600">Supplier Search</p>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-2">
                   <input
-                    value={supplierSearchPhone}
-                    onChange={(event) => handleSupplierPhoneChange(event.target.value)}
+                    value={supplierSearchQuery}
+                    onChange={(event) => handleSupplierSearchInputChange(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
                         event.preventDefault();
                         handleSupplierSearch();
                       }
                     }}
-                    inputMode="numeric"
-                    maxLength={10}
-                    placeholder="Enter 10-digit mobile number"
+                    placeholder="Search supplier by name, phone, email, or address"
                     disabled={isReadOnly}
-                    className="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
+                    className="h-10 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
                   />
                   <button
                     type="button"
                     onClick={handleSupplierSearch}
                     disabled={isReadOnly}
-                    className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex h-10 w-[96px] shrink-0 items-center justify-center gap-2 rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Search className="h-3.5 w-3.5" />
                     Search
                   </button>
-                  {selectedSupplierId ? (
-                    <button
-                      type="button"
-                      onClick={resetSupplierSelection}
-                      disabled={isReadOnly}
-                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                      Clear
-                    </button>
-                  ) : null}
                 </div>
-                <input
-                  value={supplierLookupQuery}
-                  onChange={(event) => handleSupplierLookupChange(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      handleSupplierSearch();
-                    }
-                  }}
-                  placeholder="Type supplier name, email, or address"
-                  disabled={isReadOnly}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
-                />
                 {supplierSearchError ? <p className="text-xs font-medium text-rose-600">{supplierSearchError}</p> : null}
-                {supplierLookupQuery.trim() ? (
+                {supplierSearchQuery.trim() ? (
                   supplierLookupResults.length ? (
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       {supplierLookupResults.map((supplier) => (
@@ -344,12 +294,17 @@ export default function DebitNoteEditor({
                     <p className="mt-1 text-slate-500">{selectedSupplier.phone || "-"}</p>
                     <p className="mt-1 text-slate-500">{selectedSupplier.email || "-"}</p>
                     <p className="mt-1 text-slate-500">{supplierAddressSummary(selectedSupplier) || "-"}</p>
+                    <button
+                      type="button"
+                      onClick={resetSupplierSelection}
+                      disabled={isReadOnly}
+                      className="mt-2 inline-flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Clear
+                    </button>
                   </div>
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500">
-                    Search supplier by mobile, name, email, or address.
-                  </div>
-                )}
+                ) : null}
                 {fieldErrors.supplierId ? <span className="block text-xs text-rose-600">{fieldErrors.supplierId}</span> : null}
               </div>
               <label className="text-xs font-semibold text-slate-600 md:col-span-2 xl:col-span-3">

@@ -73,37 +73,47 @@ export default function DebitNoteListTable({
   return (
     <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
       <div className="max-h-[560px] overflow-auto">
-        <table className="w-full min-w-[1080px] text-left text-sm">
+        <table className="w-full min-w-[1080px] table-fixed text-left text-sm">
+          <colgroup>
+            <col style={{ width: "14%" }} />
+            <col style={{ width: "10%" }} />
+            <col style={{ width: "18%" }} />
+            <col style={{ width: "14%" }} />
+            <col style={{ width: "20%" }} />
+            <col style={{ width: "12%" }} />
+            <col style={{ width: "7%" }} />
+            <col style={{ width: "5%" }} />
+          </colgroup>
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr>
-              <th className="px-4 py-3 font-semibold text-slate-700">Debit Note No</th>
-              <th className="px-4 py-3 font-semibold text-slate-700">Date</th>
-              <th className="px-4 py-3 font-semibold text-slate-700">Supplier / Vendor</th>
-              <th className="px-4 py-3 font-semibold text-slate-700">Linked Purchase Invoice</th>
-              <th className="px-4 py-3 font-semibold text-slate-700">Reason</th>
-              <th className="px-4 py-3 font-semibold text-slate-700 text-right">Debit Amount</th>
-              <th className="px-4 py-3 font-semibold text-slate-700">Status</th>
-              <th className="px-4 py-3 font-semibold text-slate-700">Actions</th>
+              <th className="px-4 py-3 align-middle font-semibold text-slate-700">Debit Note No</th>
+              <th className="px-4 py-3 align-middle font-semibold text-slate-700">Date</th>
+              <th className="px-4 py-3 align-middle font-semibold text-slate-700">Supplier / Vendor</th>
+              <th className="px-4 py-3 align-middle font-semibold text-slate-700">Linked Purchase Invoice</th>
+              <th className="px-4 py-3 align-middle font-semibold text-slate-700">Reason</th>
+              <th className="px-4 py-3 align-middle text-right font-semibold text-slate-700">Debit Amount</th>
+              <th className="px-4 py-3 align-middle font-semibold text-slate-700">Status</th>
+              <th className="px-4 py-3 align-middle font-semibold text-slate-700">Actions</th>
             </tr>
           </thead>
           <tbody>
             {rows.length ? (
               rows.map((note) => (
                 <tr key={note.id} className="border-t border-slate-100 hover:bg-slate-50/70">
-                  <td className="px-4 py-3 font-semibold text-slate-900">{note.debitNoteNo}</td>
-                  <td className="px-4 py-3 text-slate-700">{note.debitNoteDate}</td>
-                  <td className="px-4 py-3 text-slate-700">{note.supplierName}</td>
-                  <td className="px-4 py-3 text-slate-700">{note.linkedPurchaseInvoiceNo}</td>
-                  <td className="px-4 py-3 text-slate-700">{note.reason}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                  <td className="px-4 py-3 align-middle font-semibold text-slate-900">{note.debitNoteNo}</td>
+                  <td className="px-4 py-3 align-middle text-slate-700">{note.debitNoteDate}</td>
+                  <td className="px-4 py-3 align-middle text-slate-700">{note.supplierName}</td>
+                  <td className="px-4 py-3 align-middle text-slate-700">{note.linkedPurchaseInvoiceNo}</td>
+                  <td className="px-4 py-3 align-middle text-slate-700">{note.reason}</td>
+                  <td className="px-4 py-3 align-middle text-right font-semibold text-slate-900">
                     {note.currency} {note.totals.total.toFixed(2)}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 align-middle">
                     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(note.status)}`}>
                       {note.status}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 align-middle">
                     <div className="relative inline-flex" data-debit-note-actions-root="true">
                       <button
                         type="button"
