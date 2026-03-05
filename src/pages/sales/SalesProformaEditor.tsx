@@ -22,6 +22,8 @@ import {
   salesProformaUpsert
 } from "../../services/proformas.service";
 
+const UNIT_OPTIONS = ["pcs", "kg", "box", "pack", "ltr", "hours", "days", "months", "service"];
+
 function parseNumber(value: unknown) {
   const numeric = Number(value ?? 0);
   return Number.isFinite(numeric) ? numeric : 0;
@@ -367,7 +369,7 @@ export default function SalesProformaEditor() {
                       itemInput: item?.name || line?.description || "",
                       description: line?.description || item?.name || "",
                       qty: parseNumber(line?.qty) || 1,
-                      unit: line?.unit || "pcs",
+                      unit: line?.unit ?? "pcs",
                       rate: parseNumber(line?.rate),
                       discountAmount: parseNumber(line?.discountAmount),
                       discountPercent: parseNumber(line?.discountPercent),
@@ -571,7 +573,7 @@ export default function SalesProformaEditor() {
       itemCode: item?.itemCode || "",
       itemInput: item?.name || "",
       description: item?.name || "",
-      unit: item?.unit || line?.unit || "pcs",
+      unit: item?.unit ?? line?.unit ?? "pcs",
       rate: parseNumber(item?.salesRate ?? item?.price ?? item?.sale_price ?? line?.rate),
       taxRate: parseNumber(item?.taxRate ?? item?.metadata?.taxRate ?? item?.tax_rate ?? line?.taxRate)
     });
@@ -595,7 +597,7 @@ export default function SalesProformaEditor() {
         itemId: match?.id || "",
         itemCode: match?.itemCode || "",
         description: match?.name || "",
-        unit: match?.unit || line?.unit || "pcs",
+        unit: match?.unit ?? line?.unit ?? "pcs",
         rate: parseNumber(match?.salesRate ?? match?.price ?? match?.sale_price ?? line?.rate),
         taxRate: parseNumber(match?.taxRate ?? match?.metadata?.taxRate ?? match?.tax_rate ?? line?.taxRate)
       };
@@ -1169,8 +1171,10 @@ export default function SalesProformaEditor() {
                         <td className="px-2 py-2">
                           <input
                             className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
-                            value={line.unit || "pcs"}
+                            value={line.unit ?? ""}
                             disabled={locked}
+                            list="sales-proforma-unit-options"
+                            placeholder="Unit"
                             onChange={(event) => updateLine(line.id, { unit: event.target.value })}
                           />
                         </td>
@@ -1248,6 +1252,11 @@ export default function SalesProformaEditor() {
                   </tbody>
                 </table>
               </div>
+              <datalist id="sales-proforma-unit-options">
+                {UNIT_OPTIONS.map((unitOption) => (
+                  <option key={unitOption} value={unitOption} />
+                ))}
+              </datalist>
               {activeLineForSearch &&
               activeLineItemSearchId &&
               normalizeItemName(activeLineForSearch.itemInput).length

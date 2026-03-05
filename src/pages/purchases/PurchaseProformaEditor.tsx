@@ -22,6 +22,8 @@ import {
   purchaseProformaUpsert
 } from "../../services/proformas.service";
 
+const UNIT_OPTIONS = ["pcs", "kg", "box", "pack", "ltr", "hours", "days", "months", "service"];
+
 function parseNumber(value: unknown) {
   const numeric = Number(value ?? 0);
   return Number.isFinite(numeric) ? numeric : 0;
@@ -123,6 +125,7 @@ function createEmptyLine() {
     itemInput: "",
     description: "",
     qty: 1,
+    unit: "pcs",
     rate: 0,
     taxRate: 0
   };
@@ -285,6 +288,7 @@ export default function PurchaseProformaEditor() {
                     itemInput: line?.itemName || line?.description || "",
                     description: line?.description || "",
                     qty: parseNumber(line?.qty) || 1,
+                    unit: line?.unit ?? "pcs",
                     rate: parseNumber(line?.rate),
                     taxRate: parseNumber(line?.taxRate)
                   }))
@@ -539,6 +543,7 @@ export default function PurchaseProformaEditor() {
       itemCode: item?.itemCode || "",
       itemInput: item?.name || "",
       description: item?.name || "",
+      unit: item?.unit ?? line?.unit ?? "pcs",
       rate: parseNumber(item?.purchaseRate ?? item?.metadata?.purchasePrice ?? item?.purchase_price ?? line?.rate),
       taxRate: parseNumber(item?.taxRate ?? item?.metadata?.taxRate ?? item?.tax_rate ?? line?.taxRate)
     });
@@ -562,6 +567,7 @@ export default function PurchaseProformaEditor() {
         itemId: match?.id || "",
         itemCode: match?.itemCode || "",
         description: match?.name || "",
+        unit: match?.unit ?? line?.unit ?? "pcs",
         rate: parseNumber(match?.purchaseRate ?? match?.metadata?.purchasePrice ?? match?.purchase_price ?? line?.rate),
         taxRate: parseNumber(match?.taxRate ?? match?.metadata?.taxRate ?? match?.tax_rate ?? line?.taxRate)
       };
@@ -605,6 +611,7 @@ export default function PurchaseProformaEditor() {
           ...line,
           description: String(line?.itemInput || line?.description || "").trim(),
           qty: parseNumber(line?.qty),
+          unit: String(line?.unit ?? "").trim(),
           rate: parseNumber(line?.rate),
           taxRate: parseNumber(line?.taxRate),
           taxInclusive: false,
@@ -1020,7 +1027,7 @@ export default function PurchaseProformaEditor() {
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
                       <label className="text-xs text-slate-600 xl:col-span-2">
                         Item
                         <div className="relative">
@@ -1097,6 +1104,18 @@ export default function PurchaseProformaEditor() {
                       </label>
 
                       <label className="text-xs text-slate-600">
+                        Unit
+                        <input
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-sm"
+                          value={line.unit ?? ""}
+                          list="purchase-proforma-unit-options"
+                          disabled={locked}
+                          placeholder="Unit"
+                          onChange={(event) => updateLine(line.id, { unit: event.target.value })}
+                        />
+                      </label>
+
+                      <label className="text-xs text-slate-600">
                         Rate
                         <input
                           type="number"
@@ -1130,6 +1149,11 @@ export default function PurchaseProformaEditor() {
                   </div>
                 ))}
               </div>
+              <datalist id="purchase-proforma-unit-options">
+                {UNIT_OPTIONS.map((unitOption) => (
+                  <option key={unitOption} value={unitOption} />
+                ))}
+              </datalist>
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-4">

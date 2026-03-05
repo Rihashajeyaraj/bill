@@ -25,12 +25,10 @@ import {
   resolveCountryIsoCode
 } from "../../lib/geoData";
 
-const BLOCKED_UNITS = ["job"];
+const UNIT_OPTIONS = ["pcs", "kg", "box", "pack", "ltr", "hours", "days", "months", "service"];
 
 function normalizeUnit(unit) {
-  const value = String(unit || "").trim();
-  if (!value) return "pcs";
-  return BLOCKED_UNITS.includes(value.toLowerCase()) ? "pcs" : value;
+  return String(unit ?? "").trim();
 }
 
 function normalizeItemName(value) {
@@ -532,7 +530,7 @@ export default function PurchaseBill() {
       itemName: item.name,
       itemId: item.id,
       itemCode: item.itemCode || "",
-      unit: normalizeUnit(item.unit || line.unit),
+      unit: normalizeUnit(item?.unit ?? line?.unit ?? "pcs"),
       rate: purchaseRate,
       saleRate: Number(item?.salesRate ?? item?.price ?? 0),
       lowStockAlert: getItemLowStockAlert(item),
@@ -560,7 +558,7 @@ export default function PurchaseBill() {
         itemName: match.name,
         itemId: match.id,
         itemCode: match.itemCode || "",
-        unit: normalizeUnit(match.unit || line.unit),
+        unit: normalizeUnit(match?.unit ?? line?.unit ?? "pcs"),
         rate: Number(match?.purchaseRate ?? match?.metadata?.purchasePrice ?? match?.price ?? 0),
         saleRate: Number(match?.salesRate ?? match?.price ?? 0),
         lowStockAlert: getItemLowStockAlert(match),
@@ -896,7 +894,7 @@ export default function PurchaseBill() {
     };
     const shouldSyncItemFromLine = (item, line) => {
       if (!item) return true;
-      const nextUnit = normalizeUnit(line?.unit || item?.unit || "pcs");
+      const nextUnit = normalizeUnit(line?.unit ?? item?.unit ?? "pcs");
       const nextSalesRate = toNumber(line?.saleRate ?? line?.rate ?? getItemSalesRate(item));
       const nextTaxRate = getLineTaxRate(line, item);
       const nextTaxInclusive = getLineTaxInclusive(line, item);
@@ -939,7 +937,7 @@ export default function PurchaseBill() {
           description: item?.description || "",
           hsn: itemType === "Product" ? item?.hsn || "" : "",
           sac: itemType === "Service" ? item?.sac || "" : "",
-          unit: normalizeUnit(line?.unit || item?.unit || "pcs"),
+          unit: normalizeUnit(line?.unit ?? item?.unit ?? "pcs"),
           salesRate: toNumber(line?.saleRate ?? line?.rate ?? getItemSalesRate(item)),
           purchaseRate: getItemPurchaseRate(item),
           taxRate: getLineTaxRate(line, item),
@@ -996,7 +994,7 @@ export default function PurchaseBill() {
           itemCode: existing.itemCode || "",
           itemName: existing.name,
           itemInput: existing.name || typedInput,
-          unit: normalizeUnit(existing.unit || line.unit),
+          unit: normalizeUnit(existing?.unit ?? line?.unit),
           lowStockAlert: getLineLowStockAlert(line, existing, existing?.type === "Service" ? "Service" : "Product")
         });
         continue;
@@ -1011,7 +1009,7 @@ export default function PurchaseBill() {
         itemCode: created?.itemCode || "",
         itemName: created?.name || typedName,
         itemInput: created?.name || typedName,
-        unit: normalizeUnit(created?.unit || line.unit),
+        unit: normalizeUnit(created?.unit ?? line?.unit),
         lowStockAlert: getLineLowStockAlert(line, created, created?.type === "Service" ? "Service" : "Product")
       });
     }
@@ -1610,6 +1608,7 @@ export default function PurchaseBill() {
                       value={line.unit}
                       onChange={(e) => updateLine(line.id, { unit: e.target.value })}
                       onBlur={(e) => updateLine(line.id, { unit: normalizeUnit(e.target.value) })}
+                      list="purchase-bill-unit-options"
                       className="w-24 rounded-xl border border-slate-100 bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
                       placeholder="Unit"
                     />
@@ -1728,6 +1727,11 @@ export default function PurchaseBill() {
                 document.body
               )
             : null}
+          <datalist id="purchase-bill-unit-options">
+            {UNIT_OPTIONS.map((unitOption) => (
+              <option key={unitOption} value={unitOption} />
+            ))}
+          </datalist>
         </div>
         <div className="mt-5 grid grid-cols-1 xl:grid-cols-2 gap-4">
           <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">

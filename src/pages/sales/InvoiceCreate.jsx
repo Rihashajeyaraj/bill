@@ -103,6 +103,7 @@ const VAT_RATES = {
   UK: 20,
   Ireland: 23
 };
+const UNIT_OPTIONS = ["pcs", "kg", "box", "pack", "ltr", "hours", "days", "months", "service"];
 function getVatRate(country, company) {
   return company?.tax?.vatRate || VAT_RATES[country] || 0;
 }
@@ -694,6 +695,7 @@ export default function InvoiceCreate() {
         selectedBatchId: "",
         hsnInput: "",
         priceTaxMode: "WITHOUT_TAX",
+        unit: "pcs",
         qty: 1,
         rate: 0,
         discount: 0,
@@ -719,6 +721,7 @@ export default function InvoiceCreate() {
         selectedBatchId: "",
         hsnInput: itemType === "Service" ? item?.sac || item?.hsn || "" : "",
         priceTaxMode: "WITHOUT_TAX",
+        unit: item?.unit ?? "pcs",
         qty: Number.isFinite(maxAssignable) ? Math.min(1, maxAssignable) : 1,
         rate: item.salesRate || item.price || 0,
         discount: 0,
@@ -1258,7 +1261,7 @@ export default function InvoiceCreate() {
   }, [allowNegativeStock, computed.enriched, stockByItemId, lines]);
 
   const hasStockErrors = stockValidationIssues.length > 0;
-  const invoiceItemGridClassName = "grid grid-cols-[2.5fr_1.5fr_0.8fr_1fr_1fr_0.8fr_1fr_1fr] gap-2";
+  const invoiceItemGridClassName = "grid grid-cols-[2.5fr_1.5fr_0.8fr_0.9fr_1fr_1fr_0.8fr_1fr_1fr] gap-2";
 
   function getOpenBatchRows(itemId) {
     const rows = Array.isArray(itemBatchMap[itemId]) ? itemBatchMap[itemId] : [];
@@ -1311,6 +1314,7 @@ export default function InvoiceCreate() {
       selectedBatchId: "",
       hsnInput: itemType === "Service" ? matchedItem?.sac || matchedItem?.hsn || line?.hsnInput || "" : "",
       priceTaxMode: "WITHOUT_TAX",
+      unit: matchedItem?.unit ?? line?.unit ?? "pcs",
       qty: nextQty,
       rate: matchedItem?.salesRate || matchedItem?.price || 0,
       tax: forceZeroTax ? 0 : Number(matchedItem?.taxRate ?? taxRate ?? 0)
@@ -1580,7 +1584,7 @@ export default function InvoiceCreate() {
           description: "",
           hsn: "",
           sac: String(line?.hsnInput || "").trim(),
-          unit: "pcs",
+          unit: line?.unit ?? "pcs",
           salesRate: Number(line?.rate || 0),
           purchaseRate: 0,
           taxRate: forceZeroTax ? 0 : Number(line?.tax ?? taxRate ?? 0),
@@ -2463,6 +2467,7 @@ export default function InvoiceCreate() {
                         <span>Item</span>
                         <span>{dynamicBatchColumnHeader}</span>
                         <span className="text-right">Qty</span>
+                        <span>Unit</span>
                         <span className="text-right">Rate</span>
                         <span className="text-right">Discount</span>
                         <span className="text-right">Tax %</span>
@@ -2617,6 +2622,14 @@ export default function InvoiceCreate() {
                                 />
 
                                 <input
+                                  value={r.unit ?? ""}
+                                  onChange={(e) => updateLine(r.id, { unit: e.target.value })}
+                                  list="invoice-unit-options"
+                                  className="h-10 w-full rounded-xl border border-slate-100 bg-white px-3 text-sm outline-none"
+                                  placeholder="Unit"
+                                />
+
+                                <input
                                   value={r.rate}
                                   onChange={(e) => updateLine(r.id, { rate: e.target.value })}
                                   className="h-10 w-full rounded-xl border border-slate-100 bg-white px-3 text-right text-sm outline-none"
@@ -2724,6 +2737,11 @@ export default function InvoiceCreate() {
                     {stockValidationIssues.length > 3 ? <p>More items have stock shortages.</p> : null}
                   </div>
                 ) : null}
+                <datalist id="invoice-unit-options">
+                  {UNIT_OPTIONS.map((unitOption) => (
+                    <option key={unitOption} value={unitOption} />
+                  ))}
+                </datalist>
               </div>
             </>
           </div>
