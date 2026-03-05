@@ -111,6 +111,10 @@ function round2(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
+function isValidRoundOffInput(value) {
+  return /^-?\d*(\.\d{0,2})?$/.test(String(value || ""));
+}
+
 function nonNegativeNumber(value, fallback = 0) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return Math.max(0, Number(fallback || 0));
@@ -189,7 +193,7 @@ export default function PurchaseBill() {
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
   const [lineItemPopover, setLineItemPopover] = useState({ top: 0, left: 0, width: 280 });
   const [roundOffEnabled, setRoundOffEnabled] = useState(false);
-  const [roundOffValue, setRoundOffValue] = useState("0");
+  const [roundOffValue, setRoundOffValue] = useState("0.00");
   const [markAsPaid, setMarkAsPaid] = useState(false);
   const [paymentType, setPaymentType] = useState("Cash");
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
@@ -851,7 +855,8 @@ export default function PurchaseBill() {
 
     const taxTotal = tax.totalTax;
     const grandTotal = round2(subTotal + taxTotal);
-    const roundOff = roundOffEnabled ? Number(roundOffValue || 0) : 0;
+    const parsedRoundOff = Number(roundOffValue);
+    const roundOff = roundOffEnabled && Number.isFinite(parsedRoundOff) ? round2(parsedRoundOff) : 0;
     const finalTotal = round2(grandTotal + roundOff);
     return { detailed, totalQty, subTotal, tax, taxTotal, grandTotal, roundOff, finalTotal, effectiveRate };
   }, [lines, roundOffEnabled, roundOffValue, companyCountry, company?.address?.state, supplierCountry, party?.state, party?.gstin, party?.taxId, isIndiaOrg, gstRuntimeEnabled, forceZeroTax]);
@@ -1953,15 +1958,44 @@ export default function PurchaseBill() {
                 </label>
                 <input
                   type="number"
+                  step="0.01"
                   value={roundOffValue}
-                  onChange={(e) => setRoundOffValue(e.target.value)}
+                  onChange={(e) => {
+                    const nextValue = String(e.target.value || "");
+                    if (!isValidRoundOffInput(nextValue)) return;
+                    setRoundOffValue(nextValue);
+                  }}
+                  onBlur={() => {
+                    const text = String(roundOffValue || "").trim();
+                    if (!text || text === "-" || text === "." || text === "-.") {
+                      setRoundOffValue("0.00");
+                      return;
+                    }
+                    const parsed = Number(text);
+                    if (!Number.isFinite(parsed)) {
+                      setRoundOffValue("0.00");
+                      return;
+                    }
+                    setRoundOffValue(round2(parsed).toFixed(2));
+                  }}
                   disabled={!roundOffEnabled}
                   className="w-24 rounded-xl border border-slate-200 px-2 py-1.5 text-sm outline-none disabled:bg-slate-100"
                 />
               </div>
               <div className="pt-3 border-t border-slate-100 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-600">Final Total</span>
+                  <span className="text-slate-600">Grand Total (Before Round Off)</span>
+                  <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">Round Off</span>
+                  <span className={`font-semibold ${computed.roundOff < 0 ? "text-rose-700" : "text-emerald-700"}`}>
+                    {computed.roundOff > 0 ? "+" : ""}
+                    {money(computed.roundOff)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">Final Grand Total</span>
                   <span className="font-semibold text-slate-900">{money(computed.finalTotal)}</span>
                 </div>
                 <div className="flex items-center justify-between">
