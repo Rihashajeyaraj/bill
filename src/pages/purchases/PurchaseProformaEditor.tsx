@@ -141,7 +141,6 @@ export default function PurchaseProformaEditor() {
   const [converting, setConverting] = useState(false);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
-  const [supplierSearchPhone, setSupplierSearchPhone] = useState("");
   const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
   const [supplierSearchError, setSupplierSearchError] = useState("");
   const [supplierCreateLoading, setSupplierCreateLoading] = useState(false);
@@ -205,11 +204,7 @@ export default function PurchaseProformaEditor() {
   }, [supplierCreateStateOptions, supplierStateQuery]);
   const suggestionMenuClassName =
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
-  const supplierSearchTerm = useMemo(() => {
-    const lookupText = String(supplierLookupQuery || "").trim();
-    if (lookupText) return lookupText;
-    return String(supplierSearchPhone || "").trim();
-  }, [supplierLookupQuery, supplierSearchPhone]);
+  const supplierSearchTerm = String(supplierLookupQuery || "").trim();
   const supplierLookupResults = useMemo(() => {
     const query = supplierSearchTerm.toLowerCase();
     if (!query) return [];
@@ -337,11 +332,6 @@ export default function PurchaseProformaEditor() {
     setForm((prev: any) => ({ ...prev, lines: [...(prev.lines || []), createEmptyLine()] }));
   }
 
-  useEffect(() => {
-    if (!selectedSupplier?.phone) return;
-    setSupplierSearchPhone(String(selectedSupplier.phone).replace(/\D/g, "").slice(-10));
-  }, [selectedSupplier?.phone]);
-
   function applySupplierSelection(nextSupplier: any) {
     if (!nextSupplier) return;
     setSupplierSearchError("");
@@ -357,32 +347,8 @@ export default function PurchaseProformaEditor() {
     setSupplierStateMenuOpen(false);
   }
 
-  function handleSupplierPhoneChange(value: string) {
-    const digits = String(value || "").replace(/\D/g, "").slice(0, 10);
-    setSupplierSearchPhone(digits);
-    setSupplierCreateDraft((prev) => ({
-      ...prev,
-      phone: digits || prev.phone,
-      country: prev.country || form.country || ""
-    }));
-    setSupplierSearchError("");
-    if (
-      form.supplierId &&
-      normalizePhoneForLookup(digits) !== normalizePhoneForLookup(selectedSupplier?.phone || form.phone || "")
-    ) {
-      updateForm({
-        supplierId: "",
-        partyName: "",
-        partyAddress: "",
-        phone: "",
-        country: form.country || ""
-      });
-    }
-  }
-
   function handleSupplierLookupChange(value: string) {
     setSupplierLookupQuery(value);
-    setSupplierSearchPhone(extractTenDigitPhone(value));
     setSupplierCreateDraft((prev) => ({
       ...prev,
       name: queryLooksPhoneLike(value) ? prev.name : String(value || "").trim(),
@@ -395,30 +361,7 @@ export default function PurchaseProformaEditor() {
   function handleSupplierSearch() {
     const query = String(supplierSearchTerm || "").trim();
     if (query.length < 1) {
-      setSupplierSearchError("Enter mobile number or name/email/address to search.");
-      return;
-    }
-    if (queryLooksPhoneLike(query)) {
-      const phoneDigits = extractTenDigitPhone(query);
-      if (!phoneDigits) {
-        setSupplierSearchError("Enter a valid 10-digit supplier mobile number.");
-        return;
-      }
-      const normalizedQuery = normalizePhoneForLookup(phoneDigits);
-      const matchedSupplier = suppliers.find(
-        (supplier) => normalizePhoneForLookup(supplier?.phone) === normalizedQuery
-      );
-      if (!matchedSupplier) {
-        setSupplierCreateDraft((prev) => ({
-          ...prev,
-          name: prev.name || "",
-          phone: phoneDigits,
-          country: prev.country || form.country || ""
-        }));
-        setSupplierSearchError("No supplier found for this mobile number.");
-        return;
-      }
-      applySupplierSelection(matchedSupplier);
+      setSupplierSearchError("Enter supplier name, phone, email, or address to search.");
       return;
     }
     if (supplierLookupResults.length === 1) {
@@ -517,7 +460,6 @@ export default function PurchaseProformaEditor() {
 
   function resetSupplier() {
     setSupplierSearchError("");
-    setSupplierSearchPhone("");
     setSupplierLookupQuery("");
     updateForm({
       supplierId: "",
@@ -772,7 +714,7 @@ export default function PurchaseProformaEditor() {
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_220px_auto]">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
                 <label className="text-sm text-slate-600">
                   Supplier Lookup
                   <input
@@ -786,17 +728,7 @@ export default function PurchaseProformaEditor() {
                         handleSupplierSearch();
                       }
                     }}
-                    placeholder="Search by phone, name, email, address"
-                  />
-                </label>
-                <label className="text-sm text-slate-600">
-                  Mobile (10 digit)
-                  <input
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                    value={supplierSearchPhone}
-                    disabled={locked}
-                    onChange={(event) => handleSupplierPhoneChange(event.target.value)}
-                    placeholder="e.g. 9876543210"
+                    placeholder="Search supplier by name, phone, email, or address"
                   />
                 </label>
                 <div className="flex items-end gap-2">
