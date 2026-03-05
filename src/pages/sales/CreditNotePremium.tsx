@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, FileDown, FileSpreadsheet, Plus } from "lucide-react";
+import { AlertTriangle, FileSpreadsheet, FileText, Plus } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import CountrySelector from "../../modules/creditNote/CountrySelector";
 import CreditNoteSkeleton from "../../modules/creditNote/CreditNoteSkeleton";
@@ -131,11 +131,14 @@ export default function CreditNotePremium() {
   const [allocationsLoading, setAllocationsLoading] = useState(false);
 
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<CreditStatus | "">("");
-  const [customerFilter, setCustomerFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [page, setPage] = useState(1);
+  const filterInputClassName =
+    "mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none";
+  const filterLabelClassName = "min-w-[170px] flex-1 text-xs font-semibold text-slate-600";
+  const actionIconButtonClassName =
+    "inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
   useGlobalLoadingBridge(loading || editorLoading || switching, "credit-note");
 
   const notes = useMemo(() => (country ? listCreditNotes(country) : []), [country, refreshKey]);
@@ -362,13 +365,11 @@ export default function CreditNotePremium() {
       notes.filter((note) => {
         const haystack = `${note.customerName} ${note.linkedInvoiceNo} ${note.creditNoteNo}`.toLowerCase();
         const matchSearch = search.trim() ? haystack.includes(search.trim().toLowerCase()) : true;
-        const matchStatus = statusFilter ? note.status === statusFilter : true;
-        const matchCustomer = customerFilter ? note.customerId === customerFilter : true;
         const matchFrom = fromDate ? note.creditNoteDate >= fromDate : true;
         const matchTo = toDate ? note.creditNoteDate <= toDate : true;
-        return matchSearch && matchStatus && matchCustomer && matchFrom && matchTo;
+        return matchSearch && matchFrom && matchTo;
       }),
-    [notes, search, statusFilter, customerFilter, fromDate, toDate]
+    [notes, search, fromDate, toDate]
   );
 
   function onCountryChange(next: CountryCode) {
@@ -807,25 +808,84 @@ export default function CreditNotePremium() {
 
           {viewMode === "list" ? (
             <div className="space-y-3">
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Credit Notes</p><p className="mt-3 text-2xl font-bold text-slate-900">{summary?.count || 0}</p></div>
-                <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Credited Amount</p><p className="mt-3 text-2xl font-bold text-slate-900">{formatMoney(summary?.totalAmount || 0, country)}</p></div>
-                <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Applied vs Pending</p><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><p className="text-emerald-700 font-semibold">{formatMoney(summary?.appliedAmount || 0, country)}</p><p className="text-amber-700 font-semibold">{formatMoney(summary?.pendingAmount || 0, country)}</p></div></div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="h-full rounded-3xl border border-slate-200 bg-white p-4 shadow-soft">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Credit Notes</p>
+                  <p className="mt-3 text-2xl font-bold text-slate-900">{summary?.count || 0}</p>
+                </div>
+                <div className="h-full rounded-3xl border border-slate-200 bg-white p-4 shadow-soft">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Credited Amount</p>
+                  <p className="mt-3 text-2xl font-bold text-slate-900">{formatMoney(summary?.totalAmount || 0, country)}</p>
+                </div>
+                <div className="h-full rounded-3xl border border-slate-200 bg-white p-4 shadow-soft">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Applied vs Pending</p>
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Applied</p>
+                      <p className="mt-1 font-semibold text-emerald-700">{formatMoney(summary?.appliedAmount || 0, country)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Pending</p>
+                      <p className="mt-1 font-semibold text-amber-700">{formatMoney(summary?.pendingAmount || 0, country)}</p>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-soft">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                  <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-                    <label className="text-xs font-semibold text-slate-600">Search<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Customer, invoice, credit note no" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
-                    <label className="text-xs font-semibold text-slate-600">Status<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as CreditStatus | "")} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All</option><option value="Draft">Draft</option><option value="Issued">Issued</option><option value="Applied">Applied</option></select></label>
-                    <label className="text-xs font-semibold text-slate-600">Customer<select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
-                    <label className="text-xs font-semibold text-slate-600">From<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
-                    <label className="text-xs font-semibold text-slate-600">To<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" /></label>
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="flex min-w-0 flex-[1_1_620px] flex-wrap items-end gap-3">
+                    <label className={filterLabelClassName}>
+                      Search
+                      <input
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder="Search by customer, invoice no, or credit note no"
+                        className={filterInputClassName}
+                      />
+                    </label>
+                    <label className={filterLabelClassName}>
+                      From date
+                      <input
+                        type="date"
+                        value={fromDate}
+                        onChange={(event) => setFromDate(event.target.value)}
+                        className={filterInputClassName}
+                      />
+                    </label>
+                    <label className={filterLabelClassName}>
+                      To date
+                      <input
+                        type="date"
+                        value={toDate}
+                        onChange={(event) => setToDate(event.target.value)}
+                        className={filterInputClassName}
+                      />
+                    </label>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <GradientButton onClick={startCreate} disabled={!canCreateNote}><Plus className="h-4 w-4" />Create Credit Note</GradientButton>
-                    <button onClick={() => exportCreditNoteSummaryPdf(filteredNotes, country)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><FileDown className="h-4 w-4" />Export PDF</button>
-                    <button onClick={() => exportCreditNotesCsv(filteredNotes, country)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><FileSpreadsheet className="h-4 w-4" />Download Excel</button>
+                  <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                    <GradientButton className="h-10 px-4 py-0" onClick={startCreate} disabled={!canCreateNote}>
+                      <Plus className="h-4 w-4" />
+                      Create Credit Note
+                    </GradientButton>
+                    <button
+                      type="button"
+                      title="Export PDF"
+                      aria-label="Export PDF"
+                      onClick={() => exportCreditNoteSummaryPdf(filteredNotes, country)}
+                      className={actionIconButtonClassName}
+                    >
+                      <FileText className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Download Excel"
+                      aria-label="Download Excel"
+                      onClick={() => exportCreditNotesCsv(filteredNotes, country)}
+                      className={actionIconButtonClassName}
+                    >
+                      <FileSpreadsheet className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
               </div>
