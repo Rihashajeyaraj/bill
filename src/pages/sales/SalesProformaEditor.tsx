@@ -22,8 +22,6 @@ import {
   salesProformaUpsert
 } from "../../services/proformas.service";
 
-const UNIT_OPTIONS = ["pcs", "kg", "box", "pack", "ltr", "hours", "days", "months", "service"];
-
 function parseNumber(value: unknown) {
   const numeric = Number(value ?? 0);
   return Number.isFinite(numeric) ? numeric : 0;
@@ -1188,7 +1186,6 @@ export default function SalesProformaEditor() {
                             className={lineItemInputClassName}
                             value={line.unit ?? ""}
                             disabled={locked}
-                            list="sales-proforma-unit-options"
                             placeholder="Unit"
                             onChange={(event) => updateLine(line.id, { unit: event.target.value })}
                           />
@@ -1271,11 +1268,6 @@ export default function SalesProformaEditor() {
                   </tbody>
                 </table>
               </div>
-              <datalist id="sales-proforma-unit-options">
-                {UNIT_OPTIONS.map((unitOption) => (
-                  <option key={unitOption} value={unitOption} />
-                ))}
-              </datalist>
               {activeLineForSearch &&
               activeLineItemSearchId &&
               normalizeItemName(activeLineForSearch.itemInput).length
