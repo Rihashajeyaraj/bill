@@ -125,7 +125,6 @@ export default function PaymentInPremium() {
   const [statusFilter, setStatusFilter] = useState<PaymentStatus | "">("");
   const [customerFilter, setCustomerFilter] = useState("");
   const [modeFilter, setModeFilter] = useState("");
-  const [customerSearchPhone, setCustomerSearchPhone] = useState("");
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerSearchError, setCustomerSearchError] = useState("");
   useGlobalLoadingBridge(loading, "payment-in");
@@ -210,13 +209,6 @@ export default function PaymentInPremium() {
   }, [dirty]);
 
   useEffect(() => {
-    if (!form?.customerId) return;
-    const selected = customers.find((entry) => entry.id === form.customerId);
-    if (!selected) return;
-    setCustomerSearchPhone(String(selected.phone || "").replace(/\D/g, "").slice(-10));
-  }, [form?.customerId, customers]);
-
-  useEffect(() => {
     if (!prefillInvoiceId) return;
     const invoice = openInvoices.find((entry) => entry.id === prefillInvoiceId);
     if (!invoice) return;
@@ -264,7 +256,6 @@ export default function PaymentInPremium() {
     setFlowMode("create");
     setActiveStep(0);
     setDirty(false);
-    setCustomerSearchPhone("");
     setCustomerLookupQuery("");
     setCustomerSearchError("");
     clearMessages();
@@ -295,7 +286,6 @@ export default function PaymentInPremium() {
     setForm(null);
     setActivePayment(null);
     setDirty(false);
-    setCustomerSearchPhone("");
     setCustomerLookupQuery("");
     setCustomerSearchError("");
     clearMessages();
@@ -326,31 +316,8 @@ export default function PaymentInPremium() {
   function applyCustomerSelection(customer: any) {
     if (!customer) return;
     applyCustomer(customer.id, customer.name);
-    setCustomerSearchPhone(String(customer.phone || "").replace(/\D/g, "").slice(-10));
     setCustomerLookupQuery("");
     setCustomerSearchError("");
-  }
-
-  function handleCustomerPhoneChange(value: string) {
-    const digits = String(value || "").replace(/\D/g, "").slice(0, 10);
-    setCustomerSearchPhone(digits);
-    setCustomerSearchError("");
-    if (form?.customerId) {
-      const selected = customers.find((entry) => entry.id === form.customerId);
-      if (normalizePhoneForLookup(digits) !== normalizePhoneForLookup(selected?.phone)) {
-        setForm((prev) =>
-          prev
-            ? {
-                ...prev,
-                customerId: "",
-                customerInput: "",
-                allocations: []
-              }
-            : prev
-        );
-        setDirty(true);
-      }
-    }
   }
 
   function handleCustomerLookupChange(value: string) {
@@ -359,27 +326,9 @@ export default function PaymentInPremium() {
   }
 
   function handleCustomerSearch() {
-    const phoneDigits = String(customerSearchPhone || "").replace(/\D/g, "");
-    if (phoneDigits) {
-      if (phoneDigits.length !== 10) {
-        setCustomerSearchError("Enter valid 10-digit mobile number.");
-        return;
-      }
-      const normalizedPhone = normalizePhoneForLookup(phoneDigits);
-      const matchedCustomer = customers.find(
-        (customer) => normalizePhoneForLookup(customer?.phone) === normalizedPhone
-      );
-      if (!matchedCustomer) {
-        setCustomerSearchError("No customer found for this mobile number.");
-        return;
-      }
-      applyCustomerSelection(matchedCustomer);
-      return;
-    }
-
     const query = String(customerLookupQuery || "").trim();
     if (query.length < 2) {
-      setCustomerSearchError("Enter mobile number or name/email/address to search.");
+      setCustomerSearchError("Enter at least 2 characters to search.");
       return;
     }
     if (!customerLookupResults.length) {
@@ -405,7 +354,6 @@ export default function PaymentInPremium() {
         : prev
     );
     setDirty(true);
-    setCustomerSearchPhone("");
     setCustomerLookupQuery("");
     setCustomerSearchError("");
   }
@@ -787,17 +735,15 @@ export default function PaymentInPremium() {
                         <p className="text-xs font-semibold text-slate-600">Customer Search</p>
                         <div className="flex flex-wrap items-center gap-2">
                           <input
-                            value={customerSearchPhone}
-                            onChange={(event) => handleCustomerPhoneChange(event.target.value)}
+                            value={customerLookupQuery}
+                            onChange={(event) => handleCustomerLookupChange(event.target.value)}
                             onKeyDown={(event) => {
                               if (event.key === "Enter") {
                                 event.preventDefault();
                                 handleCustomerSearch();
                               }
                             }}
-                            inputMode="numeric"
-                            maxLength={10}
-                            placeholder="Enter 10-digit mobile number"
+                            placeholder="Search customer/supplier by name, phone, email, or address"
                             disabled={readOnly}
                             className="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
                           />
@@ -810,31 +756,7 @@ export default function PaymentInPremium() {
                             <Search className="h-3.5 w-3.5" />
                             Search
                           </button>
-                          {form.customerId ? (
-                            <button
-                              type="button"
-                              onClick={resetCustomerSelection}
-                              disabled={readOnly}
-                              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                              Clear
-                            </button>
-                          ) : null}
                         </div>
-                        <input
-                          value={customerLookupQuery}
-                          onChange={(event) => handleCustomerLookupChange(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              handleCustomerSearch();
-                            }
-                          }}
-                          placeholder="Type customer name, email, or address"
-                          disabled={readOnly}
-                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
-                        />
                         {customerSearchError ? (
                           <p className="text-xs font-medium text-rose-600">{customerSearchError}</p>
                         ) : null}
@@ -869,11 +791,18 @@ export default function PaymentInPremium() {
                           <p className="mt-1 text-slate-500">{selectedCustomer.email || "-"}</p>
                           <p className="mt-1 text-slate-500">{customerAddressSummary(selectedCustomer) || "-"}</p>
                         </div>
-                      ) : (
-                        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500">
-                          Search customer by mobile, name, email, or address.
-                        </div>
-                      )}
+                      ) : null}
+                      {form.customerId ? (
+                        <button
+                          type="button"
+                          onClick={resetCustomerSelection}
+                          disabled={readOnly}
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                          Clear Selection
+                        </button>
+                      ) : null}
                       {fieldErrors.customerId ? <p className="text-xs text-rose-600">{fieldErrors.customerId}</p> : null}
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                         <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Outstanding</p><p className="font-semibold text-slate-900">{formatMoney(customerOutstandingBefore, country)}</p></div>
