@@ -44,6 +44,23 @@ function normalizeSupabaseError(error, fallback) {
   if (error?.code === "42501") {
     return `${fallback}. Supabase RLS denied access. Verify organization membership and policies.`;
   }
+  const message = String(error?.message || "");
+  const details = String(error?.details || "");
+  const combined = `${message} ${details}`.toLowerCase();
+  if (error?.code === "23505" && combined.includes("item_name")) {
+    return "Item name already exists.";
+  }
+  if (error?.code === "23502") {
+    if (combined.includes("reorder_level")) {
+      return "Service could not be saved due to an invalid stock configuration. Please try again.";
+    }
+    if (combined.includes("hsn_sac")) {
+      return "SAC / HSN code is required to save this service.";
+    }
+    if (combined.includes("item_name")) {
+      return "Item name is required.";
+    }
+  }
   return error?.message || fallback;
 }
 
@@ -298,14 +315,14 @@ function toRemotePayload(draft) {
   const incoming = normalizeItem(draft);
   const hsnSac = incoming.type === "Service" ? incoming.sac || incoming.hsn : incoming.hsn || incoming.sac;
   const quantity = incoming.type === "Product" ? Math.max(0, parseNumber(incoming.quantity ?? incoming.openingStock)) : 0;
-  const reorderLevel = incoming.type === "Product" ? Math.max(0, parseNumber(incoming.lowStockAlert)) : null;
+  const reorderLevel = incoming.type === "Product" ? Math.max(0, parseNumber(incoming.lowStockAlert)) : 0;
 
   return {
     item_type: incoming.type === "Service" ? "service" : "product",
     item_name: incoming.name || "",
     item_code: incoming.itemCode || null,
     sku: incoming.sku || null,
-    hsn_sac: hsnSac || null,
+    hsn_sac: hsnSac || "",
     unit: incoming.unit || "pcs",
     sale_price: Math.max(0, parseNumber(incoming.salesRate)),
     purchase_price: Math.max(0, parseNumber(incoming.purchaseRate)),

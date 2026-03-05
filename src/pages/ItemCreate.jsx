@@ -274,11 +274,15 @@ export default function ItemCreate() {
 
   function validate() {
     const nextErrors = {};
+    const complianceCode = String(form.hsnOrSac || "").trim();
     if (!String(form.itemName || "").trim()) nextErrors.itemName = "This field is required";
     if (!String(form.unit || "").trim()) nextErrors.unit = "Select unit of measure.";
     if (parseNumber(form.salePrice) < 0) nextErrors.salePrice = "Sales rate cannot be negative.";
     if (parseNumber(form.purchasePrice) < 0) nextErrors.purchasePrice = "Purchase rate cannot be negative.";
     if (parseNumber(form.taxRate) < 0) nextErrors.taxRate = `${taxRateLabel} cannot be negative.`;
+    if (showIndiaCompliance && form.type === "SERVICE" && !complianceCode) {
+      nextErrors.hsnOrSac = "SAC code is required for services.";
+    }
     if (isProductType && parseNumber(form.quantity) < 0) nextErrors.quantity = "Quantity cannot be negative.";
     if (isProductType && parseNumber(form.lowStockQty) < 0) nextErrors.lowStockQty = "Low stock alert cannot be negative.";
 
@@ -379,9 +383,10 @@ export default function ItemCreate() {
       }
       toast.success(`${itemTypeLabel} saved`, `Saved for ${companyCountry}.`);
     } catch (error) {
-      const message = error?.message || "Failed to save item.";
+      const itemLower = itemTypeLabel.toLowerCase();
+      const message = error?.message || `Failed to save ${itemLower}.`;
       setSaveError(message);
-      toast.error("Failed to save item", message);
+      toast.error(`Failed to save ${itemLower}`, message);
     } finally {
       setSaving(false);
     }
@@ -584,13 +589,20 @@ export default function ItemCreate() {
               </FormField>
 
               {showIndiaCompliance ? (
-                <FormField label={`${complianceCodeLabel} (optional)`} hint="Recommended for tax filings">
+                <FormField
+                  label={`${complianceCodeLabel}${form.type === "SERVICE" ? "" : " (optional)"}`}
+                  hint="Recommended for tax filings"
+                  required={form.type === "SERVICE"}
+                  optional={form.type !== "SERVICE"}
+                  error={errors.hsnOrSac}
+                >
                   <input
                     value={form.hsnOrSac}
                     onChange={(event) => updateField("hsnOrSac", event.target.value)}
                     className={inputClassName}
                     placeholder={form.type === "SERVICE" ? "SAC code" : "HSN code"}
                   />
+                  {errors.hsnOrSac ? <p className={errorClassName}>{errors.hsnOrSac}</p> : null}
                 </FormField>
               ) : (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">

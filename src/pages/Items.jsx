@@ -534,7 +534,8 @@ export default function Items() {
       setRefreshKey((prev) => prev + 1);
       closeModal();
     } catch (error) {
-      toast.error("Failed to save item", error?.message || "Item was not saved.");
+      const itemLabel = String(item?.type || "").toLowerCase() === "service" ? "service" : "item";
+      toast.error(`Failed to save ${itemLabel}`, error?.message || `${itemLabel} was not saved.`);
     }
   }
 
