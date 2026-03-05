@@ -11,7 +11,7 @@ function isDesktopViewport() {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return true;
   return window.matchMedia(DESKTOP_QUERY).matches;
 }
-//
+
 export default function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
