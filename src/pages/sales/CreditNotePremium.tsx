@@ -161,22 +161,39 @@ export default function CreditNotePremium() {
   const selectedInvoice: CreditInvoice | null = useMemo(() => invoices.find((invoice) => invoice.id === form?.linkedInvoiceId) || null, [invoices, form?.linkedInvoiceId]);
   const selectedCustomer = useMemo(() => customers.find((customer) => customer.id === form?.customerId) || null, [customers, form?.customerId]);
   const totals = useMemo(
-    () =>
-      effectiveForm && country
-        ? computeEditorTotals(effectiveForm, country, selectedInvoice?.remainingBalance || 0, companyState)
-        : {
-            detailed: [],
-            subtotal: 0,
-            taxTotal: 0,
-            total: 0,
-            maxRefundTotal: 0,
-            refundMode: "FULL" as const,
-            remaining: 0,
-            cgst: 0,
-            sgst: 0,
-            igst: 0
-          },
-    [effectiveForm, country, selectedInvoice?.remainingBalance, companyState]
+    () => {
+      if (!effectiveForm || !country) {
+        return {
+          detailed: [],
+          subtotal: 0,
+          taxTotal: 0,
+          total: 0,
+          maxRefundTotal: 0,
+          refundMode: "FULL" as const,
+          remaining: 0,
+          cgst: 0,
+          sgst: 0,
+          igst: 0
+        };
+      }
+      const invoiceTotal = Array.isArray(selectedInvoice?.lines)
+        ? selectedInvoice.lines.reduce(
+            (sum, line) =>
+              sum +
+              Math.max(
+                0,
+                parseNumber(
+                  (line as any)?.amountAfterTax ??
+                    parseNumber((line as any)?.quantity) * parseNumber((line as any)?.rate)
+                )
+              ),
+            0
+          )
+        : 0;
+      const invoiceAmountBase = invoiceTotal > 0 ? invoiceTotal : parseNumber(selectedInvoice?.remainingBalance || 0);
+      return computeEditorTotals(effectiveForm, country, invoiceAmountBase, companyState);
+    },
+    [effectiveForm, country, selectedInvoice?.lines, selectedInvoice?.remainingBalance, companyState]
   );
   const allowed = !country || access.allowedCountries.includes(country);
   const prefillInvoiceId = searchParams.get("invoiceId") || "";

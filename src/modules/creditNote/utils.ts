@@ -53,18 +53,19 @@ export function defaultForm(country: CountryCode, company: any): CreditNoteFormS
 export function draftLinesFromInvoice(invoice: CreditInvoice): CreditLineDraft[] {
   return invoice.lines.map((line, index) => {
     const stableLineId = String(line.id || line.sourceInvoiceItemId || `line_${index + 1}`);
+    const sourceInvoiceQty = Math.max(
+      0,
+      parseNumber(
+        line.availableReturnQty !== undefined && line.availableReturnQty !== null
+          ? line.availableReturnQty
+          : line.quantity
+      )
+    );
     return {
       id: stableLineId,
       sourceInvoiceItemId: String(line.sourceInvoiceItemId || line.id || stableLineId),
       itemId: line.itemId || "",
-      sourceInvoiceQty: Math.max(
-        0,
-        parseNumber(
-          line.availableReturnQty !== undefined && line.availableReturnQty !== null
-            ? line.availableReturnQty
-            : line.quantity
-        )
-      ),
+      sourceInvoiceQty,
       sourceInvoiceAmountAfterTax: Math.max(0, parseNumber(line.amountAfterTax)),
       priceTaxMode:
         String(line.priceTaxMode || "").toUpperCase() === "WITH_TAX"
@@ -76,7 +77,7 @@ export function draftLinesFromInvoice(invoice: CreditInvoice): CreditLineDraft[]
       returnCondition: "",
       purchaseRate: 0,
       itemName: line.itemName,
-      quantity: 0,
+      quantity: sourceInvoiceQty,
       rate: Math.max(0, line.rate),
       taxRate: Math.max(0, line.taxRate),
       hsnSac: line.hsnSac || "",
