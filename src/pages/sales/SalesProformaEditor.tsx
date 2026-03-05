@@ -289,6 +289,9 @@ export default function SalesProformaEditor() {
   }, [customerCreateStateOptions, customerStateQuery]);
   const suggestionMenuClassName =
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
+  const lineItemInputClassName =
+    "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm leading-5 outline-none";
+  const lineItemInputRightClassName = `${lineItemInputClassName} text-right`;
   const customerSearchTerm = String(customerLookupQuery || "").trim();
   const customerLookupResults = useMemo(() => {
     const query = customerSearchTerm.toLowerCase();
@@ -1085,30 +1088,41 @@ export default function SalesProformaEditor() {
               </div>
 
               <div className="overflow-x-auto rounded-2xl border border-slate-100">
-                <table className="min-w-[1240px] w-full text-left text-sm">
+                <table className="min-w-[1080px] w-full table-fixed text-left text-sm">
+                  <colgroup>
+                    <col style={{ width: "30%" }} />
+                    <col style={{ width: "8%" }} />
+                    <col style={{ width: "10%" }} />
+                    <col style={{ width: "10%" }} />
+                    <col style={{ width: "10%" }} />
+                    <col style={{ width: "12%" }} />
+                    <col style={{ width: "8%" }} />
+                    <col style={{ width: "10%" }} />
+                    <col style={{ width: "12%" }} />
+                  </colgroup>
                   <thead className="bg-slate-50 text-slate-600">
                     <tr>
-                      <th className="px-2 py-2 font-semibold">Item</th>
-                      <th className="px-2 py-2 font-semibold text-right">Qty</th>
-                      <th className="px-2 py-2 font-semibold">Unit</th>
-                      <th className="px-2 py-2 font-semibold text-right">Rate</th>
-                      <th className="px-2 py-2 font-semibold text-right">Discount %</th>
-                      <th className="px-2 py-2 font-semibold text-right">Discount Amt</th>
-                      <th className="px-2 py-2 font-semibold text-right">Tax %</th>
-                      <th className="px-2 py-2 font-semibold text-right">Amount</th>
-                      <th className="px-2 py-2 font-semibold">Action</th>
+                      <th className="px-3 py-2.5 align-middle font-semibold">Item</th>
+                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Qty</th>
+                      <th className="px-3 py-2.5 align-middle font-semibold">Unit</th>
+                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Rate</th>
+                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Discount %</th>
+                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Discount Amt</th>
+                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Tax %</th>
+                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Amount</th>
+                      <th className="px-3 py-2.5 align-middle font-semibold">Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(form.lines || []).map((line: any) => {
                       const lineError = validation?.lineErrors?.[String(line.id)] || {};
                       return (
-                      <tr key={line.id} className="border-t border-slate-100">
-                        <td className="px-2 py-2">
+                      <tr key={line.id} className="border-t border-slate-100 align-top">
+                        <td className="px-3 py-2">
                           <div className="relative">
                             <input
                               id={`sales-proforma-item-input-${line.id}`}
-                              className={`w-full rounded-lg border px-2 py-1.5 pr-8 text-sm ${
+                              className={`${lineItemInputClassName} pr-9 ${
                                 lineError?.item ? "border-rose-300" : "border-slate-200"
                               }`}
                               value={line.itemInput || ""}
@@ -1152,12 +1166,12 @@ export default function SalesProformaEditor() {
                             ) : null}
                           </div>
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-3 py-2">
                           <input
                             type="number"
                             min={0}
                             step="0.001"
-                            className={`w-full rounded-lg border px-2 py-1.5 text-right text-sm ${
+                            className={`${lineItemInputRightClassName} ${
                               lineError?.qty ? "border-rose-300" : "border-slate-200"
                             }`}
                             value={line.qty}
@@ -1168,9 +1182,9 @@ export default function SalesProformaEditor() {
                             <p className="mt-1 text-[11px] font-medium text-rose-600">{lineError.qty}</p>
                           ) : null}
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-3 py-2">
                           <input
-                            className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                            className={lineItemInputClassName}
                             value={line.unit ?? ""}
                             disabled={locked}
                             list="sales-proforma-unit-options"
@@ -1178,23 +1192,23 @@ export default function SalesProformaEditor() {
                             onChange={(event) => updateLine(line.id, { unit: event.target.value })}
                           />
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-3 py-2">
                           <input
                             type="number"
                             min={0}
                             step="0.01"
-                            className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
+                            className={lineItemInputRightClassName}
                             value={line.rate}
                             disabled={locked}
                             onChange={(event) => updateLine(line.id, { rate: parseNumber(event.target.value) })}
                           />
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-3 py-2">
                           <input
                             type="number"
                             min={0}
                             step="0.01"
-                            className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
+                            className={lineItemInputRightClassName}
                             value={line.discountPercent}
                             disabled={locked}
                             onChange={(event) => {
@@ -1205,12 +1219,12 @@ export default function SalesProformaEditor() {
                             }}
                           />
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-3 py-2">
                           <input
                             type="number"
                             min={0}
                             step="0.01"
-                            className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
+                            className={lineItemInputRightClassName}
                             value={line.discountAmount}
                             disabled={locked}
                             onChange={(event) => {
@@ -1222,26 +1236,28 @@ export default function SalesProformaEditor() {
                             }}
                           />
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-3 py-2">
                           <input
                             type="number"
                             min={0}
                             step="0.01"
-                            className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
+                            className={lineItemInputRightClassName}
                             value={line.taxRate}
                             disabled={locked}
                             onChange={(event) => updateLine(line.id, { taxRate: parseNumber(event.target.value) })}
                           />
                         </td>
-                        <td className="px-2 py-2 text-right font-semibold text-slate-900">
-                          {lineAmount(line).toFixed(2)}
+                        <td className="px-3 py-2">
+                          <div className="flex h-10 items-center justify-end rounded-xl border border-slate-200 bg-slate-50 px-3 text-right font-semibold text-slate-900">
+                            {lineAmount(line).toFixed(2)}
+                          </div>
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-3 py-2">
                           <button
                             type="button"
                             onClick={() => removeLine(line.id)}
                             disabled={locked}
-                            className="rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="h-10 w-full rounded-xl border border-rose-200 bg-white px-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Remove
                           </button>
