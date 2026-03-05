@@ -195,7 +195,6 @@ export default function SalesProformaEditor() {
   const [converting, setConverting] = useState(false);
   const [customers, setCustomers] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
-  const [customerSearchPhone, setCustomerSearchPhone] = useState("");
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerSearchError, setCustomerSearchError] = useState("");
   const [customerCreateLoading, setCustomerCreateLoading] = useState(false);
@@ -262,24 +261,19 @@ export default function SalesProformaEditor() {
   }, [customerCreateStateOptions, customerStateQuery]);
   const suggestionMenuClassName =
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
-  const customerSearchTerm = useMemo(() => {
-    const lookupText = String(customerLookupQuery || "").trim();
-    if (lookupText) return lookupText;
-    return String(customerSearchPhone || "").trim();
-  }, [customerLookupQuery, customerSearchPhone]);
+  const customerSearchTerm = String(customerLookupQuery || "").trim();
   const customerLookupResults = useMemo(() => {
     const query = customerSearchTerm.toLowerCase();
     if (!query) return [];
+    const phoneSearch = queryLooksPhoneLike(customerSearchTerm);
     const normalizedPhoneQuery = normalizePhoneForLookup(customerSearchTerm);
     return customers
       .filter((customer) => {
-        const text = [
-          customer?.name,
-          customer?.email,
-          customer?.address,
-          customer?.state,
-          customer?.country
-        ]
+        if (phoneSearch) {
+          const customerPhone = normalizePhoneForLookup(customer?.phone);
+          return normalizedPhoneQuery && customerPhone && customerPhone.includes(normalizedPhoneQuery);
+        }
+        const text = [customer?.name, customer?.email, customer?.address]
           .map((value) => String(value || "").toLowerCase())
           .join(" ");
         const customerPhone = normalizePhoneForLookup(customer?.phone);
@@ -399,11 +393,6 @@ export default function SalesProformaEditor() {
     setForm((prev: any) => ({ ...prev, lines: [...(prev.lines || []), createEmptyLine()] }));
   }
 
-  useEffect(() => {
-    if (!selectedParty?.phone) return;
-    setCustomerSearchPhone(String(selectedParty.phone).replace(/\D/g, "").slice(-10));
-  }, [selectedParty?.phone]);
-
   function applyCustomerSelection(nextCustomer: any) {
     if (!nextCustomer) return;
     setCustomerSearchError("");
@@ -417,30 +406,8 @@ export default function SalesProformaEditor() {
     setCustomerStateMenuOpen(false);
   }
 
-  function handleCustomerPhoneChange(value: string) {
-    const digits = String(value || "").replace(/\D/g, "").slice(0, 10);
-    setCustomerSearchPhone(digits);
-    setCustomerCreateDraft((prev) => ({
-      ...prev,
-      phone: digits || prev.phone,
-      country: prev.country || form.country || ""
-    }));
-    setCustomerSearchError("");
-    if (
-      form.partyId &&
-      normalizePhoneForLookup(digits) !== normalizePhoneForLookup(selectedParty?.phone || "")
-    ) {
-      updateForm({
-        partyId: "",
-        partyName: "",
-        country: form.country || ""
-      });
-    }
-  }
-
   function handleCustomerLookupChange(value: string) {
     setCustomerLookupQuery(value);
-    setCustomerSearchPhone(extractTenDigitPhone(value));
     setCustomerCreateDraft((prev) => ({
       ...prev,
       name: queryLooksPhoneLike(value) ? prev.name : String(value || "").trim(),
@@ -453,30 +420,7 @@ export default function SalesProformaEditor() {
   function handleCustomerSearch() {
     const query = String(customerSearchTerm || "").trim();
     if (query.length < 1) {
-      setCustomerSearchError("Enter mobile number or name/email/address to search.");
-      return;
-    }
-    if (queryLooksPhoneLike(query)) {
-      const phoneDigits = extractTenDigitPhone(query);
-      if (!phoneDigits) {
-        setCustomerSearchError("Enter a valid 10-digit customer mobile number.");
-        return;
-      }
-      const normalizedQuery = normalizePhoneForLookup(phoneDigits);
-      const matchedCustomer = customers.find(
-        (customer) => normalizePhoneForLookup(customer?.phone) === normalizedQuery
-      );
-      if (!matchedCustomer) {
-        setCustomerCreateDraft((prev) => ({
-          ...prev,
-          name: prev.name || "",
-          phone: phoneDigits,
-          country: prev.country || form.country || ""
-        }));
-        setCustomerSearchError("No customer found for this mobile number.");
-        return;
-      }
-      applyCustomerSelection(matchedCustomer);
+      setCustomerSearchError("Enter customer name, phone, email, or address to search.");
       return;
     }
     if (customerLookupResults.length === 1) {
@@ -484,10 +428,13 @@ export default function SalesProformaEditor() {
       return;
     }
     if (!customerLookupResults.length) {
+      const phoneDraft = queryLooksPhoneLike(query)
+        ? String(query || "").replace(/\D/g, "").slice(0, 10)
+        : "";
       setCustomerCreateDraft((prev) => ({
         ...prev,
-        name: query,
-        phone: prev.phone || extractTenDigitPhone(query),
+        name: queryLooksPhoneLike(query) ? prev.name : query,
+        phone: phoneDraft || prev.phone,
         country: prev.country || form.country || ""
       }));
       setCustomerSearchError("No customer found for this search.");
@@ -575,7 +522,6 @@ export default function SalesProformaEditor() {
 
   function resetCustomer() {
     setCustomerSearchError("");
-    setCustomerSearchPhone("");
     setCustomerLookupQuery("");
     updateForm({
       partyId: "",
@@ -838,9 +784,9 @@ export default function SalesProformaEditor() {
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_220px_auto]">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
                 <label className="text-sm text-slate-600">
-                  Customer Lookup
+                  Search Customer
                   <input
                     className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                     value={customerLookupQuery}
@@ -852,17 +798,7 @@ export default function SalesProformaEditor() {
                         handleCustomerSearch();
                       }
                     }}
-                    placeholder="Search by phone, name, email, address"
-                  />
-                </label>
-                <label className="text-sm text-slate-600">
-                  Mobile (10 digit)
-                  <input
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                    value={customerSearchPhone}
-                    disabled={locked}
-                    onChange={(event) => handleCustomerPhoneChange(event.target.value)}
-                    placeholder="e.g. 9876543210"
+                    placeholder="Search by name, phone, email, or address"
                   />
                 </label>
                 <div className="flex items-end gap-2">
