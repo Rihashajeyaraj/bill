@@ -37,6 +37,12 @@ function paymentHint(mode: PaymentMode) {
   return "Cash receipt will be recorded against customer ledger.";
 }
 
+function numberInputValue(value: unknown) {
+  const numeric = parseNumber(value as any);
+  if (!Number.isFinite(numeric) || numeric === 0) return "";
+  return String(value ?? "");
+}
+
 export default function PaymentInEditor({
   country,
   readOnly,
@@ -143,7 +149,8 @@ export default function PaymentInEditor({
                 <input
                   type="number"
                   min={0}
-                  value={form.amountReceived}
+                  value={numberInputValue(form.amountReceived)}
+                  placeholder="0"
                   onChange={(event) => onUpdateForm("amountReceived", event.target.value)}
                   className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
                 />
@@ -284,7 +291,8 @@ export default function PaymentInEditor({
                         <input
                           type="number"
                           min={0}
-                          value={line.applyAmount}
+                          value={numberInputValue(line.applyAmount)}
+                          placeholder="0"
                           onChange={(event) => onUpdateAllocation(line.invoiceId, parseNumber(event.target.value))}
                           className="w-32 rounded-lg border border-slate-200 px-2 py-1.5 text-right text-sm"
                         />

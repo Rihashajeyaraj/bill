@@ -88,6 +88,12 @@ function customerAddressSummary(customer: any) {
     .join(", ");
 }
 
+function numberInputValue(value: unknown) {
+  const numeric = parseNumber(value as any);
+  if (!Number.isFinite(numeric) || numeric === 0) return "";
+  return String(value ?? "");
+}
+
 export default function PaymentInPremium() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
@@ -445,6 +451,20 @@ export default function PaymentInPremium() {
 
     setFieldErrors(errors);
     if (Object.keys(errors).length) {
+      if (errors.customerId) {
+        setActiveStep(0);
+      } else if (
+        errors.amountReceived ||
+        errors.allocations ||
+        errors.paymentDate ||
+        errors.registrationNumber ||
+        errors.chequeNo ||
+        errors.bankName ||
+        errors.bankAccount ||
+        errors.transactionId
+      ) {
+        setActiveStep(1);
+      }
       setErrorMessage(Object.values(errors)[0] || "Please fix the highlighted fields before saving.");
       setSuccessMessage("");
       return false;
@@ -871,7 +891,15 @@ export default function PaymentInPremium() {
                     <div className="space-y-3">
                       <label className="block">
                         <span className="text-xs font-semibold text-slate-600">Amount Received</span>
-                        <input type="number" min={0} value={form.amountReceived} disabled={readOnly} onChange={(event) => updateForm("amountReceived", event.target.value)} className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200" />
+                        <input
+                          type="number"
+                          min={0}
+                          value={numberInputValue(form.amountReceived)}
+                          placeholder="0"
+                          disabled={readOnly}
+                          onChange={(event) => updateForm("amountReceived", event.target.value)}
+                          className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
+                        />
                         {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
                       </label>
                       <label className="block">
@@ -879,11 +907,11 @@ export default function PaymentInPremium() {
                         <input
                           type="number"
                           min={0}
-                          value={totals.amountApplied}
+                          value={numberInputValue(totals.amountApplied)}
                           disabled={readOnly || !form.customerId || !form.allocations.length}
                           onChange={(event) => setAllocateAmount(parseNumber(event.target.value))}
                           className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-50"
-                          placeholder="Allocate to invoices"
+                          placeholder="0"
                         />
                         <p className="mt-1 text-xs text-slate-500">
                           Unapplied: <span className="font-semibold text-slate-700">{formatMoney(totals.unappliedAmount, country)}</span>
