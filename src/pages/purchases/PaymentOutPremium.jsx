@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
+  ChevronDown,
   FileDown,
   Mail,
   Plus,
@@ -88,6 +89,7 @@ export default function PaymentOutPremium() {
   const [activePayment, setActivePayment] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [dirty, setDirty] = useState(false);
+  const [showMoreActions, setShowMoreActions] = useState(false);
 
   const [search, setSearch] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("");
@@ -279,6 +281,7 @@ export default function PaymentOutPremium() {
     setPanelMode("form");
     setActiveStep(0);
     setDirty(false);
+    setShowMoreActions(false);
     setSupplierLookupQuery("");
     setSupplierSearchError("");
   }
@@ -296,6 +299,7 @@ export default function PaymentOutPremium() {
     setPanelMode("form");
     setActiveStep(mode === "view" ? 2 : 0);
     setDirty(false);
+    setShowMoreActions(false);
     if (mode === "view") {
       setForm((prev) => ({ ...prev, readOnly: true }));
     }
@@ -308,6 +312,7 @@ export default function PaymentOutPremium() {
     setForm(defaultPaymentForm(country, currency));
     setActivePayment(null);
     setDirty(false);
+    setShowMoreActions(false);
     setSupplierLookupQuery("");
     setSupplierSearchError("");
   }
@@ -992,7 +997,7 @@ export default function PaymentOutPremium() {
           ) : null}
 
           {panelMode === "form" && !readOnly ? (
-            <div className="fixed bottom-4 right-4 z-40 flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-lg backdrop-blur">
+            <div className="fixed bottom-4 right-4 z-40 flex flex-wrap items-center justify-end gap-3 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
               <button
                 type="button"
                 onClick={() => persist("Draft")}
@@ -1011,31 +1016,51 @@ export default function PaymentOutPremium() {
                 <Send className="h-3.5 w-3.5" />
                 Mark Paid
               </button>
-              <button
-                type="button"
-                onClick={() => persist("Applied")}
-                disabled={!canApplyPayments || !canSaveCurrentFlow}
-                className={`${ACTION_BAR_BASE} border border-emerald-200 bg-emerald-50 text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50`}
-              >
-                <Wallet className="h-3.5 w-3.5" />
-                Apply to Bills
-              </button>
-              <button
-                type="button"
-                onClick={() => exportPaymentOutPdf(activePayment || form)}
-                className={`${ACTION_BAR_BASE} border border-slate-200 text-slate-700`}
-              >
-                <FileDown className="h-3.5 w-3.5" />
-                PDF
-              </button>
-              <button
-                type="button"
-                onClick={() => window.alert("Email payment advice queued.")}
-                className={`${ACTION_BAR_BASE} border border-slate-200 text-slate-700`}
-              >
-                <Mail className="h-3.5 w-3.5" />
-                Email
-              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowMoreActions((prev) => !prev)}
+                  className={`${ACTION_BAR_BASE} border border-slate-200 text-slate-700`}
+                >
+                  More
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+                {showMoreActions ? (
+                  <div className="absolute bottom-full right-0 mb-2 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMoreActions(false);
+                        persist("Applied");
+                      }}
+                      disabled={!canApplyPayments || !canSaveCurrentFlow}
+                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Apply to Bills
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMoreActions(false);
+                        exportPaymentOutPdf(activePayment || form);
+                      }}
+                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Download PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMoreActions(false);
+                        window.alert("Email payment advice queued.");
+                      }}
+                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Email Receipt
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
           ) : null}
         </div>
