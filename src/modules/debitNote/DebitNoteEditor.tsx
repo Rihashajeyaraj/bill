@@ -51,6 +51,12 @@ function supplierAddressSummary(supplier: SupplierOption | null) {
     .join(", ");
 }
 
+function numberInputValue(value: unknown) {
+  const numeric = parseNumber(value as any);
+  if (!Number.isFinite(numeric) || numeric === 0) return "";
+  return String(value ?? "");
+}
+
 export default function DebitNoteEditor({
   country,
   readOnly,
@@ -419,7 +425,7 @@ export default function DebitNoteEditor({
                         type="number"
                         min={0}
                         max={parseNumber((line as any).sourcePurchaseQty)}
-                        value={line.quantity}
+                        value={numberInputValue(line.quantity)}
                         onChange={(event) => {
                           const sourceQty = Math.max(0, parseNumber((line as any).sourcePurchaseQty));
                           const nextQtyRaw = Math.max(0, parseNumber(event.target.value));
@@ -430,6 +436,7 @@ export default function DebitNoteEditor({
                             debitValue: 0
                           });
                         }}
+                        placeholder="0"
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                       />
                       <p className="mt-1 text-[11px] text-slate-500">
@@ -456,8 +463,9 @@ export default function DebitNoteEditor({
                       <input
                         type="number"
                         min={0}
-                        value={line.rate}
+                        value={numberInputValue(line.rate)}
                         readOnly
+                        placeholder="0"
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700"
                       />
                       <p className="mt-1 text-[11px] text-slate-500">
@@ -469,8 +477,9 @@ export default function DebitNoteEditor({
                       <input
                         type="number"
                         min={0}
-                        value={line.taxRate}
+                        value={numberInputValue(line.taxRate)}
                         readOnly
+                        placeholder="0"
                         className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700"
                       />
                     </label>
