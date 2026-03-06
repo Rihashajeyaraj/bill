@@ -237,8 +237,6 @@ export function computeEditorTotals(
   let total = maxRefundTotal;
   if (refundMode === "NONE") {
     total = 0;
-  } else if (refundMode === "PARTIAL") {
-    total = Math.min(maxRefundTotal, Math.max(0, parseNumber(form.partialRefundAmount)));
   }
   const refundRatio = maxRefundTotal > 0 ? total / maxRefundTotal : 0;
   const subtotal = returnSubtotal * refundRatio;

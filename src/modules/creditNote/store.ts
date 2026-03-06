@@ -411,8 +411,7 @@ function computeTotals(
   lines: CreditLineComputed[],
   invoiceBalanceBefore: number,
   partialAmountCap?: number,
-  refundModeInput: "FULL" | "PARTIAL" | "NONE" = "FULL",
-  partialRefundAmount?: number
+  refundModeInput: "FULL" | "PARTIAL" | "NONE" = "FULL"
 ): CreditTotals {
   const returnSubtotal = lines.reduce((sum, line) => sum + line.baseAmount, 0);
   const returnTaxTotal = lines.reduce((sum, line) => sum + line.taxAmount, 0);
@@ -428,8 +427,6 @@ function computeTotals(
   let total = maxRefundTotal;
   if (refundMode === "NONE") {
     total = 0;
-  } else if (refundMode === "PARTIAL") {
-    total = Math.min(maxRefundTotal, Math.max(0, toNumber(partialRefundAmount)));
   }
   const refundRatio = maxRefundTotal > 0 ? total / maxRefundTotal : 0;
   const subtotal = returnSubtotal * refundRatio;
@@ -837,11 +834,10 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
     lines,
     authoritativeBalanceBefore,
     payload.partialAmountCap,
-    payload.refundMode || "FULL",
-    payload.partialRefundAmount
+    payload.refundMode || "FULL"
   );
   if (totals.refundMode === "PARTIAL" && totals.total <= 0) {
-    throw new Error("Partial refund amount must be greater than zero.");
+    throw new Error("Returned item value must be greater than zero for partial refund.");
   }
   if (totals.total > authoritativeBalanceBefore + 0.01) {
     throw new Error(
@@ -876,7 +872,7 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
       (line) => String((line as any)?.returnCondition || "").trim().toUpperCase() === "REUSABLE"
     ),
     refundMode: totals.refundMode,
-    partialRefundAmount: totals.refundMode === "PARTIAL" ? toNumber(payload.partialRefundAmount) : 0,
+    partialRefundAmount: totals.refundMode === "PARTIAL" ? totals.total : 0,
     discountPercent: toNumber(payload.discountPercent),
     partialAmountCap: toNumber(payload.partialAmountCap),
     priceAdjustmentAmount: toNumber(payload.priceAdjustmentAmount),

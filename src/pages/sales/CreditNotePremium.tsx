@@ -628,16 +628,8 @@ export default function CreditNotePremium() {
     ) {
       errors.lines = "Select reusable or not reusable for each returned line.";
     }
-    if (form.refundMode === "FULL" && totals.maxRefundTotal <= 0) {
+    if ((form.refundMode === "FULL" || form.refundMode === "PARTIAL") && totals.maxRefundTotal <= 0) {
       errors.totals = "Return value must be greater than zero.";
-    }
-    if (form.refundMode === "PARTIAL") {
-      const partial = parseNumber(form.partialRefundAmount);
-      if (partial <= 0) {
-        errors.totals = "Enter a partial refund amount greater than zero.";
-      } else if (partial > totals.maxRefundTotal + 0.01) {
-        errors.totals = "Partial refund cannot exceed return value.";
-      }
     }
     if (targetStatus === "Applied" && !access.canApply) {
       errors.workflow = "You do not have approval permission to apply credits.";
@@ -699,7 +691,7 @@ export default function CreditNotePremium() {
         internalNotes: effectiveFormForSave.internalNotes,
         customerNotes: effectiveFormForSave.customerNotes,
         refundMode: effectiveFormForSave.refundMode,
-        partialRefundAmount: parseNumber(effectiveFormForSave.partialRefundAmount),
+        partialRefundAmount: effectiveFormForSave.refundMode === "PARTIAL" ? totals.total : 0,
         discountPercent: 0,
         partialAmountCap: 0,
         priceAdjustmentAmount: 0,

@@ -439,21 +439,9 @@ export default function CreditNoteEditor({
                   </label>
                 </div>
                 {form.refundMode === "PARTIAL" ? (
-                  <label className="mt-2 block text-xs font-semibold text-slate-600">
-                    Partial Refund Amount
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={numberInputValue(form.partialRefundAmount)}
-                      onChange={(event) => onUpdateForm("partialRefundAmount", event.target.value)}
-                      placeholder="0"
-                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                    />
-                    <p className="mt-1 text-[11px] font-normal text-slate-500">
-                      Max {formatMoney(totals.maxRefundTotal, country)}
-                    </p>
-                  </label>
+                  <p className="mt-2 text-[11px] font-normal text-slate-500">
+                    Partial refund is auto-calculated from returned quantities and item values.
+                  </p>
                 ) : null}
               </div>
               <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600">
