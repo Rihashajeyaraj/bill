@@ -609,6 +609,42 @@ function applyLocalReturnStockDelta(previousNote: CreditNoteRecord | undefined, 
   lsSetOrganizationScoped(LS_KEYS.items, nextItems);
 }
 
+function recalculateLocalInvoiceBalance(invoiceId: string) {
+  const normalizedInvoiceId = String(invoiceId || "").trim();
+  if (!normalizedInvoiceId) return;
+  const invoices = lsGetOrganizationScoped(LS_KEYS.invoices, []);
+  if (!Array.isArray(invoices) || !invoices.length) return;
+
+  const paymentApplied = appliedPaymentInForInvoice(normalizedInvoiceId);
+  const creditApplied = appliedCreditForInvoice(normalizedInvoiceId);
+
+  const nextInvoices = invoices.map((invoice: any) => {
+    if (String(invoice?.id || "").trim() !== normalizedInvoiceId) return invoice;
+    const invoiceTotal = Math.max(
+      0,
+      toNumber(
+        invoice?.totals?.grandTotal ??
+          invoice?.totals?.total ??
+          invoice?.totals?.subTotal ??
+          invoice?.grandTotal
+      )
+    );
+    const nextBalance = Math.max(0, invoiceTotal - paymentApplied - creditApplied);
+    const nextTotals =
+      invoice?.totals && typeof invoice.totals === "object"
+        ? { ...invoice.totals, balance: nextBalance }
+        : { balance: nextBalance };
+    return {
+      ...invoice,
+      totals: nextTotals,
+      remainingBalance: nextBalance,
+      balanceAmount: nextBalance
+    };
+  });
+
+  lsSetOrganizationScoped(LS_KEYS.invoices, nextInvoices);
+}
+
 function buildHistory(
   previous: CreditNoteRecord | undefined,
   status: CreditStatus,
@@ -898,6 +934,7 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
   const nextList = existing ? list.map((entry) => (entry.id === existing.id ? note : entry)) : [note, ...list];
   setAllNotes(nextList);
   applyLocalReturnStockDelta(existing, note);
+  recalculateLocalInvoiceBalance(note.linkedInvoiceId);
   void triggerLowStockNotifications();
   return note;
 }
@@ -921,6 +958,7 @@ export function removeCreditNote(noteId: string): CreditNoteRecord {
 
   // Ensure any prior local stock impact is rolled back if status rules evolve.
   applyLocalReturnStockDelta(existing, { ...existing, status: "Draft" });
+  recalculateLocalInvoiceBalance(existing.linkedInvoiceId);
   void triggerLowStockNotifications();
   return existing;
 }
