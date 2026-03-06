@@ -20,6 +20,7 @@ import {
   purchaseProformaPeekNumber,
   purchaseProformaUpsert
 } from "../../services/proformas.service";
+import { purchasesList } from "../../services/purchases.service";
 
 const UNIT_OPTIONS = ["pcs", "kg", "box", "pack", "ltr", "hours", "days", "months", "service"];
 
@@ -116,6 +117,55 @@ function itemMatchesSearchQuery(item: any, query: unknown) {
   );
 }
 
+function toNormalizedIdSet(value: unknown) {
+  const set = new Set<string>();
+  if (Array.isArray(value)) {
+    value.forEach((entry) => {
+      const next = String(entry || "").trim();
+      if (next) set.add(next);
+    });
+    return set;
+  }
+  if (typeof value === "string") {
+    value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .forEach((entry) => set.add(entry));
+    return set;
+  }
+  return set;
+}
+
+function extractMappedSupplierIds(item: any) {
+  const metadata = item?.metadata && typeof item.metadata === "object" ? item.metadata : {};
+  const candidates = [
+    item?.supplierId,
+    item?.supplier_id,
+    item?.vendorId,
+    item?.vendor_id,
+    item?.supplierIds,
+    item?.supplier_ids,
+    item?.vendorIds,
+    item?.vendor_ids,
+    metadata?.supplierId,
+    metadata?.supplier_id,
+    metadata?.vendorId,
+    metadata?.vendor_id,
+    metadata?.supplierIds,
+    metadata?.supplier_ids,
+    metadata?.vendorIds,
+    metadata?.vendor_ids,
+    metadata?.mappedSupplierIds,
+    metadata?.linkedSupplierIds
+  ];
+  const merged = new Set<string>();
+  candidates.forEach((candidate) => {
+    toNormalizedIdSet(candidate).forEach((entry) => merged.add(entry));
+  });
+  return merged;
+}
+
 function createEmptyLine() {
   return {
     id: `ppf_line_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
@@ -173,6 +223,38 @@ export default function PurchaseProformaEditor() {
   const selectedSupplier = useMemo(
     () => suppliers.find((entry) => String(entry?.id || "") === String(form.supplierId || "")) || null,
     [suppliers, form.supplierId]
+  );
+  const purchaseHistory = useMemo(() => purchasesList(), []);
+  const historicallyMappedItemIdsBySupplier = useMemo(() => {
+    const mapped = new Map<string, Set<string>>();
+    (purchaseHistory || []).forEach((bill: any) => {
+      const supplierId = String(bill?.partyId || bill?.supplierId || bill?.vendorId || "").trim();
+      if (!supplierId) return;
+      const itemSet = mapped.get(supplierId) || new Set<string>();
+      (Array.isArray(bill?.lines) ? bill.lines : []).forEach((line: any) => {
+        const itemId = String(line?.itemId || line?.item_id || "").trim();
+        if (itemId) itemSet.add(itemId);
+      });
+      mapped.set(supplierId, itemSet);
+    });
+    return mapped;
+  }, [purchaseHistory]);
+  const supplierScopedItems = useMemo(() => {
+    const supplierId = String(form.supplierId || "").trim();
+    const baseItems = (items || []).filter(
+      (item: any) => item && item?.status !== "Inactive" && (item?.type === "Product" || item?.type === "Service")
+    );
+    if (!supplierId) return baseItems;
+    const historicalItemSet = historicallyMappedItemIdsBySupplier.get(supplierId) || new Set<string>();
+    return baseItems.filter((item: any) => {
+      const mappedSuppliers = extractMappedSupplierIds(item);
+      if (mappedSuppliers.size) return mappedSuppliers.has(supplierId);
+      return historicalItemSet.has(String(item?.id || "").trim());
+    });
+  }, [items, form.supplierId, historicallyMappedItemIdsBySupplier]);
+  const supplierScopedItemIdSet = useMemo(
+    () => new Set((supplierScopedItems || []).map((item: any) => String(item?.id || "").trim()).filter(Boolean)),
+    [supplierScopedItems]
   );
   const isReadOnlyView = String(searchParams.get("mode") || "").toLowerCase() === "view";
   const isConverted = String(form?.status || "").toUpperCase() === "CONVERTED";
@@ -478,6 +560,10 @@ export default function PurchaseProformaEditor() {
 
   function selectLineItem(line: any, item: any) {
     if (!line || !item) return;
+    if (form.supplierId && !supplierScopedItemIdSet.has(String(item?.id || "").trim())) {
+      toast.warning("Invalid item", "Selected item is not mapped to this supplier.");
+      return;
+    }
     updateLine(line.id, {
       itemId: item?.id || "",
       itemCode: item?.itemCode || "",
@@ -490,7 +576,7 @@ export default function PurchaseProformaEditor() {
   }
 
   function handleItemInput(lineId: string, inputValue: string) {
-    const match = findItemBySearchInput(items, inputValue);
+    const match = findItemBySearchInput(supplierScopedItems, inputValue);
     updateLine(lineId, (line: any) => {
       if (!match) {
         return {
@@ -526,7 +612,7 @@ export default function PurchaseProformaEditor() {
   function getLineItemSearchResults(line: any) {
     const query = normalizeItemName(line?.itemInput);
     if (!query) return [];
-    return (items || []).filter((item) => itemMatchesSearchQuery(item, query)).slice(0, 8);
+    return (supplierScopedItems || []).filter((item) => itemMatchesSearchQuery(item, query)).slice(0, 8);
   }
 
   const activeLineForSearch = useMemo(
@@ -536,12 +622,16 @@ export default function PurchaseProformaEditor() {
   const activeLineSearchResults = useMemo(() => {
     if (!activeLineForSearch) return [];
     return getLineItemSearchResults(activeLineForSearch);
-  }, [activeLineForSearch, items]);
+  }, [activeLineForSearch, supplierScopedItems]);
 
   async function onSave() {
     if (locked) return;
     if (!form.supplierId) {
       toast.warning("Supplier required", "Select a supplier before saving.");
+      return;
+    }
+    if (!supplierScopedItems.length) {
+      toast.warning("No products available", "No products available for this supplier.");
       return;
     }
     setSaving(true);
@@ -557,9 +647,16 @@ export default function PurchaseProformaEditor() {
           taxInclusive: false,
           lineNo: index + 1
         }))
-        .filter((line: any) => line.qty > 0 && (line.itemId || line.itemInput || line.description));
+        .filter((line: any) => line.qty > 0 && String(line?.itemId || "").trim());
       if (!cleanedLines.length) {
-        toast.warning("Line items required", "Add at least one line item before saving.");
+        toast.warning("Line items required", "Add at least one mapped line item before saving.");
+        return;
+      }
+      const invalidLine = cleanedLines.find(
+        (line: any) => !supplierScopedItemIdSet.has(String(line?.itemId || "").trim())
+      );
+      if (invalidLine) {
+        toast.warning("Invalid item", "One or more items are not mapped to the selected supplier.");
         return;
       }
 
@@ -913,6 +1010,9 @@ export default function PurchaseProformaEditor() {
                 <div>
                   <p className="text-sm font-semibold text-slate-900">Line Items</p>
                   <p className="text-xs text-slate-500">Use the same pricing flow as Purchase Bill (tax exclusive only).</p>
+                  {form.supplierId && !supplierScopedItems.length ? (
+                    <p className="mt-1 text-xs font-medium text-rose-600">No products available for this supplier.</p>
+                  ) : null}
                 </div>
                 <button
                   type="button"
@@ -992,7 +1092,11 @@ export default function PurchaseProformaEditor() {
                                   </button>
                                 ))
                               ) : (
-                                <div className="px-2 py-1.5 text-xs text-slate-500">No items found</div>
+                                <div className="px-2 py-1.5 text-xs text-slate-500">
+                                  {form.supplierId
+                                    ? "No products available for this supplier."
+                                    : "No items found"}
+                                </div>
                               )}
                             </div>
                           ) : null}
