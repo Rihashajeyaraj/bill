@@ -7,6 +7,7 @@ import {
 } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
+import { invoicesSyncFromRemote } from "./invoices.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROFORMA_STATUSES = new Set(["DRAFT", "SENT", "APPROVED", "REJECTED", "EXPIRED", "CONVERTED"]);
@@ -935,7 +936,7 @@ export async function convertSalesProforma(proformaId) {
   if (error) {
     throw new Error(normalizeSupabaseError(error, "Failed to convert sales proforma"));
   }
-  await salesProformasSyncFromRemote();
+  await Promise.all([salesProformasSyncFromRemote(), invoicesSyncFromRemote()]);
   return {
     invoiceId: data?.invoice_id || "",
     invoiceNo: data?.invoice_no || ""
