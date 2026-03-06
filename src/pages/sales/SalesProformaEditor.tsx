@@ -137,12 +137,12 @@ function createEmptyLine() {
     itemCode: "",
     itemInput: "",
     description: "",
-    qty: 0,
+    qty: "",
     unit: "pcs",
-    rate: 0,
-    discountAmount: 0,
-    discountPercent: 0,
-    taxRate: 0
+    rate: "",
+    discountAmount: "",
+    discountPercent: "",
+    taxRate: ""
   };
 }
 
@@ -1181,7 +1181,6 @@ export default function SalesProformaEditor() {
                             }`}
                             value={typeof line.qty === "number" ? (line.qty === 0 ? "" : line.qty) : (line.qty ?? "")}
                             disabled={locked}
-                            placeholder="0"
                             onChange={(event) => updateLine(line.id, { qty: event.target.value })}
                           />
                           {lineError?.qty ? (
@@ -1205,7 +1204,6 @@ export default function SalesProformaEditor() {
                             className={lineItemInputRightClassName}
                             value={typeof line.rate === "number" ? (line.rate === 0 ? "" : line.rate) : (line.rate ?? "")}
                             disabled={locked}
-                            placeholder="0"
                             onChange={(event) => updateLine(line.id, { rate: event.target.value })}
                           />
                         </td>
@@ -1215,7 +1213,11 @@ export default function SalesProformaEditor() {
                             min={0}
                             step="0.01"
                             className={lineItemInputRightClassName}
-                            value={line.discountPercent}
+                            value={
+                              typeof line.discountPercent === "number"
+                                ? (line.discountPercent === 0 ? "" : line.discountPercent)
+                                : (line.discountPercent ?? "")
+                            }
                             disabled={locked}
                             onChange={(event) => {
                               const discountPercent = Math.max(0, parseNumber(event.target.value));
@@ -1231,7 +1233,11 @@ export default function SalesProformaEditor() {
                             min={0}
                             step="0.01"
                             className={lineItemInputRightClassName}
-                            value={line.discountAmount}
+                            value={
+                              typeof line.discountAmount === "number"
+                                ? (line.discountAmount === 0 ? "" : line.discountAmount)
+                                : (line.discountAmount ?? "")
+                            }
                             disabled={locked}
                             onChange={(event) => {
                               const baseAmount = Math.max(0, parseNumber(line.qty) * parseNumber(line.rate));
@@ -1250,7 +1256,6 @@ export default function SalesProformaEditor() {
                             className={lineItemInputRightClassName}
                             value={typeof line.taxRate === "number" ? (line.taxRate === 0 ? "" : line.taxRate) : (line.taxRate ?? "")}
                             disabled={locked}
-                            placeholder="0"
                             onChange={(event) => updateLine(line.id, { taxRate: event.target.value })}
                           />
                         </td>

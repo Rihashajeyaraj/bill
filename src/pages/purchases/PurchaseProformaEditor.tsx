@@ -173,10 +173,10 @@ function createEmptyLine() {
     itemCode: "",
     itemInput: "",
     description: "",
-    qty: 1,
+    qty: "",
     unit: "pcs",
-    rate: 0,
-    taxRate: 0
+    rate: "",
+    taxRate: ""
   };
 }
 
@@ -246,11 +246,13 @@ export default function PurchaseProformaEditor() {
     );
     if (!supplierId) return baseItems;
     const historicalItemSet = historicallyMappedItemIdsBySupplier.get(supplierId) || new Set<string>();
-    return baseItems.filter((item: any) => {
+    const scoped = baseItems.filter((item: any) => {
       const mappedSuppliers = extractMappedSupplierIds(item);
       if (mappedSuppliers.size) return mappedSuppliers.has(supplierId);
       return historicalItemSet.has(String(item?.id || "").trim());
     });
+    // If no mapping exists yet for this supplier, allow all active items as fallback.
+    return scoped.length ? scoped : baseItems;
   }, [items, form.supplierId, historicallyMappedItemIdsBySupplier]);
   const supplierScopedItemIdSet = useMemo(
     () => new Set((supplierScopedItems || []).map((item: any) => String(item?.id || "").trim()).filter(Boolean)),
@@ -362,7 +364,7 @@ export default function PurchaseProformaEditor() {
                     itemCode: line?.itemCode || "",
                     itemInput: line?.itemName || line?.description || "",
                     description: line?.description || "",
-                    qty: parseNumber(line?.qty) || 1,
+                    qty: parseNumber(line?.qty),
                     unit: line?.unit ?? "pcs",
                     rate: parseNumber(line?.rate),
                     taxRate: parseNumber(line?.taxRate)
@@ -1113,9 +1115,9 @@ export default function PurchaseProformaEditor() {
                           min={0}
                           step="0.001"
                           className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-right text-sm"
-                          value={line.qty}
+                          value={typeof line.qty === "number" ? (line.qty === 0 ? "" : line.qty) : (line.qty ?? "")}
                           disabled={locked}
-                          onChange={(event) => updateLine(line.id, { qty: parseNumber(event.target.value) })}
+                          onChange={(event) => updateLine(line.id, { qty: event.target.value })}
                         />
                       </label>
 
@@ -1138,9 +1140,9 @@ export default function PurchaseProformaEditor() {
                           min={0}
                           step="0.01"
                           className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-right text-sm"
-                          value={line.rate}
+                          value={typeof line.rate === "number" ? (line.rate === 0 ? "" : line.rate) : (line.rate ?? "")}
                           disabled={locked}
-                          onChange={(event) => updateLine(line.id, { rate: parseNumber(event.target.value) })}
+                          onChange={(event) => updateLine(line.id, { rate: event.target.value })}
                         />
                       </label>
 
@@ -1151,9 +1153,9 @@ export default function PurchaseProformaEditor() {
                           min={0}
                           step="0.01"
                           className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-right text-sm"
-                          value={line.taxRate}
+                          value={typeof line.taxRate === "number" ? (line.taxRate === 0 ? "" : line.taxRate) : (line.taxRate ?? "")}
                           disabled={locked}
-                          onChange={(event) => updateLine(line.id, { taxRate: parseNumber(event.target.value) })}
+                          onChange={(event) => updateLine(line.id, { taxRate: event.target.value })}
                         />
                       </label>
                     </div>
