@@ -282,7 +282,6 @@ function mapPurchaseHeader(row, lineRows = []) {
     country: metadata?.country || "",
     taxMode: metadata?.taxMode || "",
     supplyType: metadata?.supplyType || "",
-    paymentType: metadata?.paymentType || "",
     status: normalizeStatus(row?.status),
     convertedDocumentId: row?.converted_document_id || "",
     convertedAt: row?.converted_at || "",
@@ -766,7 +765,6 @@ export async function purchaseProformaUpsert(input) {
         partyName: input?.partyName || "",
         partyAddress: input?.partyAddress || "",
         phone: input?.phone || "",
-        paymentType: input?.paymentType || "",
         taxMode: input?.taxMode || "",
         supplyType: input?.supplyType || "",
         createdByName: actorName
@@ -887,7 +885,6 @@ export async function purchaseProformaUpsert(input) {
     country: input?.country || "",
     taxMode: input?.taxMode || "",
     supplyType: input?.supplyType || "",
-    paymentType: input?.paymentType || "",
     status,
     convertedDocumentId: input?.convertedDocumentId || "",
     convertedAt: input?.convertedAt || "",

@@ -164,7 +164,6 @@ export default function PurchaseProformaEditor() {
     partyAddress: "",
     phone: "",
     country: "",
-    paymentType: "Unpaid",
     taxMode: "",
     supplyType: "",
     status: "DRAFT",
@@ -270,7 +269,6 @@ export default function PurchaseProformaEditor() {
             partyAddress: found.partyAddress || "",
             phone: found.phone || "",
             country: found.country || "",
-            paymentType: found.paymentType || "Unpaid",
             taxMode: found.taxMode || "",
             supplyType: found.supplyType || "",
             status: found.status || "DRAFT",
@@ -700,15 +698,6 @@ export default function PurchaseProformaEditor() {
                   value={form.validTill || ""}
                   disabled={locked}
                   onChange={(event) => updateForm({ validTill: event.target.value })}
-                />
-              </label>
-              <label className="text-sm text-slate-600">
-                Payment Type
-                <input
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                  value={form.paymentType || ""}
-                  disabled={locked}
-                  onChange={(event) => updateForm({ paymentType: event.target.value })}
                 />
               </label>
             </div>
