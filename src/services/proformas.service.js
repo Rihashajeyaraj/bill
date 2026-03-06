@@ -724,6 +724,8 @@ export async function salesProformaUpsert(input) {
 
 export async function purchaseProformaUpsert(input) {
   assertWritePermission("purchase proformas");
+  const stockSnapshot = lsGetOrganizationScoped(LS_KEYS.items, []);
+  const stockSnapshotJson = JSON.stringify(Array.isArray(stockSnapshot) ? stockSnapshot : []);
   const nowIso = new Date().toISOString();
   const proformaDate = String(input?.proformaDate || "").trim() || nowIso.slice(0, 10);
   const validTill = String(input?.validTill || "").trim();
@@ -912,6 +914,14 @@ export async function purchaseProformaUpsert(input) {
 
   const existing = purchaseGetAll().filter((entry) => String(entry?.id || "") !== String(localEntry.id));
   purchaseSetAll([localEntry, ...existing]);
+
+  // Proforma purchase orders must not mutate inventory; stock updates happen only on posted bills.
+  const stockAfter = lsGetOrganizationScoped(LS_KEYS.items, []);
+  const stockAfterJson = JSON.stringify(Array.isArray(stockAfter) ? stockAfter : []);
+  if (stockAfterJson !== stockSnapshotJson) {
+    lsSetOrganizationScoped(LS_KEYS.items, Array.isArray(stockSnapshot) ? stockSnapshot : []);
+  }
+
   return { id: localEntry.id, proformaNo: localEntry.proformaNo };
 }
 
