@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Printer, Save, Search, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
@@ -712,6 +712,9 @@ export default function InvoiceCreate() {
       alert(`Out of stock: ${item.name}.`);
       return;
     }
+    if (!allowNegativeStock && Number.isFinite(maxAssignable) && maxAssignable < 1) {
+      showInsufficientStockAlert(item.id, maxAssignable, 1, item.name || "Item");
+    }
     setLines((prev) => {
       const emptyIndex = prev.findIndex((line) => !line.itemId);
       const nextLine = {
@@ -1259,6 +1262,7 @@ export default function InvoiceCreate() {
   const stockValidationIssues = useMemo(() => {
     return collectStockValidationIssues(computed.enriched, lines, stockByItemId);
   }, [allowNegativeStock, computed.enriched, stockByItemId, lines]);
+  const stockAlertDedupRef = useRef({ key: "", at: 0 });
 
   const hasStockErrors = stockValidationIssues.length > 0;
   const invoiceItemGridClassName = "grid grid-cols-[2.5fr_1.5fr_0.8fr_0.9fr_1fr_1fr_0.8fr_1fr_1fr] gap-3";
@@ -1295,6 +1299,34 @@ export default function InvoiceCreate() {
     return getBatchAvailableForLineFromSource(itemId, batchId, lines, excludeLineId);
   }
 
+  function getStockAlertItemName(itemId, fallbackName = "") {
+    const stockName = String(stockByItemId.get(itemId)?.itemName || "").trim();
+    if (stockName) return stockName;
+    const listedName = String(
+      (items || []).find((entry) => String(entry?.id || "") === String(itemId || ""))?.name || ""
+    ).trim();
+    if (listedName) return listedName;
+    return String(fallbackName || "Item").trim() || "Item";
+  }
+
+  function showInsufficientStockAlert(itemId, available, requested, fallbackName = "") {
+    const safeAvailable = Math.max(0, Number(available || 0));
+    const safeRequested = Math.max(0, Number(requested || 0));
+    if (!Number.isFinite(safeAvailable) || !Number.isFinite(safeRequested) || safeRequested <= safeAvailable) {
+      return;
+    }
+    const itemName = getStockAlertItemName(itemId, fallbackName);
+    const key = `${itemId}|${round2(safeAvailable)}|${round2(safeRequested)}`;
+    const now = Date.now();
+    if (stockAlertDedupRef.current.key === key && now - stockAlertDedupRef.current.at < 1200) {
+      return;
+    }
+    stockAlertDedupRef.current = { key, at: now };
+    alert(
+      `Insufficient stock for product: ${itemName}. Available: ${round2(safeAvailable)}, Requested: ${round2(safeRequested)}.`
+    );
+  }
+
   function selectLineItem(line, matchedItem) {
     if (!matchedItem || !line) return;
     const itemType = normalizeInvoiceItemType(matchedItem?.type);
@@ -1311,6 +1343,9 @@ export default function InvoiceCreate() {
     const nextQty = Number.isFinite(maxAssignable)
       ? Math.min(normalizedQty, maxAssignable)
       : normalizedQty;
+    if (!allowNegativeStock && Number.isFinite(maxAssignable) && normalizedQty > nextQty) {
+      showInsufficientStockAlert(matchedItem.id, maxAssignable, normalizedQty, matchedItem.name || "Item");
+    }
     updateLine(line.id, {
       itemInput: formatItemSearchLabel(matchedItem),
       itemId: matchedItem.id,
@@ -1358,6 +1393,10 @@ export default function InvoiceCreate() {
     if (Number.isFinite(maxAssignable) && maxAssignable <= 0) {
       alert("Selected batch has zero available stock.");
       return;
+    }
+    const currentQty = Math.max(0, Number(line.qty || 0));
+    if (!allowNegativeStock && Number.isFinite(maxAssignable) && currentQty > maxAssignable) {
+      showInsufficientStockAlert(line.itemId, maxAssignable, currentQty, line.itemInput || "Item");
     }
     updateLine(line.id, {
       selectedBatchId: selectedId,
@@ -2617,6 +2656,12 @@ export default function InvoiceCreate() {
                                             r.selectedBatchId || ""
                                           );
                                           if (Number.isFinite(maxAssignable) && parsed > maxAssignable) {
+                                            showInsufficientStockAlert(
+                                              r.itemId,
+                                              maxAssignable,
+                                              parsed,
+                                              r.itemInput || "Item"
+                                            );
                                             updateLine(r.id, { qty: maxAssignable });
                                             return;
                                           }
