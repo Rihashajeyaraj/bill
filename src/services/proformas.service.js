@@ -37,6 +37,12 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
+function isUniqueConstraintConflict(error) {
+  const code = String(error?.code || "").trim();
+  const status = Number(error?.status || 0);
+  return code === "23505" || status === 409;
+}
+
 function isOrganizationAccessError(error) {
   const code = String(error?.code || "").toUpperCase();
   const message = String(error?.message || "").toLowerCase();
@@ -534,17 +540,6 @@ export async function salesProformaUpsert(input) {
       throw new Error("Organization is required to save sales proforma.");
     }
 
-    if (!proformaNo && !looksLikeUuid(id)) {
-      const { data: nextNo, error: noError } = await supabase.rpc("allocate_sales_proforma_no", {
-        p_organization_id: organizationId,
-        p_proforma_date: proformaDate
-      });
-      if (noError) {
-        throw new Error(normalizeSupabaseError(noError, "Failed to allocate sales proforma number"));
-      }
-      proformaNo = String(nextNo || "").trim();
-    }
-
     const headerPayload = {
       organization_id: organizationId,
       proforma_no: proformaNo || `PI-${Date.now()}`,
@@ -592,15 +587,37 @@ export async function salesProformaUpsert(input) {
       }
       headerRow = data;
     } else {
-      const { data, error } = await supabase
-        .from("proforma_invoices")
-        .insert(headerPayload)
-        .select("*")
-        .single();
-      if (error) {
-        throw new Error(normalizeSupabaseError(error, "Failed to create sales proforma"));
+      let created = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (!proformaNo || attempt > 0) {
+          const { data: nextNo, error: noError } = await supabase.rpc("allocate_sales_proforma_no", {
+            p_organization_id: organizationId,
+            p_proforma_date: proformaDate
+          });
+          if (noError) {
+            throw new Error(normalizeSupabaseError(noError, "Failed to allocate sales proforma number"));
+          }
+          proformaNo = String(nextNo || "").trim();
+          headerPayload.proforma_no = proformaNo || `PI-${Date.now()}`;
+        }
+
+        const { data, error } = await supabase
+          .from("proforma_invoices")
+          .insert(headerPayload)
+          .select("*")
+          .single();
+        if (!error) {
+          created = data;
+          break;
+        }
+        if (!isUniqueConstraintConflict(error)) {
+          throw new Error(normalizeSupabaseError(error, "Failed to create sales proforma"));
+        }
+        if (attempt === 2) {
+          throw new Error("Failed to create sales proforma due to number conflict. Please retry.");
+        }
       }
-      headerRow = data;
+      headerRow = created;
     }
 
     id = String(headerRow?.id || id || "");
@@ -728,17 +745,6 @@ export async function purchaseProformaUpsert(input) {
       throw new Error("Organization is required to save purchase proforma.");
     }
 
-    if (!proformaNo && !looksLikeUuid(id)) {
-      const { data: nextNo, error: noError } = await supabase.rpc("allocate_purchase_proforma_no", {
-        p_organization_id: organizationId,
-        p_proforma_date: proformaDate
-      });
-      if (noError) {
-        throw new Error(normalizeSupabaseError(noError, "Failed to allocate purchase proforma number"));
-      }
-      proformaNo = String(nextNo || "").trim();
-    }
-
     const headerPayload = {
       organization_id: organizationId,
       proforma_no: proformaNo || `PPI-${Date.now()}`,
@@ -782,15 +788,37 @@ export async function purchaseProformaUpsert(input) {
       }
       headerRow = data;
     } else {
-      const { data, error } = await supabase
-        .from("purchase_proformas")
-        .insert(headerPayload)
-        .select("*")
-        .single();
-      if (error) {
-        throw new Error(normalizeSupabaseError(error, "Failed to create purchase proforma"));
+      let created = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (!proformaNo || attempt > 0) {
+          const { data: nextNo, error: noError } = await supabase.rpc("allocate_purchase_proforma_no", {
+            p_organization_id: organizationId,
+            p_proforma_date: proformaDate
+          });
+          if (noError) {
+            throw new Error(normalizeSupabaseError(noError, "Failed to allocate purchase proforma number"));
+          }
+          proformaNo = String(nextNo || "").trim();
+          headerPayload.proforma_no = proformaNo || `PPI-${Date.now()}`;
+        }
+
+        const { data, error } = await supabase
+          .from("purchase_proformas")
+          .insert(headerPayload)
+          .select("*")
+          .single();
+        if (!error) {
+          created = data;
+          break;
+        }
+        if (!isUniqueConstraintConflict(error)) {
+          throw new Error(normalizeSupabaseError(error, "Failed to create purchase proforma"));
+        }
+        if (attempt === 2) {
+          throw new Error("Failed to create purchase proforma due to number conflict. Please retry.");
+        }
       }
-      headerRow = data;
+      headerRow = created;
     }
 
     id = String(headerRow?.id || id || "");

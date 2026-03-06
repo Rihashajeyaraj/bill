@@ -149,6 +149,7 @@ function createEmptyLine() {
 function validateSalesProformaForm(form: any) {
   const errors: any = {};
   const lineErrors: Record<string, { item?: string; qty?: string }> = {};
+  let hasBlockingLineError = false;
 
   const proformaDate = String(form?.proformaDate || "").trim();
   if (!proformaDate) {
@@ -169,9 +170,11 @@ function validateSalesProformaForm(form: any) {
 
     if (!itemText && qty > 0) {
       nextLineErrors.item = "Item is required.";
+      hasBlockingLineError = true;
     }
     if (itemText && qty <= 0) {
       nextLineErrors.qty = "Qty must be greater than 0.";
+      hasBlockingLineError = true;
     }
 
     if (itemText && qty > 0) {
@@ -191,7 +194,11 @@ function validateSalesProformaForm(form: any) {
     errors.lineErrors = lineErrors;
   }
 
-  const hasErrors = Object.keys(errors).length > 0;
+  const hasErrors =
+    !!errors.proformaDate ||
+    !!errors.partyId ||
+    !!errors.lines ||
+    (!validLineCount && hasBlockingLineError);
   errors.hasErrors = hasErrors;
   return errors;
 }
