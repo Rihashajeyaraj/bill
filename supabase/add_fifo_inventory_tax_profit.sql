@@ -386,8 +386,8 @@ declare
   v_supply_type text := coalesce(p_payload->>'supply_type', '');
   v_line jsonb;
   v_item_id uuid;
-  v_item_type text;
   v_item_name text;
+  v_item_type text;
   v_item_code text;
   v_description text;
   v_qty numeric;
@@ -765,6 +765,7 @@ declare
   v_tax_regime text := 'none';
   v_line jsonb;
   v_item_id uuid;
+  v_item_name text;
   v_item_type text;
   v_description text;
   v_qty numeric;
@@ -782,6 +783,7 @@ declare
   v_line_id uuid;
   v_manual_batch_id uuid;
   v_available numeric;
+  v_required_qty numeric;
   v_remaining numeric;
   v_pick_qty numeric;
   v_alloc_order integer;
@@ -975,23 +977,26 @@ begin
     v_alloc_order := 0;
 
     if v_item_id is not null then
-      select i.item_type::text, coalesce(i.purchase_price, 0)
-        into v_item_type, v_fallback_cost
+      select i.item_name, i.item_type::text, coalesce(i.purchase_price, 0)
+        into v_item_name, v_item_type, v_fallback_cost
       from public.items i
       where i.organization_id = v_org_id
         and i.id = v_item_id;
 
       if lower(coalesce(v_item_type, '')) = 'product' then
-        select coalesce(sum(b.qty_remaining), 0)
+        select round(coalesce(sum(b.qty_remaining), 0)::numeric, 3)
           into v_available
         from public.stock_batches b
         where b.organization_id = v_org_id
           and b.item_id = v_item_id
           and b.qty_remaining > 0;
 
-        if (not v_allow_negative_stock) and v_available < v_qty then
-          raise exception 'Insufficient stock for item %. Requested %, available %.',
-            v_item_id, v_qty, v_available;
+        v_required_qty := round(coalesce(v_qty, 0)::numeric, 3);
+        if (not v_allow_negative_stock) and v_available < v_required_qty then
+          raise exception 'Insufficient stock for product: %. Available: %, Requested: %.',
+            coalesce(nullif(trim(v_item_name), ''), v_description, 'Item'),
+            v_available,
+            v_required_qty;
         end if;
 
         v_remaining := v_qty;
@@ -1009,9 +1014,11 @@ begin
             raise exception 'Selected batch % not found for item %', v_manual_batch_id, v_item_id;
           end if;
 
-          if (not v_allow_negative_stock) and v_batch.qty_remaining < v_qty then
-            raise exception 'Insufficient selected batch stock for item %. Requested %, selected batch available %.',
-              v_item_id, v_qty, v_batch.qty_remaining;
+          if (not v_allow_negative_stock) and round(coalesce(v_batch.qty_remaining, 0)::numeric, 3) < v_required_qty then
+            raise exception 'Insufficient stock for product: %. Available: %, Requested: %.',
+              coalesce(nullif(trim(v_item_name), ''), v_description, 'Item'),
+              round(coalesce(v_batch.qty_remaining, 0)::numeric, 3),
+              v_required_qty;
           end if;
 
           v_pick_qty := least(v_remaining, coalesce(v_batch.qty_remaining, 0));

@@ -1751,7 +1751,7 @@ export default function InvoiceCreate() {
     if (!allowNegativeStock && effectiveStockIssues.length) {
       const issue = effectiveStockIssues[0];
       alert(
-        `Insufficient stock for ${issue.itemName}. Available ${issue.available}, requested ${issue.requested}.`
+        `Insufficient stock for product: ${issue.itemName}. Available: ${issue.available}, Requested: ${issue.requested}.`
       );
       return null;
     }
