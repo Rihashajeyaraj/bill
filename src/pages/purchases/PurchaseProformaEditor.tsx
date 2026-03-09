@@ -102,21 +102,6 @@ function findItemBySearchInput(items: any[], value: unknown) {
   );
 }
 
-function itemMatchesSearchQuery(item: any, query: unknown) {
-  const normalizedQuery = normalizeItemName(query);
-  if (!normalizedQuery) return true;
-  const name = normalizeItemName(item?.name);
-  const itemCode = normalizeItemName(item?.itemCode);
-  const id = normalizeItemName(item?.id);
-  const label = normalizeItemName(formatItemSearchLabel(item));
-  return (
-    name.includes(normalizedQuery) ||
-    itemCode.includes(normalizedQuery) ||
-    id.includes(normalizedQuery) ||
-    label.includes(normalizedQuery)
-  );
-}
-
 function toNormalizedIdSet(value: unknown) {
   const set = new Set<string>();
   if (Array.isArray(value)) {
@@ -202,7 +187,6 @@ export default function PurchaseProformaEditor() {
   });
   const [supplierCountryMenuOpen, setSupplierCountryMenuOpen] = useState(false);
   const [supplierStateMenuOpen, setSupplierStateMenuOpen] = useState(false);
-  const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
   const [form, setForm] = useState<any>({
     id: "",
     proformaNo: "",
@@ -560,23 +544,6 @@ export default function PurchaseProformaEditor() {
     setSupplierStateMenuOpen(false);
   }
 
-  function selectLineItem(line: any, item: any) {
-    if (!line || !item) return;
-    if (form.supplierId && !supplierScopedItemIdSet.has(String(item?.id || "").trim())) {
-      toast.warning("Invalid item", "Selected item is not mapped to this supplier.");
-      return;
-    }
-    updateLine(line.id, {
-      itemId: item?.id || "",
-      itemCode: item?.itemCode || "",
-      itemInput: item?.name || "",
-      description: item?.name || "",
-      unit: item?.unit ?? line?.unit ?? "pcs",
-      rate: parseNumber(item?.purchaseRate ?? item?.metadata?.purchasePrice ?? item?.purchase_price ?? line?.rate),
-      taxRate: parseNumber(item?.taxRate ?? item?.metadata?.taxRate ?? item?.tax_rate ?? line?.taxRate)
-    });
-  }
-
   function handleItemInput(lineId: string, inputValue: string) {
     const match = findItemBySearchInput(supplierScopedItems, inputValue);
     updateLine(lineId, (line: any) => {
@@ -611,21 +578,6 @@ export default function PurchaseProformaEditor() {
     });
   }
 
-  function getLineItemSearchResults(line: any) {
-    const query = normalizeItemName(line?.itemInput);
-    if (!query) return [];
-    return (supplierScopedItems || []).filter((item) => itemMatchesSearchQuery(item, query)).slice(0, 8);
-  }
-
-  const activeLineForSearch = useMemo(
-    () => (form.lines || []).find((line: any) => String(line?.id || "") === String(activeLineItemSearchId || "")) || null,
-    [form.lines, activeLineItemSearchId]
-  );
-  const activeLineSearchResults = useMemo(() => {
-    if (!activeLineForSearch) return [];
-    return getLineItemSearchResults(activeLineForSearch);
-  }, [activeLineForSearch, supplierScopedItems]);
-
   async function onSave() {
     if (locked) return;
     if (!form.supplierId) {
@@ -659,6 +611,26 @@ export default function PurchaseProformaEditor() {
       );
       if (invalidLine) {
         toast.warning("Invalid item", "One or more items are not mapped to the selected supplier.");
+        return;
+      }
+
+      const qtyExceededLine = cleanedLines.find((line: any) => {
+        const matchedItem = (supplierScopedItems || []).find(
+          (item: any) => String(item?.id || "") === String(line?.itemId || "")
+        );
+        if (!matchedItem) return false;
+        const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
+        return itemQty > 0 && Number(line?.qty || 0) > itemQty;
+      });
+      if (qtyExceededLine) {
+        const matchedItem = (supplierScopedItems || []).find(
+          (item: any) => String(item?.id || "") === String(qtyExceededLine?.itemId || "")
+        );
+        const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
+        toast.warning(
+          "Quantity exceeds item qty",
+          `"${matchedItem?.name || "Item"}" has qty ${itemQty}, but ${Number(qtyExceededLine?.qty || 0)} was entered.`
+        );
         return;
       }
 
@@ -1050,14 +1022,7 @@ export default function PurchaseProformaEditor() {
                             value={line.itemInput || ""}
                             disabled={locked}
                             placeholder="Search by item name or code"
-                            onFocus={() => setActiveLineItemSearchId(line.id)}
-                            onBlur={() => {
-                              window.setTimeout(() => {
-                                setActiveLineItemSearchId((current) => (current === line.id ? "" : current));
-                              }, 120);
-                            }}
                             onChange={(event) => {
-                              setActiveLineItemSearchId(line.id);
                               handleItemInput(line.id, event.target.value);
                             }}
                           />
@@ -1067,7 +1032,6 @@ export default function PurchaseProformaEditor() {
                               onMouseDown={(event) => {
                                 event.preventDefault();
                                 clearLineItemSelection(line.id);
-                                setActiveLineItemSearchId(line.id);
                               }}
                               className="absolute right-1.5 top-[9px] inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                               title="Clear selected item"
@@ -1075,32 +1039,6 @@ export default function PurchaseProformaEditor() {
                             >
                               <X className="h-3.5 w-3.5" />
                             </button>
-                          ) : null}
-                          {activeLineItemSearchId === line.id && normalizeItemName(line.itemInput).length ? (
-                            <div className="absolute z-20 mt-1 w-full rounded-xl border border-slate-100 bg-white p-1.5 shadow-soft">
-                              {activeLineSearchResults.length ? (
-                                activeLineSearchResults.map((item) => (
-                                  <button
-                                    key={`proforma-line-${line.id}-${item.id}`}
-                                    type="button"
-                                    onMouseDown={(event) => {
-                                      event.preventDefault();
-                                      selectLineItem(line, item);
-                                      setActiveLineItemSearchId("");
-                                    }}
-                                    className="w-full rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50"
-                                  >
-                                    {formatItemSearchLabel(item)}
-                                  </button>
-                                ))
-                              ) : (
-                                <div className="px-2 py-1.5 text-xs text-slate-500">
-                                  {form.supplierId
-                                    ? "No products available for this supplier."
-                                    : "No items found"}
-                                </div>
-                              )}
-                            </div>
                           ) : null}
                         </div>
                         {line.itemCode ? (
@@ -1117,7 +1055,24 @@ export default function PurchaseProformaEditor() {
                           className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-right text-sm"
                           value={typeof line.qty === "number" ? (line.qty === 0 ? "" : line.qty) : (line.qty ?? "")}
                           disabled={locked}
-                          onChange={(event) => updateLine(line.id, { qty: event.target.value })}
+                          onChange={(event) => {
+                            const enteredQty = Number(event.target.value);
+                            if (line.itemId) {
+                              const matchedItem = (supplierScopedItems || []).find(
+                                (item: any) => String(item?.id || "") === String(line.itemId || "")
+                              );
+                              const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
+                              if (matchedItem && itemQty > 0 && enteredQty > itemQty) {
+                                toast.warning(
+                                  "Quantity exceeds item qty",
+                                  `Cannot enter ${enteredQty}. Maximum allowed is ${itemQty}.`
+                                );
+                                updateLine(line.id, { qty: itemQty });
+                                return;
+                              }
+                            }
+                            updateLine(line.id, { qty: event.target.value });
+                          }}
                         />
                       </label>
 

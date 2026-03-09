@@ -1086,6 +1086,26 @@ export default function PurchaseBill() {
       }
       clearFormError("lines");
 
+      const qtyExceededLine = validLines.find((line) => {
+        const matchedItem = purchasableItems.find(
+          (item) => String(item.id) === String(line.itemId)
+        );
+        if (!matchedItem) return false;
+        const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
+        return itemQty > 0 && Number(line.qty || 0) > itemQty;
+      });
+      if (qtyExceededLine) {
+        const matchedItem = purchasableItems.find(
+          (item) => String(item.id) === String(qtyExceededLine.itemId)
+        );
+        const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
+        toast.error(
+          "Quantity exceeds item qty",
+          `"${matchedItem?.name || "Item"}" has qty ${itemQty}, but ${Number(qtyExceededLine.qty || 0)} was entered.`
+        );
+        return;
+      }
+
       const effectiveBillNumber = normalizedBillNumber;
       const effectivePaymentType = markAsPaid ? paymentType : "Unpaid";
       const createdBillId = await purchasesCreate({
@@ -1604,7 +1624,24 @@ export default function PurchaseBill() {
                       type="number"
                       min="0"
                       value={line.qty}
-                      onChange={(e) => updateLine(line.id, { qty: e.target.value })}
+                      onChange={(e) => {
+                        const enteredQty = Number(e.target.value);
+                        if (line.itemId) {
+                          const matchedItem = purchasableItems.find(
+                            (item) => String(item.id) === String(line.itemId)
+                          );
+                          const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
+                          if (matchedItem && itemQty > 0 && enteredQty > itemQty) {
+                            toast.warning(
+                              "Quantity exceeds item qty",
+                              `Cannot enter ${enteredQty}. Maximum allowed is ${itemQty}.`
+                            );
+                            updateLine(line.id, { qty: itemQty });
+                            return;
+                          }
+                        }
+                        updateLine(line.id, { qty: e.target.value });
+                      }}
                       className="w-20 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
                     />
                   </td>
