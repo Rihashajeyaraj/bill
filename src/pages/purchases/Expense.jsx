@@ -5,8 +5,6 @@ import Card from "../../components/Card";
 import FormField from "../../components/FormField";
 import GradientButton from "../../components/GradientButton";
 import {
-  expenseCategoriesList,
-  expenseCategoriesSyncFromRemote,
   expensesCreate,
   expensesList,
   expensesSyncFromRemote
@@ -28,7 +26,6 @@ export default function Expense() {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
-  const [categories, setCategories] = useState(() => expenseCategoriesList());
   const [historyRows, setHistoryRows] = useState(() => expensesList());
 
   useEffect(() => {
@@ -36,17 +33,12 @@ export default function Expense() {
     async function load() {
       setLoadingHistory(true);
       try {
-        const [nextHistory, nextCategories] = await Promise.all([
-          expensesSyncFromRemote(),
-          expenseCategoriesSyncFromRemote()
-        ]);
+        const nextHistory = await expensesSyncFromRemote();
         if (!mounted) return;
         setHistoryRows(Array.isArray(nextHistory) ? nextHistory : expensesList());
-        setCategories(Array.isArray(nextCategories) ? nextCategories : expenseCategoriesList());
       } catch {
         if (!mounted) return;
         setHistoryRows(expensesList());
-        setCategories(expenseCategoriesList());
       } finally {
         if (mounted) setLoadingHistory(false);
       }
@@ -83,12 +75,6 @@ export default function Expense() {
         note
       });
       setHistoryRows(Array.isArray(updated) ? updated : expensesList());
-      try {
-        const nextCategories = await expenseCategoriesSyncFromRemote();
-        setCategories(Array.isArray(nextCategories) ? nextCategories : expenseCategoriesList());
-      } catch {
-        setCategories(expenseCategoriesList());
-      }
       setAmount("");
       setNote("");
       alert("Expense saved successfully.");
@@ -122,18 +108,12 @@ export default function Expense() {
 
           <FormField label="Category">
             <input
-              list="expense-category-options"
               value={category}
               onChange={(event) => setCategory(event.target.value)}
               onBlur={(event) => setCategory(String(event.target.value || "").trim())}
-              placeholder="Search or type category"
+              placeholder="Enter category"
               className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none"
             />
-            <datalist id="expense-category-options">
-              {categories.map((entry) => (
-                <option key={entry} value={entry} />
-              ))}
-            </datalist>
           </FormField>
 
           <FormField label="Amount">
