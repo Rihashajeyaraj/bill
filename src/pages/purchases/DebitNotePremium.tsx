@@ -737,7 +737,7 @@ export default function DebitNotePremium() {
               <p className="text-xs text-slate-500">Create and manage supplier debit adjustments for {COUNTRY_CONFIG[country].name}.</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
-              {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].code} {COUNTRY_CONFIG[country].name}
+              {COUNTRY_CONFIG[country].name}
             </div>
           </div>
         </div>

@@ -365,6 +365,11 @@ export default function PaymentInEditor({
               <div className="flex justify-between"><span className="text-slate-600">Amount Received</span><span className="font-semibold text-slate-900">{formatMoney(totals.amountReceived, country)}</span></div>
               <div className="flex justify-between"><span className="text-slate-600">Amount Applied</span><span className="font-semibold text-slate-900">{formatMoney(totals.amountApplied, country)}</span></div>
               <div className="flex justify-between border-t border-slate-200 pt-2"><span className="font-semibold text-slate-900">Unapplied Amount</span><span className="font-semibold text-slate-900">{formatMoney(totals.unappliedAmount, country)}</span></div>
+              {totals.unappliedAmount > 0 ? (
+                <p className="text-xs text-amber-700">
+                  Unapplied Amount means the payment received is greater than the amount applied to invoices. The extra amount remains available until it is adjusted to another invoice.
+                </p>
+              ) : null}
               <div className="flex justify-between"><span className="text-slate-600">Outstanding Before</span><span className="font-semibold text-slate-900">{formatMoney(customerOutstandingBefore, country)}</span></div>
               <div className="flex justify-between"><span className="text-slate-600">Outstanding After</span><span className="font-semibold text-slate-900">{formatMoney(totals.outstandingAfter, country)}</span></div>
             </div>

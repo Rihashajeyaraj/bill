@@ -548,7 +548,7 @@ export default function Dashboard() {
   return (
     <div className="dashboard-theme max-w-6xl">
       <div className="rounded-2xl bg-slate-100 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold text-slate-700">Dashboard ({countryCode} {country})</h1>
+        <h1 className="text-lg font-semibold text-slate-700">Dashboard ({country})</h1>
         <div className="flex flex-wrap items-center gap-2">
           <input
             type="date"

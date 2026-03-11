@@ -1732,7 +1732,7 @@ export default function Reports() {
           <div>
             <p className="text-xs font-semibold text-slate-500">Country</p>
             <div className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
-              {countryCode} {country}
+              {country}
             </div>
           </div>
           <div>
@@ -1783,7 +1783,7 @@ export default function Reports() {
               {REPORT_CARDS.find((report) => report.id === activeReport)?.label}
             </p>
             <p className="text-xs text-slate-500">
-              Live data from {formatIsoAsDmy(fromDate)} to {formatIsoAsDmy(toDate)} - {countryCode} {country}
+              Live data from {formatIsoAsDmy(fromDate)} to {formatIsoAsDmy(toDate)} - {country}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

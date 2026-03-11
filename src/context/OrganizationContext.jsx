@@ -35,6 +35,16 @@ function resolveCurrencySymbol(currencyCode) {
   }
 }
 
+function stripLeadingCountryCode(countryValue, countryCode) {
+  const country = String(countryValue || "").trim();
+  const code = String(countryCode || "")
+    .trim()
+    .toUpperCase();
+  if (!country || !code) return country;
+  const duplicatePrefix = new RegExp(`^${code}\\s+`, "i");
+  return country.replace(duplicatePrefix, "").trim();
+}
+
 function buildOrganizationState(profile = null) {
   const source = profile || companyGetProfile() || {};
   const countryCodeRaw = String(source?.countryCode || source?.country_code || "")
@@ -42,7 +52,10 @@ function buildOrganizationState(profile = null) {
     .toUpperCase();
   const countryRaw = String(source?.country || source?.country_name || "").trim();
   const countryCode = countryCodeRaw || companyGetCountryCode(countryRaw || "India");
-  const country = countryRaw || companyGetCountryName(countryCode || "IN");
+  const country = stripLeadingCountryCode(
+    countryRaw || companyGetCountryName(countryCode || "IN"),
+    countryCode
+  );
   const currency =
     normalizeCurrencyCode(source?.currency || source?.base_currency || source?.tax?.currency) || "INR";
 
@@ -50,7 +63,7 @@ function buildOrganizationState(profile = null) {
     profile: source,
     country,
     countryCode,
-    countryLabel: `${countryCode} ${country}`.trim(),
+    countryLabel: country,
     currency,
     currencySymbol: resolveCurrencySymbol(currency)
   };

@@ -2,11 +2,31 @@ import { jsPDF } from "jspdf";
 import { COUNTRY_CONFIG } from "./countryConfig";
 import type { CountryCode } from "./countryConfig";
 import type { PaymentInRecord } from "./store";
-import { formatCurrencyByPreference, formatDateTimeByPreference } from "../../lib/formatPreferences";
+import { formatDateTimeByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
 
 function money(value: number, country: CountryCode) {
-  const currency = COUNTRY_CONFIG[country].currency;
-  return formatCurrencyByPreference(Number(value || 0), currency, { maximumFractionDigits: 2 });
+  void country;
+  return formatNumberByPreference(Number(value || 0), {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function drawSummaryRow(
+  doc: jsPDF,
+  label: string,
+  value: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  emphasized = false
+) {
+  doc.roundedRect(x, y, width, height, 2, 2);
+  doc.line(x + width - 34, y, x + width - 34, y + height);
+  doc.setFontSize(emphasized ? 11 : 10);
+  doc.text(label, x + 3, y + height / 2 + 1);
+  doc.text(value, x + width - 3, y + height / 2 + 1, { align: "right" });
 }
 
 function downloadBlob(content: Blob, filename: string) {
@@ -103,6 +123,9 @@ export function exportPaymentInSummaryPdf(records: PaymentInRecord[], country: C
 export function exportSinglePaymentInPdf(note: PaymentInRecord) {
   const cfg = COUNTRY_CONFIG[note.country];
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const appliedAllocations = (Array.isArray(note.allocations) ? note.allocations : []).filter(
+    (line) => Number(line?.applyAmount || 0) > 0
+  );
   let y = 14;
 
   doc.setFontSize(15);
@@ -132,32 +155,44 @@ export function exportSinglePaymentInPdf(note: PaymentInRecord) {
   doc.line(14, y, 196, y);
   y += 5;
 
-  note.allocations.filter((line) => line.applyAmount > 0).slice(0, 16).forEach((line) => {
-    doc.text(line.invoiceNo.slice(0, 20), 14, y);
-    doc.text(line.invoiceDate, 58, y);
-    doc.text(money(line.balanceDue, note.country), 110, y, { align: "right" });
-    doc.text(money(line.applyAmount, note.country), 170, y, { align: "right" });
+  if (appliedAllocations.length) {
+    appliedAllocations.slice(0, 16).forEach((line) => {
+      doc.text(String(line?.invoiceNo || "-").slice(0, 20), 14, y);
+      doc.text(String(line?.invoiceDate || "-"), 58, y);
+      doc.text(money(Number(line?.balanceDue || 0), note.country), 110, y, { align: "right" });
+      doc.text(money(Number(line?.applyAmount || 0), note.country), 170, y, { align: "right" });
+      y += 6;
+    });
+  } else {
+    doc.setTextColor(100, 116, 139);
+    doc.text("No invoice applied", 14, y);
+    doc.text("-", 58, y);
+    doc.text("0.00", 110, y, { align: "right" });
+    doc.text("0.00", 170, y, { align: "right" });
+    doc.setTextColor(0, 0, 0);
     y += 6;
-  });
+  }
 
-  y += 2;
-  doc.line(120, y, 196, y);
-  y += 6;
-  doc.text("Amount Received", 132, y);
-  doc.text(money(note.totals.amountReceived, note.country), 196, y, { align: "right" });
-  y += 6;
-  doc.text("Amount Applied", 132, y);
-  doc.text(money(note.totals.amountApplied, note.country), 196, y, { align: "right" });
-  y += 6;
-  doc.setFontSize(11);
-  doc.text("Unapplied Amount", 132, y);
-  doc.text(money(note.totals.unappliedAmount, note.country), 196, y, { align: "right" });
+  y += 4;
+  drawSummaryRow(doc, "Amount Received", money(note.totals.amountReceived, note.country), 124, y, 72, 9);
+  y += 11;
+  drawSummaryRow(doc, "Amount Applied", money(note.totals.amountApplied, note.country), 124, y, 72, 9);
+  y += 11;
+  drawSummaryRow(doc, "Unapplied Amount", money(note.totals.unappliedAmount, note.country), 124, y, 72, 10, true);
 
-  y += 10;
+  y += 14;
   doc.setFontSize(9);
-  doc.text(cfg.legalFooter, 14, y);
-  y += 5;
-  doc.text(`Customer Note: ${note.customerNotes || "-"}`, 14, y);
+  const unappliedHelp = note.totals.unappliedAmount > 0
+    ? "Unapplied Amount is the extra payment received that is not yet linked to any invoice."
+    : "Unapplied Amount is zero because the full receipt is linked to invoice balances.";
+  const legalLines = doc.splitTextToSize(cfg.legalFooter, 182);
+  const helpLines = doc.splitTextToSize(unappliedHelp, 182);
+  const noteLines = doc.splitTextToSize(`Customer Note: ${note.customerNotes || "-"}`, 182);
+  doc.text(legalLines, 14, y);
+  y += legalLines.length * 4 + 2;
+  doc.text(helpLines, 14, y);
+  y += helpLines.length * 4 + 2;
+  doc.text(noteLines, 14, y);
 
   doc.save(`${note.receiptNo}.pdf`);
 }

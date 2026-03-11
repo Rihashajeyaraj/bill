@@ -586,7 +586,7 @@ export default function PaymentInPremium() {
             <p className="text-xs text-slate-500">Receive money from customers</p>
           </div>
           <div className="mx-auto w-full max-w-xs rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm font-semibold text-slate-700 sm:mx-0 sm:flex-1 sm:max-w-sm">
-            {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].code} {COUNTRY_CONFIG[country].name} | {COUNTRY_CONFIG[country].currency}
+            {COUNTRY_CONFIG[country].name} | {COUNTRY_CONFIG[country].currency}
           </div>
           <button onClick={startNewPayment} disabled={!allowed || !canCreatePayment} className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
             <Plus className="h-4 w-4" />
@@ -731,7 +731,7 @@ export default function PaymentInPremium() {
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                   <FlowCard title="Country Context" subtitle="Auto updates currency, label and legal wording">
                     <div className="space-y-3">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">{COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].code} {COUNTRY_CONFIG[country].name}</div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">{COUNTRY_CONFIG[country].name}</div>
                       <p className="text-sm text-slate-700">Currency: <span className="font-semibold">{COUNTRY_CONFIG[country].currency}</span></p>
                       <p className="text-sm text-slate-700">Receipt Label: <span className="font-semibold">{COUNTRY_CONFIG[country].receiptLabel}</span></p>
                       <p className="text-xs text-slate-500">Payment In is locked to {COUNTRY_CONFIG[country].name}.</p>
@@ -931,7 +931,7 @@ export default function PaymentInPremium() {
                         <p className="text-xs text-slate-500">Customer</p>
                         <p className="font-semibold text-slate-900">{selectedCustomer?.name || form.customerInput || "-"}</p>
                         <p className="mt-1 text-xs text-slate-500">
-                          {COUNTRY_CONFIG[country].flag} {COUNTRY_CONFIG[country].name} | {COUNTRY_CONFIG[country].currency}
+                          {COUNTRY_CONFIG[country].name} | {COUNTRY_CONFIG[country].currency}
                         </p>
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-xs">
@@ -946,6 +946,9 @@ export default function PaymentInPremium() {
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Unapplied</p>
                           <p className="text-base font-semibold text-amber-700">{formatMoney(totals.unappliedAmount, country)}</p>
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            Extra received amount not yet linked to any invoice.
+                          </p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Payment Mode</p>
@@ -954,7 +957,7 @@ export default function PaymentInPremium() {
                       </div>
                       {totals.unappliedAmount > 0 ? (
                         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                          Unapplied amount will be saved as advance payment wallet for this customer.
+                          Unapplied Amount means the payment received is greater than the amount applied to invoices. The extra amount stays available until it is adjusted to another invoice.
                         </div>
                       ) : null}
                     </div>

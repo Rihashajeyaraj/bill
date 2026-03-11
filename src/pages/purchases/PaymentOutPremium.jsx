@@ -473,7 +473,7 @@ export default function PaymentOutPremium() {
             <p className="text-xs text-slate-500">Pay suppliers and track payables</p>
           </div>
           <div className="mx-auto w-full max-w-xs rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm font-semibold text-slate-700 sm:mx-0 sm:flex-1 sm:max-w-sm">
-            {countryCode} {country} | {currencySymbol || currency || "N/A"}
+            {country} | {currencySymbol || currency || "N/A"}
           </div>
           {panelMode === "list" ? (
             <button
@@ -688,7 +688,7 @@ export default function PaymentOutPremium() {
               <FlowCard title="Country Context" subtitle="Auto updates currency and payment numbering">
                 <div className="space-y-3">
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
-                    {countryCode} {country}
+                    {country}
                   </div>
                   <p className="text-sm text-slate-700">
                     Currency: <span className="font-semibold">{currencySymbol || currency || "-"}</span>
@@ -941,7 +941,7 @@ export default function PaymentOutPremium() {
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                     <p className="font-semibold text-slate-900">{selectedSupplier?.name || form.supplierName || "-"}</p>
                     <p className="text-xs text-slate-500">
-                      {countryCode} {country} | {currencySymbol || currency || "-"} | {form.paymentDate || "-"}
+                      {country} | {currencySymbol || currency || "-"} | {form.paymentDate || "-"}
                     </p>
                   </div>
                   <div className="flex items-center justify-between">
