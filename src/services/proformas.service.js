@@ -26,6 +26,10 @@ function round2(value) {
 }
 
 function normalizeSupabaseError(error, fallback) {
+  const message = String(error?.message || "").trim();
+  if (message.toLowerCase().includes("sales proforma already converted")) {
+    return message;
+  }
   if (error?.code === "42501") {
     return `${fallback}. Supabase RLS denied access. Verify organization membership and policies.`;
   }
@@ -35,7 +39,7 @@ function normalizeSupabaseError(error, fallback) {
   if (error?.code === "PGRST202") {
     return `${fallback}. Missing proforma RPC. Run the proforma migration SQL first.`;
   }
-  return error?.message || fallback;
+  return message || fallback;
 }
 
 function isUniqueConstraintConflict(error) {
@@ -934,6 +938,9 @@ export async function convertSalesProforma(proformaId) {
     p_proforma_id: proformaId
   });
   if (error) {
+    if (String(error?.message || "").toLowerCase().includes("sales proforma already converted")) {
+      await Promise.allSettled([salesProformasSyncFromRemote(), invoicesSyncFromRemote()]);
+    }
     throw new Error(normalizeSupabaseError(error, "Failed to convert sales proforma"));
   }
   await Promise.all([salesProformasSyncFromRemote(), invoicesSyncFromRemote()]);
