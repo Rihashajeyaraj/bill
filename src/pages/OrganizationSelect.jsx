@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, ArrowRight, Building2, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Building2, Plus, Trash2 } from "lucide-react";
 import Card from "../components/Card";
 import PageHeader from "../components/PageHeader";
 import GradientButton from "../components/GradientButton";
@@ -101,6 +101,17 @@ export default function OrganizationSelect() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6">
+      <div className="mb-4">
+        <button
+          type="button"
+          onClick={() => navigate("/login", { replace: true })}
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </button>
+      </div>
+
       <PageHeader
         title="Select Company"
         subtitle="Choose the company you want to work with."
