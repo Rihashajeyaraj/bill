@@ -2847,7 +2847,8 @@ export default function InvoiceCreate() {
                         setPaidAmount(e.target.value);
                       }}
                       placeholder="Enter received amount"
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                      inputMode="decimal"
+                      className="numeric-input-uniform w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                       style={{ "--tw-ring-color": UI.COLORS.ring }}
                     />
                     {formErrors.paidAmount ? <p className="mt-1 text-xs text-rose-600">{formErrors.paidAmount}</p> : null}

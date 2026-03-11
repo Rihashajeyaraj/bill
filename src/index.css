@@ -130,4 +130,18 @@ body {
   .form-field[data-invalid="true"] textarea {
     @apply border-rose-300;
   }
+  .numeric-input-uniform {
+    font-variant-numeric: lining-nums tabular-nums;
+    font-feature-settings: "lnum" 1, "tnum" 1;
+    text-align: right;
+  }
+  .numeric-input-uniform::-webkit-outer-spin-button,
+  .numeric-input-uniform::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .numeric-input-uniform[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
 }

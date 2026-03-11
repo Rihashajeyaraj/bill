@@ -815,7 +815,8 @@ export default function PaymentOutPremium() {
                       min={0}
                       value={form.amountPaid}
                       onChange={(event) => updateField("amountPaid", event.target.value)}
-                      className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
+                      inputMode="decimal"
+                      className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
                       disabled={readOnly || !form.supplierId}
                     />
                   </label>

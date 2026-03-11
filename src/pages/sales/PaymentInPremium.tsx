@@ -837,7 +837,8 @@ export default function PaymentInPremium() {
                           placeholder="0"
                           disabled={readOnly}
                           onChange={(event) => updateForm("amountReceived", event.target.value)}
-                          className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
+                          inputMode="decimal"
+                          className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
                         />
                         {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
                       </label>
