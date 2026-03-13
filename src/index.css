@@ -20,6 +20,8 @@ body {
   background: var(--bg, #f6faf8);
   color: var(--text, #14221d);
   font-family: var(--app-font-family, "Inter", "Helvetica Neue", Arial, sans-serif);
+  font-variant-numeric: lining-nums tabular-nums;
+  font-feature-settings: "lnum" 1, "tnum" 1;
   transition: background-color 180ms ease, color 180ms ease;
 }
 

@@ -1,6 +1,7 @@
 import React from "react";
 import { Eye, FileDown, Pencil, RotateCcw } from "lucide-react";
 import type { PaymentInRecord } from "./store";
+import { formatCurrencyByPreference } from "../../lib/formatPreferences";
 
 interface ReceiptFeedCardProps {
   record: PaymentInRecord;
@@ -25,6 +26,12 @@ export default function ReceiptFeedCard({
   onUndo,
   canUndo
 }: ReceiptFeedCardProps) {
+  const money = (value: number) =>
+    formatCurrencyByPreference(Number(value || 0), record.currency, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+
   return (
     <article className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
       <div className="flex items-start justify-between gap-2">
@@ -45,15 +52,15 @@ export default function ReceiptFeedCard({
       <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
         <div className="rounded-xl bg-slate-50 p-2">
           <p className="text-slate-500">Received</p>
-          <p className="font-semibold text-slate-900">{record.currency} {record.totals.amountReceived.toFixed(0)}</p>
+          <p className="font-semibold text-slate-900">{money(record.totals.amountReceived)}</p>
         </div>
         <div className="rounded-xl bg-slate-50 p-2">
           <p className="text-slate-500">Applied</p>
-          <p className="font-semibold text-slate-900">{record.currency} {record.totals.amountApplied.toFixed(0)}</p>
+          <p className="font-semibold text-slate-900">{money(record.totals.amountApplied)}</p>
         </div>
         <div className="rounded-xl bg-slate-50 p-2">
           <p className="text-slate-500">Unapplied</p>
-          <p className="font-semibold text-amber-700">{record.currency} {record.totals.unappliedAmount.toFixed(0)}</p>
+          <p className="font-semibold text-amber-700">{money(record.totals.unappliedAmount)}</p>
         </div>
       </div>
 

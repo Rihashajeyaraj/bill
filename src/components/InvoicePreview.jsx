@@ -1,5 +1,6 @@
 import React from "react";
 import clsx from "clsx";
+import { formatDecimalByPreference } from "../lib/formatPreferences";
 
 const VARIANTS = {
   india_triplicate: {
@@ -145,8 +146,7 @@ const VARIANTS = {
 };
 
 function money(n, currencySymbol) {
-  const v = Number(n || 0);
-  const formatted = v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const formatted = formatDecimalByPreference(Number(n || 0));
   if (!currencySymbol) return formatted;
   return `${currencySymbol}${formatted}`;
 }

@@ -29,16 +29,19 @@ import {
 import { beginPageLoading, endPageLoading } from "../state/pageLoadingStore";
 import { isOrganizationScopedStorageEventKey, LS_KEYS, lsGetOrganizationScoped } from "../services/storage";
 import { resolveCountryIsoCode } from "../lib/geoData";
+import { formatCurrencyByPreference, formatNumberByPreference } from "../lib/formatPreferences";
 
 function money(n) {
-  const v = Number(n || 0);
-  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatNumberByPreference(Number(n || 0), {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
 }
 
 function compactMoney(n) {
   const v = Number(n || 0);
   if (!Number.isFinite(v)) return "0";
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat("en-US", {
     notation: "compact",
     maximumFractionDigits: 1
   }).format(v);

@@ -21,6 +21,7 @@ import {
   LS_KEYS,
   lsGetOrganizationScoped
 } from "../services/storage";
+import { formatCurrencyByPreference } from "../lib/formatPreferences";
 
 const COUNTRY_ALIAS = {
   india: "india",
@@ -119,11 +120,10 @@ function invoiceBalance(invoice) {
 }
 
 function money(value, currency) {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: currency || "INR",
+  return formatCurrencyByPreference(parseNumber(value), currency || "INR", {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2
-  }).format(parseNumber(value));
+  });
 }
 
 function refreshPremiumRecords() {

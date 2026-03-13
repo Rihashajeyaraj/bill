@@ -1,6 +1,7 @@
 import React from "react";
 import { Download, Eye, FilePenLine } from "lucide-react";
 import type { PaymentInRecord } from "./store";
+import { formatCurrencyByPreference } from "../../lib/formatPreferences";
 
 interface PaymentInListTableProps {
   records: PaymentInRecord[];
@@ -31,6 +32,11 @@ export default function PaymentInListTable({
   const currentPage = Math.min(Math.max(page, 1), totalPages);
   const start = (currentPage - 1) * pageSize;
   const rows = records.slice(start, start + pageSize);
+  const money = (value: number, currency: string) =>
+    formatCurrencyByPreference(Number(value || 0), currency, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
 
   return (
     <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
@@ -60,13 +66,13 @@ export default function PaymentInListTable({
                   <td className="px-4 py-3 text-slate-700">{entry.paymentMode}</td>
                   <td className="px-4 py-3 text-slate-700">{entry.referenceNo || entry.transactionId || "-"}</td>
                   <td className="px-4 py-3 text-right font-semibold text-slate-900">
-                    {entry.currency} {entry.totals.amountReceived.toFixed(2)}
+                    {money(entry.totals.amountReceived, entry.currency)}
                   </td>
                   <td className="px-4 py-3 text-right font-semibold text-slate-900">
-                    {entry.currency} {entry.totals.amountApplied.toFixed(2)}
+                    {money(entry.totals.amountApplied, entry.currency)}
                   </td>
                   <td className="px-4 py-3 text-right font-semibold text-slate-900">
-                    {entry.currency} {entry.totals.unappliedAmount.toFixed(2)}
+                    {money(entry.totals.unappliedAmount, entry.currency)}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(entry.status)}`}>

@@ -15,6 +15,7 @@ import { partiesByType } from "../../services/parties.service";
 import { creditNotesCreate } from "../../services/creditNotes.service";
 import { UI } from "../../theme/tokens";
 import { getInvoiceTemplateConfig } from "../../lib/templateStore";
+import { formatDecimalByPreference } from "../../lib/formatPreferences";
 
 const GST_RATES = [0, 5, 12, 18, 28];
 const VAT_RATES = {
@@ -42,8 +43,7 @@ const CURRENCY_BY_COUNTRY = {
 };
 
 function money(n) {
-  const v = Number(n || 0);
-  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatDecimalByPreference(Number(n || 0));
 }
 
 function generateCreditNoteNumber() {

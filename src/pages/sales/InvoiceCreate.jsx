@@ -40,10 +40,10 @@ import {
   normalizeBarcodeLookupValue,
   syncItemBarcodesFromRemote
 } from "../../services/itemBarcodes.service";
+import { formatDecimalByPreference } from "../../lib/formatPreferences";
 
 function money(n) {
-  const v = Number(n || 0);
-  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatDecimalByPreference(Number(n || 0));
 }
 
 function round2(value) {

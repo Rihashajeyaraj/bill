@@ -24,6 +24,7 @@ import {
   listStatesByCountry,
   resolveCountryIsoCode
 } from "../../lib/geoData";
+import { formatDecimalByPreference } from "../../lib/formatPreferences";
 
 const UNIT_OPTIONS = ["pcs", "kg", "box", "pack", "ltr", "hours", "days", "months", "service"];
 
@@ -103,8 +104,7 @@ function queryLooksPhoneLike(value) {
 }
 
 function money(n) {
-  const v = Number(n || 0);
-  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatDecimalByPreference(Number(n || 0));
 }
 
 function round2(value) {

@@ -1,5 +1,6 @@
 import React from "react";
 import clsx from "clsx";
+import { formatDecimalByPreference } from "../lib/formatPreferences";
 
 const VARIANTS = {
   india_triplicate: {
@@ -171,8 +172,7 @@ const TEENS = [
 const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
 
 function money(n) {
-  const v = Number(n || 0);
-  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatDecimalByPreference(Number(n || 0));
 }
 
 function chunkToWords(num) {

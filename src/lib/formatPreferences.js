@@ -56,6 +56,14 @@ export function formatNumberByPreference(value, options = {}) {
   }
 }
 
+export function formatDecimalByPreference(value, options = {}) {
+  return formatNumberByPreference(value, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    ...options
+  });
+}
+
 export function formatCurrencyByPreference(value, currency, options = {}) {
   const amount = Number(value ?? 0);
   const safeAmount = Number.isFinite(amount) ? amount : 0;
