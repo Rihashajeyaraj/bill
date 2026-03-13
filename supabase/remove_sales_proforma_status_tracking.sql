@@ -60,6 +60,8 @@ declare
   v_result jsonb;
   v_invoice_id uuid;
   v_invoice_no text;
+  v_existing_invoice_no text;
+  v_attempt integer;
 begin
   if p_proforma_id is null then
     raise exception 'proforma_id is required';
@@ -80,10 +82,14 @@ begin
   end if;
 
   if v_header.converted_document_id is not null then
-    raise exception 'Sales proforma already converted';
-  end if;
+    select inv.invoice_no
+      into v_existing_invoice_no
+    from public.invoices inv
+    where inv.id = v_header.converted_document_id;
 
-  v_invoice_no := public.allocate_invoice_no_for_conversion(v_header.organization_id, v_header.proforma_date);
+    raise exception 'Sales proforma already converted to invoice %',
+      coalesce(nullif(trim(v_existing_invoice_no), ''), v_header.converted_document_id::text, 'unknown');
+  end if;
 
   select coalesce(
     jsonb_agg(
@@ -116,26 +122,42 @@ begin
   from public.proforma_invoice_items i
   where i.proforma_id = v_header.id;
 
-  v_payload := jsonb_build_object(
-    'organization_id', v_header.organization_id,
-    'invoice_no', v_invoice_no,
-    'invoice_date', v_header.proforma_date,
-    'due_date', coalesce(v_header.due_date, v_header.valid_till, v_header.proforma_date),
-    'party_id', v_header.party_id,
-    'place_of_supply_state', v_header.place_of_supply_state,
-    'currency_code', v_header.currency_code,
-    'country', coalesce(v_header.metadata->>'country', ''),
-    'tax_mode', coalesce(v_header.metadata->>'taxMode', ''),
-    'supply_type', coalesce(v_header.metadata->>'supplyType', ''),
-    'party_name', coalesce(v_header.metadata->>'partyName', ''),
-    'created_by_name', coalesce(v_header.metadata->>'createdByName', ''),
-    'round_off', coalesce(v_header.round_off, 0),
-    'lines', v_lines
-  );
+  for v_attempt in 1..5 loop
+    v_invoice_no := public.allocate_invoice_no_for_conversion(v_header.organization_id, v_header.proforma_date);
 
-  execute 'select public.post_invoice_fifo($1)'
-    into v_result
-    using v_payload;
+    v_payload := jsonb_build_object(
+      'organization_id', v_header.organization_id,
+      'invoice_no', v_invoice_no,
+      'invoice_date', v_header.proforma_date,
+      'due_date', coalesce(v_header.due_date, v_header.valid_till, v_header.proforma_date),
+      'party_id', v_header.party_id,
+      'place_of_supply_state', v_header.place_of_supply_state,
+      'currency_code', v_header.currency_code,
+      'country', coalesce(v_header.metadata->>'country', ''),
+      'tax_mode', coalesce(v_header.metadata->>'taxMode', ''),
+      'supply_type', coalesce(v_header.metadata->>'supplyType', ''),
+      'party_name', coalesce(v_header.metadata->>'partyName', ''),
+      'created_by_name', coalesce(v_header.metadata->>'createdByName', ''),
+      'round_off', coalesce(v_header.round_off, 0),
+      'lines', v_lines
+    );
+
+    begin
+      execute 'select public.post_invoice_fifo($1)'
+        into v_result
+        using v_payload;
+      exit;
+    exception
+      when unique_violation then
+        if position('invoices_organization_id_invoice_no_key' in coalesce(SQLERRM, '')) > 0 then
+          if v_attempt = 5 then
+            raise exception 'Failed to generate a unique invoice number for this Pro Forma Invoice. Please retry.';
+          end if;
+        else
+          raise;
+        end if;
+    end;
+  end loop;
 
   v_invoice_id := nullif(v_result->>'invoice_id', '')::uuid;
   if v_invoice_id is null then

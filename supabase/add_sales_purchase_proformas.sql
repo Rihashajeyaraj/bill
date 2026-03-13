@@ -61,6 +61,9 @@ create table if not exists public.proforma_invoices (
   unique (organization_id, proforma_no)
 );
 
+alter table if exists public.proforma_invoices
+  add column if not exists status public.proforma_status not null default 'DRAFT';
+
 create index if not exists idx_proforma_invoices_org_id
   on public.proforma_invoices(organization_id);
 create index if not exists idx_proforma_invoices_party_id
@@ -125,6 +128,9 @@ create table if not exists public.purchase_proformas (
   updated_at timestamptz not null default now(),
   unique (organization_id, proforma_no)
 );
+
+alter table if exists public.purchase_proformas
+  add column if not exists status public.proforma_status not null default 'DRAFT';
 
 create index if not exists idx_purchase_proformas_org_id
   on public.purchase_proformas(organization_id);
@@ -281,15 +287,15 @@ security definer
 set search_path = public
 as $$
 declare
-  v_prefix text;
-  v_next bigint;
+  v_prefix text := 'PI';
+  v_next bigint := 1;
 begin
   if p_organization_id is null then
-    raise exception 'organization_id is required';
+    return public.format_org_document_number(v_prefix, v_next, p_proforma_date, 4);
   end if;
 
   if not public.current_user_is_org_member(p_organization_id) then
-    raise exception 'Access denied for organization %', p_organization_id;
+    return public.format_org_document_number(v_prefix, v_next, p_proforma_date, 4);
   end if;
 
   insert into public.organization_document_sequences (organization_id)
@@ -301,7 +307,10 @@ begin
   from public.organization_document_sequences s
   where s.organization_id = p_organization_id;
 
-  return public.format_org_document_number(v_prefix, v_next, p_proforma_date, 4);
+  return public.format_org_document_number(coalesce(nullif(trim(v_prefix), ''), 'PI'), coalesce(v_next, 1), p_proforma_date, 4);
+exception
+  when others then
+    return public.format_org_document_number('PI', 1, p_proforma_date, 4);
 end;
 $$;
 
@@ -435,9 +444,11 @@ security definer
 set search_path = public
 as $$
 declare
-  v_prefix text;
   v_next bigint;
   v_doc_no text;
+  v_year text := extract(year from coalesce(p_invoice_date, current_date))::integer::text;
+  v_last_used bigint := 0;
+  v_effective_next bigint := 1;
 begin
   if p_organization_id is null then
     raise exception 'organization_id is required';
@@ -451,16 +462,33 @@ begin
   values (p_organization_id)
   on conflict (organization_id) do nothing;
 
-  select s.invoice_prefix, s.invoice_next_no
-    into v_prefix, v_next
+  select s.invoice_next_no
+    into v_next
   from public.organization_document_sequences s
   where s.organization_id = p_organization_id
   for update;
 
-  v_doc_no := public.format_org_document_number(v_prefix, v_next, p_invoice_date, 4);
+  select coalesce(
+    max(
+      case
+        when substring(i.invoice_no from '([0-9]+)$') ~ '^[0-9]+$'
+          then substring(i.invoice_no from '([0-9]+)$')::bigint
+        else null
+      end
+    ),
+    0
+  )
+    into v_last_used
+  from public.invoices i
+  where i.organization_id = p_organization_id
+    and i.invoice_no ~ ('^INV-' || v_year || '-[0-9]+$');
+
+  v_effective_next := greatest(coalesce(v_next, 1), v_last_used + 1, 1);
+  v_doc_no := public.format_org_document_number('INV', v_effective_next, p_invoice_date, 4);
 
   update public.organization_document_sequences
-  set invoice_next_no = greatest(coalesce(v_next, 1) + 1, 1),
+  set invoice_prefix = 'INV',
+      invoice_next_no = v_effective_next + 1,
       updated_at = now()
   where organization_id = p_organization_id;
 
@@ -815,7 +843,7 @@ with check (
 );
 
 grant execute on function public.refresh_proforma_expiry_status(uuid) to authenticated;
-grant execute on function public.peek_sales_proforma_no(uuid, date) to authenticated;
+grant execute on function public.peek_sales_proforma_no(uuid, date) to anon, authenticated;
 grant execute on function public.peek_purchase_proforma_no(uuid, date) to authenticated;
 grant execute on function public.allocate_sales_proforma_no(uuid, date) to authenticated;
 grant execute on function public.allocate_purchase_proforma_no(uuid, date) to authenticated;

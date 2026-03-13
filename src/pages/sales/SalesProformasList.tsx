@@ -3,11 +3,7 @@ import { useNavigate } from "react-router-dom";
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import { useToast } from "../../context/ToastContext";
-import {
-  convertSalesProforma,
-  salesProformasList,
-  salesProformasSyncFromRemote
-} from "../../services/proformas.service";
+import { salesProformasList, salesProformasSyncFromRemote } from "../../services/proformas.service";
 import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
 
 function money(value: unknown) {
@@ -22,7 +18,6 @@ export default function SalesProformasList() {
   const navigate = useNavigate();
   const toast = useToast();
   const [loading, setLoading] = useState(true);
-  const [convertingId, setConvertingId] = useState("");
   const [rows, setRows] = useState<any[]>(() => salesProformasList());
 
   useEffect(() => {
@@ -55,29 +50,6 @@ export default function SalesProformasList() {
       return db.localeCompare(da);
     });
   }, [rows]);
-
-  async function onConvert(row: any) {
-    if (String(row?.convertedDocumentId || "").trim()) {
-      toast.warning("Already converted", "This Pro Forma Invoice has already been converted.");
-      return;
-    }
-    setConvertingId(String(row?.id || ""));
-    try {
-      const result = await convertSalesProforma(row.id);
-      toast.success(
-        "Converted to invoice",
-        result?.invoiceNo ? `Created invoice ${result.invoiceNo}.` : "Invoice created successfully."
-      );
-      setRows(await salesProformasSyncFromRemote());
-      navigate(
-        `/app/sales/invoice/history${result?.invoiceId ? `?invoiceId=${encodeURIComponent(result.invoiceId)}` : ""}`
-      );
-    } catch (error: any) {
-      toast.error("Conversion failed", error?.message || "Could not convert Pro Forma Invoice.");
-    } finally {
-      setConvertingId("");
-    }
-  }
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -130,8 +102,8 @@ export default function SalesProformasList() {
                 </tr>
               ) : (
                 sortedRows.map((row) => {
-                  const converted = !!String(row?.convertedDocumentId || "").trim();
-                  const converting = String(row?.id || "") === convertingId;
+                  const status = String(row?.status || "").toUpperCase();
+                  const converted = status === "CONVERTED" || !!String(row?.convertedDocumentId || "").trim();
                   return (
                     <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50/70">
                       <td className="px-3 py-3 font-semibold text-slate-900">{row.proformaNo || "-"}</td>
@@ -145,19 +117,25 @@ export default function SalesProformasList() {
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            onClick={() => navigate(`/app/sales/proformas/${encodeURIComponent(row.id)}`)}
+                            onClick={() =>
+                              navigate(`/app/sales/proformas/${encodeURIComponent(row.id)}?mode=view`)
+                            }
                             className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                           >
-                            View/Edit
+                            View
                           </button>
                           <button
                             type="button"
-                            disabled={converting || converted}
-                            onClick={() => void onConvert(row)}
-                            className="rounded-xl border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => navigate(`/app/sales/proformas/${encodeURIComponent(row.id)}`)}
+                            className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                           >
-                            {converted ? "Converted" : converting ? "Converting..." : "Convert to Invoice"}
+                            Edit
                           </button>
+                          {converted ? (
+                            <span className="rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700">
+                              Converted
+                            </span>
+                          ) : null}
                         </div>
                       </td>
                     </tr>

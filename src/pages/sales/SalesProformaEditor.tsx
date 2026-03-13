@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Plus, Search, X } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import Card from "../../components/Card";
 import GradientButton from "../../components/GradientButton";
@@ -205,6 +205,7 @@ function validateSalesProformaForm(form: any) {
 
 export default function SalesProformaEditor() {
   const { id = "new" } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
   const isNew = String(id || "") === "new";
@@ -243,6 +244,7 @@ export default function SalesProformaEditor() {
     country: "",
     taxMode: "",
     supplyType: "",
+    status: "DRAFT",
     convertedDocumentId: "",
     convertedAt: "",
     notes: "",
@@ -254,7 +256,10 @@ export default function SalesProformaEditor() {
     () => customers.find((entry) => String(entry?.id || "") === String(form.partyId || "")) || null,
     [customers, form.partyId]
   );
-  const locked = !!String(form?.convertedDocumentId || "").trim();
+  const isReadOnlyView = String(searchParams.get("mode") || "").toLowerCase() === "view";
+  const status = String(form?.status || "").toUpperCase();
+  const isConverted = status === "CONVERTED" || !!String(form?.convertedDocumentId || "").trim();
+  const locked = isConverted || isReadOnlyView;
   const totals = useMemo(
     () => salesProformaComputeTotals(form.lines || [], 0),
     [form.lines]
@@ -362,6 +367,7 @@ export default function SalesProformaEditor() {
             country: found.country || "",
             taxMode: found.taxMode || "",
             supplyType: found.supplyType || "",
+            status: found.status || "DRAFT",
             convertedDocumentId: found.convertedDocumentId || "",
             convertedAt: found.convertedAt || "",
             notes: found.notes || "",
@@ -745,6 +751,7 @@ export default function SalesProformaEditor() {
           updateForm({
             id: refreshed.id || form.id,
             proformaNo: refreshed.proformaNo || form.proformaNo,
+            status: refreshed.status || form.status,
             convertedDocumentId: refreshed.convertedDocumentId || form.convertedDocumentId,
             convertedAt: refreshed.convertedAt || form.convertedAt
           });
@@ -758,20 +765,36 @@ export default function SalesProformaEditor() {
   }
 
   async function onConvert() {
+    if (isReadOnlyView) return;
     if (isNew || !form.id) return;
-    if (String(form?.convertedDocumentId || "").trim()) {
+    if (isConverted) {
       toast.warning("Already converted", "This Pro Forma Invoice has already been converted.");
+      return;
+    }
+    if (status === "EXPIRED") {
+      toast.warning("Expired Pro Forma Invoice", "Expired Pro Forma Invoices cannot be converted.");
       return;
     }
     setConverting(true);
     try {
       const result = await convertSalesProforma(form.id);
+      const refreshed = await salesProformaGetByIdRemote(form.id);
+      if (refreshed) {
+        setForm((prev: any) => ({
+          ...prev,
+          status: refreshed.status || "CONVERTED",
+          convertedDocumentId: refreshed.convertedDocumentId || prev.convertedDocumentId,
+          convertedAt: refreshed.convertedAt || prev.convertedAt
+        }));
+      } else {
+        setForm((prev: any) => ({
+          ...prev,
+          status: "CONVERTED"
+        }));
+      }
       toast.success(
         "Converted to invoice",
         result?.invoiceNo ? `Created invoice ${result.invoiceNo}.` : "Invoice created successfully."
-      );
-      navigate(
-        `/app/sales/invoice/history${result?.invoiceId ? `?invoiceId=${encodeURIComponent(result.invoiceId)}` : ""}`
       );
     } catch (error: any) {
       toast.error("Conversion failed", error?.message || "Could not convert Pro Forma Invoice.");
@@ -794,30 +817,37 @@ export default function SalesProformaEditor() {
             >
               History
             </button>
-            {!isNew ? (
+            {!isNew && !isReadOnlyView ? (
               <button
                 type="button"
                 onClick={() => void onConvert()}
-                disabled={converting || locked}
+                disabled={converting || isConverted || status === "EXPIRED"}
                 className="rounded-2xl border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {converting ? "Converting..." : "Convert to Invoice"}
               </button>
             ) : null}
-            <GradientButton
-              onClick={() => void onSave()}
-              disabled={!canSave}
-              className="disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {saving ? "Saving..." : "Save Pro Forma Invoice"}
-            </GradientButton>
+            {!isReadOnlyView ? (
+              <GradientButton
+                onClick={() => void onSave()}
+                disabled={!canSave}
+                className="disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? "Saving..." : "Save"}
+              </GradientButton>
+            ) : null}
           </div>
         }
       />
 
-      {locked ? (
+      {isConverted ? (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           This Pro Forma Invoice is converted and is read-only.
+        </div>
+      ) : null}
+      {!isConverted && isReadOnlyView ? (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+          Read-only view mode. Use Edit from history to modify this Pro Forma Invoice.
         </div>
       ) : null}
 

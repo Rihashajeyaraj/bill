@@ -218,6 +218,7 @@ function mapSalesHeader(row, lineRows = []) {
     country: metadata?.country || "",
     taxMode: metadata?.taxMode || "",
     supplyType: metadata?.supplyType || "",
+    status: normalizeStatus(row?.status),
     notes: row?.notes || "",
     terms: row?.terms || "",
     convertedDocumentId: row?.converted_document_id || "",
@@ -534,6 +535,7 @@ export async function salesProformaUpsert(input) {
   const actor = authGetUser();
   const actorUserId = actor?.id || null;
   const actorName = String(actor?.name || actor?.email || "").trim();
+  const status = normalizeStatus(input?.status, "DRAFT");
 
   let id = String(input?.id || "").trim();
   let proformaNo = String(input?.proformaNo || "").trim();
@@ -565,6 +567,7 @@ export async function salesProformaUpsert(input) {
       tax_total: totals.taxTotal,
       round_off: totals.roundOff,
       grand_total: totals.grandTotal,
+      status,
       notes: input?.notes || null,
       terms: input?.terms || null,
       metadata: {
@@ -694,6 +697,7 @@ export async function salesProformaUpsert(input) {
     country: input?.country || "",
     taxMode: input?.taxMode || "",
     supplyType: input?.supplyType || "",
+    status,
     notes: input?.notes || "",
     terms: input?.terms || "",
     convertedDocumentId: input?.convertedDocumentId || "",

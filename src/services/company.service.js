@@ -684,7 +684,7 @@ function mapDocumentSequencesRow(row) {
     numbering: {
       resetYearly: !!row.reset_yearly,
       prefixes: {
-        invoice: row.invoice_prefix || "INV",
+        invoice: normalizeInvoicePrefix(row.invoice_prefix || "INV"),
         purchase: row.purchase_prefix || "BILL",
         creditNote: row.credit_note_prefix || "CN",
         debitNote: row.debit_note_prefix || "DN",
@@ -732,7 +732,7 @@ async function upsertDocumentSequences(organizationId, numbering = {}, supabaseC
   const counters = numbering?.counters || {};
   const payload = {
     organization_id: organizationId,
-    invoice_prefix: String(prefixes.invoice || "INV"),
+    invoice_prefix: normalizeInvoicePrefix(prefixes.invoice || "INV"),
     invoice_next_no: toPositiveCounter(counters.invoice, 1),
     purchase_prefix: String(prefixes.purchase || "BILL"),
     purchase_next_no: toPositiveCounter(counters.purchase, 1),
