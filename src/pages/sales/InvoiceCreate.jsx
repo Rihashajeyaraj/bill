@@ -1910,7 +1910,7 @@ export default function InvoiceCreate() {
           paymentSaved = true;
         } catch (paymentError) {
           try {
-            // Fallback: keep payment visible in Payment In as unapplied if allocation mapping fails.
+            // Fallback: keep the payment visible in Payment In even if invoice linking fails.
             const actor = authGetUser()?.name || authGetUser()?.email || "System User";
             const fallbackRecord = savePaymentIn({
               country: paymentCountryCode,
@@ -1931,7 +1931,7 @@ export default function InvoiceCreate() {
                   : "",
               paymentReference: referenceNo || "",
               internalNotes:
-                paymentNotes || `Payment for invoice ${normalizedInvoiceNo} (saved as unapplied)`,
+                paymentNotes || `Payment for invoice ${normalizedInvoiceNo} (saved as advance balance)`,
               customerNotes: "",
               attachment: null,
               desiredStatus: "Received",
@@ -1970,7 +1970,7 @@ export default function InvoiceCreate() {
 
       if (!silent) {
         if (paymentSavedAsUnapplied) {
-          alert("Invoice saved. Payment In saved as unapplied. You can allocate it in Payment In page.");
+          alert("Invoice saved. Payment In saved as advance balance.");
         } else {
           alert(paymentSaved ? "Invoice and Payment In saved successfully." : "Invoice saved successfully.");
         }

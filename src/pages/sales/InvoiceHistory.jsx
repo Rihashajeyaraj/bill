@@ -5,10 +5,6 @@ import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import { useToast } from "../../context/ToastContext";
 import { invoicesList, invoicesSyncFromRemote } from "../../services/invoices.service";
-import {
-  fetchInvoiceAllocationDetails,
-  fetchInvoiceProfitDetails
-} from "../../services/inventory.service";
 import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
 
 function money(n) {
@@ -47,12 +43,6 @@ export default function InvoiceHistory() {
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [invoices, setInvoices] = useState(() => invoicesList());
-  const [activeInvoiceId, setActiveInvoiceId] = useState("");
-  const [allocationLoading, setAllocationLoading] = useState(false);
-  const [allocationError, setAllocationError] = useState("");
-  const [allocationRows, setAllocationRows] = useState([]);
-  const [profitSummary, setProfitSummary] = useState(null);
-  const [itemProfitRows, setItemProfitRows] = useState([]);
 
   useEffect(() => {
     let mounted = true;
@@ -75,38 +65,6 @@ export default function InvoiceHistory() {
       mounted = false;
     };
   }, [toast]);
-
-  async function toggleAllocationDetails(invoiceId) {
-    if (!invoiceId) return;
-    if (String(activeInvoiceId) === String(invoiceId)) {
-      setActiveInvoiceId("");
-      setAllocationError("");
-      setAllocationRows([]);
-      setProfitSummary(null);
-      setItemProfitRows([]);
-      return;
-    }
-
-    setActiveInvoiceId(invoiceId);
-    setAllocationLoading(true);
-    setAllocationError("");
-    try {
-      const [allocations, profit] = await Promise.all([
-        fetchInvoiceAllocationDetails(invoiceId),
-        fetchInvoiceProfitDetails(invoiceId)
-      ]);
-      setAllocationRows(Array.isArray(allocations) ? allocations : []);
-      setProfitSummary(profit?.summary || null);
-      setItemProfitRows(Array.isArray(profit?.items) ? profit.items : []);
-    } catch (error) {
-      setAllocationRows([]);
-      setProfitSummary(null);
-      setItemProfitRows([]);
-      setAllocationError(error?.message || "Failed to load allocation details.");
-    } finally {
-      setAllocationLoading(false);
-    }
-  }
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -199,105 +157,9 @@ export default function InvoiceHistory() {
                             >
                               Credit Note
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void toggleAllocationDetails(invoice.id);
-                              }}
-                              className="rounded-xl border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50"
-                            >
-                              {String(activeInvoiceId) === String(invoice.id)
-                                ? "Hide Allocation"
-                                : "Allocation"}
-                            </button>
                           </div>
                         </td>
                       </tr>
-                      {String(activeInvoiceId) === String(invoice.id) ? (
-                        <tr className="border-t border-slate-100 bg-slate-50/60">
-                          <td className="px-3 py-3" colSpan={8}>
-                            {allocationLoading ? (
-                              <p className="text-xs text-slate-600">Loading allocation details...</p>
-                            ) : allocationError ? (
-                              <p className="text-xs text-rose-600">{allocationError}</p>
-                            ) : (
-                              <div className="space-y-3">
-                                {profitSummary ? (
-                                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
-                                    <span className="mr-4">Revenue (excl tax): {money(profitSummary.revenue_excl_tax)}</span>
-                                    <span className="mr-4">COGS: {money(profitSummary.cogs_amount)}</span>
-                                    <span className="mr-4">Gross Profit: {money(profitSummary.gross_profit)}</span>
-                                    <span>Margin %: {money(profitSummary.margin_percent)}</span>
-                                  </div>
-                                ) : null}
-
-                                {allocationRows.length ? (
-                                  <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                                    <table className="min-w-[760px] w-full text-left text-xs">
-                                      <thead className="bg-slate-100 text-slate-600">
-                                        <tr>
-                                          <th className="px-2 py-2 font-semibold">Item</th>
-                                          <th className="px-2 py-2 font-semibold">Batch</th>
-                                          <th className="px-2 py-2 font-semibold text-right">Qty</th>
-                                          <th className="px-2 py-2 font-semibold text-right">Cost/unit</th>
-                                          <th className="px-2 py-2 font-semibold text-right">COGS</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {allocationRows.map((row) => (
-                                          <tr key={row.allocation_id} className="border-t border-slate-100">
-                                            <td className="px-2 py-2">
-                                              {row.item_name || row.item_code || row.item_id || "Item"}
-                                            </td>
-                                            <td className="px-2 py-2">
-                                              {row.batch_document_no || "NEGATIVE-STOCK"}{" "}
-                                              {row.batch_date ? `(${formatDate(row.batch_date)})` : ""}
-                                            </td>
-                                            <td className="px-2 py-2 text-right">{money(row.allocated_qty)}</td>
-                                            <td className="px-2 py-2 text-right">{money(row.unit_cost_excl_tax)}</td>
-                                            <td className="px-2 py-2 text-right">{money(row.cogs_amount)}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                ) : (
-                                  <p className="text-xs text-slate-600">
-                                    No batch allocation rows found for this invoice.
-                                  </p>
-                                )}
-
-                                {itemProfitRows.length ? (
-                                  <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                                    <table className="min-w-[760px] w-full text-left text-xs">
-                                      <thead className="bg-slate-100 text-slate-600">
-                                        <tr>
-                                          <th className="px-2 py-2 font-semibold">Line Item</th>
-                                          <th className="px-2 py-2 font-semibold text-right">Qty</th>
-                                          <th className="px-2 py-2 font-semibold text-right">Revenue</th>
-                                          <th className="px-2 py-2 font-semibold text-right">COGS</th>
-                                          <th className="px-2 py-2 font-semibold text-right">Profit</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {itemProfitRows.map((row) => (
-                                          <tr key={row.invoice_item_id} className="border-t border-slate-100">
-                                            <td className="px-2 py-2">{row.item_name || "Item"}</td>
-                                            <td className="px-2 py-2 text-right">{money(row.qty)}</td>
-                                            <td className="px-2 py-2 text-right">{money(row.revenue_excl_tax)}</td>
-                                            <td className="px-2 py-2 text-right">{money(row.cogs_amount)}</td>
-                                            <td className="px-2 py-2 text-right">{money(row.gross_profit_amount)}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                ) : null}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ) : null}
                     </React.Fragment>
                   );
                 })

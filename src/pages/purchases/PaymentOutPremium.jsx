@@ -9,7 +9,6 @@ import {
   Search,
   Save,
   Send,
-  Wallet,
   X
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -18,14 +17,13 @@ import EmptyState from "../../components/EmptyState";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import { authGetRole, authGetUser } from "../../services/auth.service";
-import { canApplyApprovals, canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
+import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
 import { deletePaymentOutRemote, syncPaymentOutRemote } from "../../services/payments.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
 import { LS_KEYS, lsGetOrganizationScoped } from "../../services/storage";
 import {
-  allocationsFromBills,
   buildPaymentOutPayload,
   defaultPaymentForm,
   listPaymentOut,
@@ -34,8 +32,7 @@ import {
   outstandingBySupplier,
   removePaymentOut,
   savePaymentOut,
-  summarizePaymentOut,
-  updateAllocationAmount
+  summarizePaymentOut
 } from "../../modules/paymentOut/store";
 import { exportPaymentOutCsv, exportPaymentOutPdf, exportPaymentOutSummaryPdf } from "../../modules/paymentOut/pdf";
 import { formatMoney, normalizeText, parseNumber } from "../../modules/paymentOut/utils";
@@ -78,7 +75,6 @@ export default function PaymentOutPremium() {
   } = useOrganization();
   const user = authGetUser();
   const role = authGetRole();
-  const canApplyPayments = canApplyApprovals(role);
   const canCreatePayment = canCreateEntries(role);
   const canEditPayment = canEditEntries(role);
   const canDeletePayment = canDeleteEntries(role);
@@ -110,10 +106,6 @@ export default function PaymentOutPremium() {
   const selectedSupplier = useMemo(
     () => suppliers.find((entry) => entry.id === form.supplierId) || null,
     [suppliers, form.supplierId]
-  );
-  const supplierBills = useMemo(
-    () => bills.filter((bill) => bill.supplierId === form.supplierId),
-    [bills, form.supplierId]
   );
   const supplierOutstandingBefore = useMemo(
     () => (form.supplierId ? outstandingBySupplier(country, form.supplierId) : 0),
@@ -243,25 +235,11 @@ export default function PaymentOutPremium() {
     }
     if (!bill) return;
 
-    const supplierBills = bills.filter((entry) => entry.supplierId === bill.supplierId);
-    const seededAllocations = allocationsFromBills(supplierBills);
-    if (!seededAllocations.some((line) => line.billId === bill.id)) {
-      seededAllocations.push({
-        billId: bill.id,
-        billNo: bill.billNo,
-        billDate: bill.billDate,
-        billAmount: bill.billAmount,
-        balanceDue: bill.balanceDue,
-        applyAmount: 0
-      });
-    }
     setForm(() => ({
       ...defaultPaymentForm(country, currency),
       supplierId: bill.supplierId,
       supplierName: bill.supplierName,
-      allocations: seededAllocations.map((line) =>
-        line.billId === bill.id ? { ...line, applyAmount: line.balanceDue } : line
-      )
+      allocations: []
     }));
     setPanelMode("form");
     setActiveStep(1);
@@ -329,7 +307,7 @@ export default function PaymentOutPremium() {
       ...prev,
       supplierId,
       supplierName: supplier?.name || "",
-      allocations: allocationsFromBills(bills.filter((bill) => bill.supplierId === supplierId))
+      allocations: []
     }));
     setDirty(true);
   }
@@ -375,29 +353,6 @@ export default function PaymentOutPremium() {
     setSupplierSearchError("");
   }
 
-  function updateAllocation(billId, value) {
-    const otherApplied = form.allocations
-      .filter((line) => line.billId !== billId)
-      .reduce((sum, line) => sum + parseNumber(line.applyAmount), 0);
-    const maxAllowed = Math.max(0, amountPaid - otherApplied);
-    setForm((prev) => ({
-      ...prev,
-      allocations: updateAllocationAmount(prev.allocations, billId, value, maxAllowed)
-    }));
-    setDirty(true);
-  }
-
-  function autoApplyAll() {
-    let remaining = amountPaid;
-    const next = form.allocations.map((line) => {
-      const applyAmount = Math.min(line.balanceDue, remaining);
-      remaining -= applyAmount;
-      return { ...line, applyAmount };
-    });
-    setForm((prev) => ({ ...prev, allocations: next }));
-    setDirty(true);
-  }
-
   async function persist(status) {
     const isEditMode = !!form?.id;
     if (isEditMode && !canEditPayment) {
@@ -406,10 +361,6 @@ export default function PaymentOutPremium() {
     }
     if (!isEditMode && !canCreatePayment) {
       window.alert("You do not have permission to create payment out entries.");
-      return;
-    }
-    if (status === "Applied" && !canApplyPayments) {
-      window.alert("You do not have approval permission to apply payment to bills.");
       return;
     }
     if (!form.supplierId) {
@@ -506,7 +457,7 @@ export default function PaymentOutPremium() {
             <FlowCard title="Total Paid" subtitle="Across all statuses">
               <p className="text-2xl font-bold text-slate-900">{formatMoney(summary.totalPaid, currency)}</p>
             </FlowCard>
-            <FlowCard title="Unallocated" subtitle="Advance payment wallet">
+            <FlowCard title="Advance Balance" subtitle="Amount kept on account">
               <p className="text-2xl font-bold text-emerald-700">{formatMoney(summary.totalUnapplied, currency)}</p>
             </FlowCard>
           </div>
@@ -601,7 +552,7 @@ export default function PaymentOutPremium() {
                     <th className="px-4 py-3 font-semibold text-slate-700">Mode</th>
                     <th className="px-4 py-3 font-semibold text-slate-700">Reference</th>
                     <th className="px-4 py-3 font-semibold text-slate-700 text-right">Amount Paid</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">Applied</th>
+                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">Advance</th>
                     <th className="px-4 py-3 font-semibold text-slate-700 text-right">Balance / Advance</th>
                     <th className="px-4 py-3 font-semibold text-slate-700">Status</th>
                     <th className="px-4 py-3 font-semibold text-slate-700">Actions</th>
@@ -622,7 +573,7 @@ export default function PaymentOutPremium() {
                             {formatMoney(entry.totals?.amountPaid, currency)}
                           </td>
                           <td className="px-4 py-3 text-right text-slate-700">
-                            {formatMoney(entry.totals?.amountApplied, currency)}
+                            {formatMoney(advance, currency)}
                           </td>
                           <td className={`px-4 py-3 text-right font-semibold ${advance ? "text-emerald-700" : "text-slate-700"}`}>
                             {advance ? `Adv ${formatMoney(advance, currency)}` : "-"}
@@ -697,7 +648,7 @@ export default function PaymentOutPremium() {
                   <p className="text-sm text-slate-700">
                     Payment Number: <span className="font-semibold">{form.paymentNo || "Auto-generated on save"}</span>
                   </p>
-                  <p className="text-xs text-slate-500">Payment Out flow records supplier settlements and purchase bill allocations.</p>
+                  <p className="text-xs text-slate-500">Payment Out flow records supplier settlements and keeps any balance as advance.</p>
                 </div>
               </FlowCard>
 
@@ -881,55 +832,18 @@ export default function PaymentOutPremium() {
                 </div>
               </FlowCard>
 
-              <FlowCard title="Allocate to Bills" subtitle="Apply payments to open purchase bills">
+              <FlowCard title="Advance Handling" subtitle="Payments are saved without bill linking">
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs text-slate-500">Allocate current payment to supplier purchase bills.</p>
-                    <button
-                      type="button"
-                      onClick={autoApplyAll}
-                      disabled={!form.supplierId || readOnly}
-                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Auto-apply
-                    </button>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <p className="text-sm font-semibold text-slate-900">Advance Balance</p>
+                    <p className="mt-2 text-2xl font-bold text-emerald-700">{formatMoney(unappliedAmount, currency)}</p>
+                    <p className="mt-2 text-xs text-slate-500">This payment will be stored on the supplier account without bill matching.</p>
                   </div>
                   {!form.supplierId ? (
                     <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                      Select a supplier to view open bills.
+                      Select a supplier to continue.
                     </div>
-                  ) : supplierBills.length ? (
-                    form.allocations.map((line) => (
-                      <div key={line.billId} className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <p className="text-sm font-semibold text-slate-900">{line.billNo}</p>
-                            <p className="text-xs text-slate-500">Bill date: {line.billDate || "-"}</p>
-                          </div>
-                          <div className="text-right text-xs text-slate-500">
-                            <p>Bill Amount: {formatMoney(line.billAmount, currency)}</p>
-                            <p>Balance Due: {formatMoney(line.balanceDue, currency)}</p>
-                          </div>
-                        </div>
-                        <div className="mt-3">
-                          <label className="text-xs font-semibold text-slate-500">Apply Amount</label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={line.balanceDue}
-                            value={line.applyAmount}
-                            onChange={(event) => updateAllocation(line.billId, event.target.value)}
-                            className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                            disabled={readOnly}
-                          />
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                      No open bills for this supplier. Any payment will be saved as advance.
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               </FlowCard>
             </div>
@@ -950,10 +864,6 @@ export default function PaymentOutPremium() {
                     <span className="font-semibold text-slate-900">{formatMoney(amountPaid, currency)}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-500">Amount Applied</span>
-                    <span className="font-semibold text-slate-900">{formatMoney(amountApplied, currency)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
                     <span className="text-slate-500">Advance</span>
                     <span className="font-semibold text-emerald-700">{formatMoney(unappliedAmount, currency)}</span>
                   </div>
@@ -966,9 +876,7 @@ export default function PaymentOutPremium() {
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
                     <p className="text-slate-500">Approval Role</p>
                     <p className="font-semibold text-slate-700">{role}</p>
-                    {!canApplyPayments ? (
-                      <p className="mt-1 text-amber-700">Apply to bills is disabled by Users & Roles permissions.</p>
-                    ) : null}
+                    <p className="mt-1 text-slate-500">Bill linking is not available from this page.</p>
                   </div>
                 </div>
               </FlowCard>
@@ -1045,17 +953,6 @@ export default function PaymentOutPremium() {
                 </button>
                 {showMoreActions ? (
                   <div className="absolute bottom-full right-0 mb-2 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActions(false);
-                        persist("Applied");
-                      }}
-                      disabled={!canApplyPayments || !canSaveCurrentFlow}
-                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Apply to Bills
-                    </button>
                     <button
                       type="button"
                       onClick={() => {

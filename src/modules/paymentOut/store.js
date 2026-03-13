@@ -440,25 +440,6 @@ export function summarizePaymentOut(country) {
   };
 }
 
-export function allocationsFromBills(bills) {
-  return bills.map((bill) => ({
-    billId: bill.id,
-    billNo: bill.billNo,
-    billDate: bill.billDate,
-    billAmount: bill.billAmount,
-    balanceDue: bill.balanceDue,
-    applyAmount: 0
-  }));
-}
-
-export function updateAllocationAmount(allocations, billId, nextAmount, maxAllowed) {
-  return allocations.map((line) => {
-    if (line.billId !== billId) return line;
-    const capped = Math.min(Math.max(0, parseNumber(nextAmount)), maxAllowed, line.balanceDue);
-    return { ...line, applyAmount: capped };
-  });
-}
-
 export function buildPaymentOutPayload(form, supplierOutstandingBefore, actor) {
   return {
     id: form.id,

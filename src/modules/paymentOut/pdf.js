@@ -41,8 +41,8 @@ export function exportPaymentOutCsv(records, currency = "", country = "") {
       "Payment Mode",
       "Reference No",
       "Amount Paid",
-      "Applied Amount",
-      "Unapplied Amount",
+      "Advance Amount",
+      "Available Balance",
       "Status",
       "Currency"
     ],
@@ -124,8 +124,6 @@ export function exportPaymentOutPdf(record) {
   if (!record) return;
   const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
   const margin = 14;
-  const amountX = 144;
-  const balanceX = 186;
   let y = margin;
   doc.setFont("helvetica", "normal");
 
@@ -145,38 +143,8 @@ export function exportPaymentOutPdf(record) {
   }
   y += 8;
 
-  doc.setFontSize(11);
-  doc.text("Bills Settled", margin, y);
-  y += 5;
-
-  doc.setFontSize(9);
-  doc.text("Bill No", margin, y);
-  doc.text("Bill Date", 60, y);
-  doc.text("Applied", amountX, y, { align: "right" });
-  doc.text("Balance", balanceX, y, { align: "right" });
-  y += 4;
-  doc.line(margin, y, 200 - margin, y);
-  y += 4;
-
-  const allocations = record.allocations || [];
-  allocations.forEach((line) => {
-    if (y > 270) {
-      doc.addPage();
-      y = margin;
-      doc.setFont("helvetica", "normal");
-    }
-    doc.text(pdfSafeText(line.billNo), margin, y);
-    doc.text(pdfSafeText(line.billDate), 60, y);
-    doc.text(pdfMoney(line.applyAmount, record.currency), amountX, y, { align: "right" });
-    doc.text(pdfMoney(line.balanceDue, record.currency), balanceX, y, { align: "right" });
-    y += 5;
-  });
-
-  y += 6;
   doc.setFontSize(10);
   doc.text(`Amount Paid: ${pdfMoney(record.totals.amountPaid, record.currency)}`, margin, y);
-  y += 5;
-  doc.text(`Amount Applied: ${pdfMoney(record.totals.amountApplied, record.currency)}`, margin, y);
   y += 5;
   doc.text(`Advance: ${pdfMoney(record.totals.unappliedAmount, record.currency)}`, margin, y);
   y += 8;

@@ -1,5 +1,5 @@
 import { COUNTRY_CONFIG, type CountryCode } from "./countryConfig";
-import type { CustomerOpenInvoice, PaymentInRecord } from "./store";
+import type { PaymentInRecord } from "./store";
 import type { PaymentInFormState } from "./types";
 import { formatCurrencyByPreference } from "../../lib/formatPreferences";
 
@@ -22,17 +22,6 @@ export function companyRegistration(company: any, country: CountryCode) {
   if (country === "SG") return tax.gstRegNo || tax.gstin || "";
   if (country === "US") return tax.salesTaxPermit || "";
   return "";
-}
-
-export function allocationsFromInvoices(invoices: CustomerOpenInvoice[]) {
-  return invoices.map((invoice) => ({
-    invoiceId: invoice.id,
-    invoiceNo: invoice.invoiceNo,
-    invoiceDate: invoice.invoiceDate,
-    invoiceAmount: invoice.invoiceAmount,
-    balanceDue: invoice.balanceDue,
-    applyAmount: 0
-  }));
 }
 
 export function defaultForm(country: CountryCode, company: any): PaymentInFormState {

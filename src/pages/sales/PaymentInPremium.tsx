@@ -15,11 +15,11 @@ import {
   summarizePaymentIn,
   type PaymentInRecord
 } from "../../modules/paymentIn/store";
-import { allocationsFromInvoices, computeEditorTotals, defaultForm, formFromRecord, formatMoney, parseNumber } from "../../modules/paymentIn/utils";
+import { computeEditorTotals, defaultForm, formFromRecord, formatMoney, parseNumber } from "../../modules/paymentIn/utils";
 import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf } from "../../modules/paymentIn/pdf";
 import type { PaymentInFormState } from "../../modules/paymentIn/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
-import { canApplyApprovals, canCreateEntries, canDeleteEntries, canEditEntries, roleTypeLabel } from "../../services/roles";
+import { canCreateEntries, canDeleteEntries, canEditEntries, roleTypeLabel } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesSyncFromRemote } from "../../services/invoices.service";
 import { deletePaymentInRemote, syncPaymentInRemote } from "../../services/payments.service";
@@ -38,12 +38,10 @@ type PanelMode = "feed" | "flow";
 type FlowMode = "create" | "edit" | "view";
 
 function roleAccess(role: string, user: any) {
-  const canApply = canApplyApprovals(role);
   const configured = Array.isArray(user?.allowedCountries) ? user.allowedCountries.filter((entry: string) => entry in COUNTRY_CONFIG) : [];
   return {
     roleType: roleTypeLabel(role) as "Admin" | "Staff",
-    canApply,
-    allowedCountries: canApply ? COUNTRY_OPTIONS.map((entry) => entry.code) : configured.length ? configured : (["IN", "SL", "AE"] as CountryCode[])
+    allowedCountries: configured.length ? configured : COUNTRY_OPTIONS.map((entry) => entry.code)
   };
 }
 
@@ -218,18 +216,13 @@ export default function PaymentInPremium() {
     const invoice = openInvoices.find((entry) => entry.id === prefillInvoiceId);
     if (!invoice) return;
 
-    const linkedInvoices = openInvoices.filter((entry) => entry.customerId === invoice.customerId);
-    const nextAllocations = allocationsFromInvoices(linkedInvoices).map((line) =>
-      line.invoiceId === invoice.id ? { ...line, applyAmount: line.balanceDue } : line
-    );
-
     setForm((prev) => {
       const base = prev || defaultForm(country, company);
       return {
         ...base,
         customerId: invoice.customerId,
         customerInput: invoice.customerName,
-        allocations: nextAllocations
+        allocations: []
       };
     });
     setPanelMode("flow");
@@ -306,7 +299,6 @@ export default function PaymentInPremium() {
 
   function applyCustomer(customerId: string, inputName?: string) {
     const customer = customers.find((entry) => entry.id === customerId);
-    const linkedInvoices = openInvoices.filter((invoice) => invoice.customerId === customerId);
     setForm((prev) =>
       prev
         ? {
@@ -314,7 +306,7 @@ export default function PaymentInPremium() {
             customerId,
             customerInput: inputName || customer?.name || prev.customerInput,
             registrationNumber: customer?.registrationNumber || prev.registrationNumber,
-            allocations: allocationsFromInvoices(linkedInvoices)
+            allocations: []
           }
         : prev
     );
@@ -366,27 +358,11 @@ export default function PaymentInPremium() {
     setCustomerSearchError("");
   }
 
-  function setAllocateAmount(totalAllocate: number) {
-    setForm((prev) => {
-      if (!prev) return prev;
-      const amountReceived = Math.max(0, parseNumber(prev.amountReceived));
-      let remaining = Math.min(Math.max(0, totalAllocate), amountReceived);
-      const nextAllocations = prev.allocations.map((line) => {
-        const applyAmount = Math.min(line.balanceDue, remaining);
-        remaining -= applyAmount;
-        return { ...line, applyAmount };
-      });
-      return { ...prev, allocations: nextAllocations };
-    });
-    setDirty(true);
-  }
-
   function validate(targetStatus: PaymentStatus) {
     if (!form) return false;
     const cfg = COUNTRY_CONFIG[country];
     const errors: Record<string, string> = {};
     const amountReceived = Math.max(0, parseNumber(form.amountReceived));
-    const amountApplied = form.allocations.reduce((sum, line) => sum + Math.max(0, parseNumber(line.applyAmount)), 0);
 
     if (!form.paymentDate) errors.paymentDate = "Payment date is required.";
     if (!form.customerId) errors.customerId = "Customer is required.";
@@ -399,11 +375,6 @@ export default function PaymentInPremium() {
     }
     if (form.paymentMode === "Bank Transfer" && !form.bankAccount.trim()) errors.bankAccount = "Bank account is required.";
     if ((form.paymentMode === "Bank Transfer" || form.paymentMode === "Card" || form.paymentMode === "UPI" || form.paymentMode === "Online Gateway") && !form.transactionId.trim()) errors.transactionId = "Transaction ID is required.";
-    if (form.allocations.some((line) => parseNumber(line.applyAmount) > line.balanceDue)) errors.allocations = "Apply amount cannot exceed invoice balance due.";
-    if (amountApplied > amountReceived) errors.allocations = "Applied amount cannot exceed amount received.";
-    if (targetStatus === "Applied" && !access.canApply) {
-      errors.workflow = "You do not have approval permission to apply payments to invoices.";
-    }
 
     setFieldErrors(errors);
     if (Object.keys(errors).length) {
@@ -411,7 +382,6 @@ export default function PaymentInPremium() {
         setActiveStep(0);
       } else if (
         errors.amountReceived ||
-        errors.allocations ||
         errors.paymentDate ||
         errors.registrationNumber ||
         errors.chequeNo ||
@@ -471,19 +441,9 @@ export default function PaymentInPremium() {
     }
     if (!validate(targetStatus)) return;
     try {
-      let saved: PaymentInRecord | null = null;
-      const canDirectApply = !!activePayment && activePayment.status === "Received";
-      if (targetStatus === "Applied" && !canDirectApply) {
-        const stagedPayload = buildPayload("Received");
-        if (!stagedPayload) return;
-        const staged = savePaymentIn(stagedPayload);
-        const applyPayload = { ...stagedPayload, id: staged.id, desiredStatus: "Applied" as PaymentStatus, customerOutstandingBefore: staged.totals.customerOutstandingBefore };
-        saved = savePaymentIn(applyPayload);
-      } else {
-        const payload = buildPayload(targetStatus);
-        if (!payload) return;
-        saved = savePaymentIn(payload);
-      }
+      const payload = buildPayload(targetStatus);
+      if (!payload) return;
+      const saved = savePaymentIn(payload);
       if (!saved) return;
       await syncPaymentInRemote(saved);
       if (options?.download) exportSinglePaymentInPdf(saved);
@@ -498,46 +458,6 @@ export default function PaymentInPremium() {
       setErrorMessage("");
     } catch (error: any) {
       setErrorMessage(error?.message || "Unable to save payment.");
-    }
-  }
-
-  async function undoApplied(record: PaymentInRecord) {
-    if (!canReopenWithinWindow(record)) return;
-    if (!canEditPayment) {
-      setErrorMessage("You do not have permission to edit payment receipts.");
-      setSuccessMessage("");
-      return;
-    }
-    try {
-      const saved = savePaymentIn({
-        id: record.id,
-        country: record.country,
-        paymentDate: record.paymentDate,
-        customerId: record.customerId,
-        customerName: record.customerName,
-        paymentMode: record.paymentMode,
-        referenceNo: record.referenceNo,
-        chequeNo: record.chequeNo,
-        bankName: record.bankName,
-        bankAccount: record.bankAccount,
-        transactionId: record.transactionId,
-        paymentReference: record.paymentReference,
-        registrationNumber: record.registrationNumber,
-        internalNotes: record.internalNotes,
-        customerNotes: record.customerNotes,
-        attachment: record.attachment,
-        desiredStatus: "Received",
-        amountReceived: record.totals.amountReceived,
-        allocations: record.allocations,
-        customerOutstandingBefore: record.totals.customerOutstandingBefore,
-        actor: actorName
-      });
-      await syncPaymentInRemote(saved);
-      setRefreshKey((prev) => prev + 1);
-      setSuccessMessage(`${saved.receiptNo} reopened as Received.`);
-      setErrorMessage("");
-    } catch (error: any) {
-      setErrorMessage(error?.message || "Unable to undo apply.");
     }
   }
 
@@ -574,7 +494,7 @@ export default function PaymentInPremium() {
     }
   }
 
-  const confirmStatus: PaymentStatus = access.canApply && totals.amountApplied > 0 ? "Applied" : "Received";
+  const confirmStatus: PaymentStatus = "Received";
   const canSaveCurrentFlow = form?.id ? canEditPayment : canCreatePayment;
 
   return (
@@ -604,7 +524,7 @@ export default function PaymentInPremium() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <FlowCard title="Total Payments" subtitle="Count of receipts">{loading ? <PaymentInSkeleton /> : <p className="text-2xl font-bold text-slate-900">{summary?.count || 0}</p>}</FlowCard>
                 <FlowCard title="Total Received" subtitle="Across all statuses"><p className="text-2xl font-bold text-slate-900">{formatMoney(summary?.totalReceived || 0, country)}</p></FlowCard>
-                <FlowCard title="Unallocated" subtitle="Advance wallet value"><p className="text-2xl font-bold text-amber-700">{formatMoney(summary?.totalUnallocated || 0, country)}</p></FlowCard>
+                <FlowCard title="Advance Balance" subtitle="Amount kept on account"><p className="text-2xl font-bold text-amber-700">{formatMoney(summary?.totalUnallocated || 0, country)}</p></FlowCard>
               </div>
 
               <FlowCard>
@@ -634,7 +554,7 @@ export default function PaymentInPremium() {
                         <th className="px-3 py-3 font-semibold">Customer</th>
                         <th className="px-3 py-3 font-semibold">Mode</th>
                         <th className="px-3 py-3 font-semibold text-right">Received</th>
-                        <th className="px-3 py-3 font-semibold text-right">Applied</th>
+                        <th className="px-3 py-3 font-semibold text-right">Advance</th>
                         <th className="px-3 py-3 font-semibold">Status</th>
                         <th className="px-3 py-3 font-semibold">Actions</th>
                       </tr>
@@ -657,7 +577,7 @@ export default function PaymentInPremium() {
                               {formatMoney(record?.totals?.amountReceived || 0, country)}
                             </td>
                             <td className="px-3 py-3 text-right text-slate-700">
-                              {formatMoney(record?.totals?.amountApplied || 0, country)}
+                              {formatMoney(record?.totals?.unappliedAmount || 0, country)}
                             </td>
                             <td className="px-3 py-3">
                               <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(record.status)}`}>
@@ -688,16 +608,6 @@ export default function PaymentInPremium() {
                                 >
                                   PDF
                                 </button>
-                                {canReopenWithinWindow(record) ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => undoApplied(record)}
-                                    disabled={!canEditPayment}
-                                    className="rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                  >
-                                    Undo
-                                  </button>
-                                ) : null}
                                 <button
                                   type="button"
                                   onClick={() => removeRecord(record)}
@@ -842,21 +752,11 @@ export default function PaymentInPremium() {
                         />
                         {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
                       </label>
-                      <label className="block">
-                        <span className="text-xs font-semibold text-slate-600">Allocate</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={numberInputValue(totals.amountApplied)}
-                          disabled={readOnly || !form.customerId || !form.allocations.length}
-                          onChange={(event) => setAllocateAmount(parseNumber(event.target.value))}
-                          className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-50"
-                          placeholder="0"
-                        />
-                        <p className="mt-1 text-xs text-slate-500">
-                          Unapplied: <span className="font-semibold text-slate-700">{formatMoney(totals.unappliedAmount, country)}</span>
-                        </p>
-                      </label>
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <p className="text-xs font-semibold text-slate-600">Advance Balance</p>
+                        <p className="mt-1 text-lg font-semibold text-slate-900">{formatMoney(totals.unappliedAmount, country)}</p>
+                        <p className="mt-1 text-xs text-slate-500">Payments are stored without invoice linking from this screen.</p>
+                      </div>
                       <label className="block">
                         <span className="text-xs font-semibold text-slate-600">Payment Date</span>
                         <input type="date" value={form.paymentDate} disabled={readOnly} onChange={(event) => updateForm("paymentDate", event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
@@ -941,14 +841,10 @@ export default function PaymentInPremium() {
                           <p className="text-base font-semibold text-slate-900">{formatMoney(totals.amountReceived, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Amount Applied</p>
-                          <p className="text-base font-semibold text-slate-900">{formatMoney(totals.amountApplied, country)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Unapplied</p>
+                          <p className="text-slate-500">Advance</p>
                           <p className="text-base font-semibold text-amber-700">{formatMoney(totals.unappliedAmount, country)}</p>
                           <p className="mt-1 text-[11px] text-slate-500">
-                            Extra received amount not yet linked to any invoice.
+                            Extra received amount stays on the customer account.
                           </p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
@@ -958,7 +854,7 @@ export default function PaymentInPremium() {
                       </div>
                       {totals.unappliedAmount > 0 ? (
                         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                          Unapplied Amount means the payment received is greater than the amount applied to invoices. The extra amount stays available until it is adjusted to another invoice.
+                          Advance balance means this receipt is stored without linking it to invoice balances.
                         </div>
                       ) : null}
                     </div>
@@ -990,11 +886,6 @@ export default function PaymentInPremium() {
                 </div>
               ) : null}
 
-              {fieldErrors.workflow ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  {fieldErrors.workflow}
-                </div>
-              ) : null}
               {errorMessage ? (
                 <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                   {errorMessage}
@@ -1041,17 +932,6 @@ export default function PaymentInPremium() {
             </button>
             {showMoreActions ? (
               <div className="absolute bottom-full right-0 mb-2 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMoreActions(false);
-                    persist("Applied");
-                  }}
-                  disabled={!access.canApply || !canSaveCurrentFlow}
-                  className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Apply to Bills
-                </button>
                 <button
                   type="button"
                   onClick={() => {

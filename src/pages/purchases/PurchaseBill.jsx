@@ -1194,7 +1194,7 @@ export default function PurchaseBill() {
                   : "",
               paymentReference: referenceNo || "",
               internalNotes:
-                paymentNotes || `Payment from purchase bill ${effectiveBillNumber} (saved as unapplied)`,
+                paymentNotes || `Payment from purchase bill ${effectiveBillNumber} (saved as advance balance)`,
               attachment: null,
               desiredStatus: "Paid",
               amountPaid: paymentAmount,
@@ -1217,7 +1217,7 @@ export default function PurchaseBill() {
       if (paymentSavedUnapplied) {
         toast.success(
           "Purchase bill saved",
-          `Bill ${effectiveBillNumber} saved. Payment saved as unapplied in Payment Out.`
+          `Bill ${effectiveBillNumber} saved. Payment saved as advance balance in Payment Out.`
         );
       } else if (paymentSaved) {
         toast.success(
