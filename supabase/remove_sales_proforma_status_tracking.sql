@@ -22,11 +22,17 @@ declare
   v_purchase_updated integer := 0;
 begin
   if p_organization_id is null then
-    raise exception 'organization_id is required';
+    return jsonb_build_object(
+      'sales_updated', 0,
+      'purchase_updated', 0
+    );
   end if;
 
   if not public.current_user_is_org_member(p_organization_id) then
-    raise exception 'Access denied for organization %', p_organization_id;
+    return jsonb_build_object(
+      'sales_updated', 0,
+      'purchase_updated', 0
+    );
   end if;
 
   update public.purchase_proformas
@@ -42,6 +48,26 @@ begin
     'sales_updated', 0,
     'purchase_updated', v_purchase_updated
   );
+exception
+  when others then
+    return jsonb_build_object(
+      'sales_updated', 0,
+      'purchase_updated', 0
+    );
+end;
+$$;
+
+create or replace function public.refresh_proforma_expiry_status()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  return 0;
+exception
+  when others then
+    return 0;
 end;
 $$;
 
@@ -179,6 +205,7 @@ end;
 $$;
 
 grant execute on function public.refresh_proforma_expiry_status(uuid) to authenticated;
+grant execute on function public.refresh_proforma_expiry_status() to anon, authenticated;
 grant execute on function public.convert_sales_proforma_to_invoice(uuid) to authenticated;
 
 commit;
