@@ -1,14 +1,20 @@
--- Remove status tracking from Sales Pro Forma invoices.
--- Keep purchase proforma status behavior unchanged.
+-- Keep status tracking available for Sales and Purchase Proformas.
+-- This file restores the required status column/functions for compatibility.
 
 begin;
 
-drop index if exists public.idx_proforma_invoices_status;
+alter table if exists public.proforma_invoices
+  add column if not exists status public.proforma_status not null default 'DRAFT';
+
+create index if not exists idx_proforma_invoices_status
+  on public.proforma_invoices(organization_id, status);
 
 drop trigger if exists trg_proforma_invoices_expiry_status on public.proforma_invoices;
 
-alter table if exists public.proforma_invoices
-  drop column if exists status;
+create trigger trg_proforma_invoices_expiry_status
+before insert or update of valid_till, status, converted_document_id
+on public.proforma_invoices
+for each row execute procedure public.apply_proforma_expiry_status();
 
 create or replace function public.refresh_proforma_expiry_status(
   p_organization_id uuid
@@ -19,6 +25,7 @@ security definer
 set search_path = public
 as $$
 declare
+  v_sales_updated integer := 0;
   v_purchase_updated integer := 0;
 begin
   if p_organization_id is null then
@@ -35,6 +42,15 @@ begin
     );
   end if;
 
+  update public.proforma_invoices
+  set status = 'EXPIRED',
+      updated_at = now()
+  where organization_id = p_organization_id
+    and status in ('DRAFT', 'SENT', 'APPROVED')
+    and valid_till is not null
+    and valid_till < current_date;
+  get diagnostics v_sales_updated = row_count;
+
   update public.purchase_proformas
   set status = 'EXPIRED',
       updated_at = now()
@@ -45,7 +61,7 @@ begin
   get diagnostics v_purchase_updated = row_count;
 
   return jsonb_build_object(
-    'sales_updated', 0,
+    'sales_updated', v_sales_updated,
     'purchase_updated', v_purchase_updated
   );
 exception
@@ -63,8 +79,18 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_sales_updated integer := 0;
 begin
-  return 0;
+  update public.proforma_invoices
+  set status = 'EXPIRED',
+      updated_at = now()
+  where valid_till is not null
+    and valid_till < current_date
+    and status in ('DRAFT', 'SENT', 'APPROVED');
+  get diagnostics v_sales_updated = row_count;
+
+  return coalesce(v_sales_updated, 0);
 exception
   when others then
     return 0;
@@ -107,6 +133,14 @@ begin
     raise exception 'Access denied for organization %', v_header.organization_id;
   end if;
 
+  perform public.refresh_proforma_expiry_status(v_header.organization_id);
+
+  select *
+    into v_header
+  from public.proforma_invoices
+  where id = p_proforma_id
+  for update;
+
   if v_header.converted_document_id is not null then
     select inv.invoice_no
       into v_existing_invoice_no
@@ -115,6 +149,11 @@ begin
 
     raise exception 'Sales proforma already converted to invoice %',
       coalesce(nullif(trim(v_existing_invoice_no), ''), v_header.converted_document_id::text, 'unknown');
+  end if;
+
+  if v_header.status = 'EXPIRED'
+     or (v_header.valid_till is not null and v_header.valid_till < current_date) then
+    raise exception 'Cannot convert expired sales proforma';
   end if;
 
   select coalesce(
@@ -191,7 +230,8 @@ begin
   end if;
 
   update public.proforma_invoices
-  set converted_document_id = v_invoice_id,
+  set status = 'CONVERTED',
+      converted_document_id = v_invoice_id,
       converted_at = now(),
       updated_at = now()
   where id = v_header.id;
