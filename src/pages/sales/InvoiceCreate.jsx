@@ -12,7 +12,7 @@ import InvoicePreview from "../../components/InvoicePreview";
 import DateInput from "../../components/DateInput";
 
 import { useOrganization } from "../../context/OrganizationContext";
-import { invoicesCreate, invoicesList, invoicesSyncFromRemote } from "../../services/invoices.service";
+import { invoicesCreate, invoicesSyncFromRemote } from "../../services/invoices.service";
 import { calculateTaxes } from "../../services/tax";
 import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
 import { authGetRole, authGetUser } from "../../services/auth.service";
@@ -26,10 +26,6 @@ import { computeItemStock, listItems, syncItemsFromRemote, upsertItemRemote } fr
 import { outstandingByCustomer, savePaymentIn } from "../../modules/paymentIn/store";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE } from "../../modules/paymentIn/countryConfig";
 import { getInvoiceTemplateConfig } from "../../lib/templateStore";
-import {
-  companyConsumeDocumentNumber,
-  companyPeekDocumentNumber,
-} from "../../services/company.service";
 import {
   getCanonicalCountryName,
   listAllCountries,
@@ -49,44 +45,6 @@ function money(n) {
 
 function round2(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
-}
-
-function resolveAutoInvoiceId() {
-  const next = String(companyPeekDocumentNumber("invoice") || "").trim();
-  if (next) return next;
-  return `INV-${Date.now()}`;
-}
-
-function parseInvoiceSequence(value) {
-  const text = String(value || "").trim();
-  const match = text.match(/^(.+)-(\d{4})-(\d+)$/);
-  if (!match) return null;
-  const counter = Number(match[3]);
-  if (!Number.isFinite(counter) || counter < 0) return null;
-  return {
-    prefix: match[1],
-    year: match[2],
-    counter,
-    width: match[3].length
-  };
-}
-
-function resolveInvoiceNoFromExisting(baseInvoiceNo, invoiceRows) {
-  const parsedBase = parseInvoiceSequence(baseInvoiceNo);
-  if (!parsedBase) return String(baseInvoiceNo || "").trim();
-
-  let existingMax = 0;
-  (Array.isArray(invoiceRows) ? invoiceRows : []).forEach((row) => {
-    const parsed = parseInvoiceSequence(row?.invoiceNo);
-    if (!parsed) return;
-    if (parsed.year !== parsedBase.year) return;
-    if (String(parsed.prefix).toUpperCase() !== String(parsedBase.prefix).toUpperCase()) return;
-    existingMax = Math.max(existingMax, parsed.counter);
-  });
-
-  const nextCounter = Math.max(parsedBase.counter, existingMax + 1);
-  const width = Math.max(4, parsedBase.width);
-  return `${parsedBase.prefix}-${parsedBase.year}-${String(nextCounter).padStart(width, "0")}`;
 }
 
 function formatAddress(address) {
@@ -256,7 +214,7 @@ export default function InvoiceCreate() {
 
   const initialInvoiceDate = "";
   const [invoiceDate, setInvoiceDate] = useState(initialInvoiceDate);
-  const [invoiceNo, setInvoiceNo] = useState(() => resolveAutoInvoiceId());
+  const [invoiceNo, setInvoiceNo] = useState("");
   const [partyId, setPartyId] = useState("");
   const party = useMemo(() => customers.find((c) => c.id === partyId) || null, [customers, partyId]);
   const [customerSearchPhone, setCustomerSearchPhone] = useState("");
@@ -357,7 +315,6 @@ export default function InvoiceCreate() {
   useEffect(() => {
     const syncProfiles = () => {
       setTemplateConfig(getInvoiceTemplateConfig());
-      setInvoiceNo(resolveInvoiceNoFromExisting(resolveAutoInvoiceId(), invoicesList()));
     };
     const onStorage = (event) => {
       if (
@@ -392,7 +349,6 @@ export default function InvoiceCreate() {
         setCustomers(listParties().filter((party) => party.type === "Customer"));
         setItems(listItems());
         setItemBarcodes(listItemBarcodes());
-        setInvoiceNo(resolveInvoiceNoFromExisting(resolveAutoInvoiceId(), invoicesList()));
       }
     }
     loadLookups();
@@ -1613,13 +1569,7 @@ export default function InvoiceCreate() {
       return null;
     }
 
-    const normalizedInvoiceNo = resolveInvoiceNoFromExisting(
-      String(invoiceNo || "").trim() || resolveAutoInvoiceId(),
-      invoicesList()
-    );
-    if (normalizedInvoiceNo && normalizedInvoiceNo !== invoiceNo) {
-      setInvoiceNo(normalizedInvoiceNo);
-    }
+    const normalizedInvoiceNo = String(invoiceNo || "").trim();
     const nextErrors = {};
     if (!partyId) nextErrors.customer = "This field is required";
     if (!normalizedInvoiceNo) nextErrors.invoiceNo = "This field is required";
@@ -1908,9 +1858,8 @@ export default function InvoiceCreate() {
       setBankAccount("");
       setPaymentNotes("");
       setFormErrors({});
-      companyConsumeDocumentNumber("invoice");
       await invoicesSyncFromRemote();
-      setInvoiceNo(resolveInvoiceNoFromExisting(resolveAutoInvoiceId(), invoicesList()));
+      setInvoiceNo("");
 
       if (!silent) {
         if (paymentSavedAsUnapplied) {
@@ -2331,11 +2280,16 @@ export default function InvoiceCreate() {
             <>
               <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-3">
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <FormField label="Invoice ID" required error={formErrors.invoiceNo}>
+                  <FormField label="Invoice Number" required error={formErrors.invoiceNo}>
                     <input
                       value={invoiceNo}
-                      readOnly
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-100 px-3 py-2.5 text-sm font-mono text-slate-700 outline-none"
+                      onChange={(e) => {
+                        setInvoiceNo(e.target.value);
+                        clearFormError("invoiceNo");
+                      }}
+                      placeholder="Enter invoice number"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-mono text-slate-700 outline-none focus:ring-4"
+                      style={{ "--tw-ring-color": UI.COLORS.ring }}
                     />
                     {formErrors.invoiceNo ? <p className="mt-1 text-xs text-rose-600">{formErrors.invoiceNo}</p> : null}
                   </FormField>

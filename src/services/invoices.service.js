@@ -390,7 +390,10 @@ export async function invoicesCreate(invoice) {
   const actor = authGetUser();
   const actorUserId = actor?.id || null;
   const actorName = String(actor?.name || actor?.email || "").trim();
-  const invoiceNo = invoice?.invoiceNo || `INV-${Date.now()}`;
+  const invoiceNo = String(invoice?.invoiceNo || "").trim();
+  if (!invoiceNo) {
+    throw new Error("Invoice Number is required.");
+  }
   const lines = Array.isArray(invoice?.lines) ? invoice.lines : [];
   const totals = invoice?.totals || {};
   const tax = totals?.tax || {};
