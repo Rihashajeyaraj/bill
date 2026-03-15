@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import FormField from "../../components/FormField";
+import DateInput from "../../components/DateInput";
 import { useToast } from "../../context/ToastContext";
 import { listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../modules/parties/store";
 import { computeItemStock, listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
@@ -187,7 +188,7 @@ export default function PurchaseBill() {
   const [supplierStateMenuOpen, setSupplierStateMenuOpen] = useState(false);
   const [supplierAddress, setSupplierAddress] = useState("");
   const [billNumber, setBillNumber] = useState("");
-  const [billDate, setBillDate] = useState(new Date().toISOString().slice(0, 10));
+  const [billDate, setBillDate] = useState("");
   const [generateBarcodes, setGenerateBarcodes] = useState(true);
   const [lines, setLines] = useState(() => [createLine(defaultLineTaxRate)]);
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
@@ -196,7 +197,7 @@ export default function PurchaseBill() {
   const [roundOffValue, setRoundOffValue] = useState("0.00");
   const [markAsPaid, setMarkAsPaid] = useState(false);
   const [paymentType, setPaymentType] = useState("Cash");
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [paymentDate, setPaymentDate] = useState("");
   const [paidAmount, setPaidAmount] = useState("");
   const [referenceNo, setReferenceNo] = useState("");
   const [transactionId, setTransactionId] = useState("");
@@ -1508,12 +1509,11 @@ export default function PurchaseBill() {
             {formErrors.billNumber ? <p className="mt-1 text-xs text-rose-600">{formErrors.billNumber}</p> : null}
           </FormField>
           <FormField label="Bill Date" required error={formErrors.billDate}>
-            <input
-              type="date"
+            <DateInput
               value={billDate}
-              onChange={(e) => {
+              onChange={(nextValue) => {
                 clearFormError("billDate");
-                setBillDate(e.target.value);
+                setBillDate(nextValue);
               }}
               className="w-full rounded-2xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
             />
@@ -1832,12 +1832,11 @@ export default function PurchaseBill() {
                   </select>
                 </FormField>
                 <FormField label="Payment Date" required error={formErrors.paymentDate}>
-                  <input
-                    type="date"
+                  <DateInput
                     value={paymentDate}
-                    onChange={(e) => {
+                    onChange={(nextValue) => {
                       clearFormError("paymentDate");
-                      setPaymentDate(e.target.value);
+                      setPaymentDate(nextValue);
                     }}
                     className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
                   />

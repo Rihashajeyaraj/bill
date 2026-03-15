@@ -9,6 +9,7 @@ import GradientButton from "../../components/GradientButton";
 import FormField from "../../components/FormField";
 import Badge from "../../components/Badge";
 import InvoicePreview from "../../components/InvoicePreview";
+import DateInput from "../../components/DateInput";
 
 import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesCreate, invoicesList, invoicesSyncFromRemote } from "../../services/invoices.service";
@@ -220,45 +221,6 @@ function findItemBySearchInput(items, value, barcodeLookupByItemId = null) {
   );
 }
 
-function isValidDateParts(year, month, day) {
-  const candidate = new Date(Date.UTC(year, month - 1, day));
-  return (
-    candidate.getUTCFullYear() === year &&
-    candidate.getUTCMonth() + 1 === month &&
-    candidate.getUTCDate() === day
-  );
-}
-
-function parseDateToIso(value) {
-  const text = String(value || "").trim();
-  if (!text) return "";
-
-  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (isoMatch) {
-    const year = Number(isoMatch[1]);
-    const month = Number(isoMatch[2]);
-    const day = Number(isoMatch[3]);
-    if (!isValidDateParts(year, month, day)) return "";
-    return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  }
-
-  const dmyMatch = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  if (!dmyMatch) return "";
-  const day = Number(dmyMatch[1]);
-  const month = Number(dmyMatch[2]);
-  const year = Number(dmyMatch[3]);
-  if (!isValidDateParts(year, month, day)) return "";
-  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
-
-function formatIsoToDayMonthYear(value) {
-  const text = String(value || "").trim();
-  const iso = parseDateToIso(text);
-  if (!iso) return text;
-  const [, year, month, day] = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/) || [];
-  return `${day}/${month}/${year}`;
-}
-
 function resolvePaymentCountryCode(country, countryCode) {
   const code = String(countryCode || "").trim().toUpperCase();
   if (code === "LK") return "SL";
@@ -292,9 +254,8 @@ export default function InvoiceCreate() {
   const [itemSearch, setItemSearch] = useState("");
   const [lineItemMode, setLineItemMode] = useState("Product");
 
-  const initialInvoiceDate = new Date().toISOString().slice(0, 10);
+  const initialInvoiceDate = "";
   const [invoiceDate, setInvoiceDate] = useState(initialInvoiceDate);
-  const [invoiceDateInput, setInvoiceDateInput] = useState(() => formatIsoToDayMonthYear(initialInvoiceDate));
   const [invoiceNo, setInvoiceNo] = useState(() => resolveAutoInvoiceId());
   const [partyId, setPartyId] = useState("");
   const party = useMemo(() => customers.find((c) => c.id === partyId) || null, [customers, partyId]);
@@ -321,7 +282,7 @@ export default function InvoiceCreate() {
   const [printQueued, setPrintQueued] = useState(false);
   const [markAsPaid, setMarkAsPaid] = useState(false);
   const [paymentMode, setPaymentMode] = useState("Cash");
-  const [paymentDate, setPaymentDate] = useState(initialInvoiceDate);
+  const [paymentDate, setPaymentDate] = useState("");
   const [paidAmount, setPaidAmount] = useState("");
   const [referenceNo, setReferenceNo] = useState("");
   const [transactionId, setTransactionId] = useState("");
@@ -937,23 +898,6 @@ export default function InvoiceCreate() {
     });
     setCustomerCountryMenuOpen(false);
     setCustomerStateMenuOpen(false);
-  }
-
-  function handleInvoiceDateChange(value) {
-    setInvoiceDateInput(value);
-    clearFormError("invoiceDate");
-    const parsed = parseDateToIso(value);
-    if (parsed) setInvoiceDate(parsed);
-  }
-
-  function handleInvoiceDateBlur() {
-    const parsed = parseDateToIso(invoiceDateInput);
-    if (parsed) {
-      setInvoiceDate(parsed);
-      setInvoiceDateInput(formatIsoToDayMonthYear(parsed));
-      return;
-    }
-    setInvoiceDateInput(formatIsoToDayMonthYear(invoiceDate));
   }
 
   function computeInvoiceSummary(sourceLines, sourceItems) {
@@ -2396,11 +2340,10 @@ export default function InvoiceCreate() {
                     {formErrors.invoiceNo ? <p className="mt-1 text-xs text-rose-600">{formErrors.invoiceNo}</p> : null}
                   </FormField>
                   <FormField label="Invoice Date" required error={formErrors.invoiceDate}>
-                    <input
-                      value={invoiceDateInput}
-                      onChange={(e) => handleInvoiceDateChange(e.target.value)}
-                      onBlur={handleInvoiceDateBlur}
-                      placeholder="DD/MM/YYYY or YYYY-MM-DD"
+                    <DateInput
+                      value={invoiceDate}
+                      onRawChange={() => clearFormError("invoiceDate")}
+                      onChange={(nextValue) => setInvoiceDate(nextValue)}
                       className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                       style={{ "--tw-ring-color": UI.COLORS.ring }}
                     />
@@ -2868,12 +2811,11 @@ export default function InvoiceCreate() {
                     </select>
                   </FormField>
                   <FormField label="Payment Date" required error={formErrors.paymentDate}>
-                    <input
-                      type="date"
+                    <DateInput
                       value={paymentDate}
-                      onChange={(e) => {
+                      onChange={(nextValue) => {
                         clearFormError("paymentDate");
-                        setPaymentDate(e.target.value);
+                        setPaymentDate(nextValue);
                       }}
                       className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                       style={{ "--tw-ring-color": UI.COLORS.ring }}

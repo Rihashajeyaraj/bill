@@ -5,6 +5,7 @@ import Card from "../components/Card";
 import DataTable from "../components/DataTable";
 import { useToast } from "../context/ToastContext";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
+import { formatDateTimeByPreference } from "../lib/formatPreferences";
 import {
   HELP_RESOURCES,
   SUPPORT_CATEGORIES,
@@ -19,7 +20,7 @@ function formatDateTime(value) {
   if (!value) return "-";
   const parsed = new Date(value);
   if (!Number.isFinite(parsed.getTime())) return value;
-  return parsed.toLocaleString();
+  return formatDateTimeByPreference(parsed);
 }
 
 export default function HelpSupport() {

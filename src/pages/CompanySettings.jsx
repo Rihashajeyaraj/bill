@@ -135,7 +135,7 @@ const TIMEZONES = [
   "America/Los_Angeles"
 ];
 
-const DATE_FORMATS = ["DD MMM YYYY", "DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"];
+const DATE_FORMATS = ["DD/MM/YYYY", "DD MMM YYYY", "MM/DD/YYYY", "YYYY-MM-DD"];
 const NUMBER_FORMATS = ["1,23,456.78", "123,456.78", "123.456,78"];
 const MAX_CURRENCIES = 3;
 const COUNTRY_META = {
@@ -295,7 +295,7 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
     currency,
     currencies: localizationCurrencies,
     timezone: stored.localization?.timezone || defaultTimezoneForCountry(baseCountry),
-    dateFormat: stored.localization?.dateFormat || "DD MMM YYYY",
+    dateFormat: "DD/MM/YYYY",
     numberFormat: stored.localization?.numberFormat || "1,23,456.78"
   };
 

@@ -469,7 +469,7 @@ export function defaultPaymentForm(country, currency) {
     id: "",
     country,
     currency: currency || "",
-    paymentDate: new Date().toISOString().slice(0, 10),
+    paymentDate: "",
     supplierId: "",
     supplierName: "",
     paymentMode: "Cash",

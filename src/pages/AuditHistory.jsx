@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
+import DateInput from "../components/DateInput";
 import { useToast } from "../context/ToastContext";
 import { authGetRole, authUsingSupabase } from "../services/auth.service";
 import { canAccessSettings } from "../services/roles";
@@ -248,20 +249,18 @@ export default function AuditHistory() {
 
           <label className="space-y-1">
             <span className="text-xs font-semibold text-slate-500">From date</span>
-            <input
-              type="date"
+            <DateInput
               value={draftFilters.fromDate}
-              onChange={(event) => setDraftFilters((prev) => ({ ...prev, fromDate: event.target.value }))}
+              onChange={(nextValue) => setDraftFilters((prev) => ({ ...prev, fromDate: nextValue }))}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
             />
           </label>
 
           <label className="space-y-1">
             <span className="text-xs font-semibold text-slate-500">To date</span>
-            <input
-              type="date"
+            <DateInput
               value={draftFilters.toDate}
-              onChange={(event) => setDraftFilters((prev) => ({ ...prev, toDate: event.target.value }))}
+              onChange={(nextValue) => setDraftFilters((prev) => ({ ...prev, toDate: nextValue }))}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
             />
           </label>

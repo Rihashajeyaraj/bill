@@ -8,6 +8,7 @@ import {
   RotateCw
 } from "lucide-react";
 import Card from "../components/Card";
+import DateInput from "../components/DateInput";
 import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
 import { purchasesList, purchasesSyncFromRemote } from "../services/purchases.service";
 import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
@@ -553,22 +554,18 @@ export default function Dashboard() {
       <div className="rounded-2xl bg-slate-100 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-lg font-semibold text-slate-700">Dashboard ({country})</h1>
         <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="date"
+          <DateInput
             value={fromDate}
-            onChange={(event) => {
-              const next = event.target.value;
+            onChange={(next) => {
               setFromDate(next);
               if (next && toDate && next > toDate) setToDate(next);
             }}
             max={toDate || undefined}
             className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 outline-none"
           />
-          <input
-            type="date"
+          <DateInput
             value={toDate}
-            onChange={(event) => {
-              const next = event.target.value;
+            onChange={(next) => {
               setToDate(next);
               if (next && fromDate && next < fromDate) setFromDate(next);
             }}

@@ -4,6 +4,7 @@ import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import FormField from "../../components/FormField";
 import GradientButton from "../../components/GradientButton";
+import DateInput from "../../components/DateInput";
 import {
   expensesCreate,
   expensesList,
@@ -20,7 +21,7 @@ function formatDate(value) {
 }
 
 export default function Expense() {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState("");
   const [category, setCategory] = useState("Office");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -86,7 +87,7 @@ export default function Expense() {
   }
 
   function useHistoryEntry(row) {
-    setDate(row?.date || new Date().toISOString().slice(0, 10));
+    setDate(row?.date || "");
     setCategory(row?.category || "");
     setAmount(String(Number(row?.amount || 0)));
     setNote(row?.note || "");
@@ -98,10 +99,9 @@ export default function Expense() {
       <Card className="p-5">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <FormField label="Date">
-            <input
-              type="date"
+            <DateInput
               value={date}
-              onChange={(event) => setDate(event.target.value)}
+              onChange={(nextValue) => setDate(nextValue)}
               className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none"
             />
           </FormField>

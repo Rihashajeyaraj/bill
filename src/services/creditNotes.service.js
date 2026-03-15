@@ -407,7 +407,7 @@ async function applyCreditNoteReturnToStock({
         item_id: itemId,
         stock_batch_id: batchId,
         movement_type: "RETURN_IN",
-        movement_date: header?.credit_note_date || new Date().toISOString().slice(0, 10),
+        movement_date: header?.credit_note_date || "",
         quantity_delta: putBackQty,
         unit_cost_excl_tax: unitCostExcl,
         unit_cost_incl_tax: unitCostIncl,
@@ -564,7 +564,7 @@ export async function creditNotesSaveRemote(note) {
   const payload = {
     organization_id: organizationId,
     credit_note_no: creditNoteNo,
-    credit_note_date: note?.creditNoteDate || note?.creditDate || new Date().toISOString().slice(0, 10),
+    credit_note_date: note?.creditNoteDate || note?.creditDate || "",
     party_id: looksLikeUuid(note?.customerId || note?.partyId) ? note.customerId || note.partyId : null,
     related_invoice_id: relatedInvoiceId,
     reason: note?.reason || "",

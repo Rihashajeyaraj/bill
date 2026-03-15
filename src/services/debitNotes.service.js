@@ -202,7 +202,7 @@ export async function debitNotesSaveRemote(note) {
   const payload = {
     organization_id: organizationId,
     debit_note_no: debitNoteNo,
-    debit_note_date: note?.debitNoteDate || new Date().toISOString().slice(0, 10),
+    debit_note_date: note?.debitNoteDate || "",
     supplier_id: looksLikeUuid(note?.supplierId) ? note.supplierId : null,
     related_bill_id: relatedBillId,
     reason: note?.reason || "",

@@ -527,7 +527,7 @@ export async function purchaseProformaGetByIdRemote(id) {
 export async function salesProformaUpsert(input) {
   assertWritePermission("sales proformas");
   const nowIso = new Date().toISOString();
-  const proformaDate = String(input?.proformaDate || "").trim() || nowIso.slice(0, 10);
+  const proformaDate = String(input?.proformaDate || "").trim();
   const validTill = String(input?.validTill || "").trim();
   const dueDate = String(input?.dueDate || "").trim();
   const lines = Array.isArray(input?.lines) ? input.lines : [];
@@ -736,7 +736,7 @@ export async function purchaseProformaUpsert(input) {
   const stockSnapshot = lsGetOrganizationScoped(LS_KEYS.items, []);
   const stockSnapshotJson = JSON.stringify(Array.isArray(stockSnapshot) ? stockSnapshot : []);
   const nowIso = new Date().toISOString();
-  const proformaDate = String(input?.proformaDate || "").trim() || nowIso.slice(0, 10);
+  const proformaDate = String(input?.proformaDate || "").trim();
   const validTill = String(input?.validTill || "").trim();
   const dueDate = String(input?.dueDate || "").trim();
   const lines = Array.isArray(input?.lines) ? input.lines : [];

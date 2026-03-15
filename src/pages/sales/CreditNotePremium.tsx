@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, FileSpreadsheet, FileText, Plus } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
+import DateInput from "../../components/DateInput";
 import CountrySelector from "../../modules/creditNote/CountrySelector";
 import CreditNoteSkeleton from "../../modules/creditNote/CreditNoteSkeleton";
 import CreditNoteListTable from "../../modules/creditNote/CreditNoteListTable";
@@ -872,19 +873,17 @@ export default function CreditNotePremium() {
                     </label>
                     <label className={filterLabelClassName}>
                       From date
-                      <input
-                        type="date"
+                      <DateInput
                         value={fromDate}
-                        onChange={(event) => setFromDate(event.target.value)}
+                        onChange={(nextValue) => setFromDate(nextValue)}
                         className={filterInputClassName}
                       />
                     </label>
                     <label className={filterLabelClassName}>
                       To date
-                      <input
-                        type="date"
+                      <DateInput
                         value={toDate}
-                        onChange={(event) => setToDate(event.target.value)}
+                        onChange={(nextValue) => setToDate(nextValue)}
                         className={filterInputClassName}
                       />
                     </label>

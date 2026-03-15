@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import Badge from "../../components/Badge";
+import DateInput from "../../components/DateInput";
 import EmptyState from "../../components/EmptyState";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
@@ -507,16 +508,14 @@ export default function PaymentOutPremium() {
                     </option>
                   ))}
                 </select>
-                <input
-                  type="date"
+                <DateInput
                   value={fromDate}
-                  onChange={(event) => setFromDate(event.target.value)}
+                  onChange={(nextValue) => setFromDate(nextValue)}
                   className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 />
-                <input
-                  type="date"
+                <DateInput
                   value={toDate}
-                  onChange={(event) => setToDate(event.target.value)}
+                  onChange={(nextValue) => setToDate(nextValue)}
                   className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 />
               </div>
@@ -656,10 +655,9 @@ export default function PaymentOutPremium() {
                 <div className="space-y-3">
                   <label className="block">
                     <span className="text-xs font-semibold text-slate-600">Payment Date</span>
-                    <input
-                      type="date"
+                    <DateInput
                       value={form.paymentDate}
-                      onChange={(event) => updateField("paymentDate", event.target.value)}
+                      onChange={(nextValue) => updateField("paymentDate", nextValue)}
                       className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                       disabled={readOnly}
                     />

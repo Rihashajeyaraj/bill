@@ -9,6 +9,7 @@ import Modal from "../components/Modal";
 import ItemFormModal from "../modules/items/ItemFormModal";
 import { listCreditNotes } from "../modules/creditNote/store";
 import { useOrganization } from "../context/OrganizationContext";
+import { formatDateByPreference } from "../lib/formatPreferences";
 import {
   computeItemStock,
   getItemSalesHistoryRemote,
@@ -392,7 +393,7 @@ export default function Items() {
     if (!raw) return "-";
     const parsed = new Date(raw);
     if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toLocaleDateString();
+      return formatDateByPreference(parsed);
     }
     if (raw.length >= 10 && raw[4] === "-" && raw[7] === "-") {
       return raw.slice(0, 10);

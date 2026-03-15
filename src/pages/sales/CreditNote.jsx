@@ -7,6 +7,7 @@ import Card from "../../components/Card";
 import FormField from "../../components/FormField";
 import GradientButton from "../../components/GradientButton";
 import CreditNotePreview from "../../components/CreditNotePreview";
+import DateInput from "../../components/DateInput";
 import { COUNTRIES } from "../../services/company.service";
 import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesList } from "../../services/invoices.service";
@@ -89,7 +90,7 @@ export default function CreditNote() {
 
   const [country, setCountry] = useState(organizationCountry || "India");
   const [creditNoteNo] = useState(() => generateCreditNoteNumber());
-  const [creditDate, setCreditDate] = useState(new Date().toISOString().slice(0, 10));
+  const [creditDate, setCreditDate] = useState("");
   const [pdfLoading, setPdfLoading] = useState(false);
   const [referenceInvoiceId, setReferenceInvoiceId] = useState(invoices[0]?.id || "");
   const [placeOfSupply, setPlaceOfSupply] = useState("");
@@ -349,10 +350,9 @@ export default function CreditNote() {
             </FormField>
 
             <FormField label="Credit Note Date">
-              <input
-                type="date"
+              <DateInput
                 value={creditDate}
-                onChange={(e) => setCreditDate(e.target.value)}
+                onChange={(nextValue) => setCreditDate(nextValue)}
                 className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
                 style={{ "--tw-ring-color": UI.COLORS.ring }}
               />

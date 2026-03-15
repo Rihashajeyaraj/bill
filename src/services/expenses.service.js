@@ -288,7 +288,7 @@ export async function expensesCreate(expense) {
         .insert({
           organization_id: organizationId,
           expense_no: expense?.expenseNo || `EXP-${Date.now()}`,
-          expense_date: expense?.date || new Date().toISOString().slice(0, 10),
+          expense_date: expense?.date || "",
           category: category || null,
           party_id: expense?.partyId || null,
           amount: normalizedAmount,

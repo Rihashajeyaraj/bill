@@ -27,7 +27,7 @@ export function companyRegistration(company: any, country: CountryCode) {
 export function defaultForm(country: CountryCode, company: any): DebitNoteFormState {
   return {
     country,
-    debitNoteDate: new Date().toISOString().slice(0, 10),
+    debitNoteDate: "",
     supplierId: "",
     supplierInput: "",
     linkedPurchaseInvoiceId: "",

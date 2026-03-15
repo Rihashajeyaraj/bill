@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Loader2, Save, Search, X } from "lucide-react";
 import { COUNTRY_CONFIG, type CountryCode, type DebitStatus } from "./countryConfig";
+import DateInput from "../../components/DateInput";
 import type { PurchaseInvoice, DebitNoteRecord, SupplierOption } from "./store";
 import type { DebitNoteFormState } from "./types";
 import { formatMoney, parseNumber } from "./utils";
@@ -236,10 +237,9 @@ export default function DebitNoteEditor({
               </label>
               <label className="text-xs font-semibold text-slate-600">
                 Debit Note Date
-                <input
-                  type="date"
+                <DateInput
                   value={form.debitNoteDate}
-                  onChange={(event) => onUpdateForm("debitNoteDate", event.target.value)}
+                  onChange={(nextValue) => onUpdateForm("debitNoteDate", nextValue)}
                   className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
                 />
                 {fieldErrors.debitNoteDate ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.debitNoteDate}</span> : null}

@@ -4,6 +4,7 @@ import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import FormField from "../../components/FormField";
 import GradientButton from "../../components/GradientButton";
+import DateInput from "../../components/DateInput";
 import { partiesByType } from "../../services/parties.service";
 import { paymentsCreate } from "../../services/payments.service";
 
@@ -14,7 +15,7 @@ export default function PaymentOut() {
 
   const [amount, setAmount] = useState(0);
   const [mode, setMode] = useState("Cash");
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState("");
 
   function save() {
     paymentsCreate({ direction: "OUT", partyId, partyName: party?.name || "", amount, mode, date });
@@ -41,10 +42,9 @@ export default function PaymentOut() {
           </FormField>
 
           <FormField label="Date">
-            <input
-              type="date"
+            <DateInput
               value={date}
-              onChange={(e) => setDate(e.target.value)}
+              onChange={(nextValue) => setDate(nextValue)}
               className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none"
             />
           </FormField>

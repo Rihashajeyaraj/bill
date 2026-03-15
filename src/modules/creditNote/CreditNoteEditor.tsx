@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Loader2, Save, Search, X } from "lucide-react";
 import { COUNTRY_CONFIG, type CountryCode, type CreditStatus } from "./countryConfig";
+import DateInput from "../../components/DateInput";
 import type { CreditInvoice, CreditNoteRecord, CustomerOption } from "./store";
 import type { CreditNoteFormState } from "./types";
 import { formatMoney, parseNumber } from "./utils";
@@ -288,10 +289,9 @@ export default function CreditNoteEditor({
               </label>
               <label className="text-xs font-semibold text-slate-600">
                 Credit Note Date
-                <input
-                  type="date"
+                <DateInput
                   value={form.creditNoteDate}
-                  onChange={(event) => onUpdateForm("creditNoteDate", event.target.value)}
+                  onChange={(nextValue) => onUpdateForm("creditNoteDate", nextValue)}
                   className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-emerald-200"
                 />
                 {fieldErrors.creditNoteDate ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.creditNoteDate}</span> : null}

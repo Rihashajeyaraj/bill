@@ -27,7 +27,7 @@ export function companyRegistration(company: any, country: CountryCode) {
 export function defaultForm(country: CountryCode, company: any): CreditNoteFormState {
   return {
     country,
-    creditNoteDate: new Date().toISOString().slice(0, 10),
+    creditNoteDate: "",
     customerId: "",
     customerInput: "",
     linkedInvoiceId: "",

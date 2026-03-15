@@ -41,7 +41,7 @@ function mergeSourceRowsToLocalPayments(sourcePrefix, rows) {
 
   const mapped = rows.map((row, index) => ({
     id: uid("pay_"),
-    date: row?.payment_date || new Date().toISOString().slice(0, 10),
+    date: row?.payment_date || "",
     paymentNo: row?.payment_no || `PAY-${Date.now()}`,
     direction: String(row?.direction || "").toUpperCase() === "OUT" ? "OUT" : "IN",
     partyId: row?.party_id || "",
@@ -133,7 +133,7 @@ export function paymentsCreate(payment) {
       const remotePayload = {
         organization_id: organizationId,
         payment_no: payment?.paymentNo || `PAY-${Date.now()}`,
-        payment_date: payment?.date || new Date().toISOString().slice(0, 10),
+        payment_date: payment?.date || payment?.paymentDate || "",
         direction: String(payment?.direction || "IN").toUpperCase() === "OUT" ? "out" : "in",
         party_id: looksLikeUuid(payment?.partyId) ? payment.partyId : null,
         invoice_id: looksLikeUuid(payment?.invoiceId) ? payment.invoiceId : null,
@@ -168,7 +168,7 @@ export async function syncPaymentInRemote(record) {
   const shouldPost = String(record?.status || "").toLowerCase() !== "draft";
   const rows = [];
   const partyId = record?.customerId || null;
-  const paymentDate = record?.paymentDate || new Date().toISOString().slice(0, 10);
+  const paymentDate = record?.paymentDate || "";
   const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
 
   if (shouldPost && shouldApply) {
@@ -280,7 +280,7 @@ export async function syncPaymentOutRemote(record) {
   const shouldPost = String(record?.status || "").toLowerCase() !== "draft";
   const rows = [];
   const partyId = record?.supplierId || null;
-  const paymentDate = record?.paymentDate || new Date().toISOString().slice(0, 10);
+  const paymentDate = record?.paymentDate || "";
   const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
 
   if (shouldPost && shouldApply) {

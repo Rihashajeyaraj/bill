@@ -4,6 +4,7 @@ import { FileText } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import EmptyState from "../components/EmptyState";
 import Badge from "../components/Badge";
+import DateInput from "../components/DateInput";
 import { buildPartyStatement, computePartyFinancials, getParty } from "../modules/parties/store";
 import { formatMoney, outstandingMeta } from "../modules/parties/utils";
 import { useOrganization } from "../context/OrganizationContext";
@@ -156,19 +157,17 @@ export default function PartyStatement() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <label className="text-xs font-semibold text-slate-600">
             From Date
-            <input
-              type="date"
+            <DateInput
               value={fromDate}
-              onChange={(event) => setFromDate(event.target.value)}
+              onChange={(nextValue) => setFromDate(nextValue)}
               className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
             />
           </label>
           <label className="text-xs font-semibold text-slate-600">
             To Date
-            <input
-              type="date"
+            <DateInput
               value={toDate}
-              onChange={(event) => setToDate(event.target.value)}
+              onChange={(nextValue) => setToDate(nextValue)}
               className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
             />
           </label>

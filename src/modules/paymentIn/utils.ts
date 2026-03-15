@@ -27,7 +27,7 @@ export function companyRegistration(company: any, country: CountryCode) {
 export function defaultForm(country: CountryCode, company: any): PaymentInFormState {
   return {
     country,
-    paymentDate: new Date().toISOString().slice(0, 10),
+    paymentDate: "",
     customerId: "",
     customerInput: "",
     currency: COUNTRY_CONFIG[country].currency,

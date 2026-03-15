@@ -15,6 +15,7 @@ import {
   Search,
   Users
 } from "lucide-react";
+import DateInput from "../components/DateInput";
 import {
   Bar,
   BarChart,
@@ -1700,30 +1701,24 @@ export default function Reports() {
           <div>
             <p className="text-xs font-semibold text-slate-500">Date Range</p>
             <div className="mt-2 flex items-center gap-2">
-              <input
-                type="date"
+              <DateInput
                 value={fromDate}
-                onChange={(event) => {
-                  const next = event.target.value;
+                onChange={(next) => {
                   setFromDate(next);
                   setDatePreset("custom");
                   if (next && toDate && next > toDate) setToDate(next);
                 }}
-                lang="en-GB"
                 max={toDate || undefined}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
               />
               <span className="text-xs text-slate-400">to</span>
-              <input
-                type="date"
+              <DateInput
                 value={toDate}
-                onChange={(event) => {
-                  const next = event.target.value;
+                onChange={(next) => {
                   setToDate(next);
                   setDatePreset("custom");
                   if (next && fromDate && next < fromDate) setFromDate(next);
                 }}
-                lang="en-GB"
                 min={fromDate || undefined}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
               />

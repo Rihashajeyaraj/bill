@@ -17,6 +17,7 @@ import {
 import { markBackupReminderCompleted } from "../services/activity.service";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 import { canAccessSettings } from "../services/roles";
+import { formatDateTimeByPreference } from "../lib/formatPreferences";
 
 const COUNT_LABELS = [
   { key: "parties", label: "Parties" },
@@ -266,7 +267,7 @@ export default function BackupUtilities() {
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Last Generated</p>
               <p className="text-sm font-semibold text-slate-900">
-                {meta?.generatedAt ? new Date(meta.generatedAt).toLocaleString() : "-"}
+                {meta?.generatedAt ? formatDateTimeByPreference(meta.generatedAt) : "-"}
               </p>
             </div>
           </div>
@@ -333,7 +334,7 @@ export default function BackupUtilities() {
                   {remoteBackups.map((entry) => (
                     <tr key={entry.id} className="border-t border-slate-100">
                       <td className="px-3 py-2 text-slate-700">
-                        {entry.generatedAt ? new Date(entry.generatedAt).toLocaleString() : "-"}
+                        {entry.generatedAt ? formatDateTimeByPreference(entry.generatedAt) : "-"}
                       </td>
                       <td className="px-3 py-2 text-slate-700">{entry.reason || "manual"}</td>
                       <td className="px-3 py-2 text-slate-700">{entry.schemaVersion || "-"}</td>

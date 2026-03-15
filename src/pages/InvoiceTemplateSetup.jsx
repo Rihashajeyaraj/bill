@@ -8,6 +8,7 @@ import PageHeader from "../components/PageHeader";
 import GradientButton from "../components/GradientButton";
 import FormField from "../components/FormField";
 import InvoicePreview from "../components/InvoicePreview";
+import DateInput from "../components/DateInput";
 import { computeIndiaGST, computeVAT } from "../services/tax";
 import {
   DEFAULT_TEMPLATE_CONFIG,
@@ -33,7 +34,7 @@ const FALLBACK_COMPANY = "Company Name";
 
 const BASE_INVOICE = {
   invoiceNo: "",
-  invoiceDate: new Date().toISOString().slice(0, 10),
+  invoiceDate: "",
   dueDate: "",
   placeOfSupply: "",
   seller: {
@@ -514,18 +515,16 @@ export default function InvoiceTemplateSetup() {
                   />
                 </FormField>
                 <FormField label="Invoice Date">
-                  <input
-                    type="date"
+                  <DateInput
                     value={preview.invoiceDate}
-                    onChange={(e) => updatePreview({ invoiceDate: e.target.value })}
+                    onChange={(nextValue) => updatePreview({ invoiceDate: nextValue })}
                     className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none"
                   />
                 </FormField>
                 <FormField label="Due Date">
-                  <input
-                    type="date"
+                  <DateInput
                     value={preview.dueDate}
-                    onChange={(e) => updatePreview({ dueDate: e.target.value })}
+                    onChange={(nextValue) => updatePreview({ dueDate: nextValue })}
                     className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none"
                   />
                 </FormField>

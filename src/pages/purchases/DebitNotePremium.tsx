@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, FileSpreadsheet, FileText, Plus } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
+import DateInput from "../../components/DateInput";
 import CountrySelector from "../../modules/debitNote/CountrySelector";
 import DebitNoteSkeleton from "../../modules/debitNote/DebitNoteSkeleton";
 import DebitNoteListTable from "../../modules/debitNote/DebitNoteListTable";
@@ -796,19 +797,17 @@ export default function DebitNotePremium() {
                     </label>
                     <label className={filterLabelClassName}>
                       From date
-                      <input
-                        type="date"
+                      <DateInput
                         value={fromDate}
-                        onChange={(event) => setFromDate(event.target.value)}
+                        onChange={(nextValue) => setFromDate(nextValue)}
                         className={filterInputClassName}
                       />
                     </label>
                     <label className={filterLabelClassName}>
                       To date
-                      <input
-                        type="date"
+                      <DateInput
                         value={toDate}
-                        onChange={(event) => setToDate(event.target.value)}
+                        onChange={(nextValue) => setToDate(nextValue)}
                         className={filterInputClassName}
                       />
                     </label>

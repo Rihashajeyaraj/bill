@@ -1,4 +1,5 @@
 import { companyGetProfile } from "../services/company.service";
+import { formatIsoDateToDisplay } from "./dateUtils";
 
 const DATE_FORMATS = new Set(["DD MMM YYYY", "DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"]);
 const NUMBER_FORMATS = new Set(["1,23,456.78", "123,456.78", "123.456,78"]);
@@ -33,7 +34,8 @@ function resolveLocalizationSettings() {
 
 export function getPreferredDateFormat() {
   const dateFormat = String(resolveLocalizationSettings()?.dateFormat || "").trim();
-  return DATE_FORMATS.has(dateFormat) ? dateFormat : "DD MMM YYYY";
+  if (dateFormat === "DD/MM/YYYY") return dateFormat;
+  return "DD/MM/YYYY";
 }
 
 export function getPreferredNumberFormat() {
@@ -89,16 +91,7 @@ export function formatCurrencyByPreference(value, currency, options = {}) {
 export function formatDateByPreference(value, fallback = "-") {
   const date = toDate(value);
   if (!date) return fallback;
-
-  const day = pad2(date.getDate());
-  const month = pad2(date.getMonth() + 1);
-  const year = String(date.getFullYear());
-  const format = getPreferredDateFormat();
-
-  if (format === "DD/MM/YYYY") return `${day}/${month}/${year}`;
-  if (format === "MM/DD/YYYY") return `${month}/${day}/${year}`;
-  if (format === "YYYY-MM-DD") return `${year}-${month}-${day}`;
-  return `${day} ${date.toLocaleString("en-US", { month: "short" })} ${year}`;
+  return formatIsoDateToDisplay(date.toISOString().slice(0, 10), fallback);
 }
 
 export function formatTimeByPreference(value, { includeSeconds = true } = {}) {

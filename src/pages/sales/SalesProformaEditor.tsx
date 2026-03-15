@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import Card from "../../components/Card";
 import GradientButton from "../../components/GradientButton";
 import PageHeader from "../../components/PageHeader";
+import DateInput from "../../components/DateInput";
 import { useToast } from "../../context/ToastContext";
 import { listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../modules/parties/store";
 import { computeItemStock, listItems, syncItemsFromRemote } from "../../modules/items/store";
@@ -236,7 +237,7 @@ export default function SalesProformaEditor() {
   const [form, setForm] = useState<any>({
     id: "",
     proformaNo: "",
-    proformaDate: new Date().toISOString().slice(0, 10),
+    proformaDate: "",
     validTill: "",
     dueDate: "",
     partyId: "",
@@ -359,7 +360,7 @@ export default function SalesProformaEditor() {
           setForm({
             id: found.id || "",
             proformaNo: found.proformaNo || "",
-            proformaDate: found.proformaDate || new Date().toISOString().slice(0, 10),
+            proformaDate: found.proformaDate || "",
             validTill: found.validTill || "",
             dueDate: found.dueDate || "",
             partyId: found.partyId || "",
@@ -869,14 +870,13 @@ export default function SalesProformaEditor() {
               </label>
               <label className="text-sm text-slate-600">
                 Pro Forma Date
-                <input
-                  type="date"
+                <DateInput
                   className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm ${
                     validation?.proformaDate ? "border-rose-300" : "border-slate-200"
                   }`}
                   value={form.proformaDate || ""}
                   disabled={locked}
-                  onChange={(event) => updateForm({ proformaDate: event.target.value })}
+                  onChange={(nextValue) => updateForm({ proformaDate: nextValue })}
                 />
                 {validation?.proformaDate ? (
                   <p className="mt-1 text-xs font-medium text-rose-600">{validation.proformaDate}</p>
@@ -884,12 +884,11 @@ export default function SalesProformaEditor() {
               </label>
               <label className="text-sm text-slate-600">
                 Valid Till
-                <input
-                  type="date"
+                <DateInput
                   className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                   value={form.validTill || ""}
                   disabled={locked}
-                  onChange={(event) => updateForm({ validTill: event.target.value })}
+                  onChange={(nextValue) => updateForm({ validTill: nextValue })}
                 />
               </label>
             </div>
