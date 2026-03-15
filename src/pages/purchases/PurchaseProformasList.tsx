@@ -5,7 +5,6 @@ import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import { useToast } from "../../context/ToastContext";
 import {
-  convertPurchaseProforma,
   purchaseProformaGetByIdRemote,
   purchaseProformasList,
   purchaseProformasSyncFromRemote
@@ -33,7 +32,6 @@ export default function PurchaseProformasList() {
   const navigate = useNavigate();
   const toast = useToast();
   const [loading, setLoading] = useState(true);
-  const [convertingId, setConvertingId] = useState("");
   const [downloadingId, setDownloadingId] = useState("");
   const [rows, setRows] = useState<any[]>(() => purchaseProformasList());
 
@@ -67,34 +65,6 @@ export default function PurchaseProformasList() {
       return db.localeCompare(da);
     });
   }, [rows]);
-
-  async function onConvert(row: any) {
-    const status = String(row?.status || "").toUpperCase();
-    if (status === "CONVERTED") {
-      toast.warning("Already converted", "This Pro Forma Purchase Order has already been converted.");
-      return;
-    }
-    if (status === "EXPIRED") {
-      toast.warning("Expired Pro Forma Purchase Order", "Expired Pro Forma Purchase Orders cannot be converted.");
-      return;
-    }
-    setConvertingId(String(row?.id || ""));
-    try {
-      const result = await convertPurchaseProforma(row.id);
-      toast.success(
-        "Converted to purchase bill",
-        result?.billNo ? `Created bill ${result.billNo}.` : "Purchase bill created successfully."
-      );
-      setRows(await purchaseProformasSyncFromRemote());
-      navigate(
-        `/app/purchase/history${result?.billId ? `?billId=${encodeURIComponent(result.billId)}` : ""}`
-      );
-    } catch (error: any) {
-      toast.error("Conversion failed", error?.message || "Could not convert Pro Forma Purchase Order.");
-    } finally {
-      setConvertingId("");
-    }
-  }
 
   async function onDownloadPdf(row: any) {
     const recordId = String(row?.id || "");
@@ -261,27 +231,24 @@ export default function PurchaseProformasList() {
                 <th className="px-3 py-3 font-semibold">Valid Till</th>
                 <th className="px-3 py-3 font-semibold">Supplier</th>
                 <th className="px-3 py-3 font-semibold text-right">Amount</th>
-                <th className="px-3 py-3 font-semibold">Status</th>
                 <th className="px-3 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={7}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={6}>
                     Loading Pro Forma Purchase Orders...
                   </td>
                 </tr>
               ) : sortedRows.length === 0 ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={7}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={6}>
                     No Pro Forma Purchase Orders yet.
                   </td>
                 </tr>
               ) : (
                 sortedRows.map((row) => {
-                  const status = String(row?.status || "DRAFT").toUpperCase();
-                  const converting = String(row?.id || "") === convertingId;
                   const downloading = String(row?.id || "") === downloadingId;
                   return (
                     <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50/70">
@@ -291,11 +258,6 @@ export default function PurchaseProformasList() {
                       <td className="px-3 py-3 text-slate-700">{row.partyName || "-"}</td>
                       <td className="px-3 py-3 text-right font-semibold text-slate-900">
                         {money(row?.totals?.grandTotal)}
-                      </td>
-                      <td className="px-3 py-3">
-                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(status)}`}>
-                          {status}
-                        </span>
                       </td>
                       <td className="px-3 py-3">
                         <div className="flex flex-wrap gap-2">
@@ -316,14 +278,6 @@ export default function PurchaseProformasList() {
                             className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                           >
                             Edit
-                          </button>
-                          <button
-                            type="button"
-                            disabled={converting || status === "CONVERTED" || status === "EXPIRED"}
-                            onClick={() => void onConvert(row)}
-                            className="rounded-xl border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {converting ? "Converting..." : "Convert to Purchase Bill"}
                           </button>
                           <button
                             type="button"

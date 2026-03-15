@@ -15,7 +15,6 @@ import {
   resolveCountryIsoCode
 } from "../../lib/geoData";
 import {
-  convertPurchaseProforma,
   purchaseProformaComputeTotals,
   purchaseProformaGetByIdRemote,
   purchaseProformaPeekNumber,
@@ -174,7 +173,6 @@ export default function PurchaseProformaEditor() {
   const isNew = String(id || "") === "new";
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [converting, setConverting] = useState(false);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
   const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
@@ -664,32 +662,6 @@ export default function PurchaseProformaEditor() {
     }
   }
 
-  async function onConvert() {
-    const status = String(form?.status || "").toUpperCase();
-    if (isNew || !form.id) return;
-    if (status === "CONVERTED") {
-      toast.warning("Already converted", "This Pro Forma Purchase Order has already been converted.");
-      return;
-    }
-    if (status === "EXPIRED") {
-      toast.warning("Expired Pro Forma Purchase Order", "Expired Pro Forma Purchase Orders cannot be converted.");
-      return;
-    }
-    setConverting(true);
-    try {
-      const result = await convertPurchaseProforma(form.id);
-      toast.success(
-        "Converted to purchase bill",
-        result?.billNo ? `Created bill ${result.billNo}.` : "Purchase bill created successfully."
-      );
-      navigate(`/app/purchase/history${result?.billId ? `?billId=${encodeURIComponent(result.billId)}` : ""}`);
-    } catch (error: any) {
-      toast.error("Conversion failed", error?.message || "Could not convert Pro Forma Purchase Order.");
-    } finally {
-      setConverting(false);
-    }
-  }
-
   return (
     <div className="max-w-6xl space-y-5">
       <PageHeader
@@ -704,16 +676,6 @@ export default function PurchaseProformaEditor() {
             >
               History
             </button>
-            {!isNew ? (
-              <button
-                type="button"
-                onClick={() => void onConvert()}
-                disabled={converting || locked || String(form?.status || "").toUpperCase() === "EXPIRED"}
-                className="rounded-2xl border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {converting ? "Converting..." : "Convert to Bill"}
-              </button>
-            ) : null}
             <GradientButton
               onClick={() => void onSave()}
               disabled={saving || loading || locked}
