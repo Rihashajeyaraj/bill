@@ -20,6 +20,29 @@ function pdfMoney(value, currency = "") {
   return currencyCode ? `${currencyCode} ${amount}` : amount;
 }
 
+function drawSummaryRow(doc, label, value, x, y, width, height, emphasized = false) {
+  const valueFontSize = emphasized ? 10 : 9;
+  let labelFontSize = 8;
+  let valueWidth = Math.max(26, doc.getTextWidth(value) + 8);
+  valueWidth = Math.min(width * 0.48, valueWidth);
+  let dividerX = x + width - valueWidth;
+  if (dividerX < x + 22) {
+    dividerX = x + 22;
+  }
+
+  doc.setFontSize(labelFontSize);
+  while (labelFontSize > 6.5 && doc.getTextWidth(label) > dividerX - x - 6) {
+    labelFontSize -= 0.5;
+    doc.setFontSize(labelFontSize);
+  }
+
+  doc.roundedRect(x, y, width, height, 2, 2);
+  doc.line(dividerX, y, dividerX, y + height);
+  doc.text(label, x + 3, y + height / 2 + 1);
+  doc.setFontSize(valueFontSize);
+  doc.text(value, x + width - 3, y + height / 2 + 1, { align: "right" });
+}
+
 function downloadBlob(content, filename) {
   const url = URL.createObjectURL(content);
   const anchor = document.createElement("a");
@@ -124,6 +147,7 @@ export function exportPaymentOutPdf(record) {
   if (!record) return;
   const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
   const margin = 14;
+  const pageWidth = doc.internal.pageSize.getWidth();
   let y = margin;
   doc.setFont("helvetica", "normal");
 
@@ -143,11 +167,65 @@ export function exportPaymentOutPdf(record) {
   }
   y += 8;
 
-  doc.setFontSize(10);
-  doc.text(`Amount Paid: ${pdfMoney(record.totals.amountPaid, record.currency)}`, margin, y);
-  y += 5;
-  doc.text(`Advance: ${pdfMoney(record.totals.unappliedAmount, record.currency)}`, margin, y);
-  y += 8;
+  const allocations = Array.isArray(record.allocations) ? record.allocations : [];
+  if (allocations.length) {
+    const colX = {
+      bill: margin,
+      date: 82,
+      total: 118,
+      paid: 152,
+      balance: pageWidth - margin
+    };
+    const totalAmount = allocations.reduce((sum, line) => sum + parseNumber(line?.billAmount), 0);
+    const totalPaid = allocations.reduce((sum, line) => sum + parseNumber(line?.applyAmount), 0);
+    const totalBalance = allocations.reduce(
+      (sum, line) => sum + Math.max(0, parseNumber(line?.balanceDue) - parseNumber(line?.applyAmount)),
+      0
+    );
+
+    doc.setFontSize(11);
+    doc.text("Invoice Details", margin, y);
+    y += 6;
+    doc.setFontSize(9);
+    doc.text("Invoice Number", colX.bill, y);
+    doc.text("Date", colX.date, y);
+    doc.text("Total Amount", colX.total, y, { align: "right" });
+    doc.text("Amount Paid", colX.paid, y, { align: "right" });
+    doc.text("Amount Balance", colX.balance, y, { align: "right" });
+    y += 3;
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 5;
+
+    allocations.forEach((line) => {
+      doc.text(pdfSafeText(line?.billNo, "-").slice(0, 34), colX.bill, y);
+      doc.text(pdfSafeText(line?.billDate), colX.date, y);
+      doc.text(pdfMoney(line?.billAmount, record.currency), colX.total, y, { align: "right" });
+      doc.text(pdfMoney(line?.applyAmount, record.currency), colX.paid, y, { align: "right" });
+      doc.text(
+        pdfMoney(Math.max(0, parseNumber(line?.balanceDue) - parseNumber(line?.applyAmount)), record.currency),
+        colX.balance,
+        y,
+        { align: "right" }
+      );
+      y += 6;
+    });
+
+    y += 2;
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 6;
+    drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, 54, 9);
+    drawSummaryRow(doc, "Amount Paid", pdfMoney(totalPaid, record.currency), margin + 58, y, 64, 9);
+    drawSummaryRow(doc, "Amount Balance", pdfMoney(totalBalance, record.currency), margin + 126, y, 56, 9, true);
+    y += 14;
+  } else {
+    const totalAmount = parseNumber(record?.totals?.amountPaid);
+    const totalPaid = parseNumber(record?.totals?.amountApplied);
+    const totalBalance = parseNumber(record?.totals?.unappliedAmount);
+    drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, 54, 9);
+    drawSummaryRow(doc, "Amount Paid", pdfMoney(totalPaid, record.currency), margin + 58, y, 64, 9);
+    drawSummaryRow(doc, "Amount Balance", pdfMoney(totalBalance, record.currency), margin + 126, y, 56, 9, true);
+    y += 14;
+  }
 
   doc.setFontSize(8);
   doc.text("This payment advice is system generated and valid without signature.", margin, y);

@@ -12,6 +12,20 @@ function money(value: number, country: CountryCode) {
   });
 }
 
+function safeText(value: unknown, fallback = "-") {
+  const normalized = String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[^\x20-\x7E]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || fallback;
+}
+
+function documentLabel(line: PaymentInRecord["allocations"][number]) {
+  const prefix = String(line?.documentType || "").toLowerCase() === "proforma" ? "Proforma" : "Invoice";
+  return `${prefix} - ${safeText(line?.invoiceNo)}`;
+}
+
 function drawSummaryRow(
   doc: jsPDF,
   label: string,
@@ -22,10 +36,25 @@ function drawSummaryRow(
   height: number,
   emphasized = false
 ) {
+  const valueFontSize = emphasized ? 10 : 9;
+  let labelFontSize = 8;
+  let valueWidth = Math.max(26, doc.getTextWidth(value) + 8);
+  valueWidth = Math.min(width * 0.48, valueWidth);
+  let dividerX = x + width - valueWidth;
+  if (dividerX < x + 22) {
+    dividerX = x + 22;
+  }
+
+  doc.setFontSize(labelFontSize);
+  while (labelFontSize > 6.5 && doc.getTextWidth(label) > dividerX - x - 6) {
+    labelFontSize -= 0.5;
+    doc.setFontSize(labelFontSize);
+  }
+
   doc.roundedRect(x, y, width, height, 2, 2);
-  doc.line(x + width - 34, y, x + width - 34, y + height);
-  doc.setFontSize(emphasized ? 11 : 10);
+  doc.line(dividerX, y, dividerX, y + height);
   doc.text(label, x + 3, y + height / 2 + 1);
+  doc.setFontSize(valueFontSize);
   doc.text(value, x + width - 3, y + height / 2 + 1, { align: "right" });
 }
 
@@ -124,6 +153,8 @@ export function exportSinglePaymentInPdf(note: PaymentInRecord) {
   const cfg = COUNTRY_CONFIG[note.country];
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   let y = 14;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 14;
 
   doc.setFontSize(15);
   doc.text(cfg.receiptLabel, 14, y);
@@ -143,22 +174,74 @@ export function exportSinglePaymentInPdf(note: PaymentInRecord) {
   doc.text(cfg.legalWording, 14, y);
   y += 8;
 
-  drawSummaryRow(doc, "Amount Received", money(note.totals.amountReceived, note.country), 124, y, 72, 9);
-  y += 11;
-  drawSummaryRow(doc, "Advance Balance", money(note.totals.unappliedAmount, note.country), 124, y, 72, 10, true);
+  const allocations = Array.isArray(note.allocations) ? note.allocations : [];
+  if (allocations.length) {
+    const tableTop = y + 10;
+    const colX = {
+      document: margin,
+      date: 82,
+      total: 118,
+      receivable: 152,
+      balance: pageWidth - margin
+    };
+    const totalAmount = allocations.reduce((sum, line) => sum + Number(line?.invoiceAmount || 0), 0);
+    const totalReceivable = allocations.reduce((sum, line) => sum + Number(line?.balanceDue || 0), 0);
+    const totalBalance = allocations.reduce(
+      (sum, line) => sum + Math.max(0, Number(line?.balanceDue || 0) - Number(line?.applyAmount || 0)),
+      0
+    );
 
-  y += 14;
+    y = tableTop;
+    doc.setFontSize(11);
+    doc.text("Invoice Details", margin, y);
+    y += 6;
+    doc.setFontSize(9);
+    doc.text("Invoice Number", colX.document, y);
+    doc.text("Date", colX.date, y);
+    doc.text("Total Amount", colX.total, y, { align: "right" });
+    doc.text("Amount Receivable", colX.receivable, y, { align: "right" });
+    doc.text("Amount Balance", colX.balance, y, { align: "right" });
+    y += 3;
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 5;
+
+    allocations.forEach((line) => {
+      doc.text(documentLabel(line).slice(0, 34), colX.document, y);
+      doc.text(safeText(line?.invoiceDate), colX.date, y);
+      doc.text(money(Number(line?.invoiceAmount || 0), note.country), colX.total, y, { align: "right" });
+      doc.text(money(Number(line?.balanceDue || 0), note.country), colX.receivable, y, { align: "right" });
+      doc.text(
+        money(Math.max(0, Number(line?.balanceDue || 0) - Number(line?.applyAmount || 0)), note.country),
+        colX.balance,
+        y,
+        { align: "right" }
+      );
+      y += 6;
+    });
+
+    y += 2;
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 6;
+    drawSummaryRow(doc, "Total Amount", money(totalAmount, note.country), margin, y, 54, 9);
+    drawSummaryRow(doc, "Amount Receivable", money(totalReceivable, note.country), margin + 58, y, 64, 9);
+    drawSummaryRow(doc, "Amount Balance", money(totalBalance, note.country), margin + 126, y, 56, 9, true);
+    y += 14;
+  } else {
+    const totalAmount = Number(note.totals.amountReceived || 0);
+    const totalReceivable = Math.max(0, Number(note.totals.amountApplied || 0));
+    const totalBalance = Math.max(0, Number(note.totals.unappliedAmount || 0));
+    y += 10;
+    drawSummaryRow(doc, "Total Amount", money(totalAmount, note.country), margin, y, 54, 9);
+    drawSummaryRow(doc, "Amount Receivable", money(totalReceivable, note.country), margin + 58, y, 64, 9);
+    drawSummaryRow(doc, "Amount Balance", money(totalBalance, note.country), margin + 126, y, 56, 9, true);
+    y += 14;
+  }
+
   doc.setFontSize(9);
-  const unappliedHelp = note.totals.unappliedAmount > 0
-    ? "Advance balance is the extra payment received that remains on the customer account."
-    : "No advance balance remains on this receipt.";
   const legalLines = doc.splitTextToSize(cfg.legalFooter, 182);
-  const helpLines = doc.splitTextToSize(unappliedHelp, 182);
   const noteLines = doc.splitTextToSize(`Customer Note: ${note.customerNotes || "-"}`, 182);
   doc.text(legalLines, 14, y);
   y += legalLines.length * 4 + 2;
-  doc.text(helpLines, 14, y);
-  y += helpLines.length * 4 + 2;
   doc.text(noteLines, 14, y);
 
   doc.save(`${note.receiptNo}.pdf`);

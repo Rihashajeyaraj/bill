@@ -1,14 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
-  ChevronDown,
   FileDown,
   FileSpreadsheet,
   Mail,
   Plus,
   Search,
   Save,
-  Send,
   X
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -102,8 +100,6 @@ export default function PaymentOutPremium() {
   const [activePayment, setActivePayment] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [dirty, setDirty] = useState(false);
-  const [showMoreActions, setShowMoreActions] = useState(false);
-
   const [search, setSearch] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -297,7 +293,6 @@ export default function PaymentOutPremium() {
     setPanelMode("form");
     setActiveStep(0);
     setDirty(false);
-    setShowMoreActions(false);
     setSupplierLookupQuery("");
     setSupplierSearchError("");
   }
@@ -317,7 +312,6 @@ export default function PaymentOutPremium() {
     setPanelMode("form");
     setActiveStep(mode === "view" ? 2 : 0);
     setDirty(false);
-    setShowMoreActions(false);
     if (mode === "view") {
       setForm((prev) => ({ ...prev, readOnly: true }));
     }
@@ -330,7 +324,6 @@ export default function PaymentOutPremium() {
     setForm(defaultPaymentForm(country, currency));
     setActivePayment(null);
     setDirty(false);
-    setShowMoreActions(false);
     setSupplierLookupQuery("");
     setSupplierSearchError("");
   }
@@ -439,7 +432,7 @@ export default function PaymentOutPremium() {
     setSupplierSearchError("");
   }
 
-  async function persist(status) {
+  async function persist(status, options = {}) {
     const isEditMode = !!form?.id;
     if (isEditMode && !canEditPayment) {
       window.alert("You do not have permission to edit payment out entries.");
@@ -470,6 +463,9 @@ export default function PaymentOutPremium() {
       );
       const saved = savePaymentOut(payload);
       await syncPaymentOutRemote(saved);
+      if (options?.download) {
+        exportPaymentOutPdf(saved);
+      }
       setActivePayment(saved);
       setForm({ ...saved, desiredStatus: saved.status });
       setRefreshKey((prev) => prev + 1);
@@ -1107,56 +1103,28 @@ export default function PaymentOutPremium() {
             <div className="fixed bottom-4 right-4 z-40 flex flex-wrap items-center justify-end gap-3 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
               <button
                 type="button"
-                onClick={() => persist("Draft")}
+                onClick={() => persist(confirmStatus)}
                 disabled={!canSaveCurrentFlow}
                 className={`${ACTION_BAR_BASE} border border-slate-200 text-slate-700 disabled:cursor-not-allowed disabled:opacity-50`}
               >
                 <Save className="h-3.5 w-3.5" />
-                Save Draft
+                Save
               </button>
               <button
                 type="button"
-                onClick={() => persist(confirmStatus)}
+                onClick={() => {
+                  if (activePayment) {
+                    exportPaymentOutPdf(activePayment);
+                    return;
+                  }
+                  persist(confirmStatus, { download: true });
+                }}
                 disabled={!canSaveCurrentFlow}
-                className={`${ACTION_BAR_BASE} bg-slate-900 text-white disabled:cursor-not-allowed disabled:opacity-50`}
+                className={`${ACTION_BAR_BASE} border border-slate-200 text-slate-700 disabled:cursor-not-allowed disabled:opacity-50`}
               >
-                <Send className="h-3.5 w-3.5" />
-                Mark Paid
+                <FileDown className="h-3.5 w-3.5" />
+                Download PDF
               </button>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowMoreActions((prev) => !prev)}
-                  className={`${ACTION_BAR_BASE} border border-slate-200 text-slate-700`}
-                >
-                  More
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </button>
-                {showMoreActions ? (
-                  <div className="absolute bottom-full right-0 mb-2 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActions(false);
-                        exportPaymentOutPdf(activePayment || form);
-                      }}
-                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Download PDF
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreActions(false);
-                        window.alert("Email payment advice queued.");
-                      }}
-                      className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Email Receipt
-                    </button>
-                  </div>
-                ) : null}
-              </div>
             </div>
           ) : null}
         </div>

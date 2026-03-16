@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ChevronDown, FileDown, FileSpreadsheet, Mail, Plus, Save, Search, Send, X } from "lucide-react";
+import { ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Search, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import DateInput from "../../components/DateInput";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, COUNTRY_OPTIONS, type CountryCode, type PaymentMode, type PaymentStatus } from "../../modules/paymentIn/countryConfig";
@@ -142,7 +142,6 @@ export default function PaymentInPremium() {
   const [successMessage, setSuccessMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [showAudit, setShowAudit] = useState(false);
-  const [showMoreActions, setShowMoreActions] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<PaymentStatus | "">("");
   const [customerFilter, setCustomerFilter] = useState("");
@@ -311,7 +310,6 @@ export default function PaymentInPremium() {
     setDirty(false);
     setCustomerLookupQuery("");
     setCustomerSearchError("");
-    setShowMoreActions(false);
     clearMessages();
   }
 
@@ -329,7 +327,6 @@ export default function PaymentInPremium() {
     setFlowMode(mode);
     setActiveStep(mode === "view" ? 2 : 0);
     setDirty(false);
-    setShowMoreActions(false);
     clearMessages();
   }
 
@@ -343,7 +340,6 @@ export default function PaymentInPremium() {
     setDirty(false);
     setCustomerLookupQuery("");
     setCustomerSearchError("");
-    setShowMoreActions(false);
     clearMessages();
   }
 
@@ -1114,62 +1110,28 @@ export default function PaymentInPremium() {
         <div className="fixed bottom-4 right-4 z-40 flex flex-wrap items-center justify-end gap-3 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
           <button
             type="button"
-            onClick={() => persist("Draft")}
-            disabled={!canSaveCurrentFlow}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Save className="h-3.5 w-3.5" />
-            Save Draft
-          </button>
-          <button
-            type="button"
             onClick={() => persist(confirmStatus)}
             disabled={!canSaveCurrentFlow}
             className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Send className="h-3.5 w-3.5" />
-            Mark Paid
+            <Save className="h-3.5 w-3.5" />
+            Save
           </button>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowMoreActions((prev) => !prev)}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"
-            >
-              More
-              <ChevronDown className="h-3.5 w-3.5" />
-            </button>
-            {showMoreActions ? (
-              <div className="absolute bottom-full right-0 mb-2 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMoreActions(false);
-                    if (activePayment) {
-                      exportSinglePaymentInPdf(activePayment);
-                      return;
-                    }
-                    persist(confirmStatus, { download: true });
-                  }}
-                  disabled={!canSaveCurrentFlow}
-                  className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Download PDF
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMoreActions(false);
-                    persist(confirmStatus, { email: true });
-                  }}
-                  disabled={!canSaveCurrentFlow}
-                  className="flex w-full items-center rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Email Receipt
-                </button>
-              </div>
-            ) : null}
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (activePayment) {
+                exportSinglePaymentInPdf(activePayment);
+                return;
+              }
+              persist(confirmStatus, { download: true });
+            }}
+            disabled={!canSaveCurrentFlow}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <FileDown className="h-3.5 w-3.5" />
+            Download PDF
+          </button>
         </div>
       ) : null}
 
