@@ -6,6 +6,8 @@ import FormField from "../../components/FormField";
 import GradientButton from "../../components/GradientButton";
 import DateInput from "../../components/DateInput";
 import {
+  expenseCategoriesList,
+  expenseCategoriesSyncFromRemote,
   expensesCreate,
   expensesList,
   expensesSyncFromRemote
@@ -25,6 +27,8 @@ export default function Expense() {
   const [category, setCategory] = useState("Office");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
+  const [categoryOptions, setCategoryOptions] = useState(() => expenseCategoriesList());
+  const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [historyRows, setHistoryRows] = useState(() => expensesList());
@@ -34,11 +38,16 @@ export default function Expense() {
     async function load() {
       setLoadingHistory(true);
       try {
-        const nextHistory = await expensesSyncFromRemote();
+        const [nextCategories, nextHistory] = await Promise.all([
+          expenseCategoriesSyncFromRemote().catch(() => expenseCategoriesList()),
+          expensesSyncFromRemote()
+        ]);
         if (!mounted) return;
+        setCategoryOptions(Array.isArray(nextCategories) ? nextCategories : expenseCategoriesList());
         setHistoryRows(Array.isArray(nextHistory) ? nextHistory : expensesList());
       } catch {
         if (!mounted) return;
+        setCategoryOptions(expenseCategoriesList());
         setHistoryRows(expensesList());
       } finally {
         if (mounted) setLoadingHistory(false);
@@ -54,6 +63,17 @@ export default function Expense() {
     () => historyRows.reduce((sum, entry) => sum + Number(entry?.totalAmount || entry?.amount || 0), 0),
     [historyRows]
   );
+  const filteredCategoryOptions = useMemo(() => {
+    const query = String(category || "").trim().toLowerCase();
+    const source = Array.isArray(categoryOptions) ? categoryOptions : [];
+    if (!query) return source.slice(0, 8);
+    return source.filter((option) => option.toLowerCase().includes(query)).slice(0, 8);
+  }, [category, categoryOptions]);
+
+  function applyCategoryOption(option) {
+    setCategory(String(option || "").trim());
+    setShowCategorySuggestions(false);
+  }
 
   async function save() {
     const cleanCategory = String(category || "").trim();
@@ -76,6 +96,7 @@ export default function Expense() {
         note
       });
       setHistoryRows(Array.isArray(updated) ? updated : expensesList());
+      setCategoryOptions(expenseCategoriesList());
       setAmount("");
       setNote("");
       alert("Expense saved successfully.");
@@ -107,13 +128,37 @@ export default function Expense() {
           </FormField>
 
           <FormField label="Category">
-            <input
-              value={category}
-              onChange={(event) => setCategory(event.target.value)}
-              onBlur={(event) => setCategory(String(event.target.value || "").trim())}
-              placeholder="Enter category"
-              className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none"
-            />
+            <div className="relative">
+              <input
+                value={category}
+                onChange={(event) => {
+                  setCategory(event.target.value);
+                  setShowCategorySuggestions(true);
+                }}
+                onFocus={() => setShowCategorySuggestions(true)}
+                onBlur={(event) => {
+                  setCategory(String(event.target.value || "").trim());
+                  window.setTimeout(() => setShowCategorySuggestions(false), 120);
+                }}
+                placeholder="Enter category"
+                className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none"
+              />
+              {showCategorySuggestions && filteredCategoryOptions.length ? (
+                <div className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-2xl border border-slate-200 bg-white py-1 shadow-lg">
+                  {filteredCategoryOptions.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => applyCategoryOption(option)}
+                      className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </FormField>
 
           <FormField label="Amount">

@@ -45,7 +45,7 @@ import { syncItemsFromRemote } from "../modules/items/store";
 import { formatMoney, normalizeText } from "../modules/items/utils";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 
-const SCOPE_OPTIONS = ["All", "Sales", "Purchase", "Party", "Item"];
+const SCOPE_OPTIONS = ["All", "Sales", "Purchase", "Expense", "Party", "Item"];
 const DATE_PRESETS = [
   { id: "today", label: "Today" },
   { id: "7d", label: "Last 7 Days" },
@@ -93,6 +93,14 @@ const REPORT_CARDS = [
     description: "Top items, stock, and margins.",
     metricLabel: "Top Item Sales",
     icon: Package
+  },
+  {
+    id: "expense",
+    label: "Expense",
+    scope: "Expense",
+    description: "Expense ledger and category spend.",
+    metricLabel: "Total Expense",
+    icon: FileDown
   },
   {
     id: "parties",
@@ -425,6 +433,28 @@ const REPORT_CONTENT = {
         { id: "T-3", rate: "12%", taxable: 310000, output: 37200, input: 14800, net: 22400 },
         { id: "T-4", rate: "18%", taxable: 420000, output: 75600, input: 18800, net: 56800 }
       ]
+    }
+  },
+  expense: {
+    summary: [
+      { label: "Total Expense", value: 0, tone: "danger" },
+      { label: "Top Category", value: "-", tone: "warn", format: "text" },
+      { label: "Expense Entries", value: 0, tone: "default", format: "count" },
+      { label: "Average Expense", value: 0, tone: "default" }
+    ],
+    chart: {
+      type: "bar",
+      data: []
+    },
+    details: {
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "category", label: "Category" },
+        { key: "amount", label: "Amount", align: "right", format: "money" },
+        { key: "note", label: "Note" },
+        { key: "status", label: "Status", format: "status" }
+      ],
+      rows: []
     }
   },
   items: {
@@ -940,6 +970,13 @@ function deriveCardMetric(reportId, reportContent) {
       metricFormat: "money"
     };
   }
+  if (reportId === "expense") {
+    return {
+      metricLabel: "Total Expense",
+      metricValue: summary.find((card) => card.label === "Total Expense")?.value || 0,
+      metricFormat: "money"
+    };
+  }
   if (reportId === "parties") {
     const ranked = [...rows].sort((a, b) => parseAmount(b?.value) - parseAmount(a?.value));
     return {
@@ -981,6 +1018,10 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
     countryMatches(recordCountry(row), country) &&
     String(row?.status || "").toLowerCase() !== "draft" &&
     dateInRange(row?.paymentDate || row?.payment_date || row?.created_at, fromDate, toDate)
+  );
+  const expenses = arrayFromLs(LS_KEYS.expenses).filter((row) =>
+    countryMatches(recordCountry(row), country) &&
+    dateInRange(row?.date || row?.expense_date || row?.created_at, fromDate, toDate)
   );
   const legacyPayments = arrayFromLs(LS_KEYS.payments).filter((row) =>
     countryMatches(recordCountry(row), country)
@@ -1143,6 +1184,29 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
     purchasesByMonthMap.set(label, current);
   });
   const purchasesByMonth = Array.from(purchasesByMonthMap.values());
+
+  const expenseDetailRows = expenses.map((row) => ({
+    id: row?.id || row?.expenseNo || `expense_${Math.random().toString(16).slice(2)}`,
+    date: toIsoDate(row?.date || row?.expense_date || row?.created_at),
+    category: row?.category || "Uncategorized",
+    amount: parseAmount(row?.totalAmount ?? row?.amount),
+    note: row?.note || row?.notes || "-",
+    status: row?.status || "Posted"
+  }));
+
+  const expensesByCategoryMap = new Map();
+  expenseDetailRows.forEach((row) => {
+    const key = String(row?.category || "Uncategorized");
+    const current = expensesByCategoryMap.get(key) || { label: key, amount: 0, count: 0 };
+    current.amount += parseAmount(row?.amount);
+    current.count += 1;
+    expensesByCategoryMap.set(key, current);
+  });
+  const expenseChartRows = Array.from(expensesByCategoryMap.values())
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 6);
+  const topExpenseCategory = expenseChartRows[0] || null;
+  const totalExpense = expenseDetailRows.reduce((sum, row) => sum + parseAmount(row?.amount), 0);
 
   const itemSalesMap = new Map();
   invoiceRows.forEach((row) => {
@@ -1334,6 +1398,27 @@ function buildLiveReportContent({ fromDate, toDate, country }) {
       details: {
         ...template.payables.details,
         rows: payablesRows
+      }
+    },
+    expense: {
+      ...template.expense,
+      summary: [
+        { label: "Total Expense", value: totalExpense, tone: "danger" },
+        { label: "Top Category", value: topExpenseCategory?.label || "-", tone: "warn", format: "text" },
+        { label: "Expense Entries", value: expenseDetailRows.length, tone: "default", format: "count" },
+        {
+          label: "Average Expense",
+          value: expenseDetailRows.length ? totalExpense / expenseDetailRows.length : 0,
+          tone: "default"
+        }
+      ],
+      chart: {
+        type: "bar",
+        data: expenseChartRows
+      },
+      details: {
+        ...template.expense.details,
+        rows: expenseDetailRows
       }
     },
     items: {
@@ -1611,6 +1696,16 @@ export default function Reports() {
         `Tracked items in report: ${detailsRows.length}.`,
         top ? `Top item by revenue: ${top.item} (${formatMoney(top.revenue, currency)}).` : "No top item available.",
         `Low stock items: ${low}.`
+      ];
+    }
+
+    if (activeReport === "expense") {
+      const top = [...detailsRows].sort((a, b) => parseAmount(b?.amount) - parseAmount(a?.amount))[0];
+      const total = detailsRows.reduce((sum, row) => sum + parseAmount(row?.amount), 0);
+      return [
+        `Expense entries in range: ${detailsRows.length}.`,
+        top ? `Largest expense: ${top.category} (${formatMoney(top.amount, currency)}).` : "No expense ranking available.",
+        `Total expense booked: ${formatMoney(total, currency)}.`
       ];
     }
 
