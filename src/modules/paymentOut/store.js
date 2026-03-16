@@ -472,6 +472,8 @@ export function defaultPaymentForm(country, currency) {
     paymentDate: "",
     supplierId: "",
     supplierName: "",
+    allocationMode: "normal",
+    selectedBillId: "",
     paymentMode: "Cash",
     referenceNo: "",
     chequeNo: "",

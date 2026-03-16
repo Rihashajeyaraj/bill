@@ -10,6 +10,7 @@ const PAYMENT_SEQUENCE_KEY = "paymentInPremiumSequenceV1";
 const PAYMENT_LEDGER_KEY = "paymentInPremiumLedgerV1";
 const SELECTED_COUNTRY_KEY = "paymentInSelectedCountryV1";
 const CREDIT_NOTES_PREMIUM_KEY = "creditNotesPremiumV1";
+const SALES_PROFORMAS_KEY = LS_KEYS.sales_proformas;
 
 export interface CustomerOpenInvoice {
   id: string;
@@ -20,6 +21,7 @@ export interface CustomerOpenInvoice {
   invoiceDate: string;
   invoiceAmount: number;
   balanceDue: number;
+  documentType: "invoice" | "proforma";
 }
 
 export interface CustomerOption {
@@ -40,6 +42,7 @@ export interface PaymentAllocationDraft {
   invoiceAmount: number;
   balanceDue: number;
   applyAmount: number;
+  documentType?: "invoice" | "proforma";
 }
 
 export interface PaymentInTotals {
@@ -180,12 +183,23 @@ function isAppliedLikeStatus(status: unknown) {
   return normalized === "applied" || normalized === "issued" || normalized === "posted";
 }
 
-function appliedPaymentInForInvoice(invoiceId: string) {
-  if (!invoiceId) return 0;
+function documentKey(documentId: string, documentType: "invoice" | "proforma" = "invoice") {
+  return `${documentType}:${String(documentId || "")}`;
+}
+
+function appliedPaymentInForDocument(
+  documentId: string,
+  documentType: "invoice" | "proforma" = "invoice"
+) {
+  if (!documentId) return 0;
   const legacy = (lsGetOrganizationScoped(LS_KEYS.payments, []) as any[])
     .filter((entry) => String(entry?.direction || "").toUpperCase() === "IN")
     .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PI:"))
-    .filter((entry) => String(entry?.invoiceId || entry?.invoice_id || "") === String(invoiceId))
+    .filter((entry) =>
+      documentType === "invoice"
+        ? String(entry?.invoiceId || entry?.invoice_id || "") === String(documentId)
+        : false
+    )
     .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.amount)), 0);
 
   const premium = getAllPayments()
@@ -194,7 +208,11 @@ function appliedPaymentInForInvoice(invoiceId: string) {
       (sum, entry) =>
         sum +
         entry.allocations
-          .filter((line) => String(line.invoiceId) === String(invoiceId))
+          .filter(
+            (line) =>
+              documentKey(line.invoiceId, line.documentType || "invoice") ===
+              documentKey(documentId, documentType)
+          )
           .reduce((lineSum, line) => lineSum + Math.max(0, toNumber(line.applyAmount)), 0),
       0
     );
@@ -202,8 +220,8 @@ function appliedPaymentInForInvoice(invoiceId: string) {
   return legacy + premium;
 }
 
-function appliedCreditForInvoice(invoiceId: string) {
-  if (!invoiceId) return 0;
+function appliedCreditForInvoice(invoiceId: string, documentType: "invoice" | "proforma" = "invoice") {
+  if (!invoiceId || documentType !== "invoice") return 0;
 
   const legacy = (lsGetOrganizationScoped(LS_KEYS.creditNotes, []) as any[])
     .filter((entry) => isAppliedLikeStatus(entry?.status))
@@ -369,6 +387,7 @@ export function listPaymentLedger(country?: CountryCode) {
 
 export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvoice[] {
   const rawInvoices = lsGetOrganizationScoped(LS_KEYS.invoices, []);
+  const rawProformas = lsGetOrganizationScoped(SALES_PROFORMAS_KEY, []);
   const fromStorage: CustomerOpenInvoice[] = (Array.isArray(rawInvoices) ? rawInvoices : [])
     .map((invoice: any) => {
       const mappedCountry = normalizeCountryCode(invoice?.country);
@@ -377,8 +396,8 @@ export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvo
         0,
         toNumber(invoice?.totals?.grandTotal ?? invoice?.totals?.total ?? invoice?.totals?.subTotal)
       );
-      const paymentApplied = appliedPaymentInForInvoice(invoice?.id);
-      const creditApplied = appliedCreditForInvoice(invoice?.id);
+      const paymentApplied = appliedPaymentInForDocument(invoice?.id, "invoice");
+      const creditApplied = appliedCreditForInvoice(invoice?.id, "invoice");
       const storedBalance = Math.max(
         0,
         toNumber(invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoiceTotal)
@@ -396,12 +415,46 @@ export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvo
         customerName: invoice.partyName || invoice.customerName || invoice.buyer?.name || "Customer",
         invoiceDate: invoice.invoiceDate || invoice.date || "",
         invoiceAmount: invoiceTotal,
-        balanceDue
+        balanceDue,
+        documentType: "invoice"
       } satisfies CustomerOpenInvoice;
     })
     .filter(Boolean) as CustomerOpenInvoice[];
 
-  return fromStorage.sort((a, b) => (a.invoiceDate < b.invoiceDate ? 1 : -1));
+  const fromProformas: CustomerOpenInvoice[] = (Array.isArray(rawProformas) ? rawProformas : [])
+    .map((proforma: any) => {
+      const mappedCountry = normalizeCountryCode(proforma?.country);
+      if (mappedCountry && mappedCountry !== country) return null;
+      const status = String(proforma?.status || "").toUpperCase();
+      if (status === "CONVERTED" || status === "EXPIRED") return null;
+      const invoiceAmount = Math.max(
+        0,
+        toNumber(
+          proforma?.totals?.grandTotal ??
+            proforma?.totals?.total ??
+            proforma?.totals?.subTotal ??
+            proforma?.grandTotal
+        )
+      );
+      const paymentApplied = appliedPaymentInForDocument(proforma?.id, "proforma");
+      const balanceDue = Math.max(0, invoiceAmount - paymentApplied);
+      if (balanceDue <= 0) return null;
+      return {
+        id: proforma?.id,
+        invoiceNo: proforma?.proformaNo || proforma?.id,
+        country,
+        customerId:
+          proforma?.partyId || proforma?.customerId || proforma?.buyer?.id || proforma?.partyName || "unknown_customer",
+        customerName: proforma?.partyName || proforma?.customerName || proforma?.buyer?.name || "Customer",
+        invoiceDate: proforma?.proformaDate || proforma?.date || "",
+        invoiceAmount,
+        balanceDue,
+        documentType: "proforma"
+      } satisfies CustomerOpenInvoice;
+    })
+    .filter(Boolean) as CustomerOpenInvoice[];
+
+  return [...fromStorage, ...fromProformas].sort((a, b) => (a.invoiceDate < b.invoiceDate ? 1 : -1));
 }
 
 export function mapCustomersByCountry(country: CountryCode): CustomerOption[] {
@@ -467,19 +520,37 @@ export function paymentInsightsByCustomer(country: CountryCode, customerId: stri
 
 export function savePaymentIn(payload: SavePaymentInPayload): PaymentInRecord {
   assertPaymentInWritePermission({ isEdit: !!payload?.id });
+  const payments = getAllPayments();
+  const existing = payload.id ? payments.find((entry) => entry.id === payload.id) : undefined;
+  const existingAppliedByDocument = new Map<string, number>();
+  existing?.allocations?.forEach((line) => {
+    const key = documentKey(line.invoiceId, line.documentType || "invoice");
+    const current = existingAppliedByDocument.get(key) || 0;
+    existingAppliedByDocument.set(key, current + Math.max(0, toNumber(line.applyAmount)));
+  });
+
   const openInvoices = mapOpenInvoicesByCountry(payload.country);
-  const invoiceMap = new Map(openInvoices.map((invoice) => [invoice.id, invoice]));
+  const invoiceMap = new Map(
+    openInvoices.map((invoice) => [documentKey(invoice.id, invoice.documentType), invoice])
+  );
   payload.allocations.forEach((line) => {
     if (toNumber(line.applyAmount) <= 0) return;
-    const linked = invoiceMap.get(line.invoiceId);
-    if (!linked) throw new Error(`Invoice ${line.invoiceNo} is not valid for selected country.`);
-    if (linked.customerId !== payload.customerId) {
+    const type = line.documentType || "invoice";
+    const key = documentKey(line.invoiceId, type);
+    const linked = invoiceMap.get(key);
+    const existingApplied = existingAppliedByDocument.get(key) || 0;
+    const maxAllowed = Math.max(0, toNumber(linked?.balanceDue) + existingApplied);
+    if (!linked && existingApplied <= 0) {
+      throw new Error(`Invoice ${line.invoiceNo} is not valid for selected country.`);
+    }
+    if (linked && linked.customerId !== payload.customerId) {
       throw new Error(`Invoice ${line.invoiceNo} belongs to a different customer.`);
+    }
+    if (toNumber(line.applyAmount) > maxAllowed) {
+      throw new Error(`Applied amount exceeds live balance due for ${line.invoiceNo}.`);
     }
   });
 
-  const payments = getAllPayments();
-  const existing = payload.id ? payments.find((entry) => entry.id === payload.id) : undefined;
   const now = nowIso();
   const previousStatus: PaymentStatus = existing?.status || "Draft";
   const nextStatus = payload.desiredStatus;

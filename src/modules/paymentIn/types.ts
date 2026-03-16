@@ -13,6 +13,8 @@ export interface PaymentInFormState {
   paymentDate: string;
   customerId: string;
   customerInput: string;
+  allocationMode: "linked" | "normal";
+  selectedDocumentId: string;
   currency: string;
   amountReceived: string;
   paymentMode: PaymentMode;

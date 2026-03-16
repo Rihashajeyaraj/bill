@@ -30,6 +30,8 @@ export function defaultForm(country: CountryCode, company: any): PaymentInFormSt
     paymentDate: "",
     customerId: "",
     customerInput: "",
+    allocationMode: "normal",
+    selectedDocumentId: "",
     currency: COUNTRY_CONFIG[country].currency,
     amountReceived: "",
     paymentMode: COUNTRY_CONFIG[country].paymentModes[0],
@@ -48,12 +50,15 @@ export function defaultForm(country: CountryCode, company: any): PaymentInFormSt
 }
 
 export function formFromRecord(note: PaymentInRecord): PaymentInFormState {
+  const firstAllocation = note.allocations[0] || null;
   return {
     id: note.id,
     country: note.country,
     paymentDate: note.paymentDate,
     customerId: note.customerId,
     customerInput: note.customerName,
+    allocationMode: firstAllocation ? "linked" : "normal",
+    selectedDocumentId: firstAllocation?.invoiceId || "",
     currency: note.currency,
     amountReceived: String(note.totals.amountReceived || ""),
     paymentMode: note.paymentMode,
@@ -73,7 +78,8 @@ export function formFromRecord(note: PaymentInRecord): PaymentInFormState {
       invoiceDate: line.invoiceDate,
       invoiceAmount: line.invoiceAmount,
       balanceDue: line.balanceDue,
-      applyAmount: line.applyAmount
+      applyAmount: line.applyAmount,
+      documentType: line.documentType || "invoice"
     }))
   };
 }

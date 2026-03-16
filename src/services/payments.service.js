@@ -176,8 +176,9 @@ export async function syncPaymentInRemote(record) {
       const line = allocations[index];
       const amount = Math.max(0, parseNumber(line?.applyAmount));
       if (!amount) continue;
-      let invoiceId = looksLikeUuid(line?.invoiceId) ? line.invoiceId : null;
-      if (!invoiceId && line?.invoiceNo && organizationId) {
+      const isProforma = String(line?.documentType || "").toLowerCase() === "proforma";
+      let invoiceId = isProforma ? null : looksLikeUuid(line?.invoiceId) ? line.invoiceId : null;
+      if (!invoiceId && !isProforma && line?.invoiceNo && organizationId) {
         invoiceId = await findInvoiceIdByNumber(organizationId, line.invoiceNo);
       }
       rows.push({
@@ -185,11 +186,15 @@ export async function syncPaymentInRemote(record) {
         payment_date: paymentDate,
         direction: "in",
         party_id: partyId,
-        invoice_id: invoiceId || line?.invoiceId || null,
+        invoice_id: isProforma ? null : invoiceId || line?.invoiceId || null,
         amount,
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}${index + 1}`,
-        notes: record?.internalNotes || `Payment in ${record?.status || "received"}`,
+        notes:
+          record?.internalNotes ||
+          (isProforma
+            ? `Payment in ${record?.status || "received"} linked to proforma ${line?.invoiceNo || ""}`.trim()
+            : `Payment in ${record?.status || "received"}`),
         status: "posted"
       });
     }

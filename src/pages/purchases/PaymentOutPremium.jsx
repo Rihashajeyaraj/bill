@@ -66,6 +66,21 @@ function supplierAddressSummary(supplier) {
     .join(", ");
 }
 
+function buildBillAllocation(bill, amountPaid) {
+  if (!bill) return [];
+  const amount = Math.max(0, parseNumber(amountPaid));
+  return [
+    {
+      billId: bill.id,
+      billNo: bill.billNo,
+      billDate: bill.billDate,
+      billAmount: bill.billAmount,
+      balanceDue: bill.balanceDue,
+      applyAmount: Math.min(amount, bill.balanceDue)
+    }
+  ];
+}
+
 export default function PaymentOutPremium() {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
@@ -108,6 +123,25 @@ export default function PaymentOutPremium() {
     () => suppliers.find((entry) => entry.id === form.supplierId) || null,
     [suppliers, form.supplierId]
   );
+  const supplierBills = useMemo(
+    () => bills.filter((entry) => String(entry.supplierId) === String(form.supplierId)),
+    [bills, form.supplierId]
+  );
+  const selectedBill = useMemo(() => {
+    const liveBill = supplierBills.find((entry) => String(entry.id) === String(form.selectedBillId));
+    if (liveBill) return liveBill;
+    const savedBill = form?.allocations?.[0];
+    if (!savedBill) return null;
+    return {
+      id: savedBill.billId,
+      billNo: savedBill.billNo,
+      billDate: savedBill.billDate,
+      supplierId: form.supplierId,
+      supplierName: form.supplierName,
+      billAmount: savedBill.billAmount,
+      balanceDue: savedBill.balanceDue
+    };
+  }, [form.allocations, form.selectedBillId, form.supplierId, form.supplierName, supplierBills]);
   const supplierOutstandingBefore = useMemo(
     () => (form.supplierId ? outstandingBySupplier(country, form.supplierId) : 0),
     [country, form.supplierId, refreshKey]
@@ -240,7 +274,9 @@ export default function PaymentOutPremium() {
       ...defaultPaymentForm(country, currency),
       supplierId: bill.supplierId,
       supplierName: bill.supplierName,
-      allocations: []
+      allocationMode: "linked",
+      selectedBillId: bill.id,
+      allocations: buildBillAllocation(bill, 0)
     }));
     setPanelMode("form");
     setActiveStep(1);
@@ -273,7 +309,9 @@ export default function PaymentOutPremium() {
     }
     setForm({
       ...record,
-      desiredStatus: record.status
+      desiredStatus: record.status,
+      allocationMode: record?.allocations?.length ? "linked" : "normal",
+      selectedBillId: record?.allocations?.[0]?.billId || ""
     });
     setActivePayment(record);
     setPanelMode("form");
@@ -298,7 +336,19 @@ export default function PaymentOutPremium() {
   }
 
   function updateField(key, value) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === "amountPaid" && next.allocationMode === "linked" && next.selectedBillId) {
+        const linkedBill =
+          bills.find(
+            (entry) =>
+              String(entry.id) === String(next.selectedBillId) &&
+              String(entry.supplierId) === String(next.supplierId)
+          ) || null;
+        next.allocations = buildBillAllocation(linkedBill, value);
+      }
+      return next;
+    });
     setDirty(true);
   }
 
@@ -308,7 +358,40 @@ export default function PaymentOutPremium() {
       ...prev,
       supplierId,
       supplierName: supplier?.name || "",
+      allocationMode: "normal",
+      selectedBillId: "",
       allocations: []
+    }));
+    setDirty(true);
+  }
+
+  function updateAllocationMode(mode) {
+    setForm((prev) => {
+      if (mode === "normal") {
+        return {
+          ...prev,
+          allocationMode: "normal",
+          selectedBillId: "",
+          allocations: []
+        };
+      }
+      const linkedBill = supplierBills.find((entry) => String(entry.id) === String(prev.selectedBillId)) || null;
+      return {
+        ...prev,
+        allocationMode: "linked",
+        allocations: buildBillAllocation(linkedBill, prev.amountPaid)
+      };
+    });
+    setDirty(true);
+  }
+
+  function handleBillSelection(billId) {
+    const linkedBill = supplierBills.find((entry) => String(entry.id) === String(billId)) || null;
+    setForm((prev) => ({
+      ...prev,
+      allocationMode: "linked",
+      selectedBillId: linkedBill?.id || "",
+      allocations: buildBillAllocation(linkedBill, prev.amountPaid)
     }));
     setDirty(true);
   }
@@ -347,6 +430,8 @@ export default function PaymentOutPremium() {
       ...prev,
       supplierId: "",
       supplierName: "",
+      allocationMode: "normal",
+      selectedBillId: "",
       allocations: []
     }));
     setDirty(true);
@@ -368,9 +453,18 @@ export default function PaymentOutPremium() {
       window.alert("Select a supplier before saving.");
       return;
     }
+    if (form.allocationMode === "linked" && !form.selectedBillId) {
+      window.alert("Select a purchase invoice before saving.");
+      return;
+    }
     try {
       const payload = buildPaymentOutPayload(
-        { ...form, desiredStatus: status, supplierName: selectedSupplier?.name || form.supplierName },
+        {
+          ...form,
+          desiredStatus:
+            form.allocationMode === "linked" && form.allocations.length ? "Applied" : status,
+          supplierName: selectedSupplier?.name || form.supplierName
+        },
         supplierOutstandingBefore,
         actorName
       );
@@ -415,6 +509,7 @@ export default function PaymentOutPremium() {
 
   const readOnly = !!form.readOnly;
   const canSaveCurrentFlow = form?.id ? canEditPayment : canCreatePayment;
+  const confirmStatus = form.allocationMode === "linked" && form.allocations.length ? "Applied" : "Paid";
 
   return (
     <div className="mx-auto min-h-full max-w-[1360px] space-y-4 pb-32">
@@ -769,6 +864,73 @@ export default function PaymentOutPremium() {
                       disabled={readOnly || !form.supplierId}
                     />
                   </label>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-xs font-semibold text-slate-600">Is this payment for a specific invoice?</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => updateAllocationMode("linked")}
+                        disabled={readOnly || !form.supplierId}
+                        className={`rounded-full px-3 py-2 text-xs font-semibold transition ${
+                          form.allocationMode === "linked"
+                            ? "bg-slate-900 text-white"
+                            : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        } disabled:cursor-not-allowed disabled:opacity-50`}
+                      >
+                        Yes - Pay against Invoice
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateAllocationMode("normal")}
+                        disabled={readOnly}
+                        className={`rounded-full px-3 py-2 text-xs font-semibold transition ${
+                          form.allocationMode === "normal"
+                            ? "bg-slate-900 text-white"
+                            : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        } disabled:cursor-not-allowed disabled:opacity-50`}
+                      >
+                        No - Normal Payment Entry
+                      </button>
+                    </div>
+                    {!form.supplierId ? (
+                      <p className="mt-2 text-xs text-slate-500">Select a supplier first to load purchase invoice options.</p>
+                    ) : null}
+                  </div>
+                  {form.allocationMode === "linked" ? (
+                    <label className="block">
+                      <span className="text-xs font-semibold text-slate-600">Purchase Invoice</span>
+                      <select
+                        value={form.selectedBillId}
+                        onChange={(event) => handleBillSelection(event.target.value)}
+                        disabled={readOnly || !form.supplierId || !supplierBills.length}
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="">
+                          {supplierBills.length
+                            ? "Select purchase invoice"
+                            : "No pending purchase invoices for this supplier"}
+                        </option>
+                        {supplierBills.map((bill) => (
+                          <option key={bill.id} value={bill.id}>
+                            {`Invoice - ${bill.billNo} | ${bill.billDate || "-"} | Pending: ${formatMoney(bill.balanceDue, currency)}`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-xs text-slate-500">
+                      Normal Payment Entry selected. This payment will be saved without linking to any purchase invoice.
+                    </div>
+                  )}
+                  {form.allocationMode === "linked" && selectedBill ? (
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
+                      <p className="font-semibold">Invoice - {selectedBill.billNo}</p>
+                      <p className="mt-1">
+                        Date: {selectedBill.billDate || "-"} | Pending: {formatMoney(selectedBill.balanceDue, currency)}
+                      </p>
+                      <p className="mt-1">Allocated now: {formatMoney(amountApplied, currency)}</p>
+                    </div>
+                  ) : null}
                   <label className="block">
                     <span className="text-xs font-semibold text-slate-600">Payment Mode</span>
                     <select
@@ -830,12 +992,16 @@ export default function PaymentOutPremium() {
                 </div>
               </FlowCard>
 
-              <FlowCard title="Advance Handling" subtitle="Payments are saved without bill linking">
+              <FlowCard title="Advance Handling" subtitle="Choose linked invoice or normal payment entry">
                 <div className="space-y-3">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <p className="text-sm font-semibold text-slate-900">Advance Balance</p>
                     <p className="mt-2 text-2xl font-bold text-emerald-700">{formatMoney(unappliedAmount, currency)}</p>
-                    <p className="mt-2 text-xs text-slate-500">This payment will be stored on the supplier account without bill matching.</p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      {form.allocationMode === "linked"
+                        ? "Any amount above the selected invoice pending amount will stay on the supplier account as advance."
+                        : "Normal payment entries are saved without purchase invoice linking."}
+                    </p>
                   </div>
                   {!form.supplierId ? (
                     <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
@@ -866,6 +1032,19 @@ export default function PaymentOutPremium() {
                     <span className="font-semibold text-emerald-700">{formatMoney(unappliedAmount, currency)}</span>
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
+                    <p className="text-slate-500">
+                      {form.allocationMode === "linked" ? "Selected Invoice" : "Payment Flow"}
+                    </p>
+                    <p className="font-semibold text-slate-700">
+                      {selectedBill ? `Invoice - ${selectedBill.billNo}` : "Normal Payment Entry"}
+                    </p>
+                    <p className="mt-1 text-slate-500">
+                      {selectedBill
+                        ? `Pending ${formatMoney(selectedBill.balanceDue, currency)} | Applied ${formatMoney(amountApplied, currency)}`
+                        : "Saved without linking to any purchase invoice."}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
                     <p className="text-slate-500">Supplier Outstanding After Payment</p>
                     <p className={`text-base font-semibold ${outstandingAfter <= 0 ? "text-emerald-700" : "text-rose-600"}`}>
                       {formatMoney(outstandingAfter, currency)}
@@ -874,7 +1053,11 @@ export default function PaymentOutPremium() {
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
                     <p className="text-slate-500">Approval Role</p>
                     <p className="font-semibold text-slate-700">{role}</p>
-                    <p className="mt-1 text-slate-500">Bill linking is not available from this page.</p>
+                    <p className="mt-1 text-slate-500">
+                      {selectedBill
+                        ? "Pending amount updates automatically for the selected purchase invoice."
+                        : "Normal payment entry keeps the amount unlinked."}
+                    </p>
                   </div>
                 </div>
               </FlowCard>
@@ -933,7 +1116,7 @@ export default function PaymentOutPremium() {
               </button>
               <button
                 type="button"
-                onClick={() => persist("Paid")}
+                onClick={() => persist(confirmStatus)}
                 disabled={!canSaveCurrentFlow}
                 className={`${ACTION_BAR_BASE} bg-slate-900 text-white disabled:cursor-not-allowed disabled:opacity-50`}
               >

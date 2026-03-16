@@ -14,6 +14,7 @@ import {
   savePaymentIn,
   setSelectedPaymentCountry,
   summarizePaymentIn,
+  type CustomerOpenInvoice,
   type PaymentInRecord
 } from "../../modules/paymentIn/store";
 import { computeEditorTotals, defaultForm, formFromRecord, formatMoney, parseNumber } from "../../modules/paymentIn/utils";
@@ -24,6 +25,7 @@ import { canCreateEntries, canDeleteEntries, canEditEntries, roleTypeLabel } fro
 import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesSyncFromRemote } from "../../services/invoices.service";
 import { deletePaymentInRemote, syncPaymentInRemote } from "../../services/payments.service";
+import { salesProformasSyncFromRemote } from "../../services/proformas.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
@@ -93,6 +95,26 @@ function numberInputValue(value: unknown) {
   return String(value ?? "");
 }
 
+function documentTypeLabel(documentType: "invoice" | "proforma") {
+  return documentType === "proforma" ? "Proforma" : "Invoice";
+}
+
+function buildAllocation(document: CustomerOpenInvoice | null, amountReceived: unknown) {
+  if (!document) return [];
+  const amount = Math.max(0, parseNumber(amountReceived as any));
+  return [
+    {
+      invoiceId: document.id,
+      invoiceNo: document.invoiceNo,
+      invoiceDate: document.invoiceDate,
+      invoiceAmount: document.invoiceAmount,
+      balanceDue: document.balanceDue,
+      applyAmount: Math.min(amount, document.balanceDue),
+      documentType: document.documentType
+    }
+  ];
+}
+
 export default function PaymentInPremium() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
@@ -140,6 +162,27 @@ export default function PaymentInPremium() {
   const customerInsights = useMemo(() => (form?.customerId ? paymentInsightsByCustomer(country, form.customerId) : { lastPaymentDate: "", advanceWallet: 0, totalReceived: 0, paymentCount: 0 }), [country, form?.customerId, refreshKey]);
   const totals = useMemo(() => (form ? computeEditorTotals(form, customerOutstandingBefore) : { amountReceived: 0, amountApplied: 0, unappliedAmount: 0, outstandingAfter: 0 }), [form, customerOutstandingBefore]);
   const selectedCustomer = useMemo(() => customers.find((entry) => entry.id === form?.customerId) || null, [customers, form?.customerId]);
+  const customerDocuments = useMemo(
+    () => openInvoices.filter((entry) => entry.customerId === form?.customerId),
+    [openInvoices, form?.customerId]
+  );
+  const selectedCustomerDocument = useMemo(() => {
+    const liveDocument = customerDocuments.find((entry) => entry.id === form?.selectedDocumentId);
+    if (liveDocument) return liveDocument;
+    const savedDocument = form?.allocations?.[0];
+    if (!savedDocument) return null;
+    return {
+      id: savedDocument.invoiceId,
+      invoiceNo: savedDocument.invoiceNo,
+      country,
+      customerId: form?.customerId || "",
+      customerName: form?.customerInput || "",
+      invoiceDate: savedDocument.invoiceDate,
+      invoiceAmount: savedDocument.invoiceAmount,
+      balanceDue: savedDocument.balanceDue,
+      documentType: savedDocument.documentType || "invoice"
+    } satisfies CustomerOpenInvoice;
+  }, [country, customerDocuments, form?.allocations, form?.customerId, form?.customerInput, form?.selectedDocumentId]);
   const filteredPayments = useMemo(() => payments.filter((entry) => {
     const haystack = `${entry.customerName} ${entry.receiptNo} ${entry.referenceNo || ""} ${entry.transactionId || ""}`.toLowerCase();
     const q = search.trim().toLowerCase();
@@ -183,7 +226,7 @@ export default function PaymentInPremium() {
     let mounted = true;
     async function syncReferenceData() {
       try {
-        await Promise.all([syncPartiesFromRemote(), invoicesSyncFromRemote()]);
+        await Promise.all([syncPartiesFromRemote(), invoicesSyncFromRemote(), salesProformasSyncFromRemote()]);
       } catch {
         // Continue with local cache.
       } finally {
@@ -223,7 +266,9 @@ export default function PaymentInPremium() {
         ...base,
         customerId: invoice.customerId,
         customerInput: invoice.customerName,
-        allocations: []
+        allocationMode: "linked",
+        selectedDocumentId: invoice.id,
+        allocations: buildAllocation(invoice, base.amountReceived)
       };
     });
     setPanelMode("flow");
@@ -240,6 +285,15 @@ export default function PaymentInPremium() {
     setErrorMessage("");
     setSuccessMessage("");
     setFieldErrors({});
+  }
+
+  function clearFieldError(field: string) {
+    setFieldErrors((prev) => {
+      if (!prev?.[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
   }
 
   function startNewPayment() {
@@ -294,7 +348,57 @@ export default function PaymentInPremium() {
   }
 
   function updateForm<K extends keyof PaymentInFormState>(key: K, value: PaymentInFormState[K]) {
-    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    setForm((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, [key]: value };
+      if (key === "amountReceived" && next.allocationMode === "linked" && next.selectedDocumentId) {
+        const linkedDocument =
+          openInvoices.find(
+            (entry) => entry.id === next.selectedDocumentId && entry.customerId === next.customerId
+          ) || null;
+        next.allocations = buildAllocation(linkedDocument, value);
+      }
+      return next;
+    });
+    setDirty(true);
+  }
+
+  function handleAllocationModeChange(mode: "linked" | "normal") {
+    setForm((prev) => {
+      if (!prev) return prev;
+      if (mode === "normal") {
+        return {
+          ...prev,
+          allocationMode: "normal",
+          selectedDocumentId: "",
+          allocations: []
+        };
+      }
+      const linkedDocument =
+        customerDocuments.find((entry) => entry.id === prev.selectedDocumentId) || null;
+      return {
+        ...prev,
+        allocationMode: "linked",
+        allocations: buildAllocation(linkedDocument, prev.amountReceived)
+      };
+    });
+    clearFieldError("selectedDocumentId");
+    setDirty(true);
+  }
+
+  function handleDocumentSelection(documentId: string) {
+    const linkedDocument = customerDocuments.find((entry) => entry.id === documentId) || null;
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            allocationMode: "linked",
+            selectedDocumentId: linkedDocument?.id || "",
+            allocations: buildAllocation(linkedDocument, prev.amountReceived)
+          }
+        : prev
+    );
+    clearFieldError("selectedDocumentId");
     setDirty(true);
   }
 
@@ -306,6 +410,8 @@ export default function PaymentInPremium() {
             ...prev,
             customerId,
             customerInput: inputName || customer?.name || prev.customerInput,
+            allocationMode: "normal",
+            selectedDocumentId: "",
             registrationNumber: customer?.registrationNumber || prev.registrationNumber,
             allocations: []
           }
@@ -350,6 +456,8 @@ export default function PaymentInPremium() {
             ...prev,
             customerId: "",
             customerInput: "",
+            allocationMode: "normal",
+            selectedDocumentId: "",
             allocations: []
           }
         : prev
@@ -368,6 +476,9 @@ export default function PaymentInPremium() {
     if (!form.paymentDate) errors.paymentDate = "Payment date is required.";
     if (!form.customerId) errors.customerId = "Customer is required.";
     if (amountReceived <= 0) errors.amountReceived = "Amount received must be greater than zero.";
+    if (form.allocationMode === "linked" && !form.selectedDocumentId) {
+      errors.selectedDocumentId = "Select an invoice or proforma invoice.";
+    }
     if (cfg.registrationRequired && !form.registrationNumber.trim()) errors.registrationNumber = `${cfg.registrationLabel} is required.`;
     if (cfg.registrationRegex && form.registrationNumber.trim() && !cfg.registrationRegex.test(form.registrationNumber.trim())) errors.registrationNumber = `Invalid ${cfg.registrationLabel} format.`;
     if (form.paymentMode === "Cheque") {
@@ -383,6 +494,7 @@ export default function PaymentInPremium() {
         setActiveStep(0);
       } else if (
         errors.amountReceived ||
+        errors.selectedDocumentId ||
         errors.paymentDate ||
         errors.registrationNumber ||
         errors.chequeNo ||
@@ -495,7 +607,8 @@ export default function PaymentInPremium() {
     }
   }
 
-  const confirmStatus: PaymentStatus = "Received";
+  const confirmStatus: PaymentStatus =
+    form?.allocationMode === "linked" && form?.allocations?.length ? "Applied" : "Received";
   const canSaveCurrentFlow = form?.id ? canEditPayment : canCreatePayment;
 
   return (
@@ -754,9 +867,87 @@ export default function PaymentInPremium() {
                         {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
                       </label>
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <p className="text-xs font-semibold text-slate-600">Is this payment for a specific invoice?</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleAllocationModeChange("linked")}
+                            disabled={readOnly || !form.customerId}
+                            className={`rounded-full px-3 py-2 text-xs font-semibold transition ${
+                              form.allocationMode === "linked"
+                                ? "bg-slate-900 text-white"
+                                : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                            } disabled:cursor-not-allowed disabled:opacity-50`}
+                          >
+                            Yes - Pay against Invoice
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAllocationModeChange("normal")}
+                            disabled={readOnly}
+                            className={`rounded-full px-3 py-2 text-xs font-semibold transition ${
+                              form.allocationMode === "normal"
+                                ? "bg-slate-900 text-white"
+                                : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                            } disabled:cursor-not-allowed disabled:opacity-50`}
+                          >
+                            No - Normal Payment Entry
+                          </button>
+                        </div>
+                        {!form.customerId ? (
+                          <p className="mt-2 text-xs text-slate-500">Select a customer first to load invoice and proforma options.</p>
+                        ) : null}
+                      </div>
+                      {form.allocationMode === "linked" ? (
+                        <label className="block">
+                          <span className="text-xs font-semibold text-slate-600">Invoice / Proforma Invoice</span>
+                          <select
+                            value={form.selectedDocumentId}
+                            disabled={readOnly || !form.customerId || !customerDocuments.length}
+                            onChange={(event) => handleDocumentSelection(event.target.value)}
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                          >
+                            <option value="">
+                              {customerDocuments.length
+                                ? "Select invoice or proforma invoice"
+                                : "No open invoices or proformas for this customer"}
+                            </option>
+                            {customerDocuments.map((document) => (
+                              <option key={`${document.documentType}-${document.id}`} value={document.id}>
+                                {`${documentTypeLabel(document.documentType)} - ${document.invoiceNo} | ${document.invoiceDate || "-"} | Pending: ${formatMoney(document.balanceDue, country)}`}
+                              </option>
+                            ))}
+                          </select>
+                          {fieldErrors.selectedDocumentId ? (
+                            <p className="mt-1 text-xs text-rose-600">{fieldErrors.selectedDocumentId}</p>
+                          ) : null}
+                        </label>
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-xs text-slate-500">
+                          Normal Payment Entry selected. This payment will be saved without linking to any invoice or proforma invoice.
+                        </div>
+                      )}
+                      {form.allocationMode === "linked" && selectedCustomerDocument ? (
+                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
+                          <p className="font-semibold">
+                            {documentTypeLabel(selectedCustomerDocument.documentType)} - {selectedCustomerDocument.invoiceNo}
+                          </p>
+                          <p className="mt-1">
+                            Date: {selectedCustomerDocument.invoiceDate || "-"} | Pending: {formatMoney(selectedCustomerDocument.balanceDue, country)}
+                          </p>
+                          <p className="mt-1">
+                            Allocated now: {formatMoney(totals.amountApplied, country)}
+                          </p>
+                        </div>
+                      ) : null}
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                         <p className="text-xs font-semibold text-slate-600">Advance Balance</p>
                         <p className="mt-1 text-lg font-semibold text-slate-900">{formatMoney(totals.unappliedAmount, country)}</p>
-                        <p className="mt-1 text-xs text-slate-500">Payments are stored without invoice linking from this screen.</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {form.allocationMode === "linked"
+                            ? "Any amount above the selected document pending amount will stay as advance balance."
+                            : "Normal payment entries are saved without invoice linking."}
+                        </p>
                       </div>
                       <label className="block">
                         <span className="text-xs font-semibold text-slate-600">Payment Date</span>
@@ -852,10 +1043,27 @@ export default function PaymentInPremium() {
                           <p className="text-slate-500">Payment Mode</p>
                           <p className="text-base font-semibold text-slate-900">{form.paymentMode}</p>
                         </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">
+                            {form.allocationMode === "linked" ? "Selected Document" : "Payment Flow"}
+                          </p>
+                          <p className="text-base font-semibold text-slate-900">
+                            {selectedCustomerDocument
+                              ? `${documentTypeLabel(selectedCustomerDocument.documentType)} - ${selectedCustomerDocument.invoiceNo}`
+                              : "Normal Payment Entry"}
+                          </p>
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            {selectedCustomerDocument
+                              ? `Pending ${formatMoney(selectedCustomerDocument.balanceDue, country)} | Applied ${formatMoney(totals.amountApplied, country)}`
+                              : "Saved without linking to any invoice or proforma invoice."}
+                          </p>
+                        </div>
                       </div>
                       {totals.unappliedAmount > 0 ? (
                         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                          Advance balance means this receipt is stored without linking it to invoice balances.
+                          {form.allocationMode === "linked"
+                            ? "Pending balance on the selected document updates automatically. Any excess amount is retained as advance."
+                            : "This receipt is stored as a normal payment entry without invoice allocation."}
                         </div>
                       ) : null}
                     </div>
