@@ -868,7 +868,7 @@ export default function CreditNotePremium() {
                         value={search}
                         onChange={(event) => setSearch(event.target.value)}
                         placeholder="Search by customer, invoice no, or credit note no"
-                        className={filterInputClassName}
+                        className={`${filterInputClassName} search-field-input`}
                       />
                     </label>
                     <label className={filterLabelClassName}>

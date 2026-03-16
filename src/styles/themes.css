@@ -227,6 +227,22 @@
   box-shadow: 0 0 0 4px var(--ring);
 }
 
+.theme-root input.search-field-input:not([type="checkbox"]):not([type="radio"]):not([type="color"]) {
+  height: 2.5rem;
+  min-height: 2.5rem;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  padding-left: var(--control-padding-x) !important;
+  padding-right: var(--control-padding-x) !important;
+  line-height: calc(2.5rem - 2px);
+  box-sizing: border-box;
+}
+
+.theme-root input.search-field-input.search-field-input-icon:not([type="checkbox"]):not([type="radio"]):not([type="color"]) {
+  padding-left: calc(var(--control-padding-x) + 1.75rem) !important;
+  padding-right: var(--control-padding-x) !important;
+}
+
 .app-topbar-user-btn {
   border: 1px solid var(--border);
   background: var(--card);

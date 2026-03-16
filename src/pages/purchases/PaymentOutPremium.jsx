@@ -561,7 +561,7 @@ export default function PaymentOutPremium() {
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Search supplier, payment number, reference"
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
+                  className="search-field-input h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 />
                 <select
                   value={supplierFilter}

@@ -250,7 +250,7 @@ export default function CashBank() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search type, reference, party..."
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm md:w-80"
+              className="search-field-input h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm md:w-80"
             />
             <span className="text-xs text-slate-500">{syncText}</span>
           </div>

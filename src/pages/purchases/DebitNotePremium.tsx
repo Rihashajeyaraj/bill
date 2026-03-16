@@ -792,7 +792,7 @@ export default function DebitNotePremium() {
                         value={search}
                         onChange={(event) => setSearch(event.target.value)}
                         placeholder="Search supplier by name, phone, email, or invoice"
-                        className={filterInputClassName}
+                        className={`${filterInputClassName} search-field-input`}
                       />
                     </label>
                     <label className={filterLabelClassName}>

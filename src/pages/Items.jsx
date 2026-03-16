@@ -736,12 +736,12 @@ export default function Items() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <label className="relative w-full max-w-xs">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search items"
-                className="w-full rounded-full border border-slate-200 bg-slate-50 px-10 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200"
+                className="search-field-input search-field-input-icon h-10 w-full rounded-full border border-slate-200 bg-slate-50 px-10 text-sm outline-none focus:ring-4 focus:ring-slate-200"
               />
             </label>
             <select
