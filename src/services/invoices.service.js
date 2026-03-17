@@ -4,6 +4,7 @@ import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
 import { triggerLowStockNotifications } from "../modules/items/store";
+import { companyPeekDocumentNumber } from "./company.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -390,7 +391,7 @@ export async function invoicesCreate(invoice) {
   const actor = authGetUser();
   const actorUserId = actor?.id || null;
   const actorName = String(actor?.name || actor?.email || "").trim();
-  const invoiceNo = String(invoice?.invoiceNo || "").trim();
+  const invoiceNo = String(invoice?.invoiceNo || "").trim() || String(companyPeekDocumentNumber("invoice") || "").trim();
   if (!invoiceNo) {
     throw new Error("Invoice Number is required.");
   }

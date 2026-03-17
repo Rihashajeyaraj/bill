@@ -27,6 +27,10 @@ function documentLabel(line: PaymentInRecord["allocations"][number]) {
   return `${prefix} - ${safeText(line?.invoiceNo)}`;
 }
 
+function lineRemainingAmount(line: PaymentInRecord["allocations"][number]) {
+  return Math.max(0, Number(line?.balanceDue || 0) - Number(line?.applyAmount || 0));
+}
+
 function drawSummaryRow(
   doc: jsPDF,
   label: string,
@@ -198,15 +202,12 @@ export function exportSinglePaymentInPdf(note: PaymentInRecord) {
       document: margin,
       date: 82,
       total: 118,
-      receivable: 152,
+      paid: 152,
       balance: pageWidth - margin
     };
     const totalAmount = allocations.reduce((sum, line) => sum + Number(line?.invoiceAmount || 0), 0);
-    const totalReceivable = allocations.reduce((sum, line) => sum + Number(line?.balanceDue || 0), 0);
-    const totalBalance = allocations.reduce(
-      (sum, line) => sum + Math.max(0, Number(line?.balanceDue || 0) - Number(line?.applyAmount || 0)),
-      0
-    );
+    const totalPaid = allocations.reduce((sum, line) => sum + Math.max(0, Number(line?.applyAmount || 0)), 0);
+    const totalBalance = allocations.reduce((sum, line) => sum + lineRemainingAmount(line), 0);
 
     y = tableTop;
     doc.setFontSize(11);
@@ -216,23 +217,20 @@ export function exportSinglePaymentInPdf(note: PaymentInRecord) {
     doc.text("Invoice Number", colX.document, y);
     doc.text("Date", colX.date, y);
     doc.text("Total Amount", colX.total, y, { align: "right" });
-    doc.text("Amount Receivable", colX.receivable, y, { align: "right" });
+    doc.text("Amount Paid", colX.paid, y, { align: "right" });
     doc.text("Amount Balance", colX.balance, y, { align: "right" });
     y += 3;
     doc.line(margin, y, pageWidth - margin, y);
     y += 5;
 
     allocations.forEach((line) => {
+      const remainingAmount = lineRemainingAmount(line);
+      const paidAmount = Math.max(0, Number(line?.applyAmount || 0));
       doc.text(documentLabel(line).slice(0, 34), colX.document, y);
       doc.text(safeText(line?.invoiceDate), colX.date, y);
       doc.text(money(Number(line?.invoiceAmount || 0), note.country), colX.total, y, { align: "right" });
-      doc.text(money(Number(line?.balanceDue || 0), note.country), colX.receivable, y, { align: "right" });
-      doc.text(
-        money(Math.max(0, Number(line?.balanceDue || 0) - Number(line?.applyAmount || 0)), note.country),
-        colX.balance,
-        y,
-        { align: "right" }
-      );
+      doc.text(money(paidAmount, note.country), colX.paid, y, { align: "right" });
+      doc.text(money(remainingAmount, note.country), colX.balance, y, { align: "right" });
       y += 6;
     });
 
@@ -240,16 +238,16 @@ export function exportSinglePaymentInPdf(note: PaymentInRecord) {
     doc.line(margin, y, pageWidth - margin, y);
     y += 6;
     drawSummaryRow(doc, "Total Amount", money(totalAmount, note.country), margin, y, 54, 9);
-    drawSummaryRow(doc, "Amount Receivable", money(totalReceivable, note.country), margin + 58, y, 64, 9);
+    drawSummaryRow(doc, "Amount Paid", money(totalPaid, note.country), margin + 58, y, 64, 9);
     drawSummaryRow(doc, "Amount Balance", money(totalBalance, note.country), margin + 126, y, 56, 9, true);
     y += 14;
   } else {
     const totalAmount = Number(note.totals.amountReceived || 0);
-    const totalReceivable = Math.max(0, Number(note.totals.amountApplied || 0));
+    const totalPaid = Math.max(0, Number(note.totals.amountReceived || 0));
     const totalBalance = Math.max(0, Number(note.totals.unappliedAmount || 0));
     y += 10;
     drawSummaryRow(doc, "Total Amount", money(totalAmount, note.country), margin, y, 54, 9);
-    drawSummaryRow(doc, "Amount Receivable", money(totalReceivable, note.country), margin + 58, y, 64, 9);
+    drawSummaryRow(doc, "Amount Paid", money(totalPaid, note.country), margin + 58, y, 64, 9);
     drawSummaryRow(doc, "Amount Balance", money(totalBalance, note.country), margin + 126, y, 56, 9, true);
     y += 14;
   }

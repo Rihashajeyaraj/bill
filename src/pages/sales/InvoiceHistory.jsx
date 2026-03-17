@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import PageHeader from "../../components/PageHeader";
@@ -38,11 +38,30 @@ function statusBadgeClass(status) {
   return "bg-slate-100 text-slate-700";
 }
 
+function invoiceSortValue(invoiceNo) {
+  const text = String(invoiceNo || "").trim();
+  const match = text.match(/(\d+)(?!.*\d)/);
+  return match ? Number(match[1]) || 0 : 0;
+}
+
 export default function InvoiceHistory() {
   const navigate = useNavigate();
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [invoices, setInvoices] = useState(() => invoicesList());
+
+  const sortedInvoices = useMemo(
+    () =>
+      [...(Array.isArray(invoices) ? invoices : [])].sort((left, right) => {
+        const bySequence = invoiceSortValue(right?.invoiceNo) - invoiceSortValue(left?.invoiceNo);
+        if (bySequence !== 0) return bySequence;
+        return String(right?.invoiceNo || "").localeCompare(String(left?.invoiceNo || ""), undefined, {
+          numeric: true,
+          sensitivity: "base"
+        });
+      }),
+    [invoices]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -87,7 +106,7 @@ export default function InvoiceHistory() {
             <p className="text-xs text-slate-500">Review invoices and open actions.</p>
           </div>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {invoices.length} invoices
+            {sortedInvoices.length} invoices
           </span>
         </div>
 
@@ -112,14 +131,14 @@ export default function InvoiceHistory() {
                     Loading invoice history...
                   </td>
                 </tr>
-              ) : invoices.length === 0 ? (
+              ) : sortedInvoices.length === 0 ? (
                 <tr className="border-t border-slate-100">
                   <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
                     No invoices yet.
                   </td>
                 </tr>
               ) : (
-                invoices.map((invoice) => {
+                sortedInvoices.map((invoice) => {
                   const status = resolveStatus(invoice);
                   return (
                     <React.Fragment key={invoice.id}>

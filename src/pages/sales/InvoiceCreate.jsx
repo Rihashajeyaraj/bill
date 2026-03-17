@@ -16,6 +16,7 @@ import { invoicesCreate, invoicesSyncFromRemote } from "../../services/invoices.
 import { calculateTaxes } from "../../services/tax";
 import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
 import { authGetRole, authGetUser } from "../../services/auth.service";
+import { companyConsumeDocumentNumber, companyPeekDocumentNumber } from "../../services/company.service";
 import { syncPaymentInRemote } from "../../services/payments.service";
 import { fetchItemStockHistory } from "../../services/inventory.service";
 import { canCreateEntries } from "../../services/roles";
@@ -409,6 +410,14 @@ export default function InvoiceCreate() {
       setPaymentMode(paymentModes[0] || "Cash");
     }
   }, [paymentMode, paymentModes]);
+
+  useEffect(() => {
+    if (String(invoiceNo || "").trim()) return;
+    const nextInvoiceNo = companyPeekDocumentNumber("invoice");
+    if (nextInvoiceNo) {
+      setInvoiceNo(nextInvoiceNo);
+    }
+  }, [invoiceNo]);
 
   useEffect(() => {
     if (!activeLineItemSearchId) return undefined;
@@ -1569,7 +1578,7 @@ export default function InvoiceCreate() {
       return null;
     }
 
-    const normalizedInvoiceNo = String(invoiceNo || "").trim();
+    const normalizedInvoiceNo = String(invoiceNo || "").trim() || String(companyPeekDocumentNumber("invoice") || "").trim();
     const nextErrors = {};
     if (!partyId) nextErrors.customer = "This field is required";
     if (!normalizedInvoiceNo) nextErrors.invoiceNo = "This field is required";
@@ -1859,7 +1868,8 @@ export default function InvoiceCreate() {
       setPaymentNotes("");
       setFormErrors({});
       await invoicesSyncFromRemote();
-      setInvoiceNo("");
+      companyConsumeDocumentNumber("invoice");
+      setInvoiceNo(companyPeekDocumentNumber("invoice"));
 
       if (!silent) {
         if (paymentSavedAsUnapplied) {
@@ -2283,14 +2293,12 @@ export default function InvoiceCreate() {
                   <FormField label="Invoice Number" required error={formErrors.invoiceNo}>
                     <input
                       value={invoiceNo}
-                      onChange={(e) => {
-                        setInvoiceNo(e.target.value);
-                        clearFormError("invoiceNo");
-                      }}
-                      placeholder="Enter invoice number"
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-mono text-slate-700 outline-none focus:ring-4"
+                      readOnly
+                      placeholder="Auto generated"
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-mono text-slate-700 outline-none focus:ring-4"
                       style={{ "--tw-ring-color": UI.COLORS.ring }}
                     />
+                    <p className="mt-1 text-xs text-slate-500">Invoice number is generated automatically.</p>
                     {formErrors.invoiceNo ? <p className="mt-1 text-xs text-rose-600">{formErrors.invoiceNo}</p> : null}
                   </FormField>
                   <FormField label="Invoice Date" required error={formErrors.invoiceDate}>

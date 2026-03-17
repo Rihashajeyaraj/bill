@@ -8,6 +8,8 @@ import {
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { invoicesSyncFromRemote } from "./invoices.service";
+import { listPaymentIn, savePaymentIn } from "../modules/paymentIn/store";
+import { syncPaymentInRemote } from "./payments.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROFORMA_STATUSES = new Set(["DRAFT", "SENT", "APPROVED", "REJECTED", "EXPIRED", "CONVERTED"]);
@@ -934,6 +936,66 @@ export async function purchaseProformaUpsert(input) {
   return { id: localEntry.id, proformaNo: localEntry.proformaNo };
 }
 
+async function relinkSalesProformaPayments(proformaId, invoiceId, invoiceNo) {
+  const safeProformaId = String(proformaId || "").trim();
+  const safeInvoiceId = String(invoiceId || "").trim();
+  if (!safeProformaId || !safeInvoiceId) return [];
+
+  const actor = authGetUser();
+  const actorName = String(actor?.name || actor?.email || "System User").trim();
+  const linkedPayments = listPaymentIn().filter((record) =>
+    (Array.isArray(record?.allocations) ? record.allocations : []).some(
+      (line) =>
+        String(line?.documentType || "invoice").toLowerCase() === "proforma" &&
+        String(line?.invoiceId || "").trim() === safeProformaId
+    )
+  );
+
+  const updatedPayments = [];
+  for (const record of linkedPayments) {
+    const nextAllocations = (Array.isArray(record?.allocations) ? record.allocations : []).map((line) => {
+      const linkedToProforma =
+        String(line?.documentType || "invoice").toLowerCase() === "proforma" &&
+        String(line?.invoiceId || "").trim() === safeProformaId;
+      if (!linkedToProforma) return line;
+      return {
+        ...line,
+        invoiceId: safeInvoiceId,
+        invoiceNo: invoiceNo || line?.invoiceNo || "",
+        documentType: "invoice"
+      };
+    });
+
+    const saved = savePaymentIn({
+      id: record.id,
+      country: record.country,
+      paymentDate: record.paymentDate,
+      customerId: record.customerId,
+      customerName: record.customerName,
+      paymentMode: record.paymentMode,
+      referenceNo: record.referenceNo,
+      chequeNo: record.chequeNo,
+      bankName: record.bankName,
+      bankAccount: record.bankAccount,
+      transactionId: record.transactionId,
+      paymentReference: record.paymentReference,
+      registrationNumber: record.registrationNumber,
+      internalNotes: record.internalNotes,
+      customerNotes: record.customerNotes,
+      attachment: record.attachment,
+      desiredStatus: record.status,
+      amountReceived: parseNumber(record?.totals?.amountReceived ?? record?.amountReceived),
+      allocations: nextAllocations,
+      customerOutstandingBefore: parseNumber(record?.totals?.customerOutstandingBefore),
+      actor: actorName
+    });
+    await syncPaymentInRemote(saved);
+    updatedPayments.push(saved);
+  }
+
+  return updatedPayments;
+}
+
 export async function convertSalesProforma(proformaId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase is not configured for conversion.");
@@ -947,10 +1009,14 @@ export async function convertSalesProforma(proformaId) {
     }
     throw new Error(normalizeSupabaseError(error, "Failed to convert sales proforma"));
   }
+  const invoiceId = data?.invoice_id || "";
+  const invoiceNo = data?.invoice_no || "";
+  await invoicesSyncFromRemote();
+  await relinkSalesProformaPayments(proformaId, invoiceId, invoiceNo);
   await Promise.all([salesProformasSyncFromRemote(), invoicesSyncFromRemote()]);
   return {
-    invoiceId: data?.invoice_id || "",
-    invoiceNo: data?.invoice_no || ""
+    invoiceId,
+    invoiceNo
   };
 }
 
