@@ -49,26 +49,45 @@ export default function SalesProformasList() {
   }, [toast]);
 
   const sortedRows = useMemo(() => {
-    const payments = listPaymentIn().filter((entry) => String(entry?.status || "").trim().toLowerCase() !== "draft");
+    const payments = listPaymentIn().filter(
+      (entry) => String(entry?.status || "").trim().toLowerCase() === "applied"
+    );
     const appliedByProformaId = new Map<string, number>();
+    const appliedByInvoiceId = new Map<string, number>();
 
     payments.forEach((payment) => {
       const allocations = Array.isArray(payment?.allocations) ? payment.allocations : [];
       allocations.forEach((line) => {
         const isProforma = String(line?.documentType || "invoice").trim().toLowerCase() === "proforma";
-        const proformaId = String(line?.invoiceId || "").trim();
+        const documentId = String(line?.invoiceId || "").trim();
         const appliedAmount = Math.max(0, toAmount(line?.applyAmount));
-        if (!isProforma || !proformaId || appliedAmount <= 0) return;
-        appliedByProformaId.set(proformaId, (appliedByProformaId.get(proformaId) || 0) + appliedAmount);
+        if (!documentId || appliedAmount <= 0) return;
+        if (isProforma) {
+          appliedByProformaId.set(
+            documentId,
+            (appliedByProformaId.get(documentId) || 0) + appliedAmount
+          );
+          return;
+        }
+        appliedByInvoiceId.set(
+          documentId,
+          (appliedByInvoiceId.get(documentId) || 0) + appliedAmount
+        );
       });
     });
 
     return [...rows]
       .map((row) => {
         const totalAmount = Math.max(0, toAmount(row?.totals?.grandTotal ?? row?.totals?.total ?? row?.grandTotal));
+        const convertedInvoiceAmount = row?.convertedDocumentId
+          ? appliedByInvoiceId.get(String(row.convertedDocumentId || "").trim()) || 0
+          : 0;
         const appliedAmount = Math.min(
           totalAmount,
-          Math.max(0, appliedByProformaId.get(String(row?.id || "").trim()) || 0)
+          Math.max(
+            0,
+            (appliedByProformaId.get(String(row?.id || "").trim()) || 0) + convertedInvoiceAmount
+          )
         );
         const balanceAmount = Math.max(0, totalAmount - appliedAmount);
         return {

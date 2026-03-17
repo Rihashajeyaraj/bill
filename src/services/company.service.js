@@ -957,9 +957,10 @@ export async function companySaveProfileRemote(profile, options = {}) {
 
   if (!isSupabaseConfigured || !supabaseClient) {
     companySaveProfile(mergedProfile);
-    const localOrganizationId = forceCreate
-      ? `org_${Date.now().toString(16)}`
-      : authGetOrganizationId() || "";
+    const existingLocalOrganizationId = String(authGetOrganizationId() || "").trim();
+    const localOrganizationId =
+      existingLocalOrganizationId || `org_${Date.now().toString(16)}`;
+    const localCreated = forceCreate || !existingLocalOrganizationId;
     lsSetSafe(LS_KEYS.organization_id, localOrganizationId, "organization_id(saveProfile-local)");
     ssSet(LS_KEYS.organization_id, localOrganizationId);
     lsSetUserScopedSafe(
@@ -968,7 +969,7 @@ export async function companySaveProfileRemote(profile, options = {}) {
       authGetUser()?.id,
       "organization_id(saveProfile-local-user)"
     );
-    if (forceCreate) {
+    if (localCreated) {
       setInvoiceTemplateCompleted(false);
       lsSetUserScopedSafe(
         LS_KEYS.invoiceTemplateCompleted,
@@ -1369,3 +1370,4 @@ export function companyGetCountryCode(countryName) {
 export function companyGetCountryName(countryCode) {
   return getCountryName(countryCode);
 }
+

@@ -7,7 +7,11 @@ import {
 } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
-import { invoicesSyncFromRemote } from "./invoices.service";
+import { invoicesCreate, invoicesList, invoicesSyncFromRemote } from "./invoices.service";
+import {
+  companyConsumeDocumentNumber,
+  companyPeekDocumentNumber
+} from "./company.service";
 import { listPaymentIn, savePaymentIn } from "../modules/paymentIn/store";
 import { syncPaymentInRemote } from "./payments.service";
 
@@ -463,10 +467,10 @@ export async function purchaseProformasSyncFromRemote() {
 
 export async function salesProformaGetByIdRemote(id) {
   const proformaId = String(id || "").trim();
-  if (!looksLikeUuid(proformaId)) return null;
   if (!isSupabaseConfigured || !supabase) {
     return salesGetAll().find((entry) => String(entry?.id || "") === proformaId) || null;
   }
+  if (!looksLikeUuid(proformaId)) return null;
   const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
   if (!organizationId) return null;
 
@@ -495,10 +499,10 @@ export async function salesProformaGetByIdRemote(id) {
 
 export async function purchaseProformaGetByIdRemote(id) {
   const proformaId = String(id || "").trim();
-  if (!looksLikeUuid(proformaId)) return null;
   if (!isSupabaseConfigured || !supabase) {
     return purchaseGetAll().find((entry) => String(entry?.id || "") === proformaId) || null;
   }
+  if (!looksLikeUuid(proformaId)) return null;
   const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
   if (!organizationId) return null;
 
@@ -996,9 +1000,109 @@ async function relinkSalesProformaPayments(proformaId, invoiceId, invoiceNo) {
   return updatedPayments;
 }
 
+async function convertSalesProformaLocally(proformaId) {
+  const safeProformaId = String(proformaId || "").trim();
+  if (!safeProformaId) {
+    throw new Error("Sales proforma id is required.");
+  }
+
+  const current = salesGetAll().find((entry) => String(entry?.id || "").trim() === safeProformaId);
+  if (!current) {
+    throw new Error("Sales proforma not found.");
+  }
+
+  const status = String(current?.status || "").trim().toUpperCase();
+  if (status === "CONVERTED" || String(current?.convertedDocumentId || "").trim()) {
+    throw new Error("Sales proforma already converted.");
+  }
+  if (status === "EXPIRED") {
+    throw new Error("Expired Pro Forma Invoices cannot be converted.");
+  }
+
+  const invoiceNo = String(companyPeekDocumentNumber("invoice") || "").trim() || `INV-${Date.now()}`;
+  const invoiceId = await invoicesCreate({
+    invoiceNo,
+    invoiceDate: current?.proformaDate || new Date().toISOString().slice(0, 10),
+    dueDate: current?.dueDate || current?.validTill || current?.proformaDate || "",
+    partyId: current?.partyId || "",
+    partyName: current?.partyName || "",
+    placeOfSupply: current?.placeOfSupply || "",
+    country: current?.country || "",
+    taxMode: current?.taxMode || "",
+    supplyType: current?.supplyType || null,
+    lines: (Array.isArray(current?.lines) ? current.lines : []).map((line) => ({
+      itemId: line?.itemId || "",
+      itemName: line?.description || "",
+      description: line?.description || "",
+      qty: parseNumber(line?.qty),
+      unit: line?.unit || "pcs",
+      rate: parseNumber(line?.rate),
+      discount: parseNumber(line?.discountAmount),
+      discountAmount: parseNumber(line?.discountAmount),
+      discountPercent: parseNumber(line?.discountPercent),
+      taxableAmount: parseNumber(line?.taxableAmount),
+      tax: parseNumber(line?.taxRate),
+      taxRate: parseNumber(line?.taxRate),
+      cgstAmount: parseNumber(line?.cgstAmount),
+      sgstAmount: parseNumber(line?.sgstAmount),
+      igstAmount: parseNumber(line?.igstAmount),
+      vatAmount: parseNumber(line?.vatAmount),
+      cessAmount: parseNumber(line?.cessAmount),
+      amount: parseNumber(line?.lineTotal),
+      lineTotal: parseNumber(line?.lineTotal),
+      hsn: line?.hsnSac || ""
+    })),
+    totals: {
+      subTotal: parseNumber(current?.totals?.subTotal),
+      discountTotal: parseNumber(current?.totals?.discountTotal),
+      taxableTotal: parseNumber(current?.totals?.taxableTotal),
+      roundOff: parseNumber(current?.totals?.roundOff),
+      grandTotal: parseNumber(current?.totals?.grandTotal),
+      taxBreakup: {
+        supplyType: current?.supplyType || null
+      },
+      tax: {
+        type: current?.taxMode || "",
+        supplyType: current?.supplyType || null,
+        cgst: parseNumber(current?.totals?.cgst),
+        sgst: parseNumber(current?.totals?.sgst),
+        igst: parseNumber(current?.totals?.igst),
+        vat: parseNumber(current?.totals?.vat),
+        cess: parseNumber(current?.totals?.cess),
+        totalTax: parseNumber(current?.totals?.taxTotal)
+      }
+    }
+  });
+
+  companyConsumeDocumentNumber("invoice");
+
+  const convertedAt = new Date().toISOString();
+  salesSetAll(
+    salesGetAll().map((entry) =>
+      String(entry?.id || "").trim() === safeProformaId
+        ? {
+            ...entry,
+            status: "CONVERTED",
+            convertedDocumentId: invoiceId,
+            convertedAt,
+            updatedAt: convertedAt
+          }
+        : entry
+    )
+  );
+
+  await relinkSalesProformaPayments(safeProformaId, invoiceId, invoiceNo);
+  return {
+    invoiceId,
+    invoiceNo:
+      invoicesList().find((entry) => String(entry?.id || "").trim() === String(invoiceId || "").trim())
+        ?.invoiceNo || invoiceNo
+  };
+}
+
 export async function convertSalesProforma(proformaId) {
   if (!isSupabaseConfigured || !supabase) {
-    throw new Error("Supabase is not configured for conversion.");
+    return convertSalesProformaLocally(proformaId);
   }
   const { data, error } = await supabase.rpc("convert_sales_proforma_to_invoice", {
     p_proforma_id: proformaId
@@ -1048,3 +1152,4 @@ export function salesProformaComputeTotals(lines, roundOff = 0) {
 export function purchaseProformaComputeTotals(lines) {
   return calculatePurchaseTotals(lines);
 }
+
