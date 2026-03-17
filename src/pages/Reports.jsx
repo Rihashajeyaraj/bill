@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
+import { Link } from "react-router-dom";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -1743,6 +1744,20 @@ export default function Reports() {
         subtitle="Insights - Finance - Performance"
         right={
           <div className="flex flex-wrap items-center gap-2">
+            <Link
+              to="/app/reports/party-wise-statement"
+              className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
+            >
+              <ClipboardList className="h-4 w-4" />
+              Party Wise Statement
+            </Link>
+            <Link
+              to="/app/reports/aging-report"
+              className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100"
+            >
+              <BarChart3 className="h-4 w-4" />
+              Aging Report
+            </Link>
             <button
               type="button"
               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"

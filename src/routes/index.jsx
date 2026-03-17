@@ -29,6 +29,8 @@ import PaymentOutPremium from "../pages/purchases/PaymentOutPremium";
 import Expense from "../pages/purchases/Expense";
 
 import Reports from "../pages/Reports";
+import PartyWiseStatement from "../pages/reports/PartyWiseStatement";
+import AgingReport from "../pages/reports/AgingReport";
 import Notifications from "../pages/Notifications";
 import CompanySettings from "../pages/CompanySettings";
 import BackupUtilities from "../pages/BackupUtilities";
@@ -114,6 +116,9 @@ export const routes = [
 
                   { path: "/app/cash-bank", element: <Navigate to="/dashboard" replace /> },
                   { path: "/app/reports", element: <Reports /> },
+                  { path: "/app/reports/customer-statement", element: <PartyWiseStatement /> },
+                  { path: "/app/reports/party-wise-statement", element: <PartyWiseStatement /> },
+                  { path: "/app/reports/aging-report", element: <AgingReport /> },
                   { path: "/app/notifications", element: <Notifications /> },
                   { path: "/app/company-settings", element: <CompanySettings /> },
                   { path: "/app/backup", element: <BackupUtilities /> },
