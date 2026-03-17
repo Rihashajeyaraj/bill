@@ -4,6 +4,7 @@ import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import { useToast } from "../../context/ToastContext";
 import { salesProformasList, salesProformasSyncFromRemote } from "../../services/proformas.service";
+import { listPaymentIn } from "../../modules/paymentIn/store";
 import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
 
 function money(value: unknown) {
@@ -12,6 +13,11 @@ function money(value: unknown) {
 
 function formatDate(value: unknown) {
   return formatDateByPreference(value as string, String(value || "-"));
+}
+
+function toAmount(value: unknown) {
+  const numeric = Number(value || 0);
+  return Number.isFinite(numeric) ? numeric : 0;
 }
 
 export default function SalesProformasList() {
@@ -43,12 +49,40 @@ export default function SalesProformasList() {
   }, [toast]);
 
   const sortedRows = useMemo(() => {
-    return [...rows].sort((a, b) => {
+    const payments = listPaymentIn().filter((entry) => String(entry?.status || "").trim().toLowerCase() !== "draft");
+    const appliedByProformaId = new Map<string, number>();
+
+    payments.forEach((payment) => {
+      const allocations = Array.isArray(payment?.allocations) ? payment.allocations : [];
+      allocations.forEach((line) => {
+        const isProforma = String(line?.documentType || "invoice").trim().toLowerCase() === "proforma";
+        const proformaId = String(line?.invoiceId || "").trim();
+        const appliedAmount = Math.max(0, toAmount(line?.applyAmount));
+        if (!isProforma || !proformaId || appliedAmount <= 0) return;
+        appliedByProformaId.set(proformaId, (appliedByProformaId.get(proformaId) || 0) + appliedAmount);
+      });
+    });
+
+    return [...rows]
+      .map((row) => {
+        const totalAmount = Math.max(0, toAmount(row?.totals?.grandTotal ?? row?.totals?.total ?? row?.grandTotal));
+        const appliedAmount = Math.min(
+          totalAmount,
+          Math.max(0, appliedByProformaId.get(String(row?.id || "").trim()) || 0)
+        );
+        const balanceAmount = Math.max(0, totalAmount - appliedAmount);
+        return {
+          ...row,
+          appliedAmount,
+          balanceAmount
+        };
+      })
+      .sort((a, b) => {
       const da = String(a?.proformaDate || "");
       const db = String(b?.proformaDate || "");
       if (da === db) return String(b?.createdAt || "").localeCompare(String(a?.createdAt || ""));
       return db.localeCompare(da);
-    });
+      });
   }, [rows]);
 
   return (
@@ -76,7 +110,7 @@ export default function SalesProformasList() {
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">
-          <table className="min-w-[920px] w-full text-left text-sm">
+          <table className="min-w-[1100px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-3 py-3 font-semibold">Pro Forma Invoice No</th>
@@ -84,19 +118,21 @@ export default function SalesProformasList() {
                 <th className="px-3 py-3 font-semibold">Valid Till</th>
                 <th className="px-3 py-3 font-semibold">Customer</th>
                 <th className="px-3 py-3 font-semibold text-right">Amount</th>
+                <th className="px-3 py-3 font-semibold text-right">Paid</th>
+                <th className="px-3 py-3 font-semibold text-right">Balance</th>
                 <th className="px-3 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={6}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
                     Loading Pro Forma Invoices...
                   </td>
                 </tr>
               ) : sortedRows.length === 0 ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={6}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
                     No Pro Forma Invoices yet.
                   </td>
                 </tr>
@@ -112,6 +148,16 @@ export default function SalesProformasList() {
                       <td className="px-3 py-3 text-slate-700">{row.partyName || "-"}</td>
                       <td className="px-3 py-3 text-right font-semibold text-slate-900">
                         {money(row?.totals?.grandTotal)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-semibold text-sky-700">
+                        {money(row?.appliedAmount)}
+                      </td>
+                      <td
+                        className={`px-3 py-3 text-right font-semibold ${
+                          Number(row?.balanceAmount || 0) <= 0 ? "text-emerald-700" : "text-rose-700"
+                        }`}
+                      >
+                        {money(row?.balanceAmount)}
                       </td>
                       <td className="px-3 py-3">
                         <div className="flex flex-wrap gap-2">

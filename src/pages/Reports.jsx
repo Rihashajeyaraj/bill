@@ -53,15 +53,51 @@ const SORTABLE_TRANSACTION_COLUMNS = new Set(["date", "transactionType", "refere
 const REPORT_ORDER = reportSections.flatMap((section) => section.items.map((item) => item.id));
 
 const REPORT_META = {
-  "sale-report": { icon: Receipt, accent: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  "purchase-report": { icon: Briefcase, accent: "bg-amber-50 text-amber-700 border-amber-200" },
-  "day-book": { icon: CalendarDays, accent: "bg-sky-50 text-sky-700 border-sky-200" },
-  "cash-flow": { icon: Wallet, accent: "bg-cyan-50 text-cyan-700 border-cyan-200" },
-  "all-transactions": { icon: ArrowLeftRight, accent: "bg-slate-100 text-slate-700 border-slate-200" },
-  "party-statement": { icon: ClipboardList, accent: "bg-violet-50 text-violet-700 border-violet-200" },
-  "aging-report": { icon: Users, accent: "bg-rose-50 text-rose-700 border-rose-200" },
-  "all-parties": { icon: Users, accent: "bg-teal-50 text-teal-700 border-teal-200" },
-  "profit-loss": { icon: TrendingUp, accent: "bg-lime-50 text-lime-700 border-lime-200" }
+  "sale-report": {
+    icon: Receipt,
+    accent: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    activeAccent: "border-emerald-300 bg-emerald-50 text-emerald-950 shadow-md md:hover:border-emerald-400 md:hover:bg-emerald-100/80"
+  },
+  "purchase-report": {
+    icon: Briefcase,
+    accent: "bg-amber-50 text-amber-700 border-amber-200",
+    activeAccent: "border-amber-300 bg-amber-50 text-amber-950 shadow-md md:hover:border-amber-400 md:hover:bg-amber-100/80"
+  },
+  "day-book": {
+    icon: CalendarDays,
+    accent: "bg-sky-50 text-sky-700 border-sky-200",
+    activeAccent: "border-sky-300 bg-sky-50 text-sky-950 shadow-md md:hover:border-sky-400 md:hover:bg-sky-100/80"
+  },
+  "cash-flow": {
+    icon: Wallet,
+    accent: "bg-cyan-50 text-cyan-700 border-cyan-200",
+    activeAccent: "border-cyan-300 bg-cyan-50 text-cyan-950 shadow-md md:hover:border-cyan-400 md:hover:bg-cyan-100/80"
+  },
+  "all-transactions": {
+    icon: ArrowLeftRight,
+    accent: "bg-slate-100 text-slate-700 border-slate-200",
+    activeAccent: "border-slate-300 bg-slate-100 text-slate-900 shadow-md md:hover:border-slate-400 md:hover:bg-slate-200/80"
+  },
+  "party-statement": {
+    icon: ClipboardList,
+    accent: "bg-violet-50 text-violet-700 border-violet-200",
+    activeAccent: "border-violet-300 bg-violet-50 text-violet-950 shadow-md md:hover:border-violet-400 md:hover:bg-violet-100/80"
+  },
+  "aging-report": {
+    icon: Users,
+    accent: "bg-rose-50 text-rose-700 border-rose-200",
+    activeAccent: "border-rose-300 bg-rose-50 text-rose-950 shadow-md md:hover:border-rose-400 md:hover:bg-rose-100/80"
+  },
+  "all-parties": {
+    icon: Users,
+    accent: "bg-teal-50 text-teal-700 border-teal-200",
+    activeAccent: "border-teal-300 bg-teal-50 text-teal-950 shadow-md md:hover:border-teal-400 md:hover:bg-teal-100/80"
+  },
+  "profit-loss": {
+    icon: TrendingUp,
+    accent: "bg-lime-50 text-lime-700 border-lime-200",
+    activeAccent: "border-lime-300 bg-lime-50 text-lime-950 shadow-md md:hover:border-lime-400 md:hover:bg-lime-100/80"
+  }
 };
 
 const AGING_BUCKET_COLUMNS = [
@@ -310,18 +346,18 @@ function ReportSidebar({ activeReport, onSelect }) {
                   className={clsx(
                     "w-full cursor-pointer rounded-xl border px-2.5 py-1.5 text-left transform-gpu transition-all duration-200 ease-out will-change-transform md:hover:-translate-y-0.5 md:hover:scale-[1.02] md:hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
                     isActive
-                      ? "border-slate-900 bg-slate-900 text-white shadow-soft md:hover:border-slate-800 md:hover:bg-slate-800"
+                      ? meta.activeAccent
                       : "border-slate-200 bg-white md:hover:border-slate-300 md:hover:bg-slate-50"
                   )}
                 >
                   <div className="flex items-start gap-2">
-                    <div className={clsx("rounded-lg border p-1", isActive ? "border-white/20 bg-white/10" : meta.accent)}>
+                    <div className={clsx("rounded-lg border p-1", meta.accent)}>
                       <Icon className="h-3 w-3" />
                     </div>
                     <div className="min-w-0">
                       <p className="text-[12px] font-semibold leading-4">{item.label}</p>
                       <p
-                        className={clsx("mt-0.5 text-[10px] leading-4", isActive ? "text-slate-300" : "text-slate-500")}
+                        className={clsx("mt-0.5 text-[10px] leading-4", isActive ? "text-slate-600" : "text-slate-500")}
                         style={{
                           display: "-webkit-box",
                           WebkitLineClamp: 1,
