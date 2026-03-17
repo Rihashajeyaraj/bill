@@ -1,7 +1,7 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped } from "../../services/storage";
 import { authGetRole } from "../../services/auth.service";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
-import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW } from "./countryConfig";
+import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW, normalizePaymentStatus } from "./countryConfig";
 import type { CountryCode, PaymentMode, PaymentStatus } from "./countryConfig";
 import type { PaymentAttachmentMeta } from "./types";
 
@@ -162,7 +162,19 @@ function normalizeCountryCode(value: unknown): CountryCode | null {
 }
 
 function getAllPayments(): PaymentInRecord[] {
-  return lsGetOrganizationScoped(PAYMENT_STORE_KEY, []);
+  const stored = lsGetOrganizationScoped(PAYMENT_STORE_KEY, []);
+  if (!Array.isArray(stored)) return [];
+
+  return stored.map((entry: any) => ({
+    ...entry,
+    status: normalizePaymentStatus(entry?.status),
+    history: Array.isArray(entry?.history)
+      ? entry.history.map((item: any) => ({
+          ...item,
+          status: normalizePaymentStatus(item?.status)
+        }))
+      : []
+  })) as PaymentInRecord[];
 }
 
 function setAllPayments(list: PaymentInRecord[]) {
@@ -552,11 +564,17 @@ export function savePaymentIn(payload: SavePaymentInPayload): PaymentInRecord {
   });
 
   const now = nowIso();
-  const previousStatus: PaymentStatus = existing?.status || "Draft";
-  const nextStatus = payload.desiredStatus;
+  const previousStatus: PaymentStatus = normalizePaymentStatus(existing?.status || "Draft");
+  const nextStatus: PaymentStatus = normalizePaymentStatus(payload.desiredStatus);
+  if (previousStatus === "Draft" && nextStatus === "Applied") {
+    throw new Error("Confirm the payment before applying it.");
+  }
   ensureTransition(previousStatus, nextStatus);
 
   const calculated = computeTotals(payload);
+  if (nextStatus === "Applied" && calculated.totals.amountApplied <= 0) {
+    throw new Error("Select an invoice or proforma and confirm the payment before applying it.");
+  }
   const receiptNo = existing?.receiptNo || nextReceiptNumber(payload.country);
   const id = existing?.id || `pr_${Date.now().toString(16)}`;
 

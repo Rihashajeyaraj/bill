@@ -3,6 +3,7 @@ import { COUNTRY_CONFIG } from "./countryConfig";
 import type { CountryCode } from "./countryConfig";
 import type { CreditNoteRecord } from "./store";
 import { formatCurrencyByPreference, formatDateTimeByPreference } from "../../lib/formatPreferences";
+import { drawPdfPartyDetails } from "../reports/pdfPartyDetails";
 
 function money(value: number, country: CountryCode) {
   const currency = COUNTRY_CONFIG[country].currency;
@@ -112,9 +113,25 @@ export function exportSingleCreditNotePdf(note: CreditNoteRecord) {
   doc.text(`Credit Note No: ${note.creditNoteNo}`, 14, y);
   doc.text(`Date: ${note.creditNoteDate}`, 110, y);
   y += 6;
-  doc.text(`Customer: ${note.customerName}`, 14, y);
+  const partyBlockBottom = drawPdfPartyDetails(
+    doc,
+    {
+      partyId: note.customerId,
+      customerName: note.customerName,
+      address: (note as CreditNoteRecord & { address?: string })?.address,
+      phone: (note as CreditNoteRecord & { phone?: string })?.phone,
+      email: (note as CreditNoteRecord & { email?: string })?.email
+    },
+    {
+      x: 14,
+      y,
+      maxWidth: 82,
+      title: "Party Details",
+      nameLabel: "Name"
+    }
+  );
   doc.text(`Invoice: ${note.linkedInvoiceNo}`, 110, y);
-  y += 6;
+  y = Math.max(partyBlockBottom, y + 6);
   doc.text(`${cfg.taxLabel} Reg: ${note.registrationNumber || "-"}`, 14, y);
   doc.text(`Status: ${note.status}`, 110, y);
   y += 6;

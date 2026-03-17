@@ -1,6 +1,6 @@
 export type CountryCode = "SL" | "IN" | "AE" | "SG" | "UK" | "IE" | "US";
 
-export type PaymentStatus = "Draft" | "Received" | "Applied";
+export type PaymentStatus = "Draft" | "Confirmed" | "Applied";
 
 export type PaymentMode =
   | "Cash"
@@ -152,7 +152,14 @@ export const COUNTRY_NAME_TO_CODE: Record<string, CountryCode> = {
 };
 
 export const STATUS_FLOW: Record<PaymentStatus, PaymentStatus[]> = {
-  Draft: ["Draft", "Received"],
-  Received: ["Received", "Applied"],
-  Applied: ["Applied", "Received"]
+  Draft: ["Draft", "Confirmed"],
+  Confirmed: ["Confirmed", "Applied"],
+  Applied: ["Applied", "Confirmed"]
 };
+
+export function normalizePaymentStatus(value: unknown): PaymentStatus {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "applied") return "Applied";
+  if (normalized === "confirmed" || normalized === "received") return "Confirmed";
+  return "Draft";
+}

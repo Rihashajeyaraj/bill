@@ -3,6 +3,7 @@ import { COUNTRY_CONFIG } from "./countryConfig";
 import type { CountryCode } from "./countryConfig";
 import type { PaymentInRecord } from "./store";
 import { formatDateTimeByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
+import { drawPdfPartyDetails } from "../reports/pdfPartyDetails";
 
 function money(value: number, country: CountryCode) {
   void country;
@@ -163,9 +164,25 @@ export function exportSinglePaymentInPdf(note: PaymentInRecord) {
   doc.text(`Receipt No: ${note.receiptNo}`, 14, y);
   doc.text(`Date: ${note.paymentDate}`, 110, y);
   y += 6;
-  doc.text(`Customer: ${note.customerName}`, 14, y);
+  const partyBlockBottom = drawPdfPartyDetails(
+    doc,
+    {
+      partyId: note.customerId,
+      customerName: note.customerName,
+      address: (note as PaymentInRecord & { address?: string })?.address,
+      phone: (note as PaymentInRecord & { phone?: string })?.phone,
+      email: (note as PaymentInRecord & { email?: string })?.email
+    },
+    {
+      x: 14,
+      y,
+      maxWidth: 82,
+      title: "Party Details",
+      nameLabel: "Name"
+    }
+  );
   doc.text(`Payment Mode: ${note.paymentMode}`, 110, y);
-  y += 6;
+  y = Math.max(partyBlockBottom, y + 6);
   doc.text(`Reference: ${note.referenceNo || note.transactionId || "-"}`, 14, y);
   doc.text(`${cfg.registrationLabel}: ${note.registrationNumber || "-"}`, 110, y);
   y += 6;

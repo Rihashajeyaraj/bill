@@ -1792,7 +1792,7 @@ export default function InvoiceCreate() {
           };
           const stagedPayment = savePaymentIn({
             ...basePaymentPayload,
-            desiredStatus: "Received"
+            desiredStatus: "Confirmed"
           });
           const paymentRecord = savePaymentIn({
             ...basePaymentPayload,
@@ -1828,7 +1828,7 @@ export default function InvoiceCreate() {
                 paymentNotes || `Payment for invoice ${normalizedInvoiceNo} (saved as advance balance)`,
               customerNotes: "",
               attachment: null,
-              desiredStatus: "Received",
+              desiredStatus: "Confirmed",
               amountReceived: paymentAmount,
               allocations: [],
               customerOutstandingBefore: 0,

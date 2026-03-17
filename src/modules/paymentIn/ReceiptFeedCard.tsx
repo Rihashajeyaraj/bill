@@ -14,7 +14,7 @@ interface ReceiptFeedCardProps {
 
 function statusClass(status: PaymentInRecord["status"]) {
   if (status === "Applied") return "bg-emerald-50 border-emerald-200 text-emerald-700";
-  if (status === "Received") return "bg-sky-50 border-sky-200 text-sky-700";
+  if (status === "Confirmed") return "bg-sky-50 border-sky-200 text-sky-700";
   return "bg-slate-100 border-slate-200 text-slate-700";
 }
 

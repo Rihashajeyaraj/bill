@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import { formatDateTimeByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
 import { countryCodeFromName, parseNumber } from "./utils";
+import { drawPdfPartyDetails } from "../reports/pdfPartyDetails";
 
 function pdfSafeText(value, fallback = "-") {
   const normalized = String(value ?? "")
@@ -159,13 +160,29 @@ export function exportPaymentOutPdf(record) {
   doc.text(`Payment No: ${pdfSafeText(record.paymentNo)}`, margin, y);
   doc.text(`Date: ${pdfSafeText(record.paymentDate)}`, 120, y);
   y += 6;
-  doc.text(`Supplier: ${pdfSafeText(record.supplierName)}`, margin, y);
-  y += 6;
+  const partyBlockBottom = drawPdfPartyDetails(
+    doc,
+    {
+      partyId: record.supplierId,
+      supplierName: record.supplierName,
+      address: record.address,
+      phone: record.phone,
+      email: record.email
+    },
+    {
+      x: margin,
+      y,
+      maxWidth: 82,
+      title: "Party Details",
+      nameLabel: "Name"
+    }
+  );
   doc.text(`Payment Mode: ${pdfSafeText(record.paymentMode)}`, margin, y);
   if (record.referenceNo) {
     doc.text(`Reference: ${pdfSafeText(record.referenceNo)}`, 120, y);
   }
-  y += 8;
+  y = Math.max(partyBlockBottom, y + 6);
+  y += 2;
 
   const allocations = Array.isArray(record.allocations) ? record.allocations : [];
   if (allocations.length) {

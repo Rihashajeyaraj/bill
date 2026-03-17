@@ -171,96 +171,129 @@ export async function syncPaymentInRemote(record) {
   const paymentDate = record?.paymentDate || "";
   const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
 
-  if (shouldPost && shouldApply) {
-    for (let index = 0; index < allocations.length; index += 1) {
-      const line = allocations[index];
-      const amount = Math.max(0, parseNumber(line?.applyAmount));
-      if (!amount) continue;
-      const isProforma = String(line?.documentType || "").toLowerCase() === "proforma";
-      let invoiceId = isProforma ? null : looksLikeUuid(line?.invoiceId) ? line.invoiceId : null;
-      if (!invoiceId && !isProforma && line?.invoiceNo && organizationId) {
-        invoiceId = await findInvoiceIdByNumber(organizationId, line.invoiceNo);
+  if (shouldPost) {
+    const amountReceived = Math.max(0, parseNumber(record?.totals?.amountReceived ?? record?.amountReceived));
+    const amountApplied = Math.max(0, parseNumber(record?.totals?.amountApplied));
+    const unappliedAmount = Math.max(0, parseNumber(record?.totals?.unappliedAmount));
+    const primaryAllocation = allocations.find((line) => Math.max(0, parseNumber(line?.applyAmount)) > 0) || null;
+    const isProforma = String(primaryAllocation?.documentType || "").toLowerCase() === "proforma";
+    let invoiceId = null;
+    if (shouldApply && primaryAllocation && !isProforma) {
+      invoiceId = looksLikeUuid(primaryAllocation?.invoiceId) ? primaryAllocation.invoiceId : null;
+      if (!invoiceId && primaryAllocation?.invoiceNo && organizationId) {
+        invoiceId = await findInvoiceIdByNumber(organizationId, primaryAllocation.invoiceNo);
       }
-      rows.push({
-        payment_no: record?.receiptNo || `RCPT-${Date.now()}`,
-        payment_date: paymentDate,
-        direction: "in",
-        party_id: partyId,
-        invoice_id: isProforma ? null : invoiceId || line?.invoiceId || null,
-        amount,
-        payment_mode: record?.paymentMode || null,
-        reference_no: `${sourcePrefix}${index + 1}`,
-        notes:
-          record?.internalNotes ||
-          (isProforma
-            ? `Payment in ${record?.status || "received"} linked to proforma ${line?.invoiceNo || ""}`.trim()
-            : `Payment in ${record?.status || "received"}`),
-        status: "posted"
-      });
     }
 
-    const unappliedAmount = Math.max(0, parseNumber(record?.totals?.unappliedAmount));
-    if (unappliedAmount > 0) {
-      rows.push({
-        payment_no: record?.receiptNo || `RCPT-${Date.now()}`,
-        payment_date: paymentDate,
-        direction: "in",
-        party_id: partyId,
-        invoice_id: null,
-        amount: unappliedAmount,
-        payment_mode: record?.paymentMode || null,
-        reference_no: `${sourcePrefix}UNAPPLIED`,
-        notes: record?.internalNotes || `Unapplied payment in ${record?.status || "received"}`,
-        status: "posted"
-      });
-    }
-  } else if (shouldPost) {
-    const amountReceived = Math.max(
-      0,
-      parseNumber(record?.totals?.amountReceived ?? record?.amountReceived)
-    );
     if (amountReceived > 0) {
+      const noteParts = [];
+      if (record?.internalNotes) noteParts.push(record.internalNotes);
+      else noteParts.push(`Payment in ${record?.status || "confirmed"}`);
+      if (shouldApply && primaryAllocation?.invoiceNo) {
+        noteParts.push(`${isProforma ? "Proforma" : "Invoice"} ${primaryAllocation.invoiceNo}`);
+      }
+      if (shouldApply) {
+        noteParts.push(`Applied ${amountApplied.toFixed(2)}`);
+      }
+      if (unappliedAmount > 0) {
+        noteParts.push(`Advance ${unappliedAmount.toFixed(2)}`);
+      }
+
       rows.push({
         payment_no: record?.receiptNo || `RCPT-${Date.now()}`,
         payment_date: paymentDate,
         direction: "in",
         party_id: partyId,
-        invoice_id: null,
+        invoice_id: shouldApply && !isProforma ? invoiceId || primaryAllocation?.invoiceId || null : null,
         amount: amountReceived,
         payment_mode: record?.paymentMode || null,
-        reference_no: `${sourcePrefix}RECEIVED`,
-        notes: record?.internalNotes || `Payment in ${record?.status || "received"}`,
+        reference_no: `${sourcePrefix}ENTRY`,
+        notes: noteParts.filter(Boolean).join(" | "),
         status: "posted"
       });
     }
   }
 
   if (isSupabaseConfigured && supabase && organizationId) {
-    const { error: cancelError } = await supabase
+    const { data: existingRows, error: fetchError } = await supabase
       .from("payments")
-      .update({
-        status: "cancelled",
-        notes: `Superseded by latest payment-in update (${new Date().toISOString()})`,
-        updated_at: new Date().toISOString()
-      })
+      .select("id")
       .eq("organization_id", organizationId)
       .ilike("reference_no", `${sourcePrefix}%`);
-    if (cancelError) {
-      throw new Error(normalizeSupabaseError(cancelError, "Failed to archive previous payment-in rows"));
+    if (fetchError) {
+      throw new Error(normalizeSupabaseError(fetchError, "Failed to load existing payment-in rows"));
     }
 
+    const matchingRows = Array.isArray(existingRows) ? existingRows : [];
+    const [primaryRow, ...extraRows] = matchingRows;
+    const timestamp = new Date().toISOString();
+
     if (rows.length) {
-      const remoteRows = rows.map((row) => ({
-        ...row,
+      const baseRow = rows[0];
+      const remoteRow = {
         organization_id: organizationId,
-        party_id: looksLikeUuid(row?.party_id) ? row.party_id : null,
-        invoice_id: looksLikeUuid(row?.invoice_id) ? row.invoice_id : null,
-        bill_id: looksLikeUuid(row?.bill_id) ? row.bill_id : null,
-        created_by: actorUserId
-      }));
-      const { error: insertError } = await supabase.from("payments").insert(remoteRows);
-      if (insertError) {
-        throw new Error(normalizeSupabaseError(insertError, "Failed to save payment-in rows"));
+        payment_no: baseRow?.payment_no || `RCPT-${Date.now()}`,
+        payment_date: baseRow?.payment_date || "",
+        direction: "in",
+        party_id: looksLikeUuid(baseRow?.party_id) ? baseRow.party_id : null,
+        invoice_id: looksLikeUuid(baseRow?.invoice_id) ? baseRow.invoice_id : null,
+        bill_id: null,
+        amount: parseNumber(baseRow?.amount),
+        payment_mode: baseRow?.payment_mode || null,
+        reference_no: baseRow?.reference_no || `${sourcePrefix}ENTRY`,
+        notes: baseRow?.notes || null,
+        status: "posted",
+        updated_at: timestamp
+      };
+
+      if (primaryRow?.id) {
+        const { error: updateError } = await supabase
+          .from("payments")
+          .update(remoteRow)
+          .eq("organization_id", organizationId)
+          .eq("id", primaryRow.id);
+        if (updateError) {
+          throw new Error(normalizeSupabaseError(updateError, "Failed to update payment-in row"));
+        }
+      } else {
+        const { error: insertError } = await supabase.from("payments").insert({
+          ...remoteRow,
+          created_by: actorUserId
+        });
+        if (insertError) {
+          throw new Error(normalizeSupabaseError(insertError, "Failed to save payment-in row"));
+        }
+      }
+
+      if (extraRows.length) {
+        const { error: cleanupError } = await supabase
+          .from("payments")
+          .update({
+            status: "cancelled",
+            notes: `Cancelled duplicate payment-in rows (${timestamp})`,
+            updated_at: timestamp
+          })
+          .eq("organization_id", organizationId)
+          .in(
+            "id",
+            extraRows.map((row) => row.id).filter(Boolean)
+          );
+        if (cleanupError) {
+          throw new Error(normalizeSupabaseError(cleanupError, "Failed to archive duplicate payment-in rows"));
+        }
+      }
+    } else if (matchingRows.length) {
+      const { error: cancelError } = await supabase
+        .from("payments")
+        .update({
+          status: "cancelled",
+          notes: `Superseded by latest payment-in update (${timestamp})`,
+          updated_at: timestamp
+        })
+        .eq("organization_id", organizationId)
+        .ilike("reference_no", `${sourcePrefix}%`);
+      if (cancelError) {
+        throw new Error(normalizeSupabaseError(cancelError, "Failed to archive previous payment-in rows"));
       }
     }
   }

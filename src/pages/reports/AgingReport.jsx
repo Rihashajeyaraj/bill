@@ -1,11 +1,6 @@
 import React from "react";
-import PartyWiseStatement from "./PartyWiseStatement";
+import { Navigate } from "react-router-dom";
 
 export default function AgingReport() {
-  return (
-    <PartyWiseStatement
-      pageTitle="Aging Report"
-      pageSubtitle="Outstanding balances for customers and suppliers grouped into aging buckets with linked statement data."
-    />
-  );
+  return <Navigate to="/app/reports?report=aging-report" replace />;
 }

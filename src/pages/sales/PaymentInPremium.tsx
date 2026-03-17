@@ -56,7 +56,7 @@ function canReopenWithinWindow(record: PaymentInRecord | null) {
 
 function statusBadgeClass(status: PaymentStatus) {
   if (status === "Applied") return "bg-emerald-100 text-emerald-700";
-  if (status === "Received") return "bg-amber-100 text-amber-700";
+  if (status === "Confirmed") return "bg-amber-100 text-amber-700";
   return "bg-slate-100 text-slate-700";
 }
 
@@ -483,6 +483,13 @@ export default function PaymentInPremium() {
     }
     if (form.paymentMode === "Bank Transfer" && !form.bankAccount.trim()) errors.bankAccount = "Bank account is required.";
     if ((form.paymentMode === "Bank Transfer" || form.paymentMode === "Card" || form.paymentMode === "UPI" || form.paymentMode === "Online Gateway") && !form.transactionId.trim()) errors.transactionId = "Transaction ID is required.";
+    if (targetStatus === "Applied") {
+      if (form.allocationMode !== "linked" || !form.selectedDocumentId) {
+        errors.selectedDocumentId = "Select an invoice or proforma and confirm the payment before applying it.";
+      } else if (totals.amountApplied <= 0) {
+        errors.selectedDocumentId = "Applied amount must be greater than zero before applying this payment.";
+      }
+    }
 
     setFieldErrors(errors);
     if (Object.keys(errors).length) {
@@ -507,11 +514,11 @@ export default function PaymentInPremium() {
     return true;
   }
 
-  function buildPayload(targetStatus: PaymentStatus, outstandingOverride?: number) {
+  function buildPayload(targetStatus: PaymentStatus, options?: { id?: string; outstandingOverride?: number }) {
     if (!form) return null;
     const customer = customers.find((entry) => entry.id === form.customerId);
     return {
-      id: form.id,
+      id: options?.id ?? form.id,
       country,
       paymentDate: form.paymentDate,
       customerId: form.customerId,
@@ -530,12 +537,17 @@ export default function PaymentInPremium() {
       desiredStatus: targetStatus,
       amountReceived: parseNumber(form.amountReceived),
       allocations: form.allocations,
-      customerOutstandingBefore: typeof outstandingOverride === "number" ? outstandingOverride : customerOutstandingBefore,
+      customerOutstandingBefore:
+        typeof options?.outstandingOverride === "number" ? options.outstandingOverride : customerOutstandingBefore,
       actor: actorName
     };
   }
 
-  async function persist(targetStatus: PaymentStatus, options?: { email?: boolean; download?: boolean }) {
+  async function persist(
+    targetStatus: PaymentStatus,
+    options?: { email?: boolean; download?: boolean },
+    payloadOptions?: { id?: string; outstandingOverride?: number }
+  ) {
     if (!form) return;
     const isEditMode = !!form?.id;
     if (isEditMode && !canEditPayment) {
@@ -550,7 +562,7 @@ export default function PaymentInPremium() {
     }
     if (!validate(targetStatus)) return;
     try {
-      const payload = buildPayload(targetStatus);
+      const payload = buildPayload(targetStatus, payloadOptions);
       if (!payload) return;
       const saved = savePaymentIn(payload);
       if (!saved) return;
@@ -565,9 +577,41 @@ export default function PaymentInPremium() {
       setDirty(false);
       setSuccessMessage(`${saved.receiptNo} saved as ${saved.status}.`);
       setErrorMessage("");
+      return saved;
     } catch (error: any) {
       setErrorMessage(error?.message || "Unable to save payment.");
+      return null;
     }
+  }
+
+  async function handleApply() {
+    if (!form) return;
+    if (!activePayment || activePayment.status !== "Confirmed") {
+      setErrorMessage("Save this payment as Confirmed before applying it.");
+      setSuccessMessage("");
+      return;
+    }
+    if (form.allocationMode !== "linked" || !form.selectedDocumentId || totals.amountApplied <= 0) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        selectedDocumentId: "Select an invoice or proforma and confirm the payment before applying it."
+      }));
+      setActiveStep(1);
+      setErrorMessage("Confirm the payment and select a valid invoice or proforma before applying it.");
+      setSuccessMessage("");
+      return;
+    }
+
+    await persist(
+      "Applied",
+      undefined,
+      activePayment
+        ? {
+            id: activePayment.id,
+            outstandingOverride: activePayment.totals.customerOutstandingBefore
+          }
+        : undefined
+    );
   }
 
   async function removeRecord(record: PaymentInRecord) {
@@ -603,8 +647,10 @@ export default function PaymentInPremium() {
     }
   }
 
-  const confirmStatus: PaymentStatus =
-    form?.allocationMode === "linked" && form?.allocations?.length ? "Applied" : "Received";
+  const saveStatus: PaymentStatus =
+    activePayment?.status === "Applied" || activePayment?.status === "Confirmed" || activeStep === 2
+      ? "Confirmed"
+      : "Draft";
   const canSaveCurrentFlow = form?.id ? canEditPayment : canCreatePayment;
 
   return (
@@ -642,7 +688,7 @@ export default function PaymentInPremium() {
                   <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search customer, receipt, reference" className="search-field-input h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
                   <select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Customers</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select>
                   <select value={modeFilter} onChange={(event) => setModeFilter(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Modes</option>{COUNTRY_CONFIG[country].paymentModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select>
-                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PaymentStatus | "")} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Status</option><option value="Draft">Draft</option><option value="Received">Received</option><option value="Applied">Applied</option></select>
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PaymentStatus | "")} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Status</option><option value="Draft">Draft</option><option value="Confirmed">Confirmed</option><option value="Applied">Applied</option></select>
                   <DateInput value={fromDate} onChange={(nextValue) => setFromDate(nextValue)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
                   <DateInput value={toDate} onChange={(nextValue) => setToDate(nextValue)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
                 </div>
@@ -1110,12 +1156,25 @@ export default function PaymentInPremium() {
         <div className="fixed bottom-4 right-4 z-40 flex flex-wrap items-center justify-end gap-3 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
           <button
             type="button"
-            onClick={() => persist(confirmStatus)}
+            onClick={() => persist(saveStatus)}
             disabled={!canSaveCurrentFlow}
             className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Save className="h-3.5 w-3.5" />
-            Save
+            {saveStatus === "Draft" ? "Save Draft" : "Save Confirmed"}
+          </button>
+          <button
+            type="button"
+            onClick={handleApply}
+            disabled={
+              !canSaveCurrentFlow ||
+              activeStep !== 2 ||
+              form.allocationMode !== "linked" ||
+              activePayment?.status !== "Confirmed"
+            }
+            className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Apply
           </button>
           <button
             type="button"
@@ -1124,7 +1183,7 @@ export default function PaymentInPremium() {
                 exportSinglePaymentInPdf(activePayment);
                 return;
               }
-              persist(confirmStatus, { download: true });
+              persist(saveStatus, { download: true });
             }}
             disabled={!canSaveCurrentFlow}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"

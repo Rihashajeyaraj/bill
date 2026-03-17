@@ -15,7 +15,7 @@ interface PaymentInListTableProps {
 
 function statusClass(status: PaymentInRecord["status"]) {
   if (status === "Applied") return "bg-emerald-50 text-emerald-700 border-emerald-200";
-  if (status === "Received") return "bg-sky-50 text-sky-700 border-sky-200";
+  if (status === "Confirmed") return "bg-sky-50 text-sky-700 border-sky-200";
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
