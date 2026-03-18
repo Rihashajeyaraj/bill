@@ -268,16 +268,17 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
         <div className="app-sidebar-tip-wrap px-3 py-4">
           <div className="app-sidebar-tip rounded-2xl p-3">
             {!collapsed ? (
-              <>
-                <p className="app-sidebar-tip-title text-sm font-semibold">Tip</p>
-                <p className="app-sidebar-tip-copy mt-1 text-xs">
-                  {showCompanySetup
-                    ? "Complete Company Setup to unlock the dashboard."
-                    : canOpenSettings
-                      ? "Edit company details in Settings -> Company Profile."
-                      : "Ask Owner to update company settings and access permissions."}
-                </p>
-              </>
+              <a
+                href="https://twite.ai/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="app-sidebar-tip-link block w-full no-underline transition"
+              >
+                <div className="app-sidebar-tip-branding">
+                  <div className="app-sidebar-tip-copy">Created by</div>
+                  <div className="app-sidebar-tip-title">Twite AI Technologies</div>
+                </div>
+              </a>
             ) : (
               <div className="app-sidebar-tip-dot h-3 w-3 rounded-full" />
             )}

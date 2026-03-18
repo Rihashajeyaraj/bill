@@ -36,6 +36,7 @@ import {
   buildProfitLossReport,
   buildPurchaseReport,
   buildSaleReport,
+  buildTdsReport,
   getDefaultReportFilters,
   getReportsDataset,
   listReportParties,
@@ -97,6 +98,11 @@ const REPORT_META = {
     icon: TrendingUp,
     accent: "bg-lime-50 text-lime-700 border-lime-200",
     activeAccent: "border-lime-300 bg-lime-50 text-lime-950 shadow-md md:hover:border-lime-400 md:hover:bg-lime-100/80"
+  },
+  "tds-report": {
+    icon: FileSpreadsheet,
+    accent: "bg-sky-50 text-sky-700 border-sky-200",
+    activeAccent: "border-sky-300 bg-sky-50 text-sky-950 shadow-md md:hover:border-sky-400 md:hover:bg-sky-100/80"
   }
 };
 
@@ -200,6 +206,8 @@ function buildExportPayload({ viewModel, currency }) {
 
 function SearchablePartySelect({ label, options, value, onChange, placeholder = "All Parties", disabled = false }) {
   const containerRef = useRef(null);
+  const triggerRef = useRef(null);
+  const searchInputRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -231,14 +239,30 @@ function SearchablePartySelect({ label, options, value, onChange, placeholder = 
     if (!open) setQuery("");
   }, [open]);
 
+  function closeDropdown({ blur = false } = {}) {
+    setOpen(false);
+    if (!blur) return;
+    window.requestAnimationFrame(() => {
+      searchInputRef.current?.blur?.();
+      triggerRef.current?.blur?.();
+    });
+  }
+
   return (
-    <label className="text-xs font-semibold text-slate-600">
-      {label}
+    <div className="text-xs font-semibold text-slate-600">
+      <span>{label}</span>
       <div ref={containerRef} className="relative mt-2">
         <button
+          ref={triggerRef}
           type="button"
           disabled={disabled}
           onClick={() => setOpen((current) => !current)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              closeDropdown({ blur: true });
+            }
+          }}
           className="flex h-11 w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 text-left text-sm text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:ring-4 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <div className="min-w-0">
@@ -259,9 +283,24 @@ function SearchablePartySelect({ label, options, value, onChange, placeholder = 
             <div className="border-b border-slate-100 p-2">
               <label className="relative block">
                 <input
+                  ref={searchInputRef}
                   autoFocus
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      closeDropdown({ blur: true });
+                      return;
+                    }
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      const firstOption = filteredOptions[0];
+                      if (!firstOption) return;
+                      onChange(firstOption.id);
+                      closeDropdown({ blur: true });
+                    }
+                  }}
                   placeholder="Search party"
                   className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none focus:ring-4 focus:ring-slate-200"
                 />
@@ -273,7 +312,7 @@ function SearchablePartySelect({ label, options, value, onChange, placeholder = 
                 type="button"
                 onClick={() => {
                   onChange("");
-                  setOpen(false);
+                  closeDropdown({ blur: true });
                 }}
                 className={clsx("flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50", !value && "bg-emerald-50/70")}
               >
@@ -290,7 +329,7 @@ function SearchablePartySelect({ label, options, value, onChange, placeholder = 
                     type="button"
                     onClick={() => {
                       onChange(option.id);
-                      setOpen(false);
+                      closeDropdown({ blur: true });
                     }}
                     className={clsx("flex w-full items-start justify-between gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50", option.id === value && "bg-emerald-50/70")}
                   >
@@ -309,7 +348,7 @@ function SearchablePartySelect({ label, options, value, onChange, placeholder = 
           </div>
         ) : null}
       </div>
-    </label>
+    </div>
   );
 }
 
@@ -608,6 +647,7 @@ function PaginationBar({ pageInfo, onChange }) {
 
 function getDerivedPartyType(activeReport, partyType) {
   if (activeReport === "sale-report") return PARTY_TYPES.customer;
+  if (activeReport === "tds-report") return PARTY_TYPES.customer;
   if (activeReport === "purchase-report") return PARTY_TYPES.supplier;
   return partyType;
 }
@@ -850,6 +890,32 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
         pageInfo
       };
     }
+    case "tds-report": {
+      const pageInfo = paginateIfNeeded(data.rows);
+      return {
+        title: "TDS Report",
+        subtitle: "TDS deducted through Payment In entries for the selected period.",
+        filename: "tds-report",
+        metrics: [
+          { label: "Total TDS", value: formatMoney(data.totals.totalTds, currency), tone: data.totals.totalTds > 0 ? "positive" : "default" },
+          { label: "Customers", value: data.totals.customers },
+          { label: "Invoices", value: data.totals.invoices },
+          { label: "Entries", value: data.rows.length }
+        ],
+        columns: [
+          { key: "date", label: "Date", format: "date" },
+          { key: "partyName", label: "Customer" },
+          { key: "invoiceReference", label: "Invoice" },
+          { key: "category", label: "Category" },
+          { key: "tdsAmount", label: "TDS Deducted", align: "right", format: "money", emphasis: true },
+          { key: "status", label: "Status", align: "right" }
+        ],
+        tableTitle: "TDS Deductions",
+        rows: pageInfo.rows,
+        exportRows: data.rows,
+        pageInfo
+      };
+    }
     default:
       return null;
   }
@@ -882,7 +948,7 @@ export default function Reports() {
     if (activeReport === "all-transactions") {
       return [...(dataset?.parties || [])].sort((left, right) => left.name.localeCompare(right.name));
     }
-    if (activeReport === "sale-report" || activeReport === "purchase-report" || activeReport === "party-statement" || activeReport === "aging-report" || activeReport === "all-parties") {
+    if (activeReport === "sale-report" || activeReport === "purchase-report" || activeReport === "party-statement" || activeReport === "aging-report" || activeReport === "all-parties" || activeReport === "tds-report") {
       return listReportParties(dataset, partyTypeForOptions);
     }
     return [];
@@ -1021,6 +1087,8 @@ export default function Reports() {
           });
         case "profit-loss":
           return buildProfitLossReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate });
+        case "tds-report":
+          return buildTdsReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate, partyId: filters.partyId });
         default:
           return null;
       }
@@ -1080,9 +1148,9 @@ export default function Reports() {
   }
 
   function renderFilters() {
-    const showDateRange = ["sale-report", "purchase-report", "day-book", "cash-flow", "all-transactions", "party-statement", "profit-loss"].includes(activeReport);
+    const showDateRange = ["sale-report", "purchase-report", "day-book", "cash-flow", "all-transactions", "party-statement", "profit-loss", "tds-report"].includes(activeReport);
     const showPartyType = ["party-statement", "aging-report", "all-parties"].includes(activeReport);
-    const showPartySelect = ["sale-report", "purchase-report", "all-transactions", "party-statement", "aging-report"].includes(activeReport);
+    const showPartySelect = ["sale-report", "purchase-report", "all-transactions", "party-statement", "aging-report", "tds-report"].includes(activeReport);
     const showAsOfDate = activeReport === "aging-report";
     const showTransactionType = activeReport === "all-transactions";
     const showSearch = activeReport === "all-transactions" || activeReport === "all-parties";
@@ -1091,12 +1159,16 @@ export default function Reports() {
         ? "Customer"
         : activeReport === "purchase-report"
           ? "Supplier"
+          : activeReport === "tds-report"
+            ? "Customer"
           : "Party";
     const placeholder =
       activeReport === "sale-report"
         ? "All Customers"
         : activeReport === "purchase-report"
           ? "All Suppliers"
+          : activeReport === "tds-report"
+            ? "All Customers"
           : "All Parties";
 
     return (

@@ -10,6 +10,7 @@ import {
 
 const FILTER_OPTIONS = [
   { id: "all", label: "All" },
+  { id: "app", label: "Reminders" },
   { id: "credit", label: "Credit Alerts" },
   { id: "stock", label: "Low Stock" },
   { id: "customers", label: "Customers" },
@@ -20,12 +21,14 @@ const FILTER_OPTIONS = [
 
 function notificationType(entry) {
   const directType = String(entry?.notificationType || "").trim().toLowerCase();
+  if (directType === "app") return "app";
   if (directType === "stock") return "stock";
   if (directType === "credit") return "credit";
   return String(entry?.alertType || "").toLowerCase() === "low_stock" ? "stock" : "credit";
 }
 
 function formatValue(value, alertType) {
+  if (alertType === "app") return "-";
   if (alertType === "low_stock") {
     return formatNumberByPreference(Number(value || 0), {
       minimumFractionDigits: 0,
@@ -52,6 +55,7 @@ function formatDate(value) {
 
 function matchesFilter(entry, filterId) {
   const type = notificationType(entry);
+  if (filterId === "app") return type === "app";
   if (filterId === "credit") return type === "credit";
   if (filterId === "stock") return type === "stock";
   if (filterId === "customers") return entry.partyType === "customer";
@@ -62,6 +66,7 @@ function matchesFilter(entry, filterId) {
 }
 
 function alertLabel(entry) {
+  if (notificationType(entry) === "app") return "Reminder";
   if (notificationType(entry) === "stock") return "Low Stock";
   return entry.alertType === "days" ? "Overdue Days" : "Amount";
 }
@@ -141,12 +146,16 @@ export default function Notifications() {
                 rows.map((entry) => (
                   <tr key={`${notificationType(entry)}_${entry.id}`} className="border-t border-slate-100 hover:bg-slate-50/60">
                     <td className="px-4 py-3 font-semibold text-slate-900">
-                      {notificationType(entry) === "stock"
+                      {notificationType(entry) === "app"
+                        ? entry.title || "Reminder"
+                        : notificationType(entry) === "stock"
                         ? entry.itemName || "Unknown Item"
                         : entry.partyName || "Unknown Party"}
                     </td>
                     <td className="px-4 py-3 text-slate-700">
-                      {notificationType(entry) === "stock"
+                      {notificationType(entry) === "app"
+                        ? "Application"
+                        : notificationType(entry) === "stock"
                         ? "Inventory"
                         : entry.partyType === "supplier"
                           ? "Supplier"
@@ -154,11 +163,20 @@ export default function Notifications() {
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">
-                        {notificationType(entry) === "stock" ? `${alertLabel(entry)} Alert` : `${alertLabel(entry)} Exceeded`}
+                        {notificationType(entry) === "app"
+                          ? alertLabel(entry)
+                          : notificationType(entry) === "stock"
+                            ? `${alertLabel(entry)} Alert`
+                            : `${alertLabel(entry)} Exceeded`}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-700">
-                      {notificationType(entry) === "stock" ? (
+                      {notificationType(entry) === "app" ? (
+                        <>
+                          <p className="font-semibold text-slate-900">{entry.title || "Reminder"}</p>
+                          <p>{entry.description || "-"}</p>
+                        </>
+                      ) : notificationType(entry) === "stock" ? (
                         <>
                           <p className="font-semibold text-slate-900">
                             Item Code: {entry.itemCode || "-"}
@@ -192,10 +210,10 @@ export default function Notifications() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-slate-700">
-                      {formatValue(entry.limitValue, entry.alertType)}
+                      {formatValue(entry.limitValue, notificationType(entry) === "app" ? "app" : entry.alertType)}
                     </td>
                     <td className="px-4 py-3 text-slate-700">
-                      {formatValue(entry.currentValue, entry.alertType)}
+                      {formatValue(entry.currentValue, notificationType(entry) === "app" ? "app" : entry.alertType)}
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -217,6 +235,10 @@ export default function Notifications() {
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                         onClick={() => {
                           void readNotification(entry);
+                          if (notificationType(entry) === "app") {
+                            navigate(entry?.link || "/app/notifications");
+                            return;
+                          }
                           if (notificationType(entry) === "stock") {
                             navigate("/app/items");
                             return;

@@ -17,6 +17,8 @@ export interface PaymentInFormState {
   selectedDocumentId: string;
   currency: string;
   amountReceived: string;
+  tdsAmount: string;
+  tdsCategory: string;
   paymentMode: PaymentMode;
   referenceNo: string;
   chequeNo: string;

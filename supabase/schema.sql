@@ -450,6 +450,7 @@ create table if not exists public.payments (
   invoice_id uuid references public.invoices(id) on delete set null,
   bill_id uuid references public.purchase_bills(id) on delete set null,
   amount numeric(14,2) not null,
+  tds_amount numeric(14,2) not null default 0,
   payment_mode text,
   reference_no text,
   notes text,

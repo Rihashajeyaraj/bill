@@ -17,7 +17,16 @@ import {
   type CustomerOpenInvoice,
   type PaymentInRecord
 } from "../../modules/paymentIn/store";
-import { computeEditorTotals, defaultForm, formFromRecord, formatMoney, parseNumber } from "../../modules/paymentIn/utils";
+import {
+  computeEditorTotals,
+  defaultForm,
+  formFromRecord,
+  formatMoney,
+  hasPanForTds,
+  parseNumber,
+  suggestTdsAmount,
+  TDS_CATEGORY_OPTIONS
+} from "../../modules/paymentIn/utils";
 import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf } from "../../modules/paymentIn/pdf";
 import type { PaymentInFormState } from "../../modules/paymentIn/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
@@ -26,6 +35,7 @@ import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesSyncFromRemote } from "../../services/invoices.service";
 import { deletePaymentInRemote, syncPaymentInRemote } from "../../services/payments.service";
 import { salesProformasSyncFromRemote } from "../../services/proformas.service";
+import { syncTdsComplianceReminders } from "../../services/tds.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
@@ -159,7 +169,13 @@ export default function PaymentInPremium() {
 
   const customerOutstandingBefore = useMemo(() => (form?.customerId ? outstandingByCustomer(country, form.customerId) : 0), [country, form?.customerId, refreshKey]);
   const customerInsights = useMemo(() => (form?.customerId ? paymentInsightsByCustomer(country, form.customerId) : { lastPaymentDate: "", advanceWallet: 0, totalReceived: 0, paymentCount: 0 }), [country, form?.customerId, refreshKey]);
-  const totals = useMemo(() => (form ? computeEditorTotals(form, customerOutstandingBefore) : { amountReceived: 0, amountApplied: 0, unappliedAmount: 0, outstandingAfter: 0 }), [form, customerOutstandingBefore]);
+  const totals = useMemo(
+    () =>
+      form
+        ? computeEditorTotals(form, customerOutstandingBefore)
+        : { amountReceived: 0, tdsAmount: 0, totalSettled: 0, amountApplied: 0, unappliedAmount: 0, outstandingAfter: 0 },
+    [form, customerOutstandingBefore]
+  );
   const selectedCustomer = useMemo(() => customers.find((entry) => entry.id === form?.customerId) || null, [customers, form?.customerId]);
   const customerDocuments = useMemo(
     () => openInvoices.filter((entry) => entry.customerId === form?.customerId),
@@ -216,6 +232,16 @@ export default function PaymentInPremium() {
   const allowed = access.allowedCountries.includes(country);
   const readOnly = flowMode === "view";
   const prefillInvoiceId = searchParams.get("invoiceId") || "";
+  const suggestedTdsAmount = useMemo(
+    () => {
+      if (!selectedCustomerDocument) return 0;
+      const rawSuggestion = suggestTdsAmount(selectedCustomerDocument.invoiceAmount, form?.tdsCategory, selectedCustomer);
+      const remainingCapacity = Math.max(0, selectedCustomerDocument.balanceDue - totals.amountApplied);
+      return Math.min(rawSuggestion, remainingCapacity);
+    },
+    [form?.tdsCategory, selectedCustomer, selectedCustomerDocument, totals.amountApplied]
+  );
+  const hasCustomerPan = useMemo(() => hasPanForTds(selectedCustomer), [selectedCustomer]);
 
   useEffect(() => {
     setSelectedPaymentCountry(country);
@@ -468,12 +494,23 @@ export default function PaymentInPremium() {
     const cfg = COUNTRY_CONFIG[country];
     const errors: Record<string, string> = {};
     const amountReceived = Math.max(0, parseNumber(form.amountReceived));
+    const tdsAmount = Math.max(0, parseNumber(form.tdsAmount));
 
     if (!form.paymentDate) errors.paymentDate = "Payment date is required.";
     if (!form.customerId) errors.customerId = "Customer is required.";
     if (amountReceived <= 0) errors.amountReceived = "Amount received must be greater than zero.";
+    if (tdsAmount < 0) errors.tdsAmount = "TDS amount cannot be negative.";
     if (form.allocationMode === "linked" && !form.selectedDocumentId) {
       errors.selectedDocumentId = "Select an invoice or proforma invoice.";
+    }
+    if (tdsAmount > 0 && (form.allocationMode !== "linked" || !form.selectedDocumentId)) {
+      errors.tdsAmount = "Link this payment to an invoice or proforma before applying TDS.";
+    }
+    if (tdsAmount > 0 && selectedCustomerDocument) {
+      const liveRemaining = Math.max(0, selectedCustomerDocument.balanceDue - totals.amountApplied);
+      if (tdsAmount > liveRemaining) {
+        errors.tdsAmount = "TDS amount cannot exceed the remaining balance after payment allocation.";
+      }
     }
     if (cfg.registrationRequired && !form.registrationNumber.trim()) errors.registrationNumber = `${cfg.registrationLabel} is required.`;
     if (cfg.registrationRegex && form.registrationNumber.trim() && !cfg.registrationRegex.test(form.registrationNumber.trim())) errors.registrationNumber = `Invalid ${cfg.registrationLabel} format.`;
@@ -497,6 +534,7 @@ export default function PaymentInPremium() {
         setActiveStep(0);
       } else if (
         errors.amountReceived ||
+        errors.tdsAmount ||
         errors.selectedDocumentId ||
         errors.paymentDate ||
         errors.registrationNumber ||
@@ -536,6 +574,8 @@ export default function PaymentInPremium() {
       attachment: form.attachment,
       desiredStatus: targetStatus,
       amountReceived: parseNumber(form.amountReceived),
+      tdsAmount: parseNumber(form.tdsAmount),
+      tdsCategory: form.tdsCategory,
       allocations: form.allocations,
       customerOutstandingBefore:
         typeof options?.outstandingOverride === "number" ? options.outstandingOverride : customerOutstandingBefore,
@@ -567,6 +607,9 @@ export default function PaymentInPremium() {
       const saved = savePaymentIn(payload);
       if (!saved) return;
       await syncPaymentInRemote(saved);
+      if ((saved?.totals?.tdsAmount || 0) > 0) {
+        syncTdsComplianceReminders();
+      }
       if (options?.download) exportSinglePaymentInPdf(saved);
       if (options?.email) window.alert(`Email queued for ${saved.receiptNo}.`);
       setRefreshKey((prev) => prev + 1);
@@ -677,9 +720,10 @@ export default function PaymentInPremium() {
         <div className="space-y-4">
           {panelMode === "feed" ? (
             <>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
                 <FlowCard title="Total Payments" subtitle="Count of receipts">{loading ? <PaymentInSkeleton /> : <p className="text-2xl font-bold text-slate-900">{summary?.count || 0}</p>}</FlowCard>
                 <FlowCard title="Total Received" subtitle="Across all statuses"><p className="text-2xl font-bold text-slate-900">{formatMoney(summary?.totalReceived || 0, country)}</p></FlowCard>
+                <FlowCard title="Total TDS" subtitle="Deducted and settled"><p className="text-2xl font-bold text-sky-700">{formatMoney(summary?.totalTds || 0, country)}</p></FlowCard>
                 <FlowCard title="Advance Balance" subtitle="Amount kept on account"><p className="text-2xl font-bold text-amber-700">{formatMoney(summary?.totalUnallocated || 0, country)}</p></FlowCard>
               </div>
 
@@ -702,7 +746,7 @@ export default function PaymentInPremium() {
                 <PaymentInSkeleton />
               ) : (
                 <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-                  <table className="min-w-[980px] w-full text-left text-sm">
+                  <table className="min-w-[1080px] w-full text-left text-sm">
                     <thead className="bg-slate-50 text-slate-600">
                       <tr>
                         <th className="px-3 py-3 font-semibold">Receipt No</th>
@@ -710,6 +754,7 @@ export default function PaymentInPremium() {
                         <th className="px-3 py-3 font-semibold">Customer</th>
                         <th className="px-3 py-3 font-semibold">Mode</th>
                         <th className="px-3 py-3 font-semibold text-right">Received</th>
+                        <th className="px-3 py-3 font-semibold text-right">TDS</th>
                         <th className="px-3 py-3 font-semibold text-right">Advance</th>
                         <th className="px-3 py-3 font-semibold">Status</th>
                         <th className="px-3 py-3 font-semibold">Actions</th>
@@ -718,7 +763,7 @@ export default function PaymentInPremium() {
                     <tbody>
                       {!filteredPayments.length ? (
                         <tr className="border-t border-slate-100">
-                          <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
+                          <td className="px-3 py-6 text-center text-slate-500" colSpan={9}>
                             No payments found. Create a new payment to get started.
                           </td>
                         </tr>
@@ -731,6 +776,9 @@ export default function PaymentInPremium() {
                             <td className="px-3 py-3 text-slate-600">{record.paymentMode}</td>
                             <td className="px-3 py-3 text-right font-semibold text-slate-900">
                               {formatMoney(record?.totals?.amountReceived || 0, country)}
+                            </td>
+                            <td className="px-3 py-3 text-right font-semibold text-sky-700">
+                              {formatMoney(record?.totals?.tdsAmount || 0, country)}
                             </td>
                             <td className="px-3 py-3 text-right text-slate-700">
                               {formatMoney(record?.totals?.unappliedAmount || 0, country)}
@@ -894,20 +942,75 @@ export default function PaymentInPremium() {
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                   <FlowCard title="Payment Details" subtitle="Core details for this receipt">
                     <div className="space-y-3">
-                      <label className="block">
-                        <span className="text-xs font-semibold text-slate-600">Amount Received</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={numberInputValue(form.amountReceived)}
-                          placeholder="0"
-                          disabled={readOnly}
-                          onChange={(event) => updateForm("amountReceived", event.target.value)}
-                          inputMode="decimal"
-                          className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
-                        />
-                        {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
-                      </label>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <span className="text-xs font-semibold text-slate-600">Amount Received</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={numberInputValue(form.amountReceived)}
+                            placeholder="0"
+                            disabled={readOnly}
+                            onChange={(event) => updateForm("amountReceived", event.target.value)}
+                            inputMode="decimal"
+                            className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
+                          />
+                          {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
+                        </label>
+                        <label className="block">
+                          <span className="text-xs font-semibold text-slate-600">TDS Amount</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={numberInputValue(form.tdsAmount)}
+                            placeholder="0"
+                            disabled={readOnly}
+                            onChange={(event) => updateForm("tdsAmount", event.target.value)}
+                            inputMode="decimal"
+                            className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
+                          />
+                          {fieldErrors.tdsAmount ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.tdsAmount}</p> : null}
+                        </label>
+                      </div>
+                      <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                          <label className="block min-w-[220px] flex-1">
+                            <span className="text-xs font-semibold text-slate-600">TDS Category</span>
+                            <select
+                              value={form.tdsCategory}
+                              disabled={readOnly}
+                              onChange={(event) => updateForm("tdsCategory", event.target.value)}
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                            >
+                              {TDS_CATEGORY_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label} ({option.rate}%)
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="sm:text-right">
+                            <p className="text-xs font-semibold text-slate-600">
+                              Suggested TDS: {formatMoney(suggestedTdsAmount, country)}
+                            </p>
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              {selectedCustomerDocument
+                                ? hasCustomerPan
+                                  ? "Standard category rate applied."
+                                  : "20% suggestion applied because PAN is not available."
+                                : "Link an invoice or proforma to calculate TDS suggestion."}
+                            </p>
+                            <button
+                              type="button"
+                              disabled={readOnly || suggestedTdsAmount <= 0}
+                              onClick={() => updateForm("tdsAmount", String(suggestedTdsAmount))}
+                              className="mt-2 inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Use Suggestion
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                         <p className="text-xs font-semibold text-slate-600">Is this payment for a specific invoice?</p>
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -978,7 +1081,10 @@ export default function PaymentInPremium() {
                             Date: {selectedCustomerDocument.invoiceDate || "-"} | Pending: {formatMoney(selectedCustomerDocument.balanceDue, country)}
                           </p>
                           <p className="mt-1">
-                            Allocated now: {formatMoney(totals.amountApplied, country)}
+                            Cash Applied: {formatMoney(totals.amountApplied, country)} | TDS Settled: {formatMoney(totals.tdsAmount, country)}
+                          </p>
+                          <p className="mt-1">
+                            Total Settled: {formatMoney(totals.totalSettled, country)}
                           </p>
                         </div>
                       ) : null}
@@ -1075,6 +1181,14 @@ export default function PaymentInPremium() {
                           <p className="text-base font-semibold text-slate-900">{formatMoney(totals.amountReceived, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">TDS Amount</p>
+                          <p className="text-base font-semibold text-sky-700">{formatMoney(totals.tdsAmount, country)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">Total Settled</p>
+                          <p className="text-base font-semibold text-emerald-700">{formatMoney(totals.totalSettled, country)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Advance</p>
                           <p className="text-base font-semibold text-amber-700">{formatMoney(totals.unappliedAmount, country)}</p>
                           <p className="mt-1 text-[11px] text-slate-500">
@@ -1096,7 +1210,7 @@ export default function PaymentInPremium() {
                           </p>
                           <p className="mt-1 text-[11px] text-slate-500">
                             {selectedCustomerDocument
-                              ? `Pending ${formatMoney(selectedCustomerDocument.balanceDue, country)} | Applied ${formatMoney(totals.amountApplied, country)}`
+                              ? `Pending ${formatMoney(selectedCustomerDocument.balanceDue, country)} | Settled ${formatMoney(totals.totalSettled, country)}`
                               : "Saved without linking to any invoice or proforma invoice."}
                           </p>
                         </div>
@@ -1114,7 +1228,10 @@ export default function PaymentInPremium() {
                   <FlowCard title="Receipt Snapshot" subtitle="Country wording + legal labels">
                     <div className="space-y-3">
                       <p className="text-xs text-slate-500">{COUNTRY_CONFIG[country].receiptLabel}</p>
-                      <p className="text-3xl font-bold tracking-tight text-slate-900">{formatMoney(totals.amountReceived, country)}</p>
+                      <p className="text-3xl font-bold tracking-tight text-slate-900">{formatMoney(totals.totalSettled, country)}</p>
+                      <p className="text-xs text-slate-500">
+                        Received {formatMoney(totals.amountReceived, country)} + TDS {formatMoney(totals.tdsAmount, country)}
+                      </p>
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
                         <p>{COUNTRY_CONFIG[country].legalWording}</p>
                         <p className="mt-2">

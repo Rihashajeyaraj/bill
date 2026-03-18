@@ -1,7 +1,7 @@
 import { listParties, computePartyFinancials, syncPartiesFromRemote } from "../modules/parties/store";
 import { listCreditNotes as listPremiumCreditNotes } from "../modules/creditNote/store";
 import { listDebitNotes } from "../modules/debitNote/store";
-import { listPaymentIn } from "../modules/paymentIn/store";
+import { listPaymentIn, paymentInAllocationSettledAmount, paymentInAllocationTdsShare } from "../modules/paymentIn/store";
 import { listPaymentOut } from "../modules/paymentOut/store";
 import { normalizeText, openingBalanceSigned, parseNumber, toIsoDate } from "../modules/parties/utils";
 import { creditNotesList, creditNotesSyncFromRemote } from "./creditNotes.service";
@@ -20,6 +20,7 @@ export const TRANSACTION_TYPE_OPTIONS = [
   "Sale",
   "Purchase",
   "Payment In",
+  "TDS",
   "Payment Out",
   "Credit Note",
   "Debit Note",
@@ -179,6 +180,17 @@ function amountFromPayment(row, partyType) {
   );
 }
 
+function paymentInTdsAmount(row) {
+  return Math.max(0, parseNumber(row?.totals?.tdsAmount ?? row?.tdsAmount));
+}
+
+function paymentInSettledAmount(row) {
+  return Math.max(
+    0,
+    parseNumber(row?.totals?.totalSettled ?? amountFromPayment(row, PARTY_TYPES.customer) + paymentInTdsAmount(row))
+  );
+}
+
 function resolveInvoiceDate(row) {
   return toIsoDate(row?.invoiceDate || row?.invoice_date || row?.date || row?.created_at);
 }
@@ -288,7 +300,7 @@ function customerPaymentAppliedByInvoice(dataset, asOfDate = "") {
         if (normalizeText(allocation?.documentType || "invoice") !== "invoice") return;
         const invoiceId = String(allocation?.invoiceId || "").trim();
         if (!invoiceId) return;
-        applied.set(invoiceId, (applied.get(invoiceId) || 0) + Math.max(0, parseNumber(allocation?.applyAmount)));
+        applied.set(invoiceId, (applied.get(invoiceId) || 0) + paymentInAllocationSettledAmount(row, allocation));
       });
     });
 
@@ -363,22 +375,22 @@ function supplierDebitAppliedByBill(dataset, asOfDate = "") {
 
 function resolveInvoiceBalance(row, paymentMap, creditMap) {
   const explicitBalance = row?.remainingBalance ?? row?.totals?.balance ?? row?.balanceAmount ?? row?.balance;
-  if (explicitBalance !== undefined && explicitBalance !== null && explicitBalance !== "") {
+  const invoiceId = String(row?.id || "").trim();
+  const linkedSettlements = (paymentMap.get(invoiceId) || 0) + (creditMap.get(invoiceId) || 0);
+  if (linkedSettlements <= 0 && explicitBalance !== undefined && explicitBalance !== null && explicitBalance !== "") {
     return Math.max(0, parseNumber(explicitBalance));
   }
-
-  const invoiceId = String(row?.id || "").trim();
-  return Math.max(0, amountFromInvoice(row) - (paymentMap.get(invoiceId) || 0) - (creditMap.get(invoiceId) || 0));
+  return Math.max(0, amountFromInvoice(row) - linkedSettlements);
 }
 
 function resolvePurchaseBalance(row, paymentMap, debitMap) {
   const explicitBalance = row?.remainingBalance ?? row?.totals?.balance ?? row?.balanceAmount ?? row?.balance;
-  if (explicitBalance !== undefined && explicitBalance !== null && explicitBalance !== "") {
+  const billId = String(row?.id || "").trim();
+  const linkedSettlements = (paymentMap.get(billId) || 0) + (debitMap.get(billId) || 0);
+  if (linkedSettlements <= 0 && explicitBalance !== undefined && explicitBalance !== null && explicitBalance !== "") {
     return Math.max(0, parseNumber(explicitBalance));
   }
-
-  const billId = String(row?.id || "").trim();
-  return Math.max(0, amountFromInvoice(row) - (paymentMap.get(billId) || 0) - (debitMap.get(billId) || 0));
+  return Math.max(0, amountFromInvoice(row) - linkedSettlements);
 }
 
 function ageInDays(documentDate, asOfDate) {
@@ -549,14 +561,14 @@ function buildAgingDetailIndex(dataset, partyType, asOfDate) {
         allocations.forEach((allocation, index) => {
           if (normalizeText(allocation?.documentType || "invoice") !== "invoice") return;
           const invoiceId = String(allocation?.invoiceId || "").trim();
-          const appliedAmount = Math.max(0, parseNumber(allocation?.applyAmount));
-          if (!invoiceId || appliedAmount <= 0) return;
+          const settledAmount = paymentInAllocationSettledAmount(row, allocation);
+          if (!invoiceId || settledAmount <= 0) return;
           appendAgingDetail(detailMap, invoiceId, {
             id: `payment_in_${row?.id || row?.receiptNo || "entry"}_${index}`,
             date,
             transactionType: "Payment",
             reference: String(row?.receiptNo || row?.referenceNo || row?.transactionId || row?.id || "").trim(),
-            amount: -appliedAmount
+            amount: -settledAmount
           });
         });
       });
@@ -839,7 +851,7 @@ function statementTransactionsForParty(dataset, party) {
           transactionType: "Payment",
           referenceNumber: String(row?.receiptNo || row?.referenceNo || row?.paymentReference || row?.id || "").trim(),
           debit: 0,
-          credit: amountFromPayment(row, PARTY_TYPES.customer)
+          credit: paymentInSettledAmount(row)
         }))
         .filter((row) => row.credit > 0),
       ...(Array.isArray(dataset?.legacyCreditNotes) ? dataset.legacyCreditNotes : [])
@@ -1043,7 +1055,7 @@ export function buildPurchaseReport(dataset, filters = {}) {
   };
 }
 
-function buildPaymentRows(dataset, indexes) {
+function buildPaymentRows(dataset, indexes, mode = "cash") {
   const rows = [];
 
   (Array.isArray(dataset?.legacyPayments) ? dataset.legacyPayments : [])
@@ -1072,6 +1084,7 @@ function buildPaymentRows(dataset, indexes) {
   (Array.isArray(dataset?.paymentIns) ? dataset.paymentIns : [])
     .filter((row) => normalizeText(row?.status) !== "draft")
     .forEach((row) => {
+      const tdsAmount = paymentInTdsAmount(row);
       rows.push({
         id: `payment_in_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}`,
         date: resolvePaymentDate(row),
@@ -1079,9 +1092,11 @@ function buildPaymentRows(dataset, indexes) {
         reference: String(row?.receiptNo || row?.referenceNo || row?.paymentReference || row?.id || "").trim(),
         partyId: String(row?.customerId || ""),
         partyName: resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById),
-        amount: amountFromPayment(row, PARTY_TYPES.customer),
+        amount: mode === "settled" ? paymentInSettledAmount(row) : amountFromPayment(row, PARTY_TYPES.customer),
         status: normalizeStatusLabel(row?.status, "Received"),
-        note: String(row?.internalNotes || row?.customerNotes || "").trim(),
+        note: [String(row?.internalNotes || row?.customerNotes || "").trim(), tdsAmount > 0 ? `TDS ${tdsAmount.toFixed(2)}` : ""]
+          .filter(Boolean)
+          .join(" | "),
         direction: "inflow"
       });
     });
@@ -1310,6 +1325,23 @@ function buildAllTransactionsBase(dataset) {
     });
   });
 
+  (Array.isArray(dataset?.paymentIns) ? dataset.paymentIns : [])
+    .filter((row) => normalizeText(row?.status) !== "draft")
+    .filter((row) => paymentInTdsAmount(row) > 0)
+    .forEach((row) => {
+      rows.push({
+        id: `tx_tds_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}`,
+        date: resolvePaymentDate(row),
+        transactionType: "TDS",
+        reference: String(row?.receiptNo || row?.referenceNo || row?.paymentReference || row?.id || "").trim(),
+        partyId: String(row?.customerId || ""),
+        partyName: resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById),
+        amount: paymentInTdsAmount(row),
+        status: normalizeStatusLabel(row?.status, "Received"),
+        note: `TDS deducted${row?.tdsCategory ? ` (${row.tdsCategory})` : ""}`
+      });
+    });
+
   (Array.isArray(dataset?.legacyCreditNotes) ? dataset.legacyCreditNotes : []).forEach((row) => {
     rows.push({
       id: `tx_credit_legacy_${row?.id || row?.creditNoteNo || Math.random().toString(16).slice(2)}`,
@@ -1404,6 +1436,69 @@ export function buildAllTransactionsReport(dataset, filters = {}, options = {}) 
     sortDirection,
     allRows: rows,
     ...paginate(rows, options.page, options.pageSize)
+  };
+}
+
+export function buildTdsReport(dataset, filters = {}) {
+  const fromDate = toIsoDate(filters.fromDate);
+  const toDate = toIsoDate(filters.toDate);
+  const partyId = String(filters.partyId || "").trim();
+  const indexes = buildPartyIndexes(dataset);
+  const rows = [];
+
+  (Array.isArray(dataset?.paymentIns) ? dataset.paymentIns : [])
+    .filter((row) => normalizeText(row?.status) !== "draft")
+    .filter((row) => inDateRange(resolvePaymentDate(row), fromDate, toDate))
+    .filter((row) => !partyId || String(row?.customerId || "") === partyId)
+    .forEach((row) => {
+      const allocations = Array.isArray(row?.allocations) ? row.allocations : [];
+      const positiveTdsAllocations = allocations.filter(
+        (allocation) =>
+          normalizeText(allocation?.documentType || "invoice") === "invoice" &&
+          paymentInAllocationTdsShare(row, allocation) > 0
+      );
+
+      if (!positiveTdsAllocations.length && paymentInTdsAmount(row) > 0) {
+        rows.push({
+          id: `tds_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}`,
+          date: resolvePaymentDate(row),
+          partyName: resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById),
+          invoiceReference: "-",
+          tdsAmount: paymentInTdsAmount(row),
+          category: row?.tdsCategory || "Other",
+          status: normalizeStatusLabel(row?.status, "Received")
+        });
+        return;
+      }
+
+      positiveTdsAllocations.forEach((allocation, index) => {
+        rows.push({
+          id: `tds_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}_${index}`,
+          date: resolvePaymentDate(row),
+          partyName: resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById),
+          invoiceReference: String(allocation?.invoiceNo || allocation?.invoiceId || "-").trim() || "-",
+          tdsAmount: paymentInAllocationTdsShare(row, allocation),
+          category: row?.tdsCategory || "Other",
+          status: normalizeStatusLabel(row?.status, "Received")
+        });
+      });
+    });
+
+  rows.sort((left, right) => {
+    if (left.date !== right.date) return String(left.date || "").localeCompare(String(right.date || ""));
+    return String(left.partyName || "").localeCompare(String(right.partyName || ""));
+  });
+
+  return {
+    fromDate,
+    toDate,
+    partyId,
+    rows,
+    totals: {
+      totalTds: rows.reduce((sum, row) => sum + row.tdsAmount, 0),
+      customers: new Set(rows.map((row) => row.partyName)).size,
+      invoices: rows.filter((row) => row.invoiceReference !== "-").length
+    }
   };
 }
 

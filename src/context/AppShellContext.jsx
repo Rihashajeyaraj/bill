@@ -6,9 +6,13 @@ import { companyIsCompleted } from "../services/company.service";
 import { canAccessSettings } from "../services/roles";
 import { canAccessPathForRole } from "../services/accessControl";
 import {
+  APP_NOTIFICATION_EVENT_NAME,
   ensureActivitySeed,
+  listNotifications as listAppNotifications,
   listActivities,
-  logActivity
+  logActivity,
+  markAllNotificationsRead,
+  markNotificationRead
 } from "../services/activity.service";
 import {
   CREDIT_NOTIFICATION_EVENT_NAME,
@@ -24,6 +28,7 @@ import {
   markStockNotificationRead,
   syncStockNotificationsFromRemote
 } from "../services/stockNotifications.service";
+import { syncTdsComplianceReminders } from "../services/tds.service";
 
 const AppShellContext = createContext(null);
 const REMOTE_NOTIFICATION_REFRESH_COOLDOWN_MS = 30 * 1000;
@@ -37,7 +42,7 @@ function resolveNotificationType(entry, fallback = "credit") {
   return fallback;
 }
 
-function mergeNotifications(creditList, stockList) {
+function mergeNotifications(creditList, stockList, appList) {
   const normalizedCredit = (Array.isArray(creditList) ? creditList : []).map((entry) => ({
     ...entry,
     notificationType: resolveNotificationType(entry, "credit")
@@ -46,7 +51,15 @@ function mergeNotifications(creditList, stockList) {
     ...entry,
     notificationType: resolveNotificationType(entry, "stock")
   }));
-  return [...normalizedCredit, ...normalizedStock].sort(
+  const normalizedApp = (Array.isArray(appList) ? appList : [])
+    .filter((entry) => String(entry?.meta?.kind || "").startsWith("tds_"))
+    .map((entry) => ({
+    ...entry,
+    notificationType: "app",
+    isRead: !!entry?.read,
+    createdAt: entry?.createdAt || new Date().toISOString()
+  }));
+  return [...normalizedCredit, ...normalizedStock, ...normalizedApp].sort(
     (a, b) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime()
   );
 }
@@ -69,9 +82,11 @@ export function AppShellProvider({ children }) {
   const refreshFeeds = useCallback(async (options = {}) => {
     const remote = options?.remote === true;
     const force = options?.force === true;
+    syncTdsComplianceReminders();
     const cachedCredit = listCreditNotificationsCached();
     const cachedStock = listStockNotificationsCached();
-    const cachedMerged = mergeNotifications(cachedCredit, cachedStock);
+    const cachedApp = listAppNotifications();
+    const cachedMerged = mergeNotifications(cachedCredit, cachedStock, cachedApp);
     setNotifications(cachedMerged);
     setActivities(listActivities(90));
 
@@ -89,7 +104,7 @@ export function AppShellProvider({ children }) {
       ]);
       const nextCredit = creditResult.status === "fulfilled" ? creditResult.value : cachedCredit;
       const nextStock = stockResult.status === "fulfilled" ? stockResult.value : cachedStock;
-      const merged = mergeNotifications(nextCredit, nextStock);
+      const merged = mergeNotifications(nextCredit, nextStock, listAppNotifications());
       setNotifications(merged);
       lastRemoteRefreshAtRef.current = Date.now();
       return merged;
@@ -118,9 +133,11 @@ export function AppShellProvider({ children }) {
 
     window.addEventListener(CREDIT_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
     window.addEventListener(STOCK_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
+    window.addEventListener(APP_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
     return () => {
       window.removeEventListener(CREDIT_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
       window.removeEventListener(STOCK_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
+      window.removeEventListener(APP_NOTIFICATION_EVENT_NAME, onNotificationsUpdated);
     };
   }, [refreshFeeds]);
 
@@ -195,7 +212,9 @@ export function AppShellProvider({ children }) {
     const resolvedType = selectedType || resolveNotificationType(matched, "credit");
 
     try {
-      if (resolvedType === "stock") {
+      if (resolvedType === "app") {
+        markNotificationRead(id);
+      } else if (resolvedType === "stock") {
         await markStockNotificationRead(id);
       } else {
         await markCreditNotificationRead(id);
@@ -221,6 +240,7 @@ export function AppShellProvider({ children }) {
 
   async function clearNotificationBadge() {
     try {
+      markAllNotificationsRead();
       await markAllCreditNotificationsRead();
       await markAllStockNotificationsRead();
     } catch {

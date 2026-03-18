@@ -3,6 +3,7 @@ import { LS_KEYS, lsGet, lsSet, uid } from "./storage";
 const MAX_NOTIFICATIONS = 120;
 const MAX_ACTIVITIES = 200;
 const QUOTA_FALLBACK_SIZES = [120, 90, 60, 40, 20, 10, 5, 1];
+export const APP_NOTIFICATION_EVENT_NAME = "app-notifications-updated";
 
 function nowIso() {
   return new Date().toISOString();
@@ -76,6 +77,11 @@ function safeSetValue(key, value) {
   }
 }
 
+function emitAppNotificationUpdate() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(APP_NOTIFICATION_EVENT_NAME));
+}
+
 export function listNotifications() {
   return sortDescByDate(ensureArray(lsGet(LS_KEYS.app_notifications, [])));
 }
@@ -93,17 +99,20 @@ export function pushNotification(notification) {
   };
   const next = [payload, ...listNotifications()].slice(0, MAX_NOTIFICATIONS);
   safeSetWithTrim(LS_KEYS.app_notifications, next, MAX_NOTIFICATIONS);
+  emitAppNotificationUpdate();
   return payload;
 }
 
 export function markNotificationRead(id) {
   const next = listNotifications().map((entry) => (entry.id === id ? { ...entry, read: true } : entry));
   safeSetWithTrim(LS_KEYS.app_notifications, next, MAX_NOTIFICATIONS);
+  emitAppNotificationUpdate();
 }
 
 export function markAllNotificationsRead() {
   const next = listNotifications().map((entry) => ({ ...entry, read: true }));
   safeSetWithTrim(LS_KEYS.app_notifications, next, MAX_NOTIFICATIONS);
+  emitAppNotificationUpdate();
 }
 
 export function listActivities(limit = 80) {

@@ -32,6 +32,7 @@ export interface CustomerOption {
   address?: string;
   state?: string;
   registrationNumber?: string;
+  taxId?: string;
   country: CountryCode;
 }
 
@@ -47,6 +48,8 @@ export interface PaymentAllocationDraft {
 
 export interface PaymentInTotals {
   amountReceived: number;
+  tdsAmount: number;
+  totalSettled: number;
   amountApplied: number;
   unappliedAmount: number;
   customerOutstandingBefore: number;
@@ -69,6 +72,7 @@ export interface PaymentInRecord {
   transactionId?: string;
   paymentReference?: string;
   registrationNumber?: string;
+  tdsCategory?: string;
   internalNotes?: string;
   customerNotes?: string;
   attachment?: PaymentAttachmentMeta | null;
@@ -92,6 +96,8 @@ export interface PaymentLedgerEntry {
   customerName: string;
   account: "Accounts Receivable";
   amountReceived: number;
+  tdsAmount: number;
+  totalSettled: number;
   amountApplied: number;
   unappliedAmount: number;
   status: PaymentStatus;
@@ -113,11 +119,13 @@ export interface SavePaymentInPayload {
   transactionId?: string;
   paymentReference?: string;
   registrationNumber?: string;
+  tdsCategory?: string;
   internalNotes?: string;
   customerNotes?: string;
   attachment?: PaymentAttachmentMeta | null;
   desiredStatus: PaymentStatus;
   amountReceived: number;
+  tdsAmount: number;
   allocations: PaymentAllocationDraft[];
   customerOutstandingBefore: number;
   actor: string;
@@ -199,6 +207,53 @@ function documentKey(documentId: string, documentType: "invoice" | "proforma" = 
   return `${documentType}:${String(documentId || "")}`;
 }
 
+function normalizedDocumentType(value: unknown): "invoice" | "proforma" {
+  return String(value || "").trim().toLowerCase() === "proforma" ? "proforma" : "invoice";
+}
+
+export function paymentInAllocationTdsShare(record: Pick<PaymentInRecord, "allocations" | "totals">, line: Partial<PaymentAllocationDraft>) {
+  const totalTdsAmount = Math.max(0, toNumber(record?.totals?.tdsAmount));
+  if (totalTdsAmount <= 0) return 0;
+
+  const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
+  const positiveAllocations = allocations.filter((entry) => Math.max(0, toNumber(entry?.applyAmount)) > 0);
+  if (!positiveAllocations.length) return 0;
+
+  const totalApplied = positiveAllocations.reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.applyAmount)), 0);
+  const lineInvoiceId = String(line?.invoiceId || "").trim();
+  const lineDocumentType = normalizedDocumentType(line?.documentType);
+
+  const positiveIndex = positiveAllocations.findIndex(
+    (entry) =>
+      String(entry?.invoiceId || "").trim() === lineInvoiceId &&
+      normalizedDocumentType(entry?.documentType) === lineDocumentType
+  );
+  if (positiveIndex < 0) return 0;
+
+  const appliedAmount = Math.max(0, toNumber(line?.applyAmount));
+  if (appliedAmount <= 0 || totalApplied <= 0) return 0;
+
+  if (positiveAllocations.length === 1) {
+    return totalTdsAmount;
+  }
+
+  const rawShare = (appliedAmount / totalApplied) * totalTdsAmount;
+  if (positiveIndex === positiveAllocations.length - 1) {
+    const allocatedBefore = positiveAllocations
+      .slice(0, positiveIndex)
+      .reduce((sum, entry) => sum + paymentInAllocationTdsShare(record, entry), 0);
+    return Math.max(0, totalTdsAmount - allocatedBefore);
+  }
+  return Math.max(0, Number(rawShare.toFixed(2)));
+}
+
+export function paymentInAllocationSettledAmount(
+  record: Pick<PaymentInRecord, "allocations" | "totals">,
+  line: Partial<PaymentAllocationDraft>
+) {
+  return Math.max(0, toNumber(line?.applyAmount)) + paymentInAllocationTdsShare(record, line);
+}
+
 function appliedPaymentInForDocument(
   documentId: string,
   documentType: "invoice" | "proforma" = "invoice"
@@ -225,7 +280,7 @@ function appliedPaymentInForDocument(
               documentKey(line.invoiceId, line.documentType || "invoice") ===
               documentKey(documentId, documentType)
           )
-          .reduce((lineSum, line) => lineSum + Math.max(0, toNumber(line.applyAmount)), 0),
+          .reduce((lineSum, line) => lineSum + paymentInAllocationSettledAmount(entry, line), 0),
       0
     );
 
@@ -316,6 +371,7 @@ function ensureTransition(previous: PaymentStatus, next: PaymentStatus) {
 
 function computeTotals(payload: SavePaymentInPayload) {
   const amountReceived = Math.max(0, toNumber(payload.amountReceived));
+  const tdsAmount = Math.max(0, toNumber(payload.tdsAmount));
   const allocations = payload.allocations.map((line) => ({
     ...line,
     invoiceAmount: Math.max(0, toNumber(line.invoiceAmount)),
@@ -329,18 +385,34 @@ function computeTotals(payload: SavePaymentInPayload) {
     }
   });
 
+  if (tdsAmount > 0) {
+    const totalRemainingCapacity = allocations.reduce(
+      (sum, line) => sum + Math.max(0, line.balanceDue - line.applyAmount),
+      0
+    );
+    if (totalRemainingCapacity <= 0) {
+      throw new Error("TDS amount requires a linked invoice or proforma with remaining balance.");
+    }
+    if (tdsAmount > totalRemainingCapacity) {
+      throw new Error("TDS amount cannot exceed the remaining balance after payment allocation.");
+    }
+  }
+
   const amountApplied = allocations.reduce((sum, line) => sum + line.applyAmount, 0);
   if (amountApplied > amountReceived) {
     throw new Error("Applied amount cannot exceed amount received.");
   }
 
+  const totalSettled = amountReceived + tdsAmount;
   const unappliedAmount = Math.max(0, amountReceived - amountApplied);
-  const customerOutstandingAfter = Math.max(0, toNumber(payload.customerOutstandingBefore) - amountApplied);
+  const customerOutstandingAfter = Math.max(0, toNumber(payload.customerOutstandingBefore) - totalSettled);
 
   return {
     allocations,
     totals: {
       amountReceived,
+      tdsAmount,
+      totalSettled,
       amountApplied,
       unappliedAmount,
       customerOutstandingBefore: Math.max(0, toNumber(payload.customerOutstandingBefore)),
@@ -363,6 +435,8 @@ function postLedgerEntry(note: PaymentInRecord, actor: string) {
     customerName: note.customerName,
     account: "Accounts Receivable",
     amountReceived: note.totals.amountReceived,
+    tdsAmount: note.totals.tdsAmount,
+    totalSettled: note.totals.totalSettled,
     amountApplied: note.totals.amountApplied,
     unappliedAmount: note.totals.unappliedAmount,
     status: note.status,
@@ -483,6 +557,7 @@ export function mapCustomersByCountry(country: CountryCode): CustomerOption[] {
         address: party.address || "",
         state: party.state || "",
         registrationNumber: party.gstin || party.trn || party.vatNo || "",
+        taxId: party.taxId || party.gstin || party.vatNo || party.trn || "",
         country: normalizeCountryCode(party.country) || country
       } satisfies CustomerOption;
     })
@@ -594,6 +669,7 @@ export function savePaymentIn(payload: SavePaymentInPayload): PaymentInRecord {
     transactionId: payload.transactionId || "",
     paymentReference: payload.paymentReference || "",
     registrationNumber: payload.registrationNumber || "",
+    tdsCategory: payload.tdsCategory || "",
     internalNotes: payload.internalNotes || "",
     customerNotes: payload.customerNotes || "",
     attachment: payload.attachment || null,
@@ -637,10 +713,12 @@ export function removePaymentIn(id: string): PaymentInRecord {
 export function summarizePaymentIn(country: CountryCode) {
   const list = listPaymentIn(country);
   const totalReceived = list.reduce((sum, entry) => sum + entry.totals.amountReceived, 0);
+  const totalTds = list.reduce((sum, entry) => sum + toNumber(entry?.totals?.tdsAmount), 0);
   const totalUnallocated = list.reduce((sum, entry) => sum + entry.totals.unappliedAmount, 0);
   return {
     count: list.length,
     totalReceived,
+    totalTds,
     totalUnallocated
   };
 }

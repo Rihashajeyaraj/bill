@@ -62,6 +62,11 @@ export const reportSections = [
         id: "profit-loss",
         label: "Profit & Loss",
         description: "Simple sales, expenses, and net profit summary."
+      },
+      {
+        id: "tds-report",
+        label: "TDS Report",
+        description: "Invoice-linked TDS deductions captured from Payment In entries."
       }
     ]
   }

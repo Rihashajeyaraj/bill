@@ -48,6 +48,7 @@ function mergeSourceRowsToLocalPayments(sourcePrefix, rows) {
     invoiceId: row?.invoice_id || "",
     billId: row?.bill_id || "",
     amount: parseNumber(row?.amount),
+    tdsAmount: parseNumber(row?.tds_amount),
     mode: row?.payment_mode || "",
     referenceNo: row?.reference_no || `${sourcePrefix}${index + 1}`,
     note: row?.notes || "",
@@ -110,6 +111,7 @@ export async function paymentsSyncFromRemote() {
     invoiceId: row?.invoice_id || "",
     billId: row?.bill_id || "",
     amount: parseNumber(row?.amount),
+    tdsAmount: parseNumber(row?.tds_amount),
     mode: row?.payment_mode || "",
     referenceNo: row?.reference_no || "",
     note: row?.notes || "",
@@ -139,6 +141,7 @@ export function paymentsCreate(payment) {
         invoice_id: looksLikeUuid(payment?.invoiceId) ? payment.invoiceId : null,
         bill_id: looksLikeUuid(payment?.billId) ? payment.billId : null,
         amount: parseNumber(payment?.amount),
+        tds_amount: parseNumber(payment?.tdsAmount),
         payment_mode: payment?.mode || payment?.paymentMode || null,
         reference_no: payment?.referenceNo || payment?.paymentReference || null,
         notes: payment?.note || payment?.notes || null,
@@ -173,6 +176,7 @@ export async function syncPaymentInRemote(record) {
 
   if (shouldPost) {
     const amountReceived = Math.max(0, parseNumber(record?.totals?.amountReceived ?? record?.amountReceived));
+    const tdsAmount = Math.max(0, parseNumber(record?.totals?.tdsAmount ?? record?.tdsAmount));
     const amountApplied = Math.max(0, parseNumber(record?.totals?.amountApplied));
     const unappliedAmount = Math.max(0, parseNumber(record?.totals?.unappliedAmount));
     const primaryAllocation = allocations.find((line) => Math.max(0, parseNumber(line?.applyAmount)) > 0) || null;
@@ -195,6 +199,9 @@ export async function syncPaymentInRemote(record) {
       if (shouldApply) {
         noteParts.push(`Applied ${amountApplied.toFixed(2)}`);
       }
+      if (tdsAmount > 0) {
+        noteParts.push(`TDS ${tdsAmount.toFixed(2)}`);
+      }
       if (unappliedAmount > 0) {
         noteParts.push(`Advance ${unappliedAmount.toFixed(2)}`);
       }
@@ -206,6 +213,7 @@ export async function syncPaymentInRemote(record) {
         party_id: partyId,
         invoice_id: shouldApply && !isProforma ? invoiceId || primaryAllocation?.invoiceId || null : null,
         amount: amountReceived,
+        tds_amount: tdsAmount,
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}ENTRY`,
         notes: noteParts.filter(Boolean).join(" | "),
@@ -239,6 +247,7 @@ export async function syncPaymentInRemote(record) {
         invoice_id: looksLikeUuid(baseRow?.invoice_id) ? baseRow.invoice_id : null,
         bill_id: null,
         amount: parseNumber(baseRow?.amount),
+        tds_amount: parseNumber(baseRow?.tds_amount),
         payment_mode: baseRow?.payment_mode || null,
         reference_no: baseRow?.reference_no || `${sourcePrefix}ENTRY`,
         notes: baseRow?.notes || null,

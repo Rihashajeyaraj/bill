@@ -23,24 +23,28 @@ function formatQty(value) {
 
 function notificationType(entry) {
   const directType = String(entry?.notificationType || "").trim().toLowerCase();
+  if (directType === "app") return "app";
   if (directType === "stock") return "stock";
   if (directType === "credit") return "credit";
   return String(entry?.alertType || "").toLowerCase() === "low_stock" ? "stock" : "credit";
 }
 
 function formatValue(entry) {
+  if (notificationType(entry) === "app") return "-";
   if (notificationType(entry) === "stock") return formatQty(entry?.currentValue || 0);
   if (entry?.alertType === "days") return `${Math.trunc(Number(entry?.currentValue || 0))}`;
   return formatAmount(entry?.currentValue || 0);
 }
 
 function formatLimit(entry) {
+  if (notificationType(entry) === "app") return "-";
   if (notificationType(entry) === "stock") return formatQty(entry?.limitValue || 0);
   if (entry?.alertType === "days") return `${Math.trunc(Number(entry?.limitValue || 0))}`;
   return formatAmount(entry?.limitValue || 0);
 }
 
 function alertLabel(entry) {
+  if (notificationType(entry) === "app") return "Reminder";
   if (notificationType(entry) === "stock") return "Low Stock";
   return entry?.alertType === "days" ? "Overdue Days" : "Amount Limit";
 }
@@ -55,6 +59,9 @@ function formatDate(value) {
 }
 
 function alertDescription(entry) {
+  if (notificationType(entry) === "app") {
+    return String(entry?.description || entry?.title || "Reminder");
+  }
   if (notificationType(entry) === "stock") {
     return `${formatValue(entry)} available. Reorder level is ${formatLimit(entry)}.`;
   }
@@ -126,6 +133,10 @@ export default function NotificationCenter() {
                       type="button"
                       onClick={() => {
                         void readNotification(entry);
+                        if (notificationType(entry) === "app") {
+                          navigateTo(entry?.link || "/app/notifications", { log: false });
+                          return;
+                        }
                         if (notificationType(entry) === "stock") {
                           navigateTo("/app/items", { log: false });
                           return;
@@ -137,7 +148,11 @@ export default function NotificationCenter() {
                         navigateTo("/app/notifications", { log: false });
                       }}
                       className={`w-full rounded-2xl border px-3 py-2 text-left ${
-                        notificationType(entry) === "stock"
+                        notificationType(entry) === "app"
+                          ? entry.isRead
+                            ? "border-sky-200 bg-sky-50/40"
+                            : "border-sky-200 bg-sky-50"
+                          : notificationType(entry) === "stock"
                           ? entry.isRead
                             ? "border-amber-200 bg-amber-50/40"
                             : "border-amber-200 bg-amber-50"
@@ -148,7 +163,9 @@ export default function NotificationCenter() {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-sm font-semibold text-slate-900">
-                          {notificationType(entry) === "stock"
+                          {notificationType(entry) === "app"
+                            ? entry.title || "Reminder"
+                            : notificationType(entry) === "stock"
                             ? `${entry.itemName || "Item"} (Inventory)`
                             : `${entry.partyName || "Party"} (${entry.partyType === "supplier" ? "Supplier" : "Customer"})`}
                         </p>
@@ -159,11 +176,13 @@ export default function NotificationCenter() {
                         )}
                       </div>
                       <p className={`mt-1 text-xs font-semibold ${
-                        notificationType(entry) === "stock" ? "text-amber-700" : "text-rose-700"
+                        notificationType(entry) === "app" ? "text-sky-700" : notificationType(entry) === "stock" ? "text-amber-700" : "text-rose-700"
                       }`}>{alertLabel(entry)}</p>
                       <p className="mt-1 text-xs text-slate-700">{alertDescription(entry)}</p>
                       <div className="mt-1 space-y-0.5 text-[11px] text-slate-600">
-                        {notificationType(entry) === "stock" ? (
+                        {notificationType(entry) === "app" ? (
+                          <p>{entry.link || "/app/notifications"}</p>
+                        ) : notificationType(entry) === "stock" ? (
                           <p>Item Code: {entry.itemCode || "-"}</p>
                         ) : (
                           <>
