@@ -1,0 +1,86 @@
+{
+  "common": {
+    "language": {
+      "english": "ஆங்கிலம்",
+      "tamil": "தமிழ்"
+    },
+    "actions": {
+      "login": "உள்நுழை",
+      "register": "பதிவு செய்",
+      "createAccount": "கணக்கு உருவாக்கு",
+      "pleaseWait": "காத்திருக்கவும்..."
+    }
+  },
+  "auth": {
+    "brandName": "BillJoy",
+    "brandSubtitle": "இந்தியாவுக்கான முதன்மை பில்லிங் மென்பொருள்",
+    "copyright": "© 2026 Twite ai technologies . அனைத்து உரிமைகளும் பாதுகாக்கப்பட்டவை.",
+    "welcomeKicker": "வரவேற்பு",
+    "registerKicker": "பதிவு",
+    "hero": {
+      "loginTitlePrefix": "மீண்டும்",
+      "loginTitleAccent": "வரவேற்கிறோம்!",
+      "signupTitlePrefix": "கணக்கு",
+      "signupTitleAccent": "உருவாக்குங்கள்!",
+      "description": "பில்லிங், இன்வாய்சிங், GST மற்றும் அறிக்கைகளை ஒரே இடத்தில் எளிதாக்குங்கள்."
+    },
+    "features": {
+      "fastSecure": "வேகமான & பாதுகாப்பானது",
+      "gstReady": "GST தயார்",
+      "support247": "24/7 ஆதரம்"
+    },
+    "form": {
+      "loginTitle": "உள்நுழைவு",
+      "registerTitle": "பதிவு",
+      "loginSubtitle": "தொடர உள்நுழையவும்",
+      "registerSubtitle": "உங்கள் பயனர் கணக்கை உருவாக்கவும்",
+      "email": "மின்னஞ்சல்",
+      "password": "கடவுச்சொல்",
+      "confirmPassword": "கடவுச்சொல்லை உறுதிப்படுத்து",
+      "fullNameOptional": "முழு பெயர் (விருப்பம்)",
+      "role": "பங்கு",
+      "registerCode": "பதிவு குறியீடு",
+      "forgotPassword": "கடவுச்சொல் மறந்துவிட்டதா?",
+      "or": "அல்லது",
+      "dontHaveAccount": "கணக்கு இல்லையா?",
+      "alreadyHaveAccount": "ஏற்கனவே கணக்கு உள்ளதா?",
+      "placeholders": {
+        "registeredEmail": "உங்கள் பதிவு செய்யப்பட்ட மின்னஞ்சலை உள்ளிடுங்கள்",
+        "password": "உங்கள் கடவுச்சொல்லை உள்ளிடுங்கள்",
+        "fullName": "முழு பெயர்",
+        "emailAddress": "மின்னஞ்சல் முகவரி",
+        "confirmPassword": "உங்கள் கடவுச்சொல்லை உறுதிப்படுத்துங்கள்",
+        "registerCode": "அமைப்பு பதிவு குறியீட்டை ஒட்டுங்கள்"
+      }
+    },
+    "roles": {
+      "owner": "உரிமையாளர்",
+      "accounter": "கணக்காளர்",
+      "staff": "பணியாளர்"
+    },
+    "controls": {
+      "darkMode": "இருள் நிலை",
+      "toggleDarkMode": "இருள் நிலையை மாற்று"
+    },
+    "messages": {
+      "demoMode": "Supabase சூழல் விசைகள் அமைக்கப்படவில்லை. பயன்பாடு உள்ளூர் டெமோ முறையில் இயங்குகிறது.",
+      "inviteDetected": "அழைப்பு இணைப்பு கண்டறியப்பட்டது. அமைப்பில் சேர பதிவு செயல்முறையை முடிக்கவும்.",
+      "registerSuccessVerify": "பதிவு வெற்றிகரமாக முடிந்தது. மின்னஞ்சல் சரிபார்ப்பை முடித்து பின்னர் உள்நுழையவும்.",
+      "registrationDisabled": "இந்த திரையில் பதிவு முடக்கப்பட்டுள்ளது. உங்கள் நிர்வாகியை தொடர்புகொள்ளவும்.",
+      "forgotPasswordNotConnected": "இந்த build-இல் கடவுச்சொல் மீட்டமைப்பு இணைக்கப்படவில்லை. உங்கள் நிர்வாகியை தொடர்புகொள்ளவும் அல்லது உள்ள சான்றுகளை பயன்படுத்தவும்."
+    },
+    "validation": {
+      "emailRequired": "மின்னஞ்சல் அவசியம்.",
+      "passwordRequired": "கடவுச்சொல் அவசியம்.",
+      "passwordsDoNotMatch": "கடவுச்சொற்கள் பொருந்தவில்லை.",
+      "registerCodeRequired": "கணக்காளர் அல்லது பணியாளருக்குப் பதிவு குறியீடு அவசியம்."
+    },
+    "errors": {
+      "loginFailed": "உள்நுழைவு தோல்வியடைந்தது",
+      "registerFailed": "பதிவு தோல்வியடைந்தது"
+    },
+    "accessibility": {
+      "togglePasswordVisibility": "கடவுச்சொல் காட்சியமைப்பை மாற்று"
+    }
+  }
+}

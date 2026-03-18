@@ -1,0 +1,86 @@
+{
+  "common": {
+    "language": {
+      "english": "English",
+      "tamil": "Tamil"
+    },
+    "actions": {
+      "login": "Login",
+      "register": "Register",
+      "createAccount": "Create Account",
+      "pleaseWait": "Please wait..."
+    }
+  },
+  "auth": {
+    "brandName": "BillJoy",
+    "brandSubtitle": "India-first Billing Software",
+    "copyright": "© 2026 Twite ai technologies . All Rights Reserved.",
+    "welcomeKicker": "WELCOME",
+    "registerKicker": "REGISTER",
+    "hero": {
+      "loginTitlePrefix": "Welcome",
+      "loginTitleAccent": "Back!",
+      "signupTitlePrefix": "Create",
+      "signupTitleAccent": "Account!",
+      "description": "Simplify billing, invoicing, GST and reports in one place."
+    },
+    "features": {
+      "fastSecure": "Fast & Secure",
+      "gstReady": "GST Ready",
+      "support247": "24/7 Support"
+    },
+    "form": {
+      "loginTitle": "Login",
+      "registerTitle": "Register",
+      "loginSubtitle": "Login to continue",
+      "registerSubtitle": "Create your user account",
+      "email": "Email",
+      "password": "Password",
+      "confirmPassword": "Confirm Password",
+      "fullNameOptional": "Full Name (optional)",
+      "role": "Role",
+      "registerCode": "Register Code",
+      "forgotPassword": "Forgot Password?",
+      "or": "OR",
+      "dontHaveAccount": "Don't have an account?",
+      "alreadyHaveAccount": "Already have an account?",
+      "placeholders": {
+        "registeredEmail": "Enter your registered email",
+        "password": "Enter your password",
+        "fullName": "Full name",
+        "emailAddress": "Email address",
+        "confirmPassword": "Confirm your password",
+        "registerCode": "Paste organization register code"
+      }
+    },
+    "roles": {
+      "owner": "Owner",
+      "accounter": "Accounter",
+      "staff": "Staff"
+    },
+    "controls": {
+      "darkMode": "Dark Mode",
+      "toggleDarkMode": "Toggle dark mode"
+    },
+    "messages": {
+      "demoMode": "Supabase env keys are not configured. App is running in local demo mode.",
+      "inviteDetected": "Invite link detected. Complete signup to join organization.",
+      "registerSuccessVerify": "Registration successful. Check your email for verification, then login.",
+      "registrationDisabled": "Registration is disabled on this screen. Contact your administrator.",
+      "forgotPasswordNotConnected": "Password reset is not connected in this build yet. Contact your administrator or use your existing credentials."
+    },
+    "validation": {
+      "emailRequired": "Email is required.",
+      "passwordRequired": "Password is required.",
+      "passwordsDoNotMatch": "Passwords do not match.",
+      "registerCodeRequired": "Register code is required for Accounter or Staff."
+    },
+    "errors": {
+      "loginFailed": "Login failed",
+      "registerFailed": "Register failed"
+    },
+    "accessibility": {
+      "togglePasswordVisibility": "Toggle password visibility"
+    }
+  }
+}
