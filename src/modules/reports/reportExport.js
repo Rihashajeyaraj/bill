@@ -93,6 +93,14 @@ export function exportReportExcel(report) {
   );
 }
 
+export function exportReportJson(report) {
+  const payload = JSON.stringify(report || {}, null, 2);
+  downloadBlob(
+    new Blob([payload], { type: "application/json;charset=utf-8;" }),
+    `${getFileName(report)}.json`
+  );
+}
+
 export function printReport(report) {
   const markup = `
     <html>

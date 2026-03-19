@@ -24,7 +24,7 @@ import { reportSections } from "../data/reports";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 import { formatDateByPreference } from "../lib/formatPreferences";
 import { formatMoney, normalizeText } from "../modules/parties/utils";
-import { exportReportExcel, exportReportPdf, printReport } from "../modules/reports/reportExport";
+import { exportReportExcel, exportReportJson, exportReportPdf, printReport } from "../modules/reports/reportExport";
 import { authGetRole } from "../services/auth.service";
 import {
   buildAgingReport,
@@ -1426,6 +1426,7 @@ export default function Reports() {
     if (mode === "print") printReport(payload);
     if (mode === "pdf") exportReportPdf(payload);
     if (mode === "excel") exportReportExcel(payload);
+    if (mode === "json") exportReportJson(payload);
   }
 
   function handleSidebarResizeStart(event) {
@@ -1667,6 +1668,10 @@ export default function Reports() {
                     <button type="button" onClick={() => handleExport("excel")} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                       <FileSpreadsheet className="h-4 w-4" />
                       Export Excel
+                    </button>
+                    <button type="button" onClick={() => handleExport("json")} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                      <FileDown className="h-4 w-4" />
+                      Export JSON
                     </button>
                   </div>
                 </div>
