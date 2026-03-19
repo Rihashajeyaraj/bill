@@ -135,7 +135,7 @@ export default function Login() {
     if (!signupForm.password) { setErr("Password is required."); return; }
     if (signupForm.password !== signupForm.confirmPassword) { setErr("Passwords do not match."); return; }
     if (!isOwnerRole(signupForm.role) && !signupForm.registerCode.trim()) {
-      setErr("Use an invite link to join as Accounter or Staff."); return;
+      setErr("Register code is required for Accounter or Staff."); return;
     }
     setSubmitting(true);
     try {
@@ -422,11 +422,15 @@ export default function Login() {
         .lp-form-panel {
           background: ${dm ? 'rgba(15,23,42,0.98)' : '#ffffff'};
           padding: 40px 36px;
-          display: flex; flex-direction: column; justify-content: center;
+          display: flex; flex-direction: column; justify-content: flex-start;
           transition: background 0.3s;
           overflow-y: auto;
           min-height: 0;
           box-sizing: border-box;
+        }
+        .lp-form-panel--signup {
+          padding-top: 20px;
+          padding-bottom: 18px;
         }
         @media (max-width: 640px) {
           .lp-form-panel { padding: 28px 20px; }
@@ -443,18 +447,43 @@ export default function Login() {
           letter-spacing: -0.5px; margin: 4px 0 2px; line-height: 1.15;
         }
         .lp-title--solo {
-          margin-bottom: 22px;
+          margin-bottom: 14px;
         }
         .lp-subtitle {
           font-size: 13px; color: ${dm ? '#94a3b8' : '#64748b'};
           margin-bottom: 22px;
+        }
+        .lp-form {
+          width: 100%;
+        }
+        .lp-form--signup {
+          display: flex;
+          flex-direction: column;
+          gap: 0;
+        }
+        .lp-signup-row {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+        .lp-signup-field {
+          min-width: 0;
+        }
+        .lp-form--signup .lp-signup-row {
+          margin-bottom: 2px;
+        }
+        @media (min-width: 720px) {
+          .lp-signup-row--with-code {
+            grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+            align-items: end;
+          }
         }
 
         .lp-label {
           display: block; font-size: 12px; font-weight: 600;
           color: ${dm ? '#cbd5e1' : '#374151'}; margin-bottom: 6px;
         }
-        .lp-input-wrap { position: relative; margin-bottom: 14px; display: flex; align-items: center; }
+        .lp-input-wrap { position: relative; margin-bottom: 12px; display: flex; align-items: center; }
         .lp-input {
           width: 100%;
           background: ${dm ? '#1e293b' : '#f8fafc'};
@@ -467,6 +496,18 @@ export default function Login() {
         }
         .lp-input.lp-input--plain {
           padding-left: 16px;
+        }
+        .lp-form--signup .lp-label {
+          font-size: 11px;
+          margin-bottom: 4px;
+        }
+        .lp-form--signup .lp-input-wrap {
+          margin-bottom: 9px;
+        }
+        .lp-form--signup .lp-input {
+          padding-top: 10px;
+          padding-bottom: 10px;
+          font-size: 13px;
         }
         .lp-input::placeholder { color: ${dm ? '#64748b' : '#94a3b8'}; }
         .lp-input:focus {
@@ -497,11 +538,17 @@ export default function Login() {
           font-size: 13.5px; color: ${dm ? '#e2e8f0' : '#1e293b'};
           font-family: 'Inter', sans-serif; outline: none;
           transition: border-color 0.2s, box-shadow 0.2s;
-          margin-bottom: 14px; appearance: none; cursor: pointer;
+          margin-bottom: 10px; appearance: none; cursor: pointer;
         }
         .lp-select:focus {
           border-color: #22c55e;
           box-shadow: 0 0 0 3px rgba(34,197,94,0.14);
+        }
+        .lp-form--signup .lp-select {
+          padding-top: 9px;
+          padding-bottom: 9px;
+          font-size: 13px;
+          margin-bottom: 8px;
         }
 
         .lp-forgot {
@@ -525,6 +572,14 @@ export default function Login() {
           transition: all 0.25s ease;
           box-shadow: 0 8px 22px rgba(34,197,94,0.38);
           position: relative; overflow: hidden; margin-bottom: 16px;
+        }
+        .lp-submit--register {
+          margin-top: 6px;
+        }
+        .lp-form--signup .lp-submit--register {
+          height: 46px;
+          margin-top: 4px;
+          margin-bottom: 10px;
         }
         .lp-submit::before {
           content: ''; position: absolute;
@@ -563,10 +618,20 @@ export default function Login() {
         }
         .lp-link-btn:hover { opacity: 0.75; }
         .lp-helper {
-          margin: -4px 0 14px;
+          margin: 0 0 10px;
           font-size: 12px;
           color: ${dm ? '#94a3b8' : '#64748b'};
           line-height: 1.5;
+        }
+        .lp-form--signup .lp-helper {
+          margin: 0 0 6px;
+          font-size: 11px;
+          line-height: 1.35;
+        }
+        .lp-form--signup .lp-foot-text {
+          font-size: 12px;
+          margin-top: 0;
+          margin-bottom: 0;
         }
 
         .lp-err {
@@ -729,7 +794,7 @@ export default function Login() {
           </div>
 
           {/* ── RIGHT FORM PANEL ── */}
-          <div className="lp-form-panel">
+          <div className={`lp-form-panel${isLogin ? "" : " lp-form-panel--signup"}`}>
             {isLogin && <p className="lp-kicker">WELCOME</p>}
             <h1 className={`lp-title${isLogin ? "" : " lp-title--solo"}`}>{isLogin ? "Login" : "Register"}</h1>
             {isLogin && <p className="lp-subtitle">Login to continue</p>}
@@ -742,7 +807,10 @@ export default function Login() {
             {err && <div className="lp-err">{err}</div>}
             {notice && <div className="lp-ok">{notice}</div>}
 
-            <form onSubmit={isLogin ? handleLoginSubmit : handleSignupSubmit}>
+            <form
+              onSubmit={isLogin ? handleLoginSubmit : handleSignupSubmit}
+              className={`lp-form${isLogin ? "" : " lp-form--signup"}`}
+            >
               {isLogin ? (
                 <>
                   {/* Email */}
@@ -853,26 +921,48 @@ export default function Login() {
                     </button>
                   </div>
 
-                  {/* Role */}
-                  <label><span className="lp-label">Role</span></label>
-                  <select id="signup-role" className="lp-select"
-                    value={signupForm.role}
-                    onChange={(e) => setSignupForm((p) => ({ ...p, role: e.target.value }))}>
-                    {ROLE_OPTIONS.map((role) => (
-                      <option key={role} value={role}>{role}</option>
-                    ))}
-                  </select>
+                  <div className={`lp-signup-row${!isOwnerRole(signupForm.role) ? " lp-signup-row--with-code" : ""}`}>
+                    <div className="lp-signup-field">
+                      <label><span className="lp-label">Role</span></label>
+                      <select
+                        id="signup-role"
+                        className="lp-select"
+                        value={signupForm.role}
+                        onChange={(e) => setSignupForm((p) => ({ ...p, role: e.target.value }))}
+                      >
+                        {ROLE_OPTIONS.map((role) => (
+                          <option key={role} value={role}>{role}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {!isOwnerRole(signupForm.role) && (
+                      <div className="lp-signup-field">
+                        <label><span className="lp-label">Register Code</span></label>
+                        <div className="lp-input-wrap">
+                          <input
+                            id="signup-code"
+                            className="lp-input lp-input--plain"
+                            placeholder="Paste organization register code"
+                            value={signupForm.registerCode}
+                            onChange={(e) => setSignupForm((p) => ({ ...p, registerCode: e.target.value.toUpperCase() }))}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
                   {!isOwnerRole(signupForm.role) && (
-                    <p className="lp-helper">
-                      {signupForm.registerCode
-                        ? `Invite code applied: ${signupForm.registerCode}`
-                        : "Use an invite link to join as Accounter or Staff."}
-                    </p>
+                    <p className="lp-helper">Enter the code shared by your organization.</p>
                   )}
 
                   {/* Submit */}
-                  <button type="submit" className="lp-submit" disabled={submitting} id="register-btn">
+                  <button
+                    type="submit"
+                    className="lp-submit lp-submit--register"
+                    disabled={submitting}
+                    id="register-btn"
+                  >
                     <User style={{ width: 17, height: 17 }} />
                     {submitting ? "Please wait..." : "Create Account"}
                     {!submitting && <ArrowRight style={{ width: 17, height: 17, marginLeft: 4 }} />}
