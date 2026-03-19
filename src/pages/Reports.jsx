@@ -51,7 +51,21 @@ const REPORT_SIDEBAR_MIN_WIDTH = 240;
 const REPORT_SIDEBAR_MAX_WIDTH = 360;
 const REPORT_SIDEBAR_DEFAULT_WIDTH = 290;
 const SORTABLE_TRANSACTION_COLUMNS = new Set(["date", "transactionType", "reference", "partyName", "amount", "status"]);
-const REPORT_ORDER = reportSections.flatMap((section) => section.items.map((item) => item.id));
+
+function isIndiaCompany(profile = {}) {
+  const country = String(profile?.country || profile?.countryCode || "").trim().toLowerCase();
+  return country === "india" || country === "in";
+}
+
+function getVisibleReportSections(profile = {}) {
+  const allowTdsReport = isIndiaCompany(profile);
+  return reportSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => item.id !== "tds-report" || allowTdsReport)
+    }))
+    .filter((section) => section.items.length > 0);
+}
 
 const REPORT_META = {
   "sale-report": {
@@ -353,10 +367,10 @@ function SearchablePartySelect({ label, options, value, onChange, placeholder = 
   );
 }
 
-function ReportSidebar({ activeReport, onSelect }) {
+function ReportSidebar({ sections, activeReport, onSelect }) {
   return (
     <div className="space-y-2">
-      {reportSections.map((section) => (
+      {sections.map((section) => (
         <Card key={section.id} className="p-2.5">
           <div className="mb-1.5">
             <p className="text-[13px] font-semibold text-slate-900">{section.title}</p>
@@ -1075,7 +1089,7 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
 export default function Reports() {
   const role = authGetRole();
   const canAccess = isAuthorizedReportRole(role);
-  const { currency = "USD" } = useOrganization();
+  const { currency = "USD", profile: organizationProfile = {} } = useOrganization();
   const { years, selectedYear, selectFinancialYear } = useFinancialYears();
   const [searchParams, setSearchParams] = useSearchParams();
   const [filters, setFilters] = useState(() => getDefaultReportFilters());
@@ -1090,7 +1104,15 @@ export default function Reports() {
   const resizeStateRef = useRef(null);
   useGlobalLoadingBridge(loading, "reports-module");
 
-  const activeReport = REPORT_ORDER.includes(searchParams.get("report")) ? searchParams.get("report") : REPORT_ORDER[0];
+  const visibleReportSections = useMemo(
+    () => getVisibleReportSections(organizationProfile),
+    [organizationProfile]
+  );
+  const visibleReportOrder = useMemo(
+    () => visibleReportSections.flatMap((section) => section.items.map((item) => item.id)),
+    [visibleReportSections]
+  );
+  const activeReport = visibleReportOrder.includes(searchParams.get("report")) ? searchParams.get("report") : visibleReportOrder[0];
 
   const partyTypeForOptions = useMemo(
     () => getDerivedPartyType(activeReport, filters.partyType),
@@ -1263,14 +1285,19 @@ export default function Reports() {
         case "profit-loss":
           return buildProfitLossReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate });
         case "tds-report":
-          return buildTdsReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate, partyId: filters.partyId });
+          return buildTdsReport(dataset, {
+            fromDate: filters.fromDate,
+            toDate: filters.toDate,
+            partyId: filters.partyId,
+            organizationCountry: organizationProfile?.country || organizationProfile?.countryCode || ""
+          });
         default:
           return null;
       }
     } catch (reportError) {
       return { error: reportError?.message || "Failed to generate report." };
     }
-  }, [activeReport, dataset, filters, page]);
+  }, [activeReport, dataset, filters, page, organizationProfile]);
 
   const viewModel = useMemo(
     () => (reportResult?.error ? null : buildViewModel({ activeReport, data: reportResult, currency, currentPage: page, agingMetricFilter })),
@@ -1504,6 +1531,7 @@ export default function Reports() {
       >
         <div className="min-w-0">
           <ReportSidebar
+            sections={visibleReportSections}
             activeReport={activeReport}
             onSelect={(reportId) => setSearchParams({ report: reportId })}
           />

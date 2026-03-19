@@ -4,6 +4,7 @@ import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 import PageLoader from "../components/PageLoader";
 import { usePageLoading } from "../context/PageLoadingContext";
+import { useOrganization } from "../context/OrganizationContext";
 
 const DESKTOP_QUERY = "(min-width: 1024px)";
 
@@ -13,6 +14,7 @@ function isDesktopViewport() {
 }
 
 export default function AppLayout() {
+  const { organizationId } = useOrganization();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(() => isDesktopViewport());
@@ -67,6 +69,7 @@ export default function AppLayout() {
 
   return (
     <div
+      key={organizationId || "no-organization"}
       className="app-shell h-dvh overflow-hidden lg:h-screen"
       style={{ "--app-sidebar-width": sidebarWidth }}
     >

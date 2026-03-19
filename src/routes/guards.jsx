@@ -1,10 +1,11 @@
 import React from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { authGetOrganizationId, authGetRole, authGetToken } from "../services/auth.service";
+import { authGetRole, authGetToken } from "../services/auth.service";
 import { companyIsCompleted } from "../services/company.service";
 import { invoiceTemplateIsCompleted } from "../lib/templateStore";
 import { canAccessSettings } from "../services/roles";
 import { canAccessPathForRole } from "../services/accessControl";
+import { useOrganization } from "../context/OrganizationContext";
 
 export function AuthGuard() {
   const loc = useLocation();
@@ -16,11 +17,11 @@ export function AuthGuard() {
 export function SetupGuard() {
   const loc = useLocation();
   const role = authGetRole();
-  const organizationId = authGetOrganizationId();
+  const { organizationId } = useOrganization();
   const setupComplete = companyIsCompleted();
   const invoiceTemplateSelected = invoiceTemplateIsCompleted();
 
-  if (canAccessSettings(role) && !organizationId && loc.pathname !== "/organization-select") {
+  if (!organizationId && loc.pathname !== "/organization-select") {
     return <Navigate to="/organization-select" replace />;
   }
 
@@ -50,8 +51,10 @@ export function SetupGuard() {
 }
 
 export function AppRouteAccessGuard() {
+  const { organizationId } = useOrganization();
   const role = authGetRole();
   const loc = useLocation();
+  void organizationId;
 
   if (!canAccessPathForRole(role, loc.pathname)) {
     return <Navigate to="/dashboard" replace />;
@@ -61,9 +64,11 @@ export function AppRouteAccessGuard() {
 }
 
 export function InvoiceTemplateGuard() {
+  const { organizationId } = useOrganization();
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
 
+  if (!organizationId) return <Navigate to="/organization-select" replace />;
   if (!canAccessSettings(role)) return <Navigate to="/dashboard" replace />;
   if (!setupComplete) return <Navigate to="/company-setup" replace />;
 
@@ -72,6 +77,7 @@ export function InvoiceTemplateGuard() {
 
 export function CompanySetupGuard() {
   const loc = useLocation();
+  const { organizationId } = useOrganization();
   const role = authGetRole();
   const setupComplete = companyIsCompleted();
   const invoiceTemplateSelected = invoiceTemplateIsCompleted();
@@ -79,6 +85,7 @@ export function CompanySetupGuard() {
 
   if (!canAccessSettings(role)) return <Navigate to="/dashboard" replace />;
   if (createMode) return <Outlet />;
+  if (!organizationId) return <Navigate to="/organization-select" replace />;
   if (setupComplete && !invoiceTemplateSelected) return <Navigate to="/invoice-template-setup" replace />;
   if (setupComplete && invoiceTemplateSelected) return <Navigate to="/dashboard" replace />;
 

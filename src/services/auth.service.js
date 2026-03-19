@@ -642,12 +642,9 @@ export async function authLogin({ email, password }) {
   await upsertProfileRow(user);
   const fallbackRole = normalizeRoleLabel(user.user_metadata?.default_role || ROLE_LABELS.owner);
   const memberships = filterActiveMemberships(await fetchAllMemberships(user.id));
-  const isOwner = isOwnerRole(fallbackRole);
 
   let selectedMembership = null;
   if (memberships.length === 1) {
-    selectedMembership = memberships[0];
-  } else if (!isOwner && memberships.length > 1) {
     selectedMembership = memberships[0];
   }
 
@@ -669,7 +666,7 @@ export async function authLogin({ email, password }) {
 
   const organizationSummaries = memberships.map(mapMembershipSummary);
   const next =
-    isOwner && memberships.length > 1
+    memberships.length > 1
       ? "organization_select"
       : resolveNextStep(role, selectedMembership?.organization);
 

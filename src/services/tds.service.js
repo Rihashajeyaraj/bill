@@ -1,5 +1,6 @@
 import { listPaymentIn } from "../modules/paymentIn/store";
 import { listNotifications, pushNotification } from "./activity.service";
+import { companyGetProfile } from "./company.service";
 
 function parseNumber(value) {
   const numeric = Number(value ?? 0);
@@ -45,7 +46,15 @@ function reminderExists(kind, periodKey) {
   );
 }
 
+function isIndiaCompany() {
+  const profile = companyGetProfile() || {};
+  const country = String(profile?.country || profile?.countryCode || "").trim().toLowerCase();
+  return country === "india" || country === "in";
+}
+
 export function syncTdsComplianceReminders(referenceDate = new Date()) {
+  if (!isIndiaCompany()) return;
+
   const monthPeriodKey = monthKey(referenceDate);
   const quarterPeriodKey = quarterKey(referenceDate);
   const payments = listPaymentIn().filter((entry) => parseNumber(entry?.totals?.tdsAmount) > 0);

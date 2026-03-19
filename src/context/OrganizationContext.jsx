@@ -1,7 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
+  authGetOrganizationId,
+  authGetToken,
+  authListOrganizations,
+  authSelectOrganization
+} from "../services/auth.service";
+import {
   companyGetCountryCode,
   companyGetCountryName,
+  companyLoadMyOrganization,
   companyGetProfile,
   ORGANIZATION_UPDATED_EVENT
 } from "../services/company.service";
@@ -46,7 +53,8 @@ function stripLeadingCountryCode(countryValue, countryCode) {
 }
 
 function buildOrganizationState(profile = null) {
-  const source = profile || companyGetProfile() || {};
+  const organizationId = String(authGetOrganizationId() || "").trim();
+  const source = organizationId ? profile || companyGetProfile() || {} : {};
   const countryCodeRaw = String(source?.countryCode || source?.country_code || "")
     .trim()
     .toUpperCase();
@@ -60,6 +68,7 @@ function buildOrganizationState(profile = null) {
     normalizeCurrencyCode(source?.currency || source?.base_currency || source?.tax?.currency) || "INR";
 
   return {
+    organizationId,
     profile: source,
     country,
     countryCode,
@@ -73,10 +82,58 @@ const OrganizationContext = createContext(null);
 
 export function OrganizationProvider({ children }) {
   const [organization, setOrganization] = useState(() => buildOrganizationState());
+  const [organizations, setOrganizations] = useState([]);
+  const [organizationsLoading, setOrganizationsLoading] = useState(false);
+  const [switchingOrganizationId, setSwitchingOrganizationId] = useState("");
 
   const refreshOrganization = useCallback(() => {
     setOrganization(buildOrganizationState());
   }, []);
+
+  const refreshOrganizations = useCallback(async () => {
+    if (!authGetToken()) {
+      setOrganizations([]);
+      return [];
+    }
+
+    setOrganizationsLoading(true);
+    try {
+      const nextRows = await authListOrganizations();
+      const safeRows = Array.isArray(nextRows) ? nextRows : [];
+      setOrganizations(safeRows);
+      return safeRows;
+    } catch {
+      setOrganizations([]);
+      return [];
+    } finally {
+      setOrganizationsLoading(false);
+    }
+  }, []);
+
+  const switchOrganization = useCallback(
+    async (nextOrganizationId) => {
+      const safeOrganizationId = String(nextOrganizationId || "").trim();
+      if (!safeOrganizationId) {
+        throw new Error("Company selection is required.");
+      }
+      if (safeOrganizationId === String(authGetOrganizationId() || "").trim()) {
+        refreshOrganization();
+        return { organizationId: safeOrganizationId };
+      }
+
+      setSwitchingOrganizationId(safeOrganizationId);
+      try {
+        const selected = await authSelectOrganization(safeOrganizationId);
+        await companyLoadMyOrganization(safeOrganizationId);
+        refreshOrganization();
+        await refreshOrganizations();
+        return selected;
+      } finally {
+        setSwitchingOrganizationId("");
+      }
+    },
+    [refreshOrganization, refreshOrganizations]
+  );
 
   useEffect(() => {
     const onStorage = (event) => {
@@ -84,37 +141,63 @@ export function OrganizationProvider({ children }) {
         !event?.key ||
         isOrganizationScopedStorageEventKey(LS_KEYS.company_profile, event.key) ||
         isUserScopedStorageEventKey(LS_KEYS.organization_id, event.key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.organization_id, event.key) ||
         isOrganizationScopedStorageEventKey(LS_KEYS.companyProfileCompleted, event.key)
       ) {
         refreshOrganization();
+        void refreshOrganizations();
       }
     };
 
     const onProfileChanged = (event) => {
       if (event?.detail && typeof event.detail === "object") {
         setOrganization(buildOrganizationState(event.detail));
+        void refreshOrganizations();
         return;
       }
       refreshOrganization();
+      void refreshOrganizations();
     };
 
     window.addEventListener("storage", onStorage);
     window.addEventListener("focus", refreshOrganization);
+    window.addEventListener("focus", refreshOrganizations);
     window.addEventListener(ORGANIZATION_UPDATED_EVENT, onProfileChanged);
 
     return () => {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", refreshOrganization);
+      window.removeEventListener("focus", refreshOrganizations);
       window.removeEventListener(ORGANIZATION_UPDATED_EVENT, onProfileChanged);
     };
-  }, [refreshOrganization]);
+  }, [refreshOrganization, refreshOrganizations]);
+
+  useEffect(() => {
+    void refreshOrganizations();
+  }, [refreshOrganizations]);
 
   const value = useMemo(
     () => ({
       ...organization,
-      refreshOrganization
+      currentOrganization: organizations.find(
+        (entry) => String(entry?.organizationId || "").trim() === String(organization.organizationId || "").trim()
+      ) || null,
+      organizations,
+      organizationsLoading,
+      switchingOrganizationId,
+      refreshOrganization,
+      refreshOrganizations,
+      switchOrganization
     }),
-    [organization, refreshOrganization]
+    [
+      organization,
+      organizations,
+      organizationsLoading,
+      switchingOrganizationId,
+      refreshOrganization,
+      refreshOrganizations,
+      switchOrganization
+    ]
   );
 
   return <OrganizationContext.Provider value={value}>{children}</OrganizationContext.Provider>;

@@ -29,6 +29,7 @@ import {
   syncStockNotificationsFromRemote
 } from "../services/stockNotifications.service";
 import { syncTdsComplianceReminders } from "../services/tds.service";
+import { useOrganization } from "./OrganizationContext";
 
 const AppShellContext = createContext(null);
 const REMOTE_NOTIFICATION_REFRESH_COOLDOWN_MS = 30 * 1000;
@@ -67,6 +68,7 @@ function mergeNotifications(creditList, stockList, appList) {
 export function AppShellProvider({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { organizationId } = useOrganization();
 
   const [commandOpen, setCommandOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -124,7 +126,7 @@ export function AppShellProvider({ children }) {
       console.warn("Failed to initialize activity seed", error);
     }
     void refreshFeeds();
-  }, [refreshFeeds]);
+  }, [refreshFeeds, organizationId]);
 
   useEffect(() => {
     const onNotificationsUpdated = () => {

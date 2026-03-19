@@ -6,13 +6,11 @@ import PageHeader from "../components/PageHeader";
 import GradientButton from "../components/GradientButton";
 import Modal from "../components/Modal";
 import {
-  authGetRole,
   authDeleteOrganization,
-  authListOrganizations,
-  authSelectOrganization
+  authGetRole
 } from "../services/auth.service";
-import { companyLoadMyOrganization } from "../services/company.service";
 import { isOwnerRole } from "../services/roles";
+import { useOrganization } from "../context/OrganizationContext";
 
 function pathForNext(next) {
   if (next === "organization_setup") return "/company-setup";
@@ -23,53 +21,45 @@ function pathForNext(next) {
 export default function OrganizationSelect() {
   const navigate = useNavigate();
   const role = authGetRole();
-  const [loading, setLoading] = useState(true);
-  const [organizations, setOrganizations] = useState([]);
+  const isOwner = isOwnerRole(role);
+  const {
+    organizationId,
+    organizations,
+    organizationsLoading,
+    switchingOrganizationId,
+    refreshOrganizations,
+    switchOrganization
+  } = useOrganization();
   const [error, setError] = useState("");
-  const [selectingId, setSelectingId] = useState("");
   const [deletingId, setDeletingId] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
-    if (!isOwnerRole(role)) {
-      navigate("/dashboard", { replace: true });
-      return;
-    }
-
     let mounted = true;
     async function loadOrganizations() {
-      setLoading(true);
       setError("");
       try {
-        const list = await authListOrganizations();
-        if (!mounted) return;
-        setOrganizations(Array.isArray(list) ? list : []);
+        await refreshOrganizations();
       } catch (loadError) {
         if (!mounted) return;
         setError(loadError?.message || "Unable to load organizations.");
-      } finally {
-        if (mounted) setLoading(false);
       }
     }
 
-    loadOrganizations();
+    void loadOrganizations();
     return () => {
       mounted = false;
     };
-  }, [navigate, role]);
+  }, [refreshOrganizations]);
 
   async function handleSelectOrganization(organizationId) {
     if (!organizationId) return;
-    setSelectingId(organizationId);
     setError("");
     try {
-      const selected = await authSelectOrganization(organizationId);
-      await companyLoadMyOrganization(organizationId);
+      const selected = await switchOrganization(organizationId);
       navigate(pathForNext(selected?.next), { replace: true });
     } catch (selectError) {
       setError(selectError?.message || "Unable to open selected organization.");
-    } finally {
-      setSelectingId("");
     }
   }
 
@@ -89,8 +79,7 @@ export default function OrganizationSelect() {
     setError("");
     try {
       await authDeleteOrganization(targetId);
-      const latest = await authListOrganizations();
-      setOrganizations(Array.isArray(latest) ? latest : []);
+      await refreshOrganizations();
       setDeleteTarget(null);
     } catch (deleteError) {
       setError(deleteError?.message || "Unable to delete selected organization.");
@@ -115,12 +104,12 @@ export default function OrganizationSelect() {
       <PageHeader
         title="Select Company"
         subtitle="Choose the company you want to work with."
-        right={
+        right={isOwner ? (
           <GradientButton onClick={() => navigate("/company-setup?mode=create")}>
             <Plus className="h-4 w-4" />
             Create Company
           </GradientButton>
-        }
+        ) : null}
       />
 
       {error ? (
@@ -129,26 +118,28 @@ export default function OrganizationSelect() {
         </div>
       ) : null}
 
-      {loading ? (
+      {organizationsLoading ? (
         <Card className="p-6 text-sm text-slate-500">Loading organizations...</Card>
       ) : null}
 
-      {!loading && !organizations.length ? (
+      {!organizationsLoading && !organizations.length ? (
         <Card className="p-6">
           <p className="text-sm font-semibold text-slate-900">No company found</p>
           <p className="mt-1 text-sm text-slate-500">
-            Create your first company to continue.
+            {isOwner ? "Create your first company to continue." : "No company has been assigned to your account yet."}
           </p>
-          <div className="mt-4">
-            <GradientButton onClick={() => navigate("/company-setup", { replace: true })}>
-              <Plus className="h-4 w-4" />
-              Create First Company
-            </GradientButton>
-          </div>
+          {isOwner ? (
+            <div className="mt-4">
+              <GradientButton onClick={() => navigate("/company-setup", { replace: true })}>
+                <Plus className="h-4 w-4" />
+                Create First Company
+              </GradientButton>
+            </div>
+          ) : null}
         </Card>
       ) : null}
 
-      {!loading && organizations.length ? (
+      {!organizationsLoading && organizations.length ? (
         <div className="grid grid-cols-1 gap-3">
           {organizations.map((organization) => (
             <Card key={organization.organizationId} className="p-4">
@@ -159,28 +150,35 @@ export default function OrganizationSelect() {
                     <p className="truncate text-sm font-semibold text-slate-900">
                       {organization.companyName}
                     </p>
+                    {String(organizationId || "").trim() === String(organization.organizationId || "").trim() ? (
+                      <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                        Current
+                      </span>
+                    ) : null}
                   </div>
                   <p className="mt-1 text-xs text-slate-500">
                     {organization.countryCode} | Role: {organization.role}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openDeleteModal(organization)}
-                    disabled={selectingId === organization.organizationId || deletingId === organization.organizationId}
-                    className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    {deletingId === organization.organizationId ? "Deleting..." : "Delete Company"}
-                  </button>
+                  {isOwner ? (
+                    <button
+                      type="button"
+                      onClick={() => openDeleteModal(organization)}
+                      disabled={switchingOrganizationId === organization.organizationId || deletingId === organization.organizationId}
+                      className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {deletingId === organization.organizationId ? "Deleting..." : "Delete Company"}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => handleSelectOrganization(organization.organizationId)}
-                    disabled={selectingId === organization.organizationId || deletingId === organization.organizationId}
+                    disabled={switchingOrganizationId === organization.organizationId || deletingId === organization.organizationId}
                     className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white disabled:opacity-60"
                   >
-                    {selectingId === organization.organizationId ? "Opening..." : "Open"}
+                    {switchingOrganizationId === organization.organizationId ? "Opening..." : "Open"}
                     <ArrowRight className="h-3.5 w-3.5" />
                   </button>
                 </div>

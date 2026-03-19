@@ -27,6 +27,11 @@ export const TRANSACTION_TYPE_OPTIONS = [
   "Expense"
 ];
 
+function isIndiaCountry(value) {
+  const normalized = normalizeText(value);
+  return normalized === "india" || normalized === "in";
+}
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -1445,6 +1450,23 @@ export function buildAllTransactionsReport(dataset, filters = {}, options = {}) 
 }
 
 export function buildTdsReport(dataset, filters = {}) {
+  const organizationCountry = String(
+    filters.organizationCountry || filters.country || dataset?.organizationCountry || ""
+  ).trim();
+  if (!isIndiaCountry(organizationCountry)) {
+    return {
+      fromDate: toIsoDate(filters.fromDate),
+      toDate: toIsoDate(filters.toDate),
+      partyId: String(filters.partyId || "").trim(),
+      rows: [],
+      totals: {
+        totalTds: 0,
+        customers: 0,
+        invoices: 0
+      }
+    };
+  }
+
   const fromDate = toIsoDate(filters.fromDate);
   const toDate = toIsoDate(filters.toDate);
   const partyId = String(filters.partyId || "").trim();
