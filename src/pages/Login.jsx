@@ -135,7 +135,7 @@ export default function Login() {
     if (!signupForm.password) { setErr("Password is required."); return; }
     if (signupForm.password !== signupForm.confirmPassword) { setErr("Passwords do not match."); return; }
     if (!isOwnerRole(signupForm.role) && !signupForm.registerCode.trim()) {
-      setErr("Register code is required for Accounter or Staff."); return;
+      setErr("Use an invite link to join as Accounter or Staff."); return;
     }
     setSubmitting(true);
     try {
@@ -442,6 +442,9 @@ export default function Login() {
           color: ${dm ? '#f1f5f9' : '#0f172a'};
           letter-spacing: -0.5px; margin: 4px 0 2px; line-height: 1.15;
         }
+        .lp-title--solo {
+          margin-bottom: 22px;
+        }
         .lp-subtitle {
           font-size: 13px; color: ${dm ? '#94a3b8' : '#64748b'};
           margin-bottom: 22px;
@@ -559,6 +562,12 @@ export default function Login() {
           transition: opacity 0.2s;
         }
         .lp-link-btn:hover { opacity: 0.75; }
+        .lp-helper {
+          margin: -4px 0 14px;
+          font-size: 12px;
+          color: ${dm ? '#94a3b8' : '#64748b'};
+          line-height: 1.5;
+        }
 
         .lp-err {
           background: #fef2f2; border: 1px solid #fecaca;
@@ -721,9 +730,9 @@ export default function Login() {
 
           {/* ── RIGHT FORM PANEL ── */}
           <div className="lp-form-panel">
-            <p className="lp-kicker">{isLogin ? "WELCOME" : "REGISTER"}</p>
-            <h1 className="lp-title">{isLogin ? "Login" : "Register"}</h1>
-            <p className="lp-subtitle">{isLogin ? "Login to continue" : "Create your user account"}</p>
+            {isLogin && <p className="lp-kicker">WELCOME</p>}
+            <h1 className={`lp-title${isLogin ? "" : " lp-title--solo"}`}>{isLogin ? "Login" : "Register"}</h1>
+            {isLogin && <p className="lp-subtitle">Login to continue</p>}
 
             {!usingSupabase && (
               <div className="lp-demo">
@@ -854,17 +863,12 @@ export default function Login() {
                     ))}
                   </select>
 
-                  {/* Register Code */}
                   {!isOwnerRole(signupForm.role) && (
-                    <>
-                      <label><span className="lp-label">Register Code</span></label>
-                      <div className="lp-input-wrap">
-                        <input id="signup-code" className="lp-input lp-input--plain"
-                          placeholder="Paste organization register code"
-                          value={signupForm.registerCode}
-                          onChange={(e) => setSignupForm((p) => ({ ...p, registerCode: e.target.value.toUpperCase() }))} />
-                      </div>
-                    </>
+                    <p className="lp-helper">
+                      {signupForm.registerCode
+                        ? `Invite code applied: ${signupForm.registerCode}`
+                        : "Use an invite link to join as Accounter or Staff."}
+                    </p>
                   )}
 
                   {/* Submit */}
