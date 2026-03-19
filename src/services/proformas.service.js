@@ -1019,10 +1019,12 @@ async function convertSalesProformaLocally(proformaId) {
     throw new Error("Expired Pro Forma Invoices cannot be converted.");
   }
 
-  const invoiceNo = String(companyPeekDocumentNumber("invoice") || "").trim() || `INV-${Date.now()}`;
+  const invoiceDate = current?.proformaDate || new Date().toISOString().slice(0, 10);
+  const invoiceNo =
+    String(companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }) || "").trim() || `INV-${Date.now()}`;
   const invoiceId = await invoicesCreate({
     invoiceNo,
-    invoiceDate: current?.proformaDate || new Date().toISOString().slice(0, 10),
+    invoiceDate,
     dueDate: current?.dueDate || current?.validTill || current?.proformaDate || "",
     partyId: current?.partyId || "",
     partyName: current?.partyName || "",
@@ -1074,7 +1076,7 @@ async function convertSalesProformaLocally(proformaId) {
     }
   });
 
-  companyConsumeDocumentNumber("invoice");
+  companyConsumeDocumentNumber("invoice", { dateValue: invoiceDate });
 
   const convertedAt = new Date().toISOString();
   salesSetAll(

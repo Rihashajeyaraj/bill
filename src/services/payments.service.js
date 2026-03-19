@@ -4,6 +4,7 @@ import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
 import {
   annotateWithFinancialYear,
+  financialYearsEnsureForDate,
   financialYearsResolveForDate
 } from "./financialYears.service";
 
@@ -156,24 +157,26 @@ export function paymentsCreate(payment) {
     const organizationId = authGetOrganizationId();
     if (organizationId) {
       const actorUserId = authGetUser()?.id || null;
-      const remotePayload = {
-        organization_id: organizationId,
-        financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
-        payment_no: payment?.paymentNo || `PAY-${Date.now()}`,
-        payment_date: payment?.date || payment?.paymentDate || "",
-        direction: String(payment?.direction || "IN").toUpperCase() === "OUT" ? "out" : "in",
-        party_id: looksLikeUuid(payment?.partyId) ? payment.partyId : null,
-        invoice_id: looksLikeUuid(payment?.invoiceId) ? payment.invoiceId : null,
-        bill_id: looksLikeUuid(payment?.billId) ? payment.billId : null,
-        amount: parseNumber(payment?.amount),
-        tds_amount: parseNumber(payment?.tdsAmount),
-        payment_mode: payment?.mode || payment?.paymentMode || null,
-        reference_no: payment?.referenceNo || payment?.paymentReference || null,
-        notes: payment?.note || payment?.notes || null,
-        status: "posted",
-        created_by: actorUserId
-      };
       void (async () => {
+        const persistedFinancialYear =
+          (await financialYearsEnsureForDate(paymentDate).catch(() => null)) || matchedFinancialYear;
+        const remotePayload = {
+          organization_id: organizationId,
+          financial_year_id: looksLikeUuid(persistedFinancialYear?.id) ? persistedFinancialYear.id : null,
+          payment_no: payment?.paymentNo || `PAY-${Date.now()}`,
+          payment_date: paymentDate,
+          direction: String(payment?.direction || "IN").toUpperCase() === "OUT" ? "out" : "in",
+          party_id: looksLikeUuid(payment?.partyId) ? payment.partyId : null,
+          invoice_id: looksLikeUuid(payment?.invoiceId) ? payment.invoiceId : null,
+          bill_id: looksLikeUuid(payment?.billId) ? payment.billId : null,
+          amount: parseNumber(payment?.amount),
+          tds_amount: parseNumber(payment?.tdsAmount),
+          payment_mode: payment?.mode || payment?.paymentMode || null,
+          reference_no: payment?.referenceNo || payment?.paymentReference || null,
+          notes: payment?.note || payment?.notes || null,
+          status: "posted",
+          created_by: actorUserId
+        };
         let insertResult = await supabase.from("payments").insert(remotePayload);
         if (insertResult.error && isMissingColumnError(insertResult.error)) {
           const { financial_year_id, ...legacyPayload } = remotePayload;

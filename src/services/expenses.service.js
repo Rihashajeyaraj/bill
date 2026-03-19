@@ -3,6 +3,7 @@ import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import {
   annotateWithFinancialYear,
+  financialYearsEnsureForDate,
   financialYearsResolveForDate
 } from "./financialYears.service";
 
@@ -276,13 +277,16 @@ export async function expensesSyncFromRemote() {
 
 export async function expensesCreate(expense) {
   const id = uid("exp_");
+  const expenseDate = expense?.date || "";
   const category = await ensureRemoteCategory(expense?.category);
   const normalizedAmount = parseNumber(expense?.amount);
   const normalizedTaxRate = parseNumber(expense?.taxRate);
   const normalizedTaxAmount =
     parseNumber(expense?.taxAmount) || Math.max(0, (normalizedAmount * Math.max(0, normalizedTaxRate)) / 100);
   const normalizedTotalAmount = parseNumber(expense?.totalAmount) || normalizedAmount + normalizedTaxAmount;
-  const matchedFinancialYear = financialYearsResolveForDate(expense?.date || "");
+  const matchedFinancialYear =
+    (await financialYearsEnsureForDate(expenseDate).catch(() => null)) ||
+    financialYearsResolveForDate(expenseDate);
   const next = annotateWithFinancialYear({
     ...expense,
     id,
@@ -292,7 +296,7 @@ export async function expensesCreate(expense) {
     taxAmount: normalizedTaxAmount,
     totalAmount: normalizedTotalAmount,
     created_at: new Date().toISOString()
-  }, expense?.date || "");
+  }, expenseDate);
 
   if (isSupabaseConfigured && supabase) {
     const organizationId = authGetOrganizationId();
@@ -304,7 +308,7 @@ export async function expensesCreate(expense) {
           organization_id: organizationId,
           financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
           expense_no: expense?.expenseNo || `EXP-${Date.now()}`,
-          expense_date: expense?.date || "",
+          expense_date: expenseDate,
           category: category || null,
           party_id: expense?.partyId || null,
           amount: normalizedAmount,
@@ -324,7 +328,7 @@ export async function expensesCreate(expense) {
           .insert({
             organization_id: organizationId,
             expense_no: expense?.expenseNo || `EXP-${Date.now()}`,
-            expense_date: expense?.date || "",
+            expense_date: expenseDate,
             category: category || null,
             party_id: expense?.partyId || null,
             amount: normalizedAmount,

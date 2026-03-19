@@ -7,6 +7,7 @@ import { triggerLowStockNotifications } from "../modules/items/store";
 import { companyPeekDocumentNumber } from "./company.service";
 import {
   annotateWithFinancialYear,
+  financialYearsEnsureForDate,
   financialYearsResolveForDate
 } from "./financialYears.service";
 
@@ -400,10 +401,13 @@ export async function invoicesSyncFromRemote() {
 export async function invoicesCreate(invoice) {
   assertInvoiceWritePermission();
   const now = new Date().toISOString();
+  const invoiceDate = invoice?.invoiceDate || now.slice(0, 10);
   const actor = authGetUser();
   const actorUserId = actor?.id || null;
   const actorName = String(actor?.name || actor?.email || "").trim();
-  const invoiceNo = String(invoice?.invoiceNo || "").trim() || String(companyPeekDocumentNumber("invoice") || "").trim();
+  const invoiceNo =
+    String(invoice?.invoiceNo || "").trim() ||
+    String(companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }) || "").trim();
   if (!invoiceNo) {
     throw new Error("Invoice Number is required.");
   }
@@ -419,7 +423,9 @@ export async function invoicesCreate(invoice) {
   const summary = calculateInvoiceSummary(lines, totals);
   const subTotal = summary.subTotal;
   const grandTotal = summary.grandTotal;
-  const matchedFinancialYear = financialYearsResolveForDate(invoice?.invoiceDate || now.slice(0, 10));
+  const matchedFinancialYear =
+    (await financialYearsEnsureForDate(invoiceDate).catch(() => null)) ||
+    financialYearsResolveForDate(invoiceDate);
 
   let id = uid("inv_");
 
@@ -430,8 +436,8 @@ export async function invoicesCreate(invoice) {
         organization_id: organizationId,
         financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
         invoice_no: invoiceNo,
-        invoice_date: invoice?.invoiceDate || now.slice(0, 10),
-        due_date: invoice?.dueDate || invoice?.invoiceDate || now.slice(0, 10),
+        invoice_date: invoiceDate,
+        due_date: invoice?.dueDate || invoiceDate,
         party_id: looksLikeUuid(invoice?.partyId) ? invoice.partyId : null,
         place_of_supply_state: invoice?.placeOfSupply || null,
         currency_code: String(invoice?.companySnapshot?.currency || invoice?.currency || "INR")

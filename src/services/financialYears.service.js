@@ -10,6 +10,9 @@ import { isSupabaseConfigured, supabase } from "./supabaseClient";
 
 export const FINANCIAL_YEARS_UPDATED_EVENT = "financialYears:updated";
 
+const DEFAULT_FINANCIAL_YEAR_START = "2000-04-01";
+const GENERATED_FINANCIAL_YEAR_OFFSETS = [-5, -4, -3, -2, -1, 0, 1];
+
 function parseDate(value) {
   const raw = String(value || "").trim();
   if (!raw) return null;
@@ -20,6 +23,15 @@ function parseDate(value) {
   }
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function buildUtcDate(year, monthIndex, day) {
+  const safeYear = Number(year);
+  const safeMonth = Number(monthIndex);
+  const safeDay = Number(day);
+  if (!Number.isFinite(safeYear) || !Number.isFinite(safeMonth) || !Number.isFinite(safeDay)) return null;
+  const lastDay = new Date(Date.UTC(safeYear, safeMonth + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(safeYear, safeMonth, Math.min(Math.max(1, safeDay), lastDay)));
 }
 
 export function normalizeIsoDate(value) {
@@ -41,6 +53,60 @@ function addDays(date, days) {
   const next = new Date(date.getTime());
   next.setUTCDate(next.getUTCDate() + days);
   return next;
+}
+
+function looksLikeUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || "").trim()
+  );
+}
+
+function getStoredProfile() {
+  return lsGetOrganizationScoped(LS_KEYS.company_profile, null) || {};
+}
+
+function resolveFinancialYearDateCandidate(source = {}) {
+  return normalizeIsoDate(
+    source?.financialYearDate ||
+      source?.financial_year_date ||
+      source?.financialYearStartDate ||
+      source?.financial_year_start
+  );
+}
+
+function buildDefaultFinancialYearDate(referenceDate = new Date()) {
+  const parsed = parseDate(referenceDate) || new Date();
+  const year = parsed.getUTCMonth() >= 3 ? parsed.getUTCFullYear() : parsed.getUTCFullYear() - 1;
+  return `${year}-04-01`;
+}
+
+function getFinancialYearDate(profileFallback = null, rows = []) {
+  const explicit = resolveFinancialYearDateCandidate(profileFallback || {});
+  if (explicit) return explicit;
+
+  const stored = resolveFinancialYearDateCandidate(getStoredProfile());
+  if (stored) return stored;
+
+  const fromRows = (Array.isArray(rows) ? rows : []).find((row) =>
+    resolveFinancialYearDateCandidate(row || {})
+  );
+  const rowDate = resolveFinancialYearDateCandidate(fromRows || {});
+  if (rowDate) return rowDate;
+
+  const firstStartDate = normalizeIsoDate((Array.isArray(rows) ? rows : [])[0]?.startDate);
+  if (firstStartDate) return firstStartDate;
+
+  return buildDefaultFinancialYearDate();
+}
+
+function getFinancialYearOrganizationId(profileFallback = null, rows = []) {
+  return String(
+    profileFallback?.organizationId ||
+      profileFallback?.organization_id ||
+      authGetOrganizationId() ||
+      (Array.isArray(rows) ? rows[0]?.organizationId : "") ||
+      ""
+  ).trim();
 }
 
 export function buildFinancialYearEndDate(startDate) {
@@ -68,6 +134,35 @@ export function buildFinancialYearCode(startDate, endDate) {
   const endYear = String(normalizeIsoDate(endDate)).slice(0, 4);
   if (!startYear || !endYear) return "";
   return `${startYear}${endYear}`;
+}
+
+export function resolveFinancialYearRange(dateValue, financialYearDate = "") {
+  const safeDate = parseDate(dateValue);
+  const safeFinancialYearDate = parseDate(financialYearDate || DEFAULT_FINANCIAL_YEAR_START);
+  if (!safeDate || !safeFinancialYearDate) {
+    return {
+      financialYearDate: "",
+      startDate: "",
+      endDate: "",
+      label: "",
+      yearCode: ""
+    };
+  }
+
+  const anchorMonth = safeFinancialYearDate.getUTCMonth();
+  const anchorDay = safeFinancialYearDate.getUTCDate();
+  const thisYearStart = buildUtcDate(safeDate.getUTCFullYear(), anchorMonth, anchorDay);
+  const effectiveStart = safeDate >= thisYearStart ? thisYearStart : buildUtcDate(safeDate.getUTCFullYear() - 1, anchorMonth, anchorDay);
+  const startDate = normalizeIsoDate(effectiveStart);
+  const endDate = buildFinancialYearEndDate(startDate);
+
+  return {
+    financialYearDate: startDate,
+    startDate,
+    endDate,
+    label: buildFinancialYearLabel(startDate, endDate),
+    yearCode: buildFinancialYearCode(startDate, endDate)
+  };
 }
 
 function isMissingTableOrColumnError(error) {
@@ -109,21 +204,24 @@ function emitFinancialYearsUpdated(detail = null) {
 }
 
 function toFinancialYearRow(row, selectedId = "") {
-  const startDate = normalizeIsoDate(row?.start_date || row?.startDate || row?.financial_year_start);
-  const endDate = normalizeIsoDate(row?.end_date || row?.endDate || row?.financial_year_end);
+  const financialYearDate = resolveFinancialYearDateCandidate(row || {});
+  const startDate = normalizeIsoDate(row?.start_date || row?.startDate || financialYearDate);
+  const endDate = normalizeIsoDate(row?.end_date || row?.endDate) || buildFinancialYearEndDate(startDate);
   const id = String(row?.id || row?.financial_year_id || "").trim() || `${startDate}_${endDate}`;
   const label =
     String(row?.label || "").trim() || buildFinancialYearLabel(startDate, endDate) || `${startDate} to ${endDate}`;
   const yearCode = String(row?.year_code || row?.yearCode || "").trim() || buildFinancialYearCode(startDate, endDate);
+
   return {
     id,
     organizationId: String(row?.organization_id || row?.organizationId || authGetOrganizationId() || "").trim(),
+    financialYearDate: financialYearDate || startDate,
     startDate,
     endDate,
     label,
     yearCode,
-    isCurrent: !!row?.is_current,
-    autoCreated: !!row?.auto_created,
+    isCurrent: row?.isCurrent ?? !!row?.is_current,
+    autoCreated: row?.autoCreated ?? !!row?.auto_created,
     selected: String(selectedId || "").trim() === id,
     created_at: row?.created_at || new Date().toISOString(),
     updated_at: row?.updated_at || row?.created_at || new Date().toISOString()
@@ -136,11 +234,90 @@ function sortFinancialYears(rows) {
   );
 }
 
-function persistRows(rows, selectedId = "") {
-  const normalized = sortFinancialYears(rows).map((row) => toFinancialYearRow(row, selectedId));
+function mergeFinancialYearRows(rows, selectedId = "") {
+  const normalizedRows = (Array.isArray(rows) ? rows : [])
+    .filter(Boolean)
+    .map((row) => toFinancialYearRow(row, selectedId));
+  const merged = new Map();
+
+  normalizedRows.forEach((row) => {
+    const key = `${row.organizationId || "local"}::${row.startDate}`;
+    const current = merged.get(key);
+    if (!current) {
+      merged.set(key, row);
+      return;
+    }
+
+    merged.set(key, {
+      ...current,
+      ...row,
+      id: looksLikeUuid(row.id) ? row.id : looksLikeUuid(current.id) ? current.id : row.id || current.id,
+      financialYearDate: row.financialYearDate || current.financialYearDate,
+      label: row.label || current.label,
+      yearCode: row.yearCode || current.yearCode,
+      isCurrent: !!(current.isCurrent || row.isCurrent),
+      autoCreated: !!(current.autoCreated && row.autoCreated),
+      created_at: current.created_at || row.created_at,
+      updated_at: row.updated_at || current.updated_at
+    });
+  });
+
+  return sortFinancialYears(Array.from(merged.values()));
+}
+
+function buildFinancialYearRowForDate(dateValue, options = {}) {
+  const anchorDate = getFinancialYearDate(options?.profileFallback || null, options?.rows || []);
+  const range = resolveFinancialYearRange(dateValue, anchorDate);
+  if (!range.startDate || !range.endDate) return null;
+
+  const organizationId = getFinancialYearOrganizationId(options?.profileFallback || null, options?.rows || []);
+  const existing = (Array.isArray(options?.rows) ? options.rows : []).find(
+    (row) => normalizeIsoDate(row?.startDate || row?.start_date) === range.startDate
+  );
+
+  return toFinancialYearRow(
+    {
+      ...(existing || {}),
+      id: existing?.id || `${range.startDate}_${range.endDate}`,
+      organization_id: existing?.organizationId || existing?.organization_id || organizationId,
+      financial_year_date: range.financialYearDate,
+      start_date: range.startDate,
+      end_date: range.endDate,
+      label: existing?.label || range.label,
+      year_code: existing?.yearCode || existing?.year_code || range.yearCode,
+      is_current: existing?.isCurrent ?? (
+        normalizeIsoDate(new Date()) >= range.startDate && normalizeIsoDate(new Date()) <= range.endDate
+      ),
+      auto_created: existing?.autoCreated ?? true,
+      created_at: existing?.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    },
+    options?.selectedId || ""
+  );
+}
+
+function buildGeneratedFinancialYears(profileFallback = null, rows = []) {
+  const anchorDate = getFinancialYearDate(profileFallback, rows);
+  const currentRange = resolveFinancialYearRange(new Date(), anchorDate);
+  if (!currentRange.startDate) return [];
+
+  return GENERATED_FINANCIAL_YEAR_OFFSETS.map((offset) => {
+    const shiftedStart = normalizeIsoDate(addYears(parseDate(currentRange.startDate), offset));
+    return buildFinancialYearRowForDate(shiftedStart, {
+      profileFallback: { ...(profileFallback || {}), financialYearDate: anchorDate },
+      rows
+    });
+  }).filter(Boolean);
+}
+
+function persistRows(rows, selectedId = "", profileFallback = null) {
+  const normalized = mergeFinancialYearRows(
+    [...(Array.isArray(rows) ? rows : []), ...buildGeneratedFinancialYears(profileFallback, rows)],
+    selectedId
+  );
   const effectiveSelectedId =
     String(selectedId || "").trim() ||
-    String(normalized.find((row) => row.isCurrent)?.id || normalized[0]?.id || "").trim();
+    String(normalized.find((row) => row.id === getSelectedIdFallback())?.id || normalized.find((row) => row.isCurrent)?.id || normalized[0]?.id || "").trim();
 
   const finalRows = normalized.map((row) => ({
     ...row,
@@ -154,28 +331,12 @@ function persistRows(rows, selectedId = "") {
   return finalRows;
 }
 
-function buildFallbackRow(profile = {}) {
-  const startDate = normalizeIsoDate(profile?.financialYearStartDate || profile?.financial_year_start);
-  const endDate = normalizeIsoDate(profile?.financialYearEndDate || profile?.financial_year_end);
-  if (!startDate || !endDate || !isExactFinancialYearRange(startDate, endDate)) return [];
-  return [
-    {
-      id: `${startDate}_${endDate}`,
-      organizationId: authGetOrganizationId(),
-      startDate,
-      endDate,
-      label: buildFinancialYearLabel(startDate, endDate),
-      yearCode: buildFinancialYearCode(startDate, endDate),
-      isCurrent: true,
-      autoCreated: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }
-  ];
+function buildFallbackRows(profile = {}) {
+  return buildGeneratedFinancialYears(profile, []);
 }
 
 export function financialYearsList() {
-  return sortFinancialYears(getLocalRows());
+  return mergeFinancialYearRows([...getLocalRows(), ...buildGeneratedFinancialYears(getStoredProfile(), getLocalRows())]);
 }
 
 export function financialYearsGetSelectedId() {
@@ -191,11 +352,17 @@ export function financialYearsGetSelected() {
 export function financialYearsResolveForDate(dateValue, rows = financialYearsList()) {
   const safeDate = normalizeIsoDate(dateValue);
   if (!safeDate) return null;
-  return (
+
+  const matched =
     (Array.isArray(rows) ? rows : []).find(
       (row) => row?.startDate && row?.endDate && safeDate >= row.startDate && safeDate <= row.endDate
-    ) || null
-  );
+    ) || null;
+  if (matched) return matched;
+
+  return buildFinancialYearRowForDate(safeDate, {
+    rows,
+    profileFallback: getStoredProfile()
+  });
 }
 
 export function financialYearsGetCurrent(dateValue = new Date()) {
@@ -218,7 +385,7 @@ export function financialYearsSetSelected(selectedId) {
     safeId && rows.some((row) => row.id === safeId)
       ? safeId
       : String(rows.find((row) => row.isCurrent)?.id || rows[0]?.id || "").trim();
-  return persistRows(rows, nextSelectedId);
+  return persistRows(rows, nextSelectedId, getStoredProfile());
 }
 
 export function applyFinancialYearRange(filters = {}, fiscalYear = financialYearsGetSelected()) {
@@ -243,14 +410,12 @@ export function annotateWithFinancialYear(record, dateValue, rows = financialYea
 
 export async function financialYearsSyncFromRemote(profileFallback = null) {
   if (!isSupabaseConfigured || !supabase) {
-    const fallbackRows = buildFallbackRow(profileFallback || {});
-    return persistRows(fallbackRows, financialYearsGetSelectedId());
+    return persistRows(buildFallbackRows(profileFallback || {}), financialYearsGetSelectedId(), profileFallback);
   }
 
   const organizationId = authGetOrganizationId();
   if (!organizationId) {
-    const fallbackRows = buildFallbackRow(profileFallback || {});
-    return persistRows(fallbackRows, financialYearsGetSelectedId());
+    return persistRows(buildFallbackRows(profileFallback || {}), financialYearsGetSelectedId(), profileFallback);
   }
 
   const { data, error } = await supabase
@@ -261,70 +426,85 @@ export async function financialYearsSyncFromRemote(profileFallback = null) {
 
   if (error) {
     if (isMissingTableOrColumnError(error)) {
-      const fallbackRows = buildFallbackRow(profileFallback || {});
-      return persistRows(fallbackRows, financialYearsGetSelectedId());
+      return persistRows(buildFallbackRows(profileFallback || {}), financialYearsGetSelectedId(), profileFallback);
     }
     throw new Error(normalizeSupabaseError(error, "Failed to load financial years"));
   }
 
-  const mapped = (Array.isArray(data) ? data : []).map((row) => toFinancialYearRow(row, financialYearsGetSelectedId()));
-  if (!mapped.length) {
-    const fallbackRows = buildFallbackRow(profileFallback || {});
-    return persistRows(fallbackRows, financialYearsGetSelectedId());
-  }
-  return persistRows(mapped, financialYearsGetSelectedId());
+  const mapped = mergeFinancialYearRows((Array.isArray(data) ? data : []).map((row) => toFinancialYearRow(row)));
+  const rows = mapped.length ? mapped : buildFallbackRows(profileFallback || {});
+  return persistRows(rows, financialYearsGetSelectedId(), profileFallback);
 }
 
 export async function ensureFinancialYearForProfile(profile = {}, options = {}) {
-  const startDate = normalizeIsoDate(profile?.financialYearStartDate || profile?.financial_year_start);
-  const endDate = normalizeIsoDate(profile?.financialYearEndDate || profile?.financial_year_end);
-  if (!startDate || !endDate) {
-    throw new Error("Financial year start and end dates are required.");
-  }
-  if (!isExactFinancialYearRange(startDate, endDate)) {
-    throw new Error("Financial year must be exactly 12 months.");
+  const financialYearDate = getFinancialYearDate(profile);
+  if (!financialYearDate) {
+    throw new Error("Financial year date is required.");
   }
 
+  const dateValue = normalizeIsoDate(options?.dateValue || new Date()) || normalizeIsoDate(new Date());
   const organizationId = String(options?.organizationId || authGetOrganizationId() || "").trim();
-  const row = {
-    id: `${startDate}_${endDate}`,
-    organizationId,
-    startDate,
-    endDate,
-    label: buildFinancialYearLabel(startDate, endDate),
-    yearCode: buildFinancialYearCode(startDate, endDate),
-    isCurrent: true,
-    autoCreated: !!options?.autoCreated,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  };
+  const existingRows = financialYearsList();
+  const row = buildFinancialYearRowForDate(dateValue, {
+    rows: existingRows,
+    profileFallback: {
+      ...(profile || {}),
+      organizationId,
+      financialYearDate
+    }
+  });
+
+  if (!row) {
+    throw new Error("Unable to calculate financial year.");
+  }
 
   if (!organizationId || !isSupabaseConfigured || !supabase) {
-    return persistRows([row], row.id);
+    return persistRows([row, ...existingRows], row.id, profile);
   }
 
   const actorUserId = authGetUser()?.id || null;
   const payload = {
     organization_id: organizationId,
-    start_date: startDate,
-    end_date: endDate,
+    start_date: row.startDate,
+    end_date: row.endDate,
     year_code: row.yearCode,
     label: row.label,
-    is_current: true,
+    is_current: !!row.isCurrent,
     auto_created: !!options?.autoCreated,
     created_by: actorUserId
   };
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("financial_years")
-    .upsert(payload, { onConflict: "organization_id,start_date" });
+    .upsert(payload, { onConflict: "organization_id,year_code" })
+    .select("*")
+    .single();
 
   if (error) {
     if (isMissingTableOrColumnError(error)) {
-      return persistRows([row], row.id);
+      return persistRows([row, ...existingRows], row.id, profile);
     }
     throw new Error(normalizeSupabaseError(error, "Failed to save financial year"));
   }
 
-  return financialYearsSyncFromRemote(profile);
+  const savedRow = toFinancialYearRow(data || payload, row.id);
+  return persistRows([savedRow, ...existingRows], savedRow.id, profile);
+}
+
+export async function financialYearsEnsureForDate(dateValue, profileFallback = null, options = {}) {
+  const safeDate = normalizeIsoDate(dateValue);
+  if (!safeDate) return null;
+
+  const rows = financialYearsList();
+  const matched = financialYearsResolveForDate(safeDate, rows);
+  if (matched && looksLikeUuid(matched.id)) return matched;
+
+  const savedRows = await ensureFinancialYearForProfile(profileFallback || getStoredProfile(), {
+    ...options,
+    dateValue: safeDate,
+    autoCreated: options?.autoCreated ?? true
+  });
+
+  const savedMatched = financialYearsResolveForDate(safeDate, savedRows);
+  return savedMatched || matched || null;
 }

@@ -413,11 +413,11 @@ export default function InvoiceCreate() {
 
   useEffect(() => {
     if (String(invoiceNo || "").trim()) return;
-    const nextInvoiceNo = companyPeekDocumentNumber("invoice");
+    const nextInvoiceNo = companyPeekDocumentNumber("invoice", { dateValue: invoiceDate });
     if (nextInvoiceNo) {
       setInvoiceNo(nextInvoiceNo);
     }
-  }, [invoiceNo]);
+  }, [invoiceDate, invoiceNo]);
 
   useEffect(() => {
     if (!activeLineItemSearchId) return undefined;
@@ -1578,7 +1578,9 @@ export default function InvoiceCreate() {
       return null;
     }
 
-    const normalizedInvoiceNo = String(invoiceNo || "").trim() || String(companyPeekDocumentNumber("invoice") || "").trim();
+    const normalizedInvoiceNo =
+      String(invoiceNo || "").trim() ||
+      String(companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }) || "").trim();
     const nextErrors = {};
     if (!partyId) nextErrors.customer = "This field is required";
     if (!normalizedInvoiceNo) nextErrors.invoiceNo = "This field is required";
@@ -1868,8 +1870,8 @@ export default function InvoiceCreate() {
       setPaymentNotes("");
       setFormErrors({});
       await invoicesSyncFromRemote();
-      companyConsumeDocumentNumber("invoice");
-      setInvoiceNo(companyPeekDocumentNumber("invoice"));
+      companyConsumeDocumentNumber("invoice", { dateValue: invoiceDate });
+      setInvoiceNo(companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }));
 
       if (!silent) {
         if (paymentSavedAsUnapplied) {

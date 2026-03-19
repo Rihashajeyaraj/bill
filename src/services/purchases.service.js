@@ -7,6 +7,7 @@ import { triggerLowStockNotifications } from "../modules/items/store";
 import { createItemBarcodesForPurchase } from "./itemBarcodes.service";
 import {
   annotateWithFinancialYear,
+  financialYearsEnsureForDate,
   financialYearsResolveForDate
 } from "./financialYears.service";
 
@@ -356,13 +357,16 @@ export async function purchasesSyncFromRemote() {
 export async function purchasesCreate(bill) {
   assertPurchaseWritePermission();
   const now = new Date().toISOString();
+  const billDate = bill?.billDate || now.slice(0, 10);
   const actor = authGetUser();
   const actorUserId = actor?.id || null;
   const actorName = String(actor?.name || actor?.email || "").trim();
   let id = uid("pur_");
   const lines = Array.isArray(bill?.lines) ? bill.lines : [];
   const totals = bill?.totals || {};
-  const matchedFinancialYear = financialYearsResolveForDate(bill?.billDate || now.slice(0, 10));
+  const matchedFinancialYear =
+    (await financialYearsEnsureForDate(billDate).catch(() => null)) ||
+    financialYearsResolveForDate(billDate);
 
   if (isSupabaseConfigured && supabase) {
     const organizationId = authGetOrganizationId();
@@ -371,8 +375,8 @@ export async function purchasesCreate(bill) {
       const postingPayload = {
         organization_id: organizationId,
         bill_no: bill?.billNumber || `BILL-${Date.now()}`,
-        bill_date: bill?.billDate || now.slice(0, 10),
-        due_date: bill?.dueDate || bill?.billDate || now.slice(0, 10),
+        bill_date: billDate,
+        due_date: bill?.dueDate || billDate,
         supplier_id: supplierId,
         country: bill?.country || "",
         party_name: bill?.partyName || "",
@@ -419,8 +423,8 @@ export async function purchasesCreate(bill) {
             organization_id: organizationId,
             financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
             bill_no: bill?.billNumber || `BILL-${Date.now()}`,
-            bill_date: bill?.billDate || now.slice(0, 10),
-            due_date: bill?.dueDate || bill?.billDate || now.slice(0, 10),
+            bill_date: billDate,
+            due_date: bill?.dueDate || billDate,
             supplier_id: supplierId,
             subtotal: parseNumber(totals?.subTotal),
             tax_total: parseNumber(totals?.taxTotal),

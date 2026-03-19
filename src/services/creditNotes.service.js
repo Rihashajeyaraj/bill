@@ -1,6 +1,7 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import { financialYearsEnsureForDate } from "./financialYears.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -560,6 +561,7 @@ export async function creditNotesSaveRemote(note) {
     grandTotal,
     status
   });
+  await financialYearsEnsureForDate(note?.creditNoteDate || note?.creditDate || "").catch(() => null);
 
   const payload = {
     organization_id: organizationId,

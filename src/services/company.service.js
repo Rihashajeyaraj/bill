@@ -23,6 +23,7 @@ import {
   buildFinancialYearEndDate,
   ensureFinancialYearForProfile,
   financialYearsGetCurrent,
+  financialYearsResolveForDate,
   financialYearsSyncFromRemote,
   isExactFinancialYearRange,
   normalizeIsoDate
@@ -110,15 +111,44 @@ function formatInvoiceNumber(prefix, counter, year = new Date().getFullYear()) {
   return `${safePrefix}-${safeYear}-${safeCounter}`;
 }
 
+function normalizeFinancialYearFields(profile = {}) {
+  const financialYearDate = normalizeIsoDate(
+    profile?.financialYearDate ||
+      profile?.financial_year_date ||
+      profile?.financialYearStartDate ||
+      profile?.financial_year_start
+  );
+  const financialYearStartDate = financialYearDate;
+  const financialYearEndDate = financialYearStartDate ? buildFinancialYearEndDate(financialYearStartDate) : "";
+
+  return {
+    financialYearDate,
+    financialYearStartDate,
+    financialYearEndDate
+  };
+}
+
+function getFinancialYearNumberingKey(dateValue = new Date()) {
+  const matchedYear = financialYearsResolveForDate(dateValue) || financialYearsGetCurrent(dateValue);
+  return String(matchedYear?.yearCode || "").trim() || String(new Date().getFullYear());
+}
+
+function getInvoiceNumberYear(dateValue = new Date()) {
+  const matchedYear = financialYearsResolveForDate(dateValue) || financialYearsGetCurrent(dateValue);
+  return String(matchedYear?.startDate || "").slice(0, 4) || String(new Date().getFullYear());
+}
+
 function nextNumberingStateForYear(numbering = {}, options = {}) {
   const forceResetYearly = options?.forceResetYearly === true;
   const resetKeys = Array.isArray(options?.resetKeys) ? options.resetKeys : [];
   const next = numbering && typeof numbering === "object" ? { ...numbering } : {};
   if (forceResetYearly) next.resetYearly = true;
   if (!next.resetYearly) return next;
-  const nowYear = new Date().getFullYear();
-  const lastResetYear = Number(next.lastResetYear || 0);
-  if (lastResetYear === nowYear) return next;
+  const currentFinancialYearCode = getFinancialYearNumberingKey(options?.dateValue || new Date());
+  const lastResetFinancialYearCode = String(
+    next.lastResetFinancialYearCode || next.lastResetYearCode || next.lastResetYear || ""
+  ).trim();
+  if (lastResetFinancialYearCode === currentFinancialYearCode) return next;
   const counters = next.counters && typeof next.counters === "object" ? { ...next.counters } : {};
   const keysToReset =
     resetKeys
@@ -128,7 +158,8 @@ function nextNumberingStateForYear(numbering = {}, options = {}) {
     counters[key] = 1;
   });
   next.counters = counters;
-  next.lastResetYear = nowYear;
+  next.lastResetFinancialYearCode = currentFinancialYearCode;
+  next.lastResetYear = Number(String(currentFinancialYearCode).slice(0, 4)) || new Date().getFullYear();
   return next;
 }
 
@@ -343,15 +374,9 @@ function mapOrganizationToProfile(organization, taxProfile = null) {
   if (!organization) return null;
   const country = getCountryName(organization.country_code);
   const baseCurrency = organization.base_currency || "INR";
-  const configuredStartDate = normalizeIsoDate(
-    organization?.settings?.financialYearStartDate || organization?.settings?.financial_year_start
+  const { financialYearDate, financialYearStartDate, financialYearEndDate } = normalizeFinancialYearFields(
+    organization?.settings || {}
   );
-  const configuredEndDate = normalizeIsoDate(
-    organization?.settings?.financialYearEndDate || organization?.settings?.financial_year_end
-  );
-  const financialYearStartDate = configuredStartDate;
-  const financialYearEndDate =
-    configuredEndDate || (configuredStartDate ? buildFinancialYearEndDate(configuredStartDate) : "");
 
   return {
     companyName: organization.company_name || "",
@@ -380,6 +405,7 @@ function mapOrganizationToProfile(organization, taxProfile = null) {
       vatRate: Number(taxProfile?.default_output_tax_rate || 0),
       taxId: taxProfile?.tax_id || organization.pan || ""
     },
+    financialYearDate,
     financialYearStartDate,
     financialYearEndDate,
     settings: organization.settings || {},
@@ -392,8 +418,7 @@ function mapProfileToOrganizationPayload(profile, userId, existingOrgId = "") {
   const countryData = normalizeProfileCountry(profile);
   const country = countryData.country;
   const currency = profile?.currency || profile?.currencies?.[0] || "INR";
-  const financialYearStartDate = normalizeIsoDate(profile?.financialYearStartDate || profile?.financial_year_start);
-  const financialYearEndDate = normalizeIsoDate(profile?.financialYearEndDate || profile?.financial_year_end);
+  const { financialYearDate, financialYearStartDate, financialYearEndDate } = normalizeFinancialYearFields(profile);
   const financialYearStartMonth = Number(financialYearStartDate.slice(5, 7)) || 4;
 
   return {
@@ -419,6 +444,7 @@ function mapProfileToOrganizationPayload(profile, userId, existingOrgId = "") {
       ...(profile?.settings || {}),
       owner_role: toDbRole(authGetRole()),
       currencies: Array.isArray(profile?.currencies) ? profile.currencies : [currency],
+      financialYearDate,
       financialYearStartDate,
       financialYearEndDate
     },
@@ -562,14 +588,14 @@ export function companyGetProfile() {
 }
 
 export function companySaveProfile(profile) {
-  const financialYearStartDate = normalizeIsoDate(profile?.financialYearStartDate || profile?.financial_year_start);
-  const financialYearEndDate = normalizeIsoDate(profile?.financialYearEndDate || profile?.financial_year_end);
+  const { financialYearDate, financialYearStartDate, financialYearEndDate } = normalizeFinancialYearFields(profile);
   const normalizedCountry = normalizeProfileCountry(profile || {});
   const { settings: sanitizedSettings } = sanitizeSettingsPayload(profile?.settings || {});
   const normalizedProfile = {
     ...(profile || {}),
     country: normalizedCountry.country,
     countryCode: normalizedCountry.countryCode,
+    financialYearDate,
     financialYearStartDate,
     financialYearEndDate,
     settings: sanitizedSettings
@@ -582,14 +608,14 @@ export function companySaveProfile(profile) {
 export function companyUpdateProfile(partial) {
   const prev = companyGetProfile() || {};
   const merged = { ...prev, ...partial, updated_at: new Date().toISOString() };
-  const financialYearStartDate = normalizeIsoDate(merged?.financialYearStartDate || merged?.financial_year_start);
-  const financialYearEndDate = normalizeIsoDate(merged?.financialYearEndDate || merged?.financial_year_end);
+  const { financialYearDate, financialYearStartDate, financialYearEndDate } = normalizeFinancialYearFields(merged);
   const normalizedCountry = normalizeProfileCountry(merged);
   const { settings: sanitizedSettings } = sanitizeSettingsPayload(merged?.settings || {});
   const next = {
     ...merged,
     country: normalizedCountry.country,
     countryCode: normalizedCountry.countryCode,
+    financialYearDate,
     financialYearStartDate,
     financialYearEndDate,
     settings: sanitizedSettings
@@ -599,7 +625,7 @@ export function companyUpdateProfile(partial) {
   return savedProfile;
 }
 
-export function companyPeekDocumentNumber(documentType) {
+export function companyPeekDocumentNumber(documentType, options = {}) {
   const key = normalizeDocumentType(documentType);
   if (!key) return "";
   const profile = companyGetProfile() || {};
@@ -607,17 +633,18 @@ export function companyPeekDocumentNumber(documentType) {
   const numberingBase = settings?.numbering && typeof settings.numbering === "object" ? settings.numbering : {};
   const numbering = nextNumberingStateForYear(numberingBase, {
     forceResetYearly: key === "invoice",
-    resetKeys: key === "invoice" ? ["invoice"] : []
+    resetKeys: key === "invoice" ? ["invoice"] : [],
+    dateValue: options?.dateValue || new Date()
   });
   const prefixes = numbering?.prefixes && typeof numbering.prefixes === "object" ? numbering.prefixes : {};
   const counters = numbering?.counters && typeof numbering.counters === "object" ? numbering.counters : {};
   const prefix = String(prefixes[key] || buildDefaultDocumentPrefix(key, profile?.country || "India"));
   const counter = toPositiveCounter(counters[key], 1);
-  if (key === "invoice") return formatInvoiceNumber(prefix, counter);
+  if (key === "invoice") return formatInvoiceNumber(prefix, counter, getInvoiceNumberYear(options?.dateValue));
   return formatDocumentNumber(prefix, counter);
 }
 
-export function companyConsumeDocumentNumber(documentType) {
+export function companyConsumeDocumentNumber(documentType, options = {}) {
   const key = normalizeDocumentType(documentType);
   if (!key) return "";
   const profile = companyGetProfile() || {};
@@ -625,14 +652,17 @@ export function companyConsumeDocumentNumber(documentType) {
   const numberingBase = settings?.numbering && typeof settings.numbering === "object" ? settings.numbering : {};
   const numbering = nextNumberingStateForYear(numberingBase, {
     forceResetYearly: key === "invoice",
-    resetKeys: key === "invoice" ? ["invoice"] : []
+    resetKeys: key === "invoice" ? ["invoice"] : [],
+    dateValue: options?.dateValue || new Date()
   });
   const prefixes = numbering?.prefixes && typeof numbering.prefixes === "object" ? numbering.prefixes : {};
   const counters = numbering?.counters && typeof numbering.counters === "object" ? numbering.counters : {};
   const prefix = String(prefixes[key] || buildDefaultDocumentPrefix(key, profile?.country || "India"));
   const currentCounter = toPositiveCounter(counters[key], 1);
   const currentNumber =
-    key === "invoice" ? formatInvoiceNumber(prefix, currentCounter) : formatDocumentNumber(prefix, currentCounter);
+    key === "invoice"
+      ? formatInvoiceNumber(prefix, currentCounter, getInvoiceNumberYear(options?.dateValue))
+      : formatDocumentNumber(prefix, currentCounter);
 
   if (key !== "invoice" && numbering.autoIncrement === false) {
     return currentNumber;
@@ -911,6 +941,7 @@ export async function companyLoadMyOrganization(selectedOrganizationId = "") {
     if (activeFinancialYear) {
       profile = {
         ...profile,
+        financialYearDate: activeFinancialYear.financialYearDate || activeFinancialYear.startDate,
         financialYearStartDate: activeFinancialYear.startDate,
         financialYearEndDate: activeFinancialYear.endDate
       };
@@ -999,18 +1030,17 @@ export async function companySaveProfileRemote(profile, options = {}) {
     currency: profile?.currencies?.[0] || profile?.currency || previous?.currency || "INR",
     updated_at: new Date().toISOString()
   };
-  mergedProfile.financialYearStartDate = normalizeIsoDate(
-    mergedProfile?.financialYearStartDate || mergedProfile?.financial_year_start
-  );
-  mergedProfile.financialYearEndDate = normalizeIsoDate(
-    mergedProfile?.financialYearEndDate || mergedProfile?.financial_year_end
-  );
+  const normalizedFinancialYear = normalizeFinancialYearFields(mergedProfile);
+  mergedProfile.financialYearDate = normalizedFinancialYear.financialYearDate;
+  mergedProfile.financialYearStartDate = normalizedFinancialYear.financialYearStartDate;
+  mergedProfile.financialYearEndDate = normalizedFinancialYear.financialYearEndDate;
   if (
+    !mergedProfile.financialYearDate ||
     !mergedProfile.financialYearStartDate ||
     !mergedProfile.financialYearEndDate ||
     !isExactFinancialYearRange(mergedProfile.financialYearStartDate, mergedProfile.financialYearEndDate)
   ) {
-    throw new Error("Financial year must be exactly 12 months.");
+    throw new Error("Financial year date is required and must resolve to exactly 12 months.");
   }
   const { settings: sanitizedSettings } = sanitizeSettingsPayload(mergedProfile?.settings || {});
   mergedProfile.settings = sanitizedSettings;
