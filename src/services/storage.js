@@ -11,6 +11,8 @@ export const LS_KEYS = {
   app_font_family: "app_font_family",
   company_profile: "company_profile",
   companyProfileCompleted: "companyProfileCompleted",
+  financial_years: "financial_years",
+  selected_financial_year_id: "selected_financial_year_id",
   invoiceTemplateConfig: "invoiceTemplateConfig",
   invoiceTemplateCompleted: "invoiceTemplateCompleted",
   parties: "parties",

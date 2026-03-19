@@ -5,6 +5,10 @@ import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
 import { triggerLowStockNotifications } from "../modules/items/store";
 import { createItemBarcodesForPurchase } from "./itemBarcodes.service";
+import {
+  annotateWithFinancialYear,
+  financialYearsResolveForDate
+} from "./financialYears.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -32,6 +36,10 @@ function isMissingRpcError(error) {
     message.includes("could not find the function") ||
     message.includes("post_purchase_bill_fifo")
   );
+}
+
+function isMissingColumnError(error) {
+  return String(error?.code || "").toUpperCase() === "42703";
 }
 
 function normalizeAddressParts(parts) {
@@ -162,7 +170,7 @@ function mapRemotePurchaseBill(row, balanceAmount) {
     String(row?.status || "").toLowerCase() === "cancelled"
       ? "cancelled"
       : deriveBillStatus(grandTotal, effectiveBalance);
-  return {
+  const mapped = {
     id: row?.id || uid("pur_"),
     country: metadata?.country || "",
     partyId: row?.supplier_id || "",
@@ -192,8 +200,12 @@ function mapRemotePurchaseBill(row, balanceAmount) {
     createdByName: String(metadata?.createdByName || "").trim(),
     createdBy: String(metadata?.createdByName || row?.created_by || "").trim(),
     status,
+    financialYearId: row?.financial_year_id || metadata?.financialYearId || "",
+    financialYearLabel: metadata?.financialYearLabel || "",
+    financialYearCode: metadata?.financialYearCode || "",
     lines: []
   };
+  return annotateWithFinancialYear(mapped, mapped.billDate);
 }
 
 export async function purchasesSyncFromRemote() {
@@ -204,7 +216,7 @@ export async function purchasesSyncFromRemote() {
 
   const { data, error } = await supabase
     .from("purchase_bills")
-    .select("id,supplier_id,bill_no,bill_date,due_date,subtotal,tax_total,grand_total,status,metadata,created_at")
+    .select("id,supplier_id,financial_year_id,bill_no,bill_date,due_date,subtotal,tax_total,grand_total,status,metadata,created_at")
     .eq("organization_id", organizationId)
     .order("bill_date", { ascending: false })
     .order("created_at", { ascending: false });
@@ -350,6 +362,7 @@ export async function purchasesCreate(bill) {
   let id = uid("pur_");
   const lines = Array.isArray(bill?.lines) ? bill.lines : [];
   const totals = bill?.totals || {};
+  const matchedFinancialYear = financialYearsResolveForDate(bill?.billDate || now.slice(0, 10));
 
   if (isSupabaseConfigured && supabase) {
     const organizationId = authGetOrganizationId();
@@ -400,10 +413,11 @@ export async function purchasesCreate(bill) {
           throw new Error(normalizeSupabaseError(postError, "Failed to post purchase bill"));
         }
 
-        const { data: billRow, error: billError } = await supabase
+        let billInsert = await supabase
           .from("purchase_bills")
           .insert({
             organization_id: organizationId,
+            financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
             bill_no: bill?.billNumber || `BILL-${Date.now()}`,
             bill_date: bill?.billDate || now.slice(0, 10),
             due_date: bill?.dueDate || bill?.billDate || now.slice(0, 10),
@@ -425,12 +439,52 @@ export async function purchasesCreate(bill) {
               taxBreakup: bill?.totals?.taxBreakup || null,
               taxRate: parseNumber(bill?.totals?.taxRate),
               roundOff: parseNumber(totals?.roundOff),
-              totalQty: parseNumber(totals?.totalQty)
+              totalQty: parseNumber(totals?.totalQty),
+              financialYearId: matchedFinancialYear?.id || "",
+              financialYearLabel: matchedFinancialYear?.label || "",
+              financialYearCode: matchedFinancialYear?.yearCode || ""
             },
             created_by: actorUserId
           })
           .select("*")
           .single();
+        if (billInsert.error && isMissingColumnError(billInsert.error)) {
+          billInsert = await supabase
+            .from("purchase_bills")
+            .insert({
+              organization_id: organizationId,
+              bill_no: bill?.billNumber || `BILL-${Date.now()}`,
+              bill_date: bill?.billDate || now.slice(0, 10),
+              due_date: bill?.dueDate || bill?.billDate || now.slice(0, 10),
+              supplier_id: supplierId,
+              subtotal: parseNumber(totals?.subTotal),
+              tax_total: parseNumber(totals?.taxTotal),
+              grand_total: parseNumber(totals?.grandTotal),
+              status: "issued",
+              metadata: {
+                country: bill?.country || "",
+                partyName: bill?.partyName || "",
+                createdByName: actorName,
+                partyAddress: bill?.partyAddress || "",
+                phone: bill?.phone || "",
+                paymentType: bill?.paymentType || "",
+                taxMode: bill?.taxMode || "",
+                supplyType: bill?.supplyType || null,
+                tax: bill?.totals?.tax || null,
+                taxBreakup: bill?.totals?.taxBreakup || null,
+                taxRate: parseNumber(bill?.totals?.taxRate),
+                roundOff: parseNumber(totals?.roundOff),
+                totalQty: parseNumber(totals?.totalQty),
+                financialYearId: matchedFinancialYear?.id || "",
+                financialYearLabel: matchedFinancialYear?.label || "",
+                financialYearCode: matchedFinancialYear?.yearCode || ""
+              },
+              created_by: actorUserId
+            })
+            .select("*")
+            .single();
+        }
+        const { data: billRow, error: billError } = billInsert;
 
         if (billError) {
           throw new Error(normalizeSupabaseError(billError, "Failed to create purchase bill"));
@@ -474,7 +528,7 @@ export async function purchasesCreate(bill) {
     }
   }
 
-  const next = {
+  const next = annotateWithFinancialYear({
     ...bill,
     id,
     country: bill?.country || "",
@@ -520,7 +574,7 @@ export async function purchasesCreate(bill) {
       vatAmount: parseNumber(line?.vatAmount),
       amount: parseNumber(line?.amount)
     }))
-  };
+  }, bill?.billDate || now.slice(0, 10));
 
   setAll([next, ...getAll()]);
   applyPurchaseStockDelta(next.lines);

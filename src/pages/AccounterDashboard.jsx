@@ -16,6 +16,7 @@ import { computeItemStock, listItems, syncItemsFromRemote } from "../modules/ite
 import { listParties, syncPartiesFromRemote } from "../modules/parties/store";
 import { mapOpenBillsByCountry } from "../modules/paymentOut/store";
 import { useOrganization } from "../context/OrganizationContext";
+import { useFinancialYears } from "../context/FinancialYearContext";
 import {
   isOrganizationScopedStorageEventKey,
   LS_KEYS,
@@ -85,6 +86,13 @@ function toIsoDate(value) {
   return parsed.toISOString().slice(0, 10);
 }
 
+function inFinancialYear(dateValue, financialYear) {
+  if (!financialYear?.startDate || !financialYear?.endDate) return true;
+  const iso = toIsoDate(dateValue);
+  if (!iso) return false;
+  return iso >= financialYear.startDate && iso <= financialYear.endDate;
+}
+
 function todayIso() {
   const now = new Date();
   const y = now.getFullYear();
@@ -138,6 +146,7 @@ function refreshPremiumRecords() {
 export default function AccounterDashboard() {
   const navigate = useNavigate();
   const { currency = "INR", country = "India", countryCode = "IN" } = useOrganization();
+  const { selectedYear } = useFinancialYears();
 
   const [invoices, setInvoices] = useState(() => invoicesList());
   const [purchases, setPurchases] = useState(() => purchasesList());
@@ -212,22 +221,42 @@ export default function AccounterDashboard() {
 
   const dashboard = useMemo(() => {
     const today = todayIso();
-    const scopedInvoices = invoices.filter((invoice) => countryMatches(recordCountry(invoice), country));
-    const scopedPurchases = purchases.filter((bill) => countryMatches(recordCountry(bill), country));
-    const scopedPayments = payments.filter((entry) => countryMatches(recordCountry(entry), country));
+    const scopedInvoices = invoices.filter(
+      (invoice) =>
+        countryMatches(recordCountry(invoice), country) &&
+        inFinancialYear(invoice?.invoiceDate || invoice?.date || invoice?.created_at, selectedYear)
+    );
+    const scopedPurchases = purchases.filter(
+      (bill) =>
+        countryMatches(recordCountry(bill), country) &&
+        inFinancialYear(bill?.billDate || bill?.invoiceDate || bill?.date || bill?.created_at, selectedYear)
+    );
+    const scopedPayments = payments.filter(
+      (entry) =>
+        countryMatches(recordCountry(entry), country) &&
+        inFinancialYear(entry?.paymentDate || entry?.payment_date || entry?.date || entry?.created_at, selectedYear)
+    );
     const scopedItems = items.filter((item) => countryMatches(recordCountry(item), country));
     const scopedParties = parties.filter((party) => countryMatches(recordCountry(party), country));
     const scopedCreditNotes = (Array.isArray(premiumRecords.creditNotes) ? premiumRecords.creditNotes : []).filter(
-      (entry) => countryMatches(recordCountry(entry), country)
+      (entry) =>
+        countryMatches(recordCountry(entry), country) &&
+        inFinancialYear(entry?.creditNoteDate || entry?.creditDate || entry?.created_at, selectedYear)
     );
     const scopedDebitNotes = (Array.isArray(premiumRecords.debitNotes) ? premiumRecords.debitNotes : []).filter(
-      (entry) => countryMatches(recordCountry(entry), country)
+      (entry) =>
+        countryMatches(recordCountry(entry), country) &&
+        inFinancialYear(entry?.debitNoteDate || entry?.created_at, selectedYear)
     );
     const scopedPaymentIn = (Array.isArray(premiumRecords.paymentIn) ? premiumRecords.paymentIn : []).filter(
-      (entry) => countryMatches(recordCountry(entry), country)
+      (entry) =>
+        countryMatches(recordCountry(entry), country) &&
+        inFinancialYear(entry?.paymentDate || entry?.payment_date || entry?.created_at, selectedYear)
     );
     const scopedPaymentOut = (Array.isArray(premiumRecords.paymentOut) ? premiumRecords.paymentOut : []).filter(
-      (entry) => countryMatches(recordCountry(entry), country)
+      (entry) =>
+        countryMatches(recordCountry(entry), country) &&
+        inFinancialYear(entry?.paymentDate || entry?.payment_date || entry?.created_at, selectedYear)
     );
 
     const todaysInvoices = scopedInvoices.filter(
@@ -284,7 +313,10 @@ export default function AccounterDashboard() {
 
     const receivableAmount = pendingInvoices.reduce((sum, invoice) => sum + invoiceBalance(invoice), 0);
     const payableAmount = mapOpenBillsByCountry(countryCode || country).reduce(
-      (sum, bill) => sum + parseNumber(bill?.balanceDue),
+      (sum, bill) =>
+        inFinancialYear(bill?.billDate || bill?.invoiceDate || bill?.date || bill?.created_at, selectedYear)
+          ? sum + parseNumber(bill?.balanceDue)
+          : sum,
       0
     );
 
@@ -345,7 +377,7 @@ export default function AccounterDashboard() {
       suppliers,
       pendingFollowUps
     };
-  }, [country, countryCode, invoices, purchases, payments, items, parties, premiumRecords]);
+  }, [country, countryCode, invoices, purchases, payments, items, parties, premiumRecords, selectedYear]);
 
   return (
     <div className="dashboard-theme max-w-6xl space-y-4">
@@ -355,6 +387,7 @@ export default function AccounterDashboard() {
           Monitor all staff operations, review approval queues, and control receivable/payable flow ({countryCode}{" "}
           {country}).
         </p>
+        <p className="mt-1 text-xs text-slate-500">Financial Year: {selectedYear?.label || "Not selected"}</p>
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">

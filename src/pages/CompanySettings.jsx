@@ -80,6 +80,11 @@ import {
   phoneDigitRangeLabel,
   validateInternationalPhone
 } from "../lib/phoneValidation";
+import {
+  buildFinancialYearEndDate,
+  isExactFinancialYearRange,
+  normalizeIsoDate
+} from "../services/financialYears.service";
 
 const SECTION_ITEMS = [
   {
@@ -260,6 +265,10 @@ function buildDefaultPrefixes(country) {
 function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
   const stored = profile?.settings || {};
   const baseCountry = profile?.country || stored.localization?.defaultCountry || "India";
+  const today = new Date();
+  const defaultFinancialYearStartYear = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+  const defaultFinancialYearStartDate = `${defaultFinancialYearStartYear}-04-01`;
+  const defaultFinancialYearEndDate = buildFinancialYearEndDate(defaultFinancialYearStartDate);
   const localizationCurrencies = normalizeLocalizationCurrencies({
     country: baseCountry,
     primary: stored.localization?.currency || profile?.currency || profile?.tax?.currency,
@@ -281,6 +290,12 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
     phone: profile?.phone || "",
     website: profile?.website || "",
     country: baseCountry,
+    financialYearStartDate:
+      normalizeIsoDate(profile?.financialYearStartDate || profile?.financial_year_start) ||
+      defaultFinancialYearStartDate,
+    financialYearEndDate:
+      normalizeIsoDate(profile?.financialYearEndDate || profile?.financial_year_end) ||
+      defaultFinancialYearEndDate,
     address: {
       line1: address.line1 || address.street || "",
       line2: address.line2 || "",
@@ -477,6 +492,8 @@ function mapSettingsToProfile(settings) {
     phone: settings.profile.phone,
     website: settings.profile.website,
     country: settings.localization.defaultCountry,
+    financialYearStartDate: settings.profile.financialYearStartDate,
+    financialYearEndDate: settings.profile.financialYearEndDate,
     currency: primaryCurrency,
     currencies: normalizedCurrencies,
     address: settings.profile.address,
@@ -665,6 +682,15 @@ function validateProfile(profile) {
     errors.phone = phoneValidation.error;
   }
   if (!profile.country?.trim()) errors.country = "This field is required";
+  if (!profile.financialYearStartDate?.trim()) errors.financialYearStartDate = "This field is required";
+  if (!profile.financialYearEndDate?.trim()) errors.financialYearEndDate = "This field is required";
+  if (
+    profile.financialYearStartDate &&
+    profile.financialYearEndDate &&
+    !isExactFinancialYearRange(profile.financialYearStartDate, profile.financialYearEndDate)
+  ) {
+    errors.financialYearEndDate = "Financial year must be exactly 12 months.";
+  }
   if (!profile.address?.line1?.trim()) errors.line1 = "This field is required";
   if (profile.website && !/^https?:\/\/|^[a-z0-9.-]+\.[a-z]{2,}/i.test(profile.website.trim())) {
     errors.website = "Enter a valid website URL.";
@@ -1737,6 +1763,53 @@ export default function CompanySettings() {
                       {sectionErrors.website ? (
                         <p className="mt-1 text-xs text-rose-600">{sectionErrors.website}</p>
                       ) : null}
+                    </FormField>
+
+                    <FormField
+                      label="Financial Year Start Date"
+                      required
+                      error={sectionErrors.financialYearStartDate}
+                    >
+                      <input
+                        type="date"
+                        value={settings.profile.financialYearStartDate || ""}
+                        onChange={(event) =>
+                          updateSection("profile", {
+                            financialYearStartDate: event.target.value,
+                            financialYearEndDate: event.target.value
+                              ? buildFinancialYearEndDate(event.target.value)
+                              : settings.profile.financialYearEndDate
+                          })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                      />
+                      {sectionErrors.financialYearStartDate ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.financialYearStartDate}</p>
+                      ) : null}
+                    </FormField>
+
+                    <FormField
+                      label="Financial Year End Date"
+                      required
+                      error={sectionErrors.financialYearEndDate}
+                      hint="Auto-calculated as one year minus one day"
+                    >
+                      <input
+                        type="date"
+                        value={settings.profile.financialYearEndDate || ""}
+                        onChange={(event) =>
+                          updateSection("profile", { financialYearEndDate: event.target.value })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                      />
+                      {sectionErrors.financialYearEndDate ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.financialYearEndDate}</p>
+                      ) : (
+                        <p className="mt-1 text-xs text-slate-500">
+                          Label preview: {settings.profile.financialYearStartDate?.slice(0, 4) || "YYYY"}-
+                          {settings.profile.financialYearEndDate?.slice(0, 4) || "YYYY"}
+                        </p>
+                      )}
                     </FormField>
                   </div>
                   <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">

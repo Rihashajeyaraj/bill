@@ -1,9 +1,14 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import {
+  annotateWithFinancialYear,
+  financialYearsResolveForDate
+} from "./financialYears.service";
 
 const DEFAULT_EXPENSE_CATEGORIES = ["Office", "Travel", "Utilities", "Marketing", "Maintenance"];
 export const EXPENSES_CHANGED_EVENT = "expenses:updated";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function getAll() {
   return lsGetOrganizationScoped(LS_KEYS.expenses, []);
@@ -21,6 +26,10 @@ function setAllCategories(list) {
 function parseNumber(value) {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
+}
+
+function looksLikeUuid(value) {
+  return UUID_PATTERN.test(String(value || ""));
 }
 
 function notifyExpensesChanged(source = "unknown") {
@@ -90,8 +99,12 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
+function isMissingColumnError(error) {
+  return String(error?.code || "").toUpperCase() === "42703";
+}
+
 function mapExpenseRow(row) {
-  return {
+  return annotateWithFinancialYear({
     id: row?.id || uid("exp_"),
     expenseNo: row?.expense_no || "",
     date: row?.expense_date || "",
@@ -104,8 +117,9 @@ function mapExpenseRow(row) {
     paymentMode: row?.payment_mode || "",
     note: row?.notes || "",
     status: row?.status || "posted",
+    financialYearId: row?.financial_year_id || "",
     created_at: row?.created_at || new Date().toISOString()
-  };
+  }, row?.expense_date || row?.created_at);
 }
 
 function normalizeExpenseCategory(value) {
@@ -268,7 +282,8 @@ export async function expensesCreate(expense) {
   const normalizedTaxAmount =
     parseNumber(expense?.taxAmount) || Math.max(0, (normalizedAmount * Math.max(0, normalizedTaxRate)) / 100);
   const normalizedTotalAmount = parseNumber(expense?.totalAmount) || normalizedAmount + normalizedTaxAmount;
-  const next = {
+  const matchedFinancialYear = financialYearsResolveForDate(expense?.date || "");
+  const next = annotateWithFinancialYear({
     ...expense,
     id,
     category,
@@ -277,16 +292,17 @@ export async function expensesCreate(expense) {
     taxAmount: normalizedTaxAmount,
     totalAmount: normalizedTotalAmount,
     created_at: new Date().toISOString()
-  };
+  }, expense?.date || "");
 
   if (isSupabaseConfigured && supabase) {
     const organizationId = authGetOrganizationId();
     if (organizationId) {
       const actorUserId = authGetUser()?.id || null;
-      const { data, error } = await supabase
+      let insertResult = await supabase
         .from("expenses")
         .insert({
           organization_id: organizationId,
+          financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
           expense_no: expense?.expenseNo || `EXP-${Date.now()}`,
           expense_date: expense?.date || "",
           category: category || null,
@@ -302,6 +318,28 @@ export async function expensesCreate(expense) {
         })
         .select("*")
         .single();
+      if (insertResult.error && isMissingColumnError(insertResult.error)) {
+        insertResult = await supabase
+          .from("expenses")
+          .insert({
+            organization_id: organizationId,
+            expense_no: expense?.expenseNo || `EXP-${Date.now()}`,
+            expense_date: expense?.date || "",
+            category: category || null,
+            party_id: expense?.partyId || null,
+            amount: normalizedAmount,
+            tax_rate: normalizedTaxRate,
+            tax_amount: normalizedTaxAmount,
+            total_amount: normalizedTotalAmount,
+            payment_mode: expense?.paymentMode || null,
+            notes: expense?.note || expense?.notes || null,
+            status: "posted",
+            created_by: actorUserId
+          })
+          .select("*")
+          .single();
+      }
+      const { data, error } = insertResult;
 
       if (error) {
         throw new Error(normalizeSupabaseError(error, "Failed to save expense"));

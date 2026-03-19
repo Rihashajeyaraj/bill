@@ -2,6 +2,10 @@ import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "
 import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
+import {
+  annotateWithFinancialYear,
+  financialYearsResolveForDate
+} from "./financialYears.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -28,6 +32,10 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
+function isMissingColumnError(error) {
+  return String(error?.code || "").toUpperCase() === "42703";
+}
+
 function referenceFromEntry(entry) {
   return String(entry?.referenceNo || entry?.reference_no || "");
 }
@@ -40,6 +48,8 @@ function mergeSourceRowsToLocalPayments(sourcePrefix, rows) {
   }
 
   const mapped = rows.map((row, index) => ({
+    ...annotateWithFinancialYear(
+      {
     id: uid("pay_"),
     date: row?.payment_date || "",
     paymentNo: row?.payment_no || `PAY-${Date.now()}`,
@@ -54,6 +64,9 @@ function mergeSourceRowsToLocalPayments(sourcePrefix, rows) {
     note: row?.notes || "",
     status: row?.status || "posted",
     created_at: row?.created_at || new Date().toISOString()
+      },
+      row?.payment_date || row?.created_at
+    )
   }));
 
   setAll([...mapped, ...keep]);
@@ -102,22 +115,28 @@ export async function paymentsSyncFromRemote() {
     throw new Error(normalizeSupabaseError(error, "Failed to load payments"));
   }
 
-  const mapped = (Array.isArray(data) ? data : []).map((row) => ({
-    id: row?.id || uid("pay_"),
-    date: row?.payment_date || "",
-    paymentNo: row?.payment_no || "",
-    direction: String(row?.direction || "").toUpperCase(),
-    partyId: row?.party_id || "",
-    invoiceId: row?.invoice_id || "",
-    billId: row?.bill_id || "",
-    amount: parseNumber(row?.amount),
-    tdsAmount: parseNumber(row?.tds_amount),
-    mode: row?.payment_mode || "",
-    referenceNo: row?.reference_no || "",
-    note: row?.notes || "",
-    status: row?.status || "posted",
-    created_at: row?.created_at || new Date().toISOString()
-  }));
+  const mapped = (Array.isArray(data) ? data : []).map((row) =>
+    annotateWithFinancialYear(
+      {
+        id: row?.id || uid("pay_"),
+        date: row?.payment_date || "",
+        paymentNo: row?.payment_no || "",
+        direction: String(row?.direction || "").toUpperCase(),
+        partyId: row?.party_id || "",
+        invoiceId: row?.invoice_id || "",
+        billId: row?.bill_id || "",
+        amount: parseNumber(row?.amount),
+        tdsAmount: parseNumber(row?.tds_amount),
+        mode: row?.payment_mode || "",
+        referenceNo: row?.reference_no || "",
+        note: row?.notes || "",
+        status: row?.status || "posted",
+        financialYearId: row?.financial_year_id || "",
+        created_at: row?.created_at || new Date().toISOString()
+      },
+      row?.payment_date || row?.created_at
+    )
+  );
 
   setAll(mapped);
   return mapped;
@@ -125,7 +144,12 @@ export async function paymentsSyncFromRemote() {
 
 export function paymentsCreate(payment) {
   const id = uid("pay_");
-  const next = { ...payment, id, created_at: new Date().toISOString() };
+  const paymentDate = payment?.date || payment?.paymentDate || "";
+  const matchedFinancialYear = financialYearsResolveForDate(paymentDate);
+  const next = annotateWithFinancialYear(
+    { ...payment, id, created_at: new Date().toISOString() },
+    paymentDate
+  );
   setAll([next, ...getAll()]);
 
   if (isSupabaseConfigured && supabase) {
@@ -134,6 +158,7 @@ export function paymentsCreate(payment) {
       const actorUserId = authGetUser()?.id || null;
       const remotePayload = {
         organization_id: organizationId,
+        financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
         payment_no: payment?.paymentNo || `PAY-${Date.now()}`,
         payment_date: payment?.date || payment?.paymentDate || "",
         direction: String(payment?.direction || "IN").toUpperCase() === "OUT" ? "out" : "in",
@@ -148,7 +173,13 @@ export function paymentsCreate(payment) {
         status: "posted",
         created_by: actorUserId
       };
-      void supabase.from("payments").insert(remotePayload);
+      void (async () => {
+        let insertResult = await supabase.from("payments").insert(remotePayload);
+        if (insertResult.error && isMissingColumnError(insertResult.error)) {
+          const { financial_year_id, ...legacyPayload } = remotePayload;
+          insertResult = await supabase.from("payments").insert(legacyPayload);
+        }
+      })();
     }
   }
 

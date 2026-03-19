@@ -19,6 +19,14 @@ import {
   supabase
 } from "./supabaseClient";
 import { setInvoiceTemplateCompleted } from "../lib/templateStore";
+import {
+  buildFinancialYearEndDate,
+  ensureFinancialYearForProfile,
+  financialYearsGetCurrent,
+  financialYearsSyncFromRemote,
+  isExactFinancialYearRange,
+  normalizeIsoDate
+} from "./financialYears.service";
 
 export const COUNTRIES = ["India", "Sri Lanka", "UAE", "USA", "United Kingdom", "Ireland"];
 export const ORGANIZATION_UPDATED_EVENT = "organization:updated";
@@ -335,6 +343,15 @@ function mapOrganizationToProfile(organization, taxProfile = null) {
   if (!organization) return null;
   const country = getCountryName(organization.country_code);
   const baseCurrency = organization.base_currency || "INR";
+  const configuredStartDate = normalizeIsoDate(
+    organization?.settings?.financialYearStartDate || organization?.settings?.financial_year_start
+  );
+  const configuredEndDate = normalizeIsoDate(
+    organization?.settings?.financialYearEndDate || organization?.settings?.financial_year_end
+  );
+  const financialYearStartDate = configuredStartDate;
+  const financialYearEndDate =
+    configuredEndDate || (configuredStartDate ? buildFinancialYearEndDate(configuredStartDate) : "");
 
   return {
     companyName: organization.company_name || "",
@@ -363,6 +380,8 @@ function mapOrganizationToProfile(organization, taxProfile = null) {
       vatRate: Number(taxProfile?.default_output_tax_rate || 0),
       taxId: taxProfile?.tax_id || organization.pan || ""
     },
+    financialYearStartDate,
+    financialYearEndDate,
     settings: organization.settings || {},
     created_at: organization.created_at,
     updated_at: organization.updated_at
@@ -373,6 +392,9 @@ function mapProfileToOrganizationPayload(profile, userId, existingOrgId = "") {
   const countryData = normalizeProfileCountry(profile);
   const country = countryData.country;
   const currency = profile?.currency || profile?.currencies?.[0] || "INR";
+  const financialYearStartDate = normalizeIsoDate(profile?.financialYearStartDate || profile?.financial_year_start);
+  const financialYearEndDate = normalizeIsoDate(profile?.financialYearEndDate || profile?.financial_year_end);
+  const financialYearStartMonth = Number(financialYearStartDate.slice(5, 7)) || 4;
 
   return {
     id: existingOrgId || undefined,
@@ -391,11 +413,14 @@ function mapProfileToOrganizationPayload(profile, userId, existingOrgId = "") {
     pan: profile?.tax?.taxId || "",
     tax_regime: deriveTaxRegime(country),
     base_currency: String(currency).toUpperCase(),
+    financial_year_start_month: financialYearStartMonth,
     is_setup_completed: true,
     settings: {
       ...(profile?.settings || {}),
       owner_role: toDbRole(authGetRole()),
-      currencies: Array.isArray(profile?.currencies) ? profile.currencies : [currency]
+      currencies: Array.isArray(profile?.currencies) ? profile.currencies : [currency],
+      financialYearStartDate,
+      financialYearEndDate
     },
     updated_at: new Date().toISOString()
   };
@@ -537,12 +562,16 @@ export function companyGetProfile() {
 }
 
 export function companySaveProfile(profile) {
+  const financialYearStartDate = normalizeIsoDate(profile?.financialYearStartDate || profile?.financial_year_start);
+  const financialYearEndDate = normalizeIsoDate(profile?.financialYearEndDate || profile?.financial_year_end);
   const normalizedCountry = normalizeProfileCountry(profile || {});
   const { settings: sanitizedSettings } = sanitizeSettingsPayload(profile?.settings || {});
   const normalizedProfile = {
     ...(profile || {}),
     country: normalizedCountry.country,
     countryCode: normalizedCountry.countryCode,
+    financialYearStartDate,
+    financialYearEndDate,
     settings: sanitizedSettings
   };
   const savedProfile = persistProfileLocal(normalizedProfile, { completedStatus: true });
@@ -553,12 +582,16 @@ export function companySaveProfile(profile) {
 export function companyUpdateProfile(partial) {
   const prev = companyGetProfile() || {};
   const merged = { ...prev, ...partial, updated_at: new Date().toISOString() };
+  const financialYearStartDate = normalizeIsoDate(merged?.financialYearStartDate || merged?.financial_year_start);
+  const financialYearEndDate = normalizeIsoDate(merged?.financialYearEndDate || merged?.financial_year_end);
   const normalizedCountry = normalizeProfileCountry(merged);
   const { settings: sanitizedSettings } = sanitizeSettingsPayload(merged?.settings || {});
   const next = {
     ...merged,
     country: normalizedCountry.country,
     countryCode: normalizedCountry.countryCode,
+    financialYearStartDate,
+    financialYearEndDate,
     settings: sanitizedSettings
   };
   const savedProfile = persistProfileLocal(next, { completedStatus: companyIsCompleted() });
@@ -872,6 +905,20 @@ export async function companyLoadMyOrganization(selectedOrganizationId = "") {
     // Use organization payload as fallback when optional settings tables/functions are unavailable.
   }
 
+  try {
+    const years = await financialYearsSyncFromRemote(profile);
+    const activeFinancialYear = financialYearsGetCurrent() || years?.[0] || null;
+    if (activeFinancialYear) {
+      profile = {
+        ...profile,
+        financialYearStartDate: activeFinancialYear.startDate,
+        financialYearEndDate: activeFinancialYear.endDate
+      };
+    }
+  } catch {
+    // Financial year table is optional until migration is applied.
+  }
+
   const deprecatedInOrgSettings = sanitizeSettingsPayload(organization?.settings || {}).changed;
   const deprecatedInSettingsRow = sanitizeSettingsPayload(settingsRow || {}).changed;
   if (deprecatedInOrgSettings || deprecatedInSettingsRow) {
@@ -952,6 +999,19 @@ export async function companySaveProfileRemote(profile, options = {}) {
     currency: profile?.currencies?.[0] || profile?.currency || previous?.currency || "INR",
     updated_at: new Date().toISOString()
   };
+  mergedProfile.financialYearStartDate = normalizeIsoDate(
+    mergedProfile?.financialYearStartDate || mergedProfile?.financial_year_start
+  );
+  mergedProfile.financialYearEndDate = normalizeIsoDate(
+    mergedProfile?.financialYearEndDate || mergedProfile?.financial_year_end
+  );
+  if (
+    !mergedProfile.financialYearStartDate ||
+    !mergedProfile.financialYearEndDate ||
+    !isExactFinancialYearRange(mergedProfile.financialYearStartDate, mergedProfile.financialYearEndDate)
+  ) {
+    throw new Error("Financial year must be exactly 12 months.");
+  }
   const { settings: sanitizedSettings } = sanitizeSettingsPayload(mergedProfile?.settings || {});
   mergedProfile.settings = sanitizedSettings;
 
@@ -1062,6 +1122,8 @@ export async function companySaveProfileRemote(profile, options = {}) {
     .upsert(taxPayload, { onConflict: "organization_id" });
 
   if (taxError) throw new Error(taxError.message || "Failed to save tax settings");
+
+  await ensureFinancialYearForProfile(mergedProfile, { organizationId });
 
   try {
     await upsertCompanySettingsRow({

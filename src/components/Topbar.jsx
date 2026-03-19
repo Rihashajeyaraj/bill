@@ -3,6 +3,7 @@ import { Bell, ChevronDown, LogOut, Menu } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { authGetRole, authGetUser, authLogout } from "../services/auth.service";
 import { useOrganization } from "../context/OrganizationContext";
+import { useFinancialYears } from "../context/FinancialYearContext";
 import { useAppShell } from "../context/AppShellContext";
 import { formatDateByPreference, formatTimeByPreference } from "../lib/formatPreferences";
 
@@ -11,6 +12,7 @@ export default function Topbar({ onOpenSidebar }) {
   const user = authGetUser();
   const role = authGetRole();
   const { profile: company = {} } = useOrganization();
+  const { years, selectedYear, selectFinancialYear } = useFinancialYears();
   const { unreadCount } = useAppShell();
   const companyName = String(company?.companyName || "").trim();
 
@@ -94,6 +96,22 @@ export default function Topbar({ onOpenSidebar }) {
               </span>
             </p>
           </div>
+          {selectedYear ? (
+            <label className="hidden min-w-[180px] shrink-0 lg:block">
+              <span className="sr-only">Financial year</span>
+              <select
+                value={selectedYear?.id || ""}
+                onChange={(event) => selectFinancialYear(event.target.value)}
+                className="h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-soft outline-none focus:ring-4 focus:ring-slate-100"
+              >
+                {years.map((year) => (
+                  <option key={year.id} value={year.id}>
+                    FY {year.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">

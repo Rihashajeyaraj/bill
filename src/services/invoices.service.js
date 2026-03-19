@@ -5,6 +5,10 @@ import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
 import { triggerLowStockNotifications } from "../modules/items/store";
 import { companyPeekDocumentNumber } from "./company.service";
+import {
+  annotateWithFinancialYear,
+  financialYearsResolveForDate
+} from "./financialYears.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -84,6 +88,10 @@ function isMissingRpcError(error) {
   );
 }
 
+function isMissingColumnError(error) {
+  return String(error?.code || "").toUpperCase() === "42703";
+}
+
 function deriveInvoiceStatus(grandTotal, balanceAmount) {
   const grand = Math.max(0, parseNumber(grandTotal));
   const balance = Math.max(0, parseNumber(balanceAmount));
@@ -148,7 +156,7 @@ function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
       ? "cancelled"
       : deriveInvoiceStatus(grandTotal, effectiveBalance);
 
-  return {
+  const mapped = {
     id: row?.id || uid("inv_"),
     invoiceNo: row?.invoice_no || "",
     invoiceDate: row?.invoice_date || "",
@@ -174,9 +182,13 @@ function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
     createdByName: String(metadata?.createdByName || "").trim(),
     createdBy: String(metadata?.createdByName || row?.created_by || "").trim(),
     status,
+    financialYearId: row?.financial_year_id || metadata?.financialYearId || "",
+    financialYearLabel: metadata?.financialYearLabel || "",
+    financialYearCode: metadata?.financialYearCode || "",
     created_at: row?.created_at || new Date().toISOString(),
     updated_at: row?.updated_at || row?.created_at || new Date().toISOString()
   };
+  return annotateWithFinancialYear(mapped, mapped.invoiceDate);
 }
 
 function buildRemoteLines(invoiceId, lines) {
@@ -407,6 +419,7 @@ export async function invoicesCreate(invoice) {
   const summary = calculateInvoiceSummary(lines, totals);
   const subTotal = summary.subTotal;
   const grandTotal = summary.grandTotal;
+  const matchedFinancialYear = financialYearsResolveForDate(invoice?.invoiceDate || now.slice(0, 10));
 
   let id = uid("inv_");
 
@@ -415,6 +428,7 @@ export async function invoicesCreate(invoice) {
     if (organizationId) {
       const remotePayload = {
         organization_id: organizationId,
+        financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
         invoice_no: invoiceNo,
         invoice_date: invoice?.invoiceDate || now.slice(0, 10),
         due_date: invoice?.dueDate || invoice?.invoiceDate || now.slice(0, 10),
@@ -446,7 +460,10 @@ export async function invoicesCreate(invoice) {
           taxMode: invoice?.taxMode || tax?.type || "",
           supplyType: invoice?.supplyType || tax?.supplyType || taxBreakup?.supplyType || null,
           taxBreakup,
-          templateId: invoice?.templateId || ""
+          templateId: invoice?.templateId || "",
+          financialYearId: matchedFinancialYear?.id || "",
+          financialYearLabel: matchedFinancialYear?.label || "",
+          financialYearCode: matchedFinancialYear?.yearCode || ""
         },
         created_by: actorUserId
       };
@@ -506,11 +523,20 @@ export async function invoicesCreate(invoice) {
           throw new Error(normalizeSupabaseError(postError, "Failed to post invoice"));
         }
 
-        const { data: header, error: headerError } = await supabase
+        let headerResult = await supabase
           .from("invoices")
           .upsert(remotePayload, { onConflict: "organization_id,invoice_no" })
           .select("*")
           .single();
+        if (headerResult.error && isMissingColumnError(headerResult.error)) {
+          const { financial_year_id, ...legacyPayload } = remotePayload;
+          headerResult = await supabase
+            .from("invoices")
+            .upsert(legacyPayload, { onConflict: "organization_id,invoice_no" })
+            .select("*")
+            .single();
+        }
+        const { data: header, error: headerError } = headerResult;
 
         if (headerError) {
           throw new Error(normalizeSupabaseError(headerError, "Failed to save invoice"));
@@ -539,7 +565,7 @@ export async function invoicesCreate(invoice) {
     }
   }
 
-  const next = {
+  const next = annotateWithFinancialYear({
     ...invoice,
     id,
     invoiceNo,
@@ -569,7 +595,7 @@ export async function invoicesCreate(invoice) {
     createdBy: actorName || String(actorUserId || "").trim(),
     created_at: now,
     updated_at: now
-  };
+  }, invoice?.invoiceDate || now.slice(0, 10));
 
   setAll([next, ...getAll().filter((entry) => entry.id !== id && entry.invoiceNo !== invoiceNo)]);
   applyInvoiceStockDelta(lines);

@@ -21,6 +21,7 @@ import {
   lsGetOrganizationScoped
 } from "../services/storage";
 import { useOrganization } from "../context/OrganizationContext";
+import { useFinancialYears } from "../context/FinancialYearContext";
 import { formatCurrencyByPreference } from "../lib/formatPreferences";
 
 const COUNTRY_ALIAS = {
@@ -85,6 +86,13 @@ function toIsoDate(value) {
   return parsed.toISOString().slice(0, 10);
 }
 
+function inFinancialYear(dateValue, financialYear) {
+  if (!financialYear?.startDate || !financialYear?.endDate) return true;
+  const iso = toIsoDate(dateValue);
+  if (!iso) return false;
+  return iso >= financialYear.startDate && iso <= financialYear.endDate;
+}
+
 function todayIso() {
   const now = new Date();
   const y = now.getFullYear();
@@ -139,6 +147,7 @@ export default function StaffDashboard() {
   const navigate = useNavigate();
   const role = authGetRole();
   const { country = "India", countryCode = "IN", currency = "INR" } = useOrganization();
+  const { selectedYear } = useFinancialYears();
 
   const [invoices, setInvoices] = useState(() => invoicesList());
   const [purchases, setPurchases] = useState(() => purchasesList());
@@ -207,21 +216,37 @@ export default function StaffDashboard() {
 
   const dashboard = useMemo(() => {
     const today = todayIso();
-    const scopedInvoices = invoices.filter((invoice) => countryMatches(recordCountry(invoice), country));
-    const scopedPurchases = purchases.filter((bill) => countryMatches(recordCountry(bill), country));
+    const scopedInvoices = invoices.filter(
+      (invoice) =>
+        countryMatches(recordCountry(invoice), country) &&
+        inFinancialYear(invoice?.invoiceDate || invoice?.date || invoice?.created_at, selectedYear)
+    );
+    const scopedPurchases = purchases.filter(
+      (bill) =>
+        countryMatches(recordCountry(bill), country) &&
+        inFinancialYear(bill?.billDate || bill?.invoiceDate || bill?.date || bill?.created_at, selectedYear)
+    );
     const scopedItems = items.filter((item) => countryMatches(recordCountry(item), country));
     const scopedParties = parties.filter((party) => countryMatches(recordCountry(party), country));
     const scopedCreditNotes = (Array.isArray(premiumRecords.creditNotes) ? premiumRecords.creditNotes : []).filter(
-      (entry) => countryMatches(recordCountry(entry), country)
+      (entry) =>
+        countryMatches(recordCountry(entry), country) &&
+        inFinancialYear(entry?.creditNoteDate || entry?.creditDate || entry?.created_at, selectedYear)
     );
     const scopedDebitNotes = (Array.isArray(premiumRecords.debitNotes) ? premiumRecords.debitNotes : []).filter(
-      (entry) => countryMatches(recordCountry(entry), country)
+      (entry) =>
+        countryMatches(recordCountry(entry), country) &&
+        inFinancialYear(entry?.debitNoteDate || entry?.created_at, selectedYear)
     );
     const scopedPaymentIn = (Array.isArray(premiumRecords.paymentIn) ? premiumRecords.paymentIn : []).filter(
-      (entry) => countryMatches(recordCountry(entry), country)
+      (entry) =>
+        countryMatches(recordCountry(entry), country) &&
+        inFinancialYear(entry?.paymentDate || entry?.payment_date || entry?.created_at, selectedYear)
     );
     const scopedPaymentOut = (Array.isArray(premiumRecords.paymentOut) ? premiumRecords.paymentOut : []).filter(
-      (entry) => countryMatches(recordCountry(entry), country)
+      (entry) =>
+        countryMatches(recordCountry(entry), country) &&
+        inFinancialYear(entry?.paymentDate || entry?.payment_date || entry?.created_at, selectedYear)
     );
 
     const todaysInvoices = scopedInvoices.filter(
@@ -302,7 +327,7 @@ export default function StaffDashboard() {
       lowStockItems,
       recentInvoices
     };
-  }, [country, invoices, purchases, items, parties, premiumRecords]);
+  }, [country, invoices, purchases, items, parties, premiumRecords, selectedYear]);
 
   return (
     <div className="dashboard-theme max-w-6xl space-y-4">
@@ -312,6 +337,7 @@ export default function StaffDashboard() {
           Biller workspace for daily sales, billing queue, and stock alerts ({country}).
         </p>
         <p className="mt-1 text-xs text-slate-500">Logged in role: {role}</p>
+        <p className="mt-1 text-xs text-slate-500">Financial Year: {selectedYear?.label || "Not selected"}</p>
       </div>
 
       <Card className="p-4">

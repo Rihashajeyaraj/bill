@@ -20,6 +20,7 @@ import Card from "../components/Card";
 import DateInput from "../components/DateInput";
 import PageHeader from "../components/PageHeader";
 import { useOrganization } from "../context/OrganizationContext";
+import { useFinancialYears } from "../context/FinancialYearContext";
 import { reportSections } from "../data/reports";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 import { formatDateByPreference } from "../lib/formatPreferences";
@@ -45,6 +46,7 @@ import {
   TRANSACTION_TYPE_OPTIONS
 } from "../services/reports.service";
 import { isAccounterRole, isOwnerRole } from "../services/roles";
+import { applyFinancialYearRange } from "../services/financialYears.service";
 
 const REPORT_PAGE_SIZE = 20;
 const REPORT_SIDEBAR_MIN_WIDTH = 240;
@@ -925,6 +927,7 @@ export default function Reports() {
   const role = authGetRole();
   const canAccess = isAuthorizedReportRole(role);
   const { currency = "USD" } = useOrganization();
+  const { years, selectedYear, selectFinancialYear } = useFinancialYears();
   const [searchParams, setSearchParams] = useSearchParams();
   const [filters, setFilters] = useState(() => getDefaultReportFilters());
   const [dataset, setDataset] = useState(() => getReportsDataset());
@@ -953,6 +956,11 @@ export default function Reports() {
     }
     return [];
   }, [activeReport, dataset, partyTypeForOptions]);
+
+  useEffect(() => {
+    if (!selectedYear) return;
+    setFilters((current) => applyFinancialYearRange(current, selectedYear));
+  }, [selectedYear?.id, selectedYear?.startDate, selectedYear?.endDate]);
 
   useEffect(() => {
     if (searchParams.get("report") !== activeReport) {
@@ -1174,6 +1182,23 @@ export default function Reports() {
     return (
       <Card className="p-6">
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+          {years.length ? (
+            <label className="text-xs font-semibold text-slate-600">
+              Financial Year
+              <select
+                value={selectedYear?.id || ""}
+                onChange={(event) => selectFinancialYear(event.target.value)}
+                className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-100"
+              >
+                {years.map((year) => (
+                  <option key={year.id} value={year.id}>
+                    FY {year.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
           {showPartyType ? (
             <label className="text-xs font-semibold text-slate-600">
               Party Type

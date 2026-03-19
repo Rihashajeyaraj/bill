@@ -6,6 +6,7 @@ import { ThemeProvider, useTheme } from "./ThemeContext";
 import { ToastProvider, useToast } from "./ToastContext";
 import { PageLoadingProvider } from "./PageLoadingContext";
 import { OrganizationProvider } from "./OrganizationContext";
+import { FinancialYearProvider } from "./FinancialYearContext";
 import { useSessionTimeout } from "../hooks/useSessionTimeout";
 import { authGetRole, authGetToken, authLogout } from "../services/auth.service";
 import { canAccessPathForRole } from "../services/accessControl";
@@ -110,9 +111,11 @@ function ProvidersTree({ children }) {
         <ConfirmProvider>
           <PageLoadingProvider>
             <OrganizationProvider>
-              <AppShellProvider>
-                <SessionAndShellLayer>{children}</SessionAndShellLayer>
-              </AppShellProvider>
+              <FinancialYearProvider>
+                <AppShellProvider>
+                  <SessionAndShellLayer>{children}</SessionAndShellLayer>
+                </AppShellProvider>
+              </FinancialYearProvider>
             </OrganizationProvider>
           </PageLoadingProvider>
         </ConfirmProvider>

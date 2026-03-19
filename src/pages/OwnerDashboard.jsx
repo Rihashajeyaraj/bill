@@ -31,6 +31,7 @@ import { beginPageLoading, endPageLoading } from "../state/pageLoadingStore";
 import { isOrganizationScopedStorageEventKey, LS_KEYS, lsGetOrganizationScoped } from "../services/storage";
 import { resolveCountryIsoCode } from "../lib/geoData";
 import { formatCurrencyByPreference, formatNumberByPreference } from "../lib/formatPreferences";
+import { useFinancialYears } from "../context/FinancialYearContext";
 
 function money(n) {
   return formatNumberByPreference(Number(n || 0), {
@@ -164,11 +165,14 @@ function countryMatches(recordValue, targetCountry) {
 
 export default function Dashboard() {
   const { currency = "INR", country = "India", countryCode = "IN", profile = {} } = useOrganization();
+  const { selectedYear } = useFinancialYears();
   const companyTimeZone = useMemo(
     () => resolveCompanyTimeZone(profile, country, countryCode),
     [profile, country, countryCode]
   );
   const todayIso = useMemo(() => toLocalIsoDate(new Date(), companyTimeZone), [companyTimeZone]);
+  const defaultFromDate = selectedYear?.startDate || todayIso;
+  const defaultToDate = selectedYear?.endDate || todayIso;
 
   useEffect(() => {
     const token = beginPageLoading("dashboard");
@@ -190,9 +194,15 @@ export default function Dashboard() {
   const [paymentOutPremium, setPaymentOutPremium] = useState(() =>
     lsGetOrganizationScoped("paymentOutPremiumV1", [])
   );
-  const [fromDate, setFromDate] = useState(() => todayIso);
-  const [toDate, setToDate] = useState(() => todayIso);
+  const [fromDate, setFromDate] = useState(() => defaultFromDate);
+  const [toDate, setToDate] = useState(() => defaultToDate);
   const [donutTab, setDonutTab] = useState("income");
+
+  useEffect(() => {
+    if (!selectedYear) return;
+    setFromDate(selectedYear.startDate);
+    setToDate(selectedYear.endDate);
+  }, [selectedYear?.id, selectedYear?.startDate, selectedYear?.endDate]);
 
   const refreshExpenses = useCallback(async () => {
     try {
@@ -552,7 +562,10 @@ export default function Dashboard() {
   return (
     <div className="dashboard-theme max-w-6xl">
       <div className="rounded-2xl bg-slate-100 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold text-slate-700">Dashboard ({country})</h1>
+        <div>
+          <h1 className="text-lg font-semibold text-slate-700">Dashboard ({country})</h1>
+          <p className="text-xs text-slate-500">Financial Year: {selectedYear?.label || "Not selected"}</p>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <DateInput
             value={fromDate}
@@ -575,8 +588,8 @@ export default function Dashboard() {
           <button
             type="button"
             onClick={() => {
-              setFromDate(todayIso);
-              setToDate(todayIso);
+              setFromDate(defaultFromDate);
+              setToDate(defaultToDate);
             }}
             className="h-8 w-8 rounded-xl border border-slate-200 bg-white flex items-center justify-center"
             title="Reset date range"

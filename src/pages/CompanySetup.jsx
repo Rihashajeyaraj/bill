@@ -25,6 +25,11 @@ import {
   phoneDigitRangeLabel,
   validateInternationalPhone
 } from "../lib/phoneValidation";
+import {
+  buildFinancialYearEndDate,
+  isExactFinancialYearRange,
+  normalizeIsoDate
+} from "../services/financialYears.service";
 
 const MAX_CURRENCIES = 3;
 
@@ -80,6 +85,14 @@ function normalizeProfile(user, role, existing) {
     postalCode: legacyAddress.postalCode || ""
   };
   const currencies = normalizeCurrencyList(existing, baseCountry);
+  const today = new Date();
+  const currentYear = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+  const defaultFinancialYearStart = `${currentYear}-04-01`;
+  const defaultFinancialYearEnd = buildFinancialYearEndDate(defaultFinancialYearStart);
+  const financialYearStartDate =
+    normalizeIsoDate(existing?.financialYearStartDate || existing?.financial_year_start) || defaultFinancialYearStart;
+  const financialYearEndDate =
+    normalizeIsoDate(existing?.financialYearEndDate || existing?.financial_year_end) || defaultFinancialYearEnd;
 
   return {
     ownerName: user?.name || existing?.ownerName || "",
@@ -98,7 +111,9 @@ function normalizeProfile(user, role, existing) {
       vatNumber: existing?.tax?.vatNumber || "",
       vatRate: existing?.tax?.vatRate || getVatRate(baseCountry),
       taxId: existing?.tax?.taxId || ""
-    }
+    },
+    financialYearStartDate,
+    financialYearEndDate
   };
 }
 
@@ -215,6 +230,15 @@ export default function CompanySetup() {
     if (!profile.address.line1.trim()) next.addressLine1 = "This field is required";
     if (!profile.address.city.trim()) next.city = "This field is required";
     if (isIndia && !profile.address.state.trim()) next.state = "This field is required";
+    if (!profile.financialYearStartDate) next.financialYearStartDate = "This field is required";
+    if (!profile.financialYearEndDate) next.financialYearEndDate = "This field is required";
+    if (
+      profile.financialYearStartDate &&
+      profile.financialYearEndDate &&
+      !isExactFinancialYearRange(profile.financialYearStartDate, profile.financialYearEndDate)
+    ) {
+      next.financialYearEndDate = "Financial year must be exactly 12 months.";
+    }
     return next;
   }
 
@@ -258,6 +282,16 @@ export default function CompanySetup() {
         delete next.state;
         changed = true;
       }
+      if (next.financialYearStartDate && profile.financialYearStartDate) {
+        delete next.financialYearStartDate;
+        changed = true;
+      }
+      if (next.financialYearEndDate && profile.financialYearEndDate) {
+        if (isExactFinancialYearRange(profile.financialYearStartDate, profile.financialYearEndDate)) {
+          delete next.financialYearEndDate;
+          changed = true;
+        }
+      }
 
       return changed ? next : prev;
     });
@@ -269,7 +303,9 @@ export default function CompanySetup() {
     profile.currencies.length,
     profile.address.line1,
     profile.address.city,
-    profile.address.state
+    profile.address.state,
+    profile.financialYearStartDate,
+    profile.financialYearEndDate
   ]);
 
   async function save() {
@@ -283,6 +319,8 @@ export default function CompanySetup() {
       await companySaveProfileRemote({
         ...profile,
         currency: profile.currencies[0] || "",
+        financialYearStartDate: profile.financialYearStartDate,
+        financialYearEndDate: profile.financialYearEndDate,
         created_at: new Date().toISOString()
       }, { forceCreate: createMode });
       nav(canAccessSettings(role) ? "/invoice-template-setup" : "/dashboard", { replace: true });
@@ -636,6 +674,60 @@ export default function CompanySetup() {
                   className="w-full rounded-2xl border border-slate-100 px-3 py-2.5 text-sm outline-none focus:ring-4"
                   style={{ "--tw-ring-color": UI.COLORS.ring }}
                 />
+              </FormField>
+            </div>
+          </section>
+
+          <section className="mt-6">
+            <h2 className="text-base font-semibold text-slate-900">Financial Year</h2>
+            <p className="mt-1 text-sm text-slate-500">This 12-month period will be used for reports and transaction tagging.</p>
+
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField label="Financial Year Start Date" required error={errors.financialYearStartDate}>
+                <input
+                  type="date"
+                  value={profile.financialYearStartDate || ""}
+                  onChange={(e) => {
+                    const nextStart = e.target.value;
+                    setProfile((p) => ({
+                      ...p,
+                      financialYearStartDate: nextStart,
+                      financialYearEndDate: nextStart ? buildFinancialYearEndDate(nextStart) : p.financialYearEndDate
+                    }));
+                  }}
+                  className={`w-full rounded-2xl border px-3 py-2.5 text-sm outline-none focus:ring-4 ${
+                    errors.financialYearStartDate ? "border-rose-300" : "border-slate-100"
+                  }`}
+                  style={{ "--tw-ring-color": UI.COLORS.ring }}
+                />
+                {errors.financialYearStartDate ? (
+                  <p className="mt-1 text-xs text-rose-600">{errors.financialYearStartDate}</p>
+                ) : null}
+              </FormField>
+
+              <FormField
+                label="Financial Year End Date"
+                required
+                error={errors.financialYearEndDate}
+                hint="Auto-calculated as one year minus one day"
+              >
+                <input
+                  type="date"
+                  value={profile.financialYearEndDate || ""}
+                  onChange={(e) => setProfile((p) => ({ ...p, financialYearEndDate: e.target.value }))}
+                  className={`w-full rounded-2xl border px-3 py-2.5 text-sm outline-none focus:ring-4 ${
+                    errors.financialYearEndDate ? "border-rose-300" : "border-slate-100"
+                  }`}
+                  style={{ "--tw-ring-color": UI.COLORS.ring }}
+                />
+                {errors.financialYearEndDate ? (
+                  <p className="mt-1 text-xs text-rose-600">{errors.financialYearEndDate}</p>
+                ) : (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Label preview: {profile.financialYearStartDate?.slice(0, 4) || "YYYY"}-
+                    {profile.financialYearEndDate?.slice(0, 4) || "YYYY"}
+                  </p>
+                )}
               </FormField>
             </div>
           </section>
