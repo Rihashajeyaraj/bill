@@ -30,6 +30,47 @@ function normalizeSections(report) {
   return Array.isArray(report?.sections) ? report.sections : [];
 }
 
+function toSummaryObject(report) {
+  return (Array.isArray(report?.summary) ? report.summary : []).reduce((accumulator, item) => {
+    const label = safeText(item?.label, "");
+    if (!label) return accumulator;
+    accumulator[label] = item?.value ?? "";
+    return accumulator;
+  }, {});
+}
+
+function toReadableSections(report) {
+  return normalizeSections(report).map((section) => {
+    const columns = (Array.isArray(section?.columns) ? section.columns : []).map((column, index) => ({
+      key: safeText(column?.key || column?.label || `column_${index + 1}`, `column_${index + 1}`),
+      label: safeText(column?.label || column?.key || `Column ${index + 1}`, `Column ${index + 1}`)
+    }));
+
+    const rows = (Array.isArray(section?.rows) ? section.rows : []).map((row) =>
+      columns.reduce((accumulator, column, index) => {
+        accumulator[column.label] = Array.isArray(row) ? row[index] ?? "" : "";
+        return accumulator;
+      }, {})
+    );
+
+    return {
+      title: safeText(section?.title || "Report Data"),
+      columns: columns.map((column) => column.label),
+      rows
+    };
+  });
+}
+
+function toReadableJson(report) {
+  return {
+    title: report?.title || "Report",
+    subtitle: report?.subtitle || "",
+    filename: getFileName(report),
+    summary: toSummaryObject(report),
+    tables: toReadableSections(report)
+  };
+}
+
 function htmlSummary(report) {
   const items = Array.isArray(report?.summary) ? report.summary : [];
   if (!items.length) return "";
@@ -94,7 +135,7 @@ export function exportReportExcel(report) {
 }
 
 export function exportReportJson(report) {
-  const payload = JSON.stringify(report || {}, null, 2);
+  const payload = JSON.stringify(toReadableJson(report), null, 2);
   downloadBlob(
     new Blob([payload], { type: "application/json;charset=utf-8;" }),
     `${getFileName(report)}.json`
