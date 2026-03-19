@@ -2,14 +2,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   LockKeyhole,
-  Mail,
   User,
-  ShieldCheck,
   Eye,
   EyeOff,
   ArrowRight,
-  Shield,
-  Headphones,
   Globe,
   Moon,
   Sun,
@@ -367,28 +363,6 @@ export default function Login() {
           margin: 0 -6px;
         }
 
-        .lp-features {
-          position: relative; z-index: 2;
-          display: grid; grid-template-columns: repeat(3, 1fr);
-          gap: 8px; margin-top: 10px; margin-bottom: 14px;
-        }
-        .lp-feat-card {
-          background: rgba(255,255,255,0.75);
-          border: 1px solid rgba(255,255,255,0.9);
-          border-radius: 14px; padding: 10px 8px;
-          display: flex; align-items: center; gap: 7px;
-          box-shadow: 0 3px 10px rgba(0,0,0,0.05);
-          backdrop-filter: blur(8px);
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
-          cursor: default;
-        }
-        .lp-feat-card:hover { transform: translateY(-2px); box-shadow: 0 7px 18px rgba(0,0,0,0.09); }
-        .lp-feat-icon {
-          width: 28px; height: 28px; border-radius: 8px;
-          display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-        }
-        .lp-feat-label { font-size: 11px; font-weight: 600; color: #1e293b; line-height: 1.2; }
-
         .lp-hero-foot {
           position: relative; z-index: 2;
           display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -694,31 +668,6 @@ export default function Login() {
               />
             </div>
 
-            {/* Feature Cards */}
-            <div className="lp-features">
-              <div className="lp-feat-card">
-                <div className="lp-feat-icon" style={{ background: 'rgba(34,197,94,0.12)' }}>
-                  <Shield style={{ width: 15, height: 15, color: '#16a34a' }} />
-                </div>
-                <span className="lp-feat-label">Fast &amp; Secure</span>
-              </div>
-              <div className="lp-feat-card">
-                <div className="lp-feat-icon" style={{ background: 'rgba(234,179,8,0.12)' }}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                    stroke="#ca8a04" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10"/><path d="M12 6v6l3 3"/>
-                  </svg>
-                </div>
-                <span className="lp-feat-label">GST Ready</span>
-              </div>
-              <div className="lp-feat-card">
-                <div className="lp-feat-icon" style={{ background: 'rgba(59,130,246,0.12)' }}>
-                  <Headphones style={{ width: 15, height: 15, color: '#2563eb' }} />
-                </div>
-                <span className="lp-feat-label">24/7 Support</span>
-              </div>
-            </div>
-
             {/* Bottom controls */}
             <div className="lp-hero-foot">
               {/* Language pill (opens upward) */}
@@ -767,7 +716,7 @@ export default function Login() {
               </div>
             </div>
 
-            <p className="lp-copyright">© 2024 Twite Billing. All Rights Reserved.</p>
+            <p className="lp-copyright">© 2026 Twite Billing. All Rights Reserved.</p>
           </div>
 
           {/* ── RIGHT FORM PANEL ── */}
