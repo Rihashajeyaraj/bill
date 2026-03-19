@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   LockKeyhole,
   Mail,
-  ReceiptIndianRupee,
   User,
   ShieldCheck,
   Eye,
@@ -28,6 +27,7 @@ import {
 } from "../services/company.service";
 import { ROLE_LABELS, ROLE_OPTIONS, isOwnerRole } from "../services/roles";
 import { invoiceTemplateIsCompleted } from "../lib/templateStore";
+import twiteLogo from "../images/twite_ai_technologies_logo.jfif";
 
 const LANGUAGES = [
   { code: "en", label: "English", flag: "🇬🇧" },
@@ -324,11 +324,17 @@ export default function Login() {
         }
         .lp-logo-icon {
           width: 42px; height: 42px; border-radius: 12px;
-          background: linear-gradient(135deg, #22c55e, #16a34a);
+          background: rgba(255,255,255,0.94);
           display: flex; align-items: center; justify-content: center;
-          box-shadow: 0 6px 16px rgba(34,197,94,0.35); flex-shrink: 0;
+          box-shadow: 0 6px 16px rgba(15,23,42,0.12); flex-shrink: 0;
+          overflow: hidden;
         }
-        .lp-logo-icon svg { color: white; }
+        .lp-logo-img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+        }
         .lp-logo-name { font-size: 17px; font-weight: 700; color: #0f172a; letter-spacing: -0.3px; }
         .lp-logo-sub { font-size: 11px; color: #475569; font-weight: 400; }
 
@@ -655,7 +661,7 @@ export default function Login() {
             {/* Logo */}
             <div className="lp-logo-row">
               <div className="lp-logo-icon">
-                <ReceiptIndianRupee style={{ width: 20, height: 20 }} />
+                <img src={twiteLogo} alt="Twite Billing logo" className="lp-logo-img" />
               </div>
               <div>
                 <div className="lp-logo-name">Twite Billing</div>
