@@ -165,6 +165,35 @@ function amountFromAdjustment(row) {
   );
 }
 
+function taxTotalsFromRow(row) {
+  const totals = row?.totals && typeof row.totals === "object" ? row.totals : {};
+  const tax = totals?.tax && typeof totals.tax === "object" ? totals.tax : {};
+  const taxBreakup = totals?.taxBreakup && typeof totals.taxBreakup === "object" ? totals.taxBreakup : {};
+  const cgst = Math.max(0, parseNumber(tax?.cgst ?? totals?.cgst ?? taxBreakup?.cgst));
+  const sgst = Math.max(0, parseNumber(tax?.sgst ?? totals?.sgst ?? taxBreakup?.sgst));
+  const igst = Math.max(0, parseNumber(tax?.igst ?? totals?.igst ?? taxBreakup?.igst));
+  const explicitTotal = Math.max(
+    0,
+    parseNumber(
+      tax?.taxTotal ??
+        tax?.totalTax ??
+        tax?.taxAmount ??
+        totals?.taxTotal ??
+        totals?.totalTax ??
+        taxBreakup?.taxTotal ??
+        taxBreakup?.totalTax
+    )
+  );
+  const computedTotal = cgst + sgst + igst;
+
+  return {
+    cgst,
+    sgst,
+    igst,
+    taxTotal: explicitTotal || computedTotal
+  };
+}
+
 function amountFromPayment(row, partyType) {
   if (normalizePartyType(partyType) === PARTY_TYPES.supplier) {
     return Math.max(
@@ -1644,5 +1673,105 @@ export function buildProfitLossReport(dataset, filters = {}) {
       netResultType: netProfit < 0 ? "loss" : "profit"
     },
     expenseRows
+  };
+}
+
+export function buildGstReport(dataset, filters = {}) {
+  const organizationCountry = String(
+    filters.organizationCountry || filters.country || dataset?.organizationCountry || ""
+  ).trim();
+  const fromDate = toIsoDate(filters.fromDate);
+  const toDate = toIsoDate(filters.toDate);
+
+  if (!isIndiaCountry(organizationCountry)) {
+    return {
+      fromDate,
+      toDate,
+      rows: [],
+      totals: {
+        outputGst: 0,
+        inputGst: 0,
+        gstPayable: 0,
+        outputCgst: 0,
+        outputSgst: 0,
+        outputIgst: 0,
+        inputCgst: 0,
+        inputSgst: 0,
+        inputIgst: 0,
+        payableCgst: 0,
+        payableSgst: 0,
+        payableIgst: 0
+      }
+    };
+  }
+
+  const indexes = buildPartyIndexes(dataset);
+  const salesRows = (Array.isArray(dataset?.invoices) ? dataset.invoices : [])
+    .filter((row) => normalizeText(row?.status) !== "draft" && normalizeText(row?.status) !== "cancelled")
+    .filter((row) => inDateRange(resolveInvoiceDate(row), fromDate, toDate))
+    .map((row) => {
+      const taxTotals = taxTotalsFromRow(row);
+      return {
+        id: `gst_sale_${row?.id || row?.invoiceNo || Math.random().toString(16).slice(2)}`,
+        date: resolveInvoiceDate(row),
+        reference: String(row?.invoiceNo || row?.id || "").trim(),
+        partyName: resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById),
+        gstAmount: taxTotals.taxTotal,
+        cgst: taxTotals.cgst,
+        sgst: taxTotals.sgst,
+        igst: taxTotals.igst
+      };
+    })
+    .sort((left, right) => String(left.date || "").localeCompare(String(right.date || "")));
+
+  const purchaseRows = (Array.isArray(dataset?.purchases) ? dataset.purchases : [])
+    .filter((row) => normalizeText(row?.status) !== "draft" && normalizeText(row?.status) !== "cancelled")
+    .filter((row) => inDateRange(resolvePurchaseDate(row), fromDate, toDate))
+    .map((row) => {
+      const taxTotals = taxTotalsFromRow(row);
+      return {
+        id: `gst_purchase_${row?.id || row?.billNumber || Math.random().toString(16).slice(2)}`,
+        date: resolvePurchaseDate(row),
+        reference: String(row?.billNumber || row?.invoiceNo || row?.id || "").trim(),
+        partyName: resolvePartyName(row, PARTY_TYPES.supplier, indexes.partiesById),
+        gstAmount: taxTotals.taxTotal,
+        cgst: taxTotals.cgst,
+        sgst: taxTotals.sgst,
+        igst: taxTotals.igst
+      };
+    });
+
+  const outputTotals = salesRows.reduce(
+    (summary, row) => ({
+      outputGst: summary.outputGst + row.gstAmount,
+      outputCgst: summary.outputCgst + row.cgst,
+      outputSgst: summary.outputSgst + row.sgst,
+      outputIgst: summary.outputIgst + row.igst
+    }),
+    { outputGst: 0, outputCgst: 0, outputSgst: 0, outputIgst: 0 }
+  );
+
+  const inputTotals = purchaseRows.reduce(
+    (summary, row) => ({
+      inputGst: summary.inputGst + row.gstAmount,
+      inputCgst: summary.inputCgst + row.cgst,
+      inputSgst: summary.inputSgst + row.sgst,
+      inputIgst: summary.inputIgst + row.igst
+    }),
+    { inputGst: 0, inputCgst: 0, inputSgst: 0, inputIgst: 0 }
+  );
+
+  return {
+    fromDate,
+    toDate,
+    rows: salesRows,
+    totals: {
+      ...outputTotals,
+      ...inputTotals,
+      gstPayable: outputTotals.outputGst - inputTotals.inputGst,
+      payableCgst: outputTotals.outputCgst - inputTotals.inputCgst,
+      payableSgst: outputTotals.outputSgst - inputTotals.inputSgst,
+      payableIgst: outputTotals.outputIgst - inputTotals.inputIgst
+    }
   };
 }

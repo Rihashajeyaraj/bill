@@ -31,6 +31,7 @@ import {
   buildAllPartiesReport,
   buildAllTransactionsReport,
   buildCashFlowReport,
+  buildGstReport,
   buildPartyStatementReport,
   buildProfitLossReport,
   buildPurchaseReport,
@@ -62,7 +63,9 @@ function getVisibleReportSections(profile = {}) {
   return reportSections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => item.id !== "tds-report" || allowTdsReport)
+      items: section.items.filter(
+        (item) => (item.id !== "tds-report" && item.id !== "gst-report") || allowTdsReport
+      )
     }))
     .filter((section) => section.items.length > 0);
 }
@@ -107,6 +110,11 @@ const REPORT_META = {
     icon: TrendingUp,
     accent: "bg-lime-50 text-lime-700 border-lime-200",
     activeAccent: "border-lime-300 bg-lime-50 text-lime-950 shadow-md md:hover:border-lime-400 md:hover:bg-lime-100/80"
+  },
+  "gst-report": {
+    icon: FileSpreadsheet,
+    accent: "bg-orange-50 text-orange-700 border-orange-200",
+    activeAccent: "border-orange-300 bg-orange-50 text-orange-950 shadow-md md:hover:border-orange-400 md:hover:bg-orange-100/80"
   },
   "tds-report": {
     icon: FileSpreadsheet,
@@ -814,8 +822,59 @@ function ProfitLossBreakdownModal({ mode, onClose, viewModel, currency }) {
   );
 }
 
+function GstBreakdownPanel({ totals, currency }) {
+  const rows = [
+    {
+      label: "CGST",
+      output: totals.outputCgst,
+      input: totals.inputCgst,
+      payable: totals.payableCgst
+    },
+    {
+      label: "SGST",
+      output: totals.outputSgst,
+      input: totals.inputSgst,
+      payable: totals.payableSgst
+    },
+    {
+      label: "IGST",
+      output: totals.outputIgst,
+      input: totals.inputIgst,
+      payable: totals.payableIgst
+    }
+  ];
+
+  return (
+    <div className="mb-4 overflow-auto rounded-3xl border border-slate-200 bg-slate-50/70">
+      <table className="w-full min-w-[720px] text-left text-sm">
+        <thead className="bg-slate-100/80">
+          <tr>
+            <th className="px-4 py-3 font-semibold text-slate-700">GST Type</th>
+            <th className="px-4 py-3 text-right font-semibold text-slate-700">Output GST</th>
+            <th className="px-4 py-3 text-right font-semibold text-slate-700">Input GST</th>
+            <th className="px-4 py-3 text-right font-semibold text-slate-700">Payable</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label} className="border-t border-slate-200">
+              <td className="px-4 py-3 font-medium text-slate-900">{row.label}</td>
+              <td className="px-4 py-3 text-right text-slate-700">{formatMoney(row.output, currency)}</td>
+              <td className="px-4 py-3 text-right text-slate-700">{formatMoney(row.input, currency)}</td>
+              <td className={clsx("px-4 py-3 text-right font-semibold", row.payable >= 0 ? "text-emerald-700" : "text-rose-700")}>
+                {formatMoney(row.payable, currency)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function getDerivedPartyType(activeReport, partyType) {
   if (activeReport === "sale-report") return PARTY_TYPES.customer;
+  if (activeReport === "gst-report") return PARTY_TYPES.customer;
   if (activeReport === "tds-report") return PARTY_TYPES.customer;
   if (activeReport === "purchase-report") return PARTY_TYPES.supplier;
   return partyType;
@@ -1055,6 +1114,35 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
         }
       };
     }
+    case "gst-report": {
+      const pageInfo = paginateIfNeeded(data.rows);
+      return {
+        title: "GST Report",
+        subtitle: "Sales GST output, purchase GST input, and payable tax for the selected period.",
+        filename: "gst-report",
+        metrics: [
+          { label: "Total Sales GST", value: formatMoney(data.totals.outputGst, currency), tone: "positive" },
+          { label: "Total Purchase GST", value: formatMoney(data.totals.inputGst, currency) },
+          { label: "GST Payable", value: formatMoney(data.totals.gstPayable, currency), tone: data.totals.gstPayable >= 0 ? "positive" : "negative" }
+        ],
+        columns: [
+          { key: "date", label: "Date", format: "date" },
+          { key: "reference", label: "Invoice No" },
+          { key: "partyName", label: "Customer" },
+          { key: "gstAmount", label: "GST Amount", align: "right", format: "money", emphasis: true }
+        ],
+        tableTitle: "Sales GST Entries",
+        rows: pageInfo.rows,
+        exportRows: data.rows,
+        pageInfo,
+        totals: data.totals,
+        breakdown: [
+          { label: "CGST", output: data.totals.outputCgst, input: data.totals.inputCgst, payable: data.totals.payableCgst },
+          { label: "SGST", output: data.totals.outputSgst, input: data.totals.inputSgst, payable: data.totals.payableSgst },
+          { label: "IGST", output: data.totals.outputIgst, input: data.totals.inputIgst, payable: data.totals.payableIgst }
+        ]
+      };
+    }
     case "tds-report": {
       const pageInfo = paginateIfNeeded(data.rows);
       return {
@@ -1284,6 +1372,12 @@ export default function Reports() {
           });
         case "profit-loss":
           return buildProfitLossReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate });
+        case "gst-report":
+          return buildGstReport(dataset, {
+            fromDate: filters.fromDate,
+            toDate: filters.toDate,
+            organizationCountry: organizationProfile?.country || organizationProfile?.countryCode || ""
+          });
         case "tds-report":
           return buildTdsReport(dataset, {
             fromDate: filters.fromDate,
@@ -1350,7 +1444,7 @@ export default function Reports() {
   }
 
   function renderFilters() {
-    const showDateRange = ["sale-report", "purchase-report", "cash-flow", "all-transactions", "party-statement", "profit-loss", "tds-report"].includes(activeReport);
+    const showDateRange = ["sale-report", "purchase-report", "cash-flow", "all-transactions", "party-statement", "profit-loss", "gst-report", "tds-report"].includes(activeReport);
     const showPartyType = ["party-statement", "aging-report", "all-parties"].includes(activeReport);
     const showPartySelect = ["sale-report", "purchase-report", "all-transactions", "party-statement", "aging-report", "tds-report"].includes(activeReport);
     const showAsOfDate = activeReport === "aging-report";
@@ -1625,7 +1719,20 @@ export default function Reports() {
                       </div>
                     </div>
 
-                    {activeReport === "aging-report" ? (
+                    {activeReport === "gst-report" ? (
+                      <>
+                        <GstBreakdownPanel totals={viewModel.totals} currency={currency} />
+                        <ReportTable
+                          columns={viewModel.columns}
+                          rows={viewModel.rows}
+                          currency={currency}
+                          sortKey={filters.sortKey}
+                          sortDirection={filters.sortDirection}
+                          onSort={null}
+                          emptyText="No GST entries found for the selected filters."
+                        />
+                      </>
+                    ) : activeReport === "aging-report" ? (
                       <AgingReportTable
                         rows={viewModel.rows}
                         currency={currency}

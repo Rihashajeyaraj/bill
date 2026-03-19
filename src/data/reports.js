@@ -59,6 +59,11 @@ export const reportSections = [
         description: "Simple sales, expenses, and net profit summary."
       },
       {
+        id: "gst-report",
+        label: "GST Report",
+        description: "Sales and purchase GST summary with CGST, SGST, and IGST split."
+      },
+      {
         id: "tds-report",
         label: "TDS Report",
         description: "Invoice-linked TDS deductions captured from Payment In entries."
