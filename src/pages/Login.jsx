@@ -176,15 +176,16 @@ export default function Login() {
 
         .lp-root {
           font-family: 'Inter', sans-serif;
-          min-height: 100vh;
+          min-height: 100dvh;
           background: ${dm ? '#0f172a' : '#dceef5'};
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 1rem;
+          padding: clamp(12px, 2vw, 24px);
           transition: background 0.3s ease;
           position: relative;
           overflow: hidden;
+          box-sizing: border-box;
         }
         .lp-root::before {
           content: '';
@@ -277,11 +278,16 @@ export default function Login() {
           overflow: hidden;
           display: grid;
           grid-template-columns: 1fr 1fr;
-          min-height: 600px;
+          min-height: min(600px, calc(100dvh - 48px));
+          max-height: calc(100dvh - 48px);
           backdrop-filter: blur(20px);
         }
         @media (max-width: 768px) {
-          .lp-card { grid-template-columns: 1fr; }
+          .lp-card {
+            grid-template-columns: 1fr;
+            min-height: auto;
+            max-height: calc(100dvh - 24px);
+          }
           .lp-hero { display: none; }
         }
 
@@ -291,6 +297,7 @@ export default function Login() {
           padding: 36px 30px 24px;
           background: linear-gradient(150deg, #d8f0f5 0%, #c0e8ef 18%, #cdeee6 45%, #ddf5ed 70%, #eefaf6 100%);
           display: flex; flex-direction: column; gap: 0;
+          min-height: 0;
         }
         .lp-hero-orb1 {
           position: absolute; top: -60px; right: -80px;
@@ -438,6 +445,11 @@ export default function Login() {
           display: flex; flex-direction: column; justify-content: center;
           transition: background 0.3s;
           overflow-y: auto;
+          min-height: 0;
+          box-sizing: border-box;
+        }
+        @media (max-width: 640px) {
+          .lp-form-panel { padding: 28px 20px; }
         }
 
         .lp-kicker {
@@ -646,8 +658,8 @@ export default function Login() {
                 <ReceiptIndianRupee style={{ width: 20, height: 20 }} />
               </div>
               <div>
-                <div className="lp-logo-name">BillJoy</div>
-                <div className="lp-logo-sub">India-first Billing Software</div>
+                <div className="lp-logo-name">Twite Billing</div>
+                <div className="lp-logo-sub">Smart billing for growing businesses</div>
               </div>
             </div>
 
@@ -749,7 +761,7 @@ export default function Login() {
               </div>
             </div>
 
-            <p className="lp-copyright">© 2024 BillJoy. All Rights Reserved.</p>
+            <p className="lp-copyright">© 2024 Twite Billing. All Rights Reserved.</p>
           </div>
 
           {/* ── RIGHT FORM PANEL ── */}
