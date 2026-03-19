@@ -15,11 +15,6 @@ export const reportSections = [
         description: "Supplier bills with paid and pending analysis."
       },
       {
-        id: "day-book",
-        label: "Day Book",
-        description: "Chronological daily view of sales, purchases, payments, and expenses."
-      },
-      {
         id: "cash-flow",
         label: "Cash Flow",
         description: "Cash received, cash spent, and net flow across the selected period."

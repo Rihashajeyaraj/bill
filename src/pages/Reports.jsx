@@ -4,7 +4,6 @@ import { useSearchParams } from "react-router-dom";
 import {
   ArrowLeftRight,
   Briefcase,
-  CalendarDays,
   ChevronDown,
   ClipboardList,
   FileDown,
@@ -32,7 +31,6 @@ import {
   buildAllPartiesReport,
   buildAllTransactionsReport,
   buildCashFlowReport,
-  buildDayBookReport,
   buildPartyStatementReport,
   buildProfitLossReport,
   buildPurchaseReport,
@@ -65,11 +63,6 @@ const REPORT_META = {
     icon: Briefcase,
     accent: "bg-amber-50 text-amber-700 border-amber-200",
     activeAccent: "border-amber-300 bg-amber-50 text-amber-950 shadow-md md:hover:border-amber-400 md:hover:bg-amber-100/80"
-  },
-  "day-book": {
-    icon: CalendarDays,
-    accent: "bg-sky-50 text-sky-700 border-sky-200",
-    activeAccent: "border-sky-300 bg-sky-50 text-sky-950 shadow-md md:hover:border-sky-400 md:hover:bg-sky-100/80"
   },
   "cash-flow": {
     icon: Wallet,
@@ -714,32 +707,6 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
         pageInfo
       };
     }
-    case "day-book": {
-      const pageInfo = paginateIfNeeded(data.rows);
-      return {
-        title: "Day Book",
-        subtitle: "Daily transactions across sales, purchases, payments, and expenses.",
-        filename: "day-book",
-        metrics: [
-          { label: "Cash In", value: formatMoney(data.totals.cashIn, currency), tone: "positive" },
-          { label: "Cash Out", value: formatMoney(data.totals.cashOut, currency) },
-          { label: "Net Movement", value: formatMoney(data.totals.netMovement, currency), tone: data.totals.netMovement >= 0 ? "positive" : "negative" },
-          { label: "Entries", value: data.rows.length }
-        ],
-        columns: [
-          { key: "date", label: "Date", format: "date" },
-          { key: "entryType", label: "Entry Type" },
-          { key: "reference", label: "Reference" },
-          { key: "partyName", label: "Party / Category" },
-          { key: "cashIn", label: "Cash In", align: "right", format: "money" },
-          { key: "cashOut", label: "Cash Out", align: "right", format: "money" }
-        ],
-        tableTitle: "Day Book Entries",
-        rows: pageInfo.rows,
-        exportRows: data.rows,
-        pageInfo
-      };
-    }
     case "cash-flow": {
       const pageInfo = paginateIfNeeded(data.rows);
       return {
@@ -1053,8 +1020,6 @@ export default function Reports() {
           return buildSaleReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate, partyId: filters.partyId });
         case "purchase-report":
           return buildPurchaseReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate, partyId: filters.partyId });
-        case "day-book":
-          return buildDayBookReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate });
         case "cash-flow":
           return buildCashFlowReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate });
         case "all-transactions":
@@ -1156,7 +1121,7 @@ export default function Reports() {
   }
 
   function renderFilters() {
-    const showDateRange = ["sale-report", "purchase-report", "day-book", "cash-flow", "all-transactions", "party-statement", "profit-loss", "tds-report"].includes(activeReport);
+    const showDateRange = ["sale-report", "purchase-report", "cash-flow", "all-transactions", "party-statement", "profit-loss", "tds-report"].includes(activeReport);
     const showPartyType = ["party-statement", "aging-report", "all-parties"].includes(activeReport);
     const showPartySelect = ["sale-report", "purchase-report", "all-transactions", "party-statement", "aging-report", "tds-report"].includes(activeReport);
     const showAsOfDate = activeReport === "aging-report";
