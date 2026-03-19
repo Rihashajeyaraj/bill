@@ -183,6 +183,12 @@ function formatCell(row, column, currency) {
   return value || "-";
 }
 
+function formatPercent(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return "-";
+  return `${numericValue.toFixed(Math.abs(numericValue) >= 10 ? 1 : 2)}%`;
+}
+
 function buildExportPayload({ viewModel, currency }) {
   return {
     title: viewModel.title,
@@ -640,6 +646,160 @@ function PaginationBar({ pageInfo, onChange }) {
   );
 }
 
+function ProfitLossInsights({ viewModel, currency }) {
+  const totals = viewModel?.totals || {};
+  const topExpenseRows = Array.isArray(viewModel?.topExpenseRows) ? viewModel.topExpenseRows : [];
+  const totalSales = Number(totals.totalSales || 0);
+  const totalExpenses = Number(totals.totalExpenses || 0);
+  const grossProfit = Number(totals.grossProfit || 0);
+  const netProfit = Number(totals.netProfit || 0);
+  const grossLabel = grossProfit < 0 ? "Gross Loss" : "Gross Profit";
+  const netLabel = netProfit < 0 ? "Net Loss" : "Net Profit";
+
+  const summaryRows = [
+    { label: grossLabel, value: formatMoney(Math.abs(grossProfit), currency), tone: grossProfit < 0 ? "text-rose-700" : "text-emerald-700" },
+    { label: "Total Expenses", value: formatMoney(totalExpenses, currency), tone: "text-slate-900" },
+    { label: netLabel, value: formatMoney(Math.abs(netProfit), currency), tone: netProfit < 0 ? "text-rose-700" : "text-emerald-700" },
+    { label: "Profit Margin", value: formatPercent(viewModel?.profitMargin), tone: netProfit < 0 ? "text-rose-700" : "text-slate-900" }
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.7fr)]">
+        <div className="rounded-3xl border border-slate-200 bg-white p-5">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Top Expense Categories</p>
+              <p className="mt-1 text-xs text-slate-500">Highest expense categories within the selected financial year/date range.</p>
+            </div>
+            <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+              {topExpenseRows.length} categories
+            </div>
+          </div>
+
+          {topExpenseRows.length ? (
+            <div className="space-y-3">
+              {topExpenseRows.map((row) => {
+                const amount = Number(row?.amount || 0);
+                const share = totalExpenses > 0 ? Math.max(0, Math.min(100, (amount / totalExpenses) * 100)) : 0;
+                return (
+                  <div key={row.category} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-slate-900">{row.category || "Uncategorized"}</p>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-slate-900">{formatMoney(amount, currency)}</p>
+                        <p className="text-xs text-slate-500">{formatPercent(share)}</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                      <div className="h-full rounded-full bg-slate-900" style={{ width: `${share}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 p-6 text-sm text-slate-500">
+              No expense entries exist for the selected filters. Profit values are currently based on sales and purchases only.
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-5">
+          <p className="text-sm font-semibold text-slate-900">Profit Snapshot</p>
+          <p className="mt-1 text-xs text-slate-500">Summary values remain aligned with the simplified profit and loss formula.</p>
+
+          <div className="mt-4 space-y-3">
+            {summaryRows.map((row) => (
+              <div key={row.label} className="flex items-center justify-between gap-3 rounded-2xl border border-white/70 bg-white px-4 py-3">
+                <span className="text-sm font-medium text-slate-600">{row.label}</span>
+                <span className={clsx("text-sm font-semibold", row.tone)}>{row.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfitLossBreakdownModal({ mode, onClose, viewModel, currency }) {
+  if (!mode || !viewModel) return null;
+
+  const totals = viewModel.totals || {};
+  const totalSales = Number(totals.totalSales || 0);
+  const totalPurchase = Number(totals.totalPurchase ?? totals.totalPurchases ?? 0);
+  const totalExpenses = Number(totals.totalExpenses || 0);
+  const grossProfit = Number(totals.grossProfit || 0);
+  const netProfit = Number(totals.netProfit || 0);
+  const grossLabel = grossProfit < 0 ? "Gross Loss" : "Gross Profit";
+  const netLabel = netProfit < 0 ? "Net Loss" : "Net Profit";
+  const isGrossMode = mode === "gross-breakdown";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" onClick={onClose}>
+      <Card
+        className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-lg font-semibold text-slate-900">{isGrossMode ? "Gross Profit Breakdown" : "Net Profit Breakdown"}</p>
+            <p className="mt-1 text-sm text-slate-500">Uses the same current filters and summary card totals.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
+          <div className="space-y-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-medium text-slate-700">Sales</span>
+              <span className="font-semibold text-slate-900">{formatMoney(totalSales, currency)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-medium text-slate-700">(-) Purchase</span>
+              <span className="font-semibold text-slate-900">{formatMoney(totalPurchase, currency)}</span>
+            </div>
+            <div className="border-t border-dashed border-slate-300 pt-3">
+              <div className={clsx("flex items-center justify-between gap-3", isGrossMode && "rounded-2xl px-4 py-3", isGrossMode && (grossProfit < 0 ? "bg-rose-50" : "bg-emerald-50"))}>
+                <span className="font-semibold text-slate-900">{grossLabel}</span>
+                <span className={clsx(isGrossMode ? "text-base font-bold" : "font-semibold", grossProfit < 0 ? "text-rose-700" : "text-emerald-700")}>
+                  {formatMoney(Math.abs(grossProfit), currency)}
+                </span>
+              </div>
+            </div>
+
+            {!isGrossMode ? (
+              <>
+                <div className="pt-2" />
+
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium text-slate-700">(-) Total Expenses</span>
+                  <span className="font-semibold text-slate-900">{formatMoney(totalExpenses, currency)}</span>
+                </div>
+                <div className="border-t border-dashed border-slate-300 pt-3">
+                  <div className={clsx("flex items-center justify-between gap-3 rounded-2xl px-4 py-3", netProfit < 0 ? "bg-rose-50" : "bg-emerald-50")}>
+                    <span className="font-semibold text-slate-900">{netLabel}</span>
+                    <span className={clsx("text-base font-bold", netProfit < 0 ? "text-rose-700" : "text-emerald-700")}>
+                      {formatMoney(Math.abs(netProfit), currency)}
+                    </span>
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 function getDerivedPartyType(activeReport, partyType) {
   if (activeReport === "sale-report") return PARTY_TYPES.customer;
   if (activeReport === "tds-report") return PARTY_TYPES.customer;
@@ -839,24 +999,46 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
       };
     }
     case "profit-loss": {
-      const pageInfo = paginateIfNeeded(data.expenseRows);
+      const totalPurchase = data.totals.totalPurchase ?? data.totals.totalPurchases ?? 0;
+      const grossProfit = data.totals.grossProfit ?? data.totals.totalSales - totalPurchase;
+      const netProfit = data.totals.netProfit ?? grossProfit - data.totals.totalExpenses;
       return {
         title: "Profit & Loss",
         subtitle: "Simple financial summary without complex accounting treatment.",
         filename: "profit-loss",
         metrics: [
           { label: "Total Sales", value: formatMoney(data.totals.totalSales, currency), tone: "positive" },
+          { label: "Total Purchase", value: formatMoney(totalPurchase, currency) },
+          {
+            label: grossProfit < 0 ? "Gross Loss" : "Gross Profit",
+            value: formatMoney(Math.abs(grossProfit), currency),
+            tone: grossProfit < 0 ? "negative" : "positive",
+            metricKey: "gross-breakdown"
+          },
           { label: "Total Expenses", value: formatMoney(data.totals.totalExpenses, currency) },
-          { label: "Net Profit", value: formatMoney(data.totals.netProfit, currency), tone: data.totals.netProfit >= 0 ? "positive" : "negative" }
+          {
+            label: netProfit < 0 ? "Net Loss" : "Net Profit",
+            value: formatMoney(Math.abs(netProfit), currency),
+            tone: netProfit >= 0 ? "positive" : "negative",
+            metricKey: "net-breakdown"
+          }
         ],
         columns: [
           { key: "category", label: "Expense Category" },
           { key: "amount", label: "Amount", align: "right", format: "money", emphasis: true }
         ],
-        tableTitle: "Expense Breakdown",
-        rows: pageInfo.rows,
+        tableTitle: "Top Expense Categories",
+        rows: data.expenseRows,
         exportRows: data.expenseRows,
-        pageInfo
+        pageInfo: null,
+        topExpenseRows: data.expenseRows.slice(0, 5),
+        profitMargin: data.totals.totalSales > 0 ? (netProfit / data.totals.totalSales) * 100 : null,
+        totals: {
+          ...data.totals,
+          totalPurchase,
+          grossProfit,
+          netProfit
+        }
       };
     }
     case "tds-report": {
@@ -904,6 +1086,7 @@ export default function Reports() {
   const [sidebarWidth, setSidebarWidth] = useState(REPORT_SIDEBAR_DEFAULT_WIDTH);
   const [expandedAgingBucket, setExpandedAgingBucket] = useState(null);
   const [agingMetricFilter, setAgingMetricFilter] = useState("totalOutstanding");
+  const [profitBreakdownMode, setProfitBreakdownMode] = useState("");
   const resizeStateRef = useRef(null);
   useGlobalLoadingBridge(loading, "reports-module");
 
@@ -960,6 +1143,25 @@ export default function Reports() {
     setExpandedAgingBucket(null);
     setAgingMetricFilter("totalOutstanding");
   }, [activeReport, filters.asOfDate, filters.partyId, filters.partyType, dataset]);
+
+  useEffect(() => {
+    if (activeReport !== "profit-loss") {
+      setProfitBreakdownMode("");
+    }
+  }, [activeReport]);
+
+  useEffect(() => {
+    if (!profitBreakdownMode) return undefined;
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setProfitBreakdownMode("");
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [profitBreakdownMode]);
 
   useEffect(() => {
     function handleMouseMove(event) {
@@ -1363,6 +1565,15 @@ export default function Reports() {
                             setAgingMetricFilter(metric.metricKey);
                           }}
                         />
+                      ) : metric.metricKey && activeReport === "profit-loss" ? (
+                        <InteractiveMetricCard
+                          key={metric.label}
+                          label={metric.label}
+                          value={metric.value}
+                          tone={metric.tone}
+                          active={profitBreakdownMode === metric.metricKey}
+                          onClick={() => setProfitBreakdownMode(metric.metricKey)}
+                        />
                       ) : (
                         <MetricCard key={metric.label} label={metric.label} value={metric.value} tone={metric.tone} />
                       )
@@ -1372,37 +1583,43 @@ export default function Reports() {
               </Card>
 
               <Card className="p-6">
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">{viewModel.tableTitle}</p>
-                    <p className="text-xs text-slate-500">Built for large datasets with filtered exports and paginated viewing.</p>
-                  </div>
-                  <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                    {(viewModel.pageInfo?.totalRows ?? viewModel.exportRows.length) || 0} rows
-                  </div>
-                </div>
-
-                {activeReport === "aging-report" ? (
-                  <AgingReportTable
-                    rows={viewModel.rows}
-                    currency={currency}
-                    expandedBucket={expandedAgingBucket}
-                    onToggle={handleAgingBucketToggle}
-                    emptyText="No records found for the selected filters."
-                  />
+                {activeReport === "profit-loss" ? (
+                  <ProfitLossInsights viewModel={viewModel} currency={currency} />
                 ) : (
-                  <ReportTable
-                    columns={viewModel.columns}
-                    rows={viewModel.rows}
-                    currency={currency}
-                    sortKey={filters.sortKey}
-                    sortDirection={filters.sortDirection}
-                    onSort={activeReport === "all-transactions" ? handleSort : null}
-                    emptyText={activeReport === "party-statement" ? "Select a party to generate the statement." : "No records found for the selected filters."}
-                  />
-                )}
+                  <>
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{viewModel.tableTitle}</p>
+                        <p className="text-xs text-slate-500">Built for large datasets with filtered exports and paginated viewing.</p>
+                      </div>
+                      <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                        {(viewModel.pageInfo?.totalRows ?? viewModel.exportRows.length) || 0} rows
+                      </div>
+                    </div>
 
-                <PaginationBar pageInfo={viewModel.pageInfo} onChange={setPage} />
+                    {activeReport === "aging-report" ? (
+                      <AgingReportTable
+                        rows={viewModel.rows}
+                        currency={currency}
+                        expandedBucket={expandedAgingBucket}
+                        onToggle={handleAgingBucketToggle}
+                        emptyText="No records found for the selected filters."
+                      />
+                    ) : (
+                      <ReportTable
+                        columns={viewModel.columns}
+                        rows={viewModel.rows}
+                        currency={currency}
+                        sortKey={filters.sortKey}
+                        sortDirection={filters.sortDirection}
+                        onSort={activeReport === "all-transactions" ? handleSort : null}
+                        emptyText={activeReport === "party-statement" ? "Select a party to generate the statement." : "No records found for the selected filters."}
+                      />
+                    )}
+
+                    <PaginationBar pageInfo={viewModel.pageInfo} onChange={setPage} />
+                  </>
+                )}
               </Card>
             </>
           ) : (
@@ -1412,6 +1629,15 @@ export default function Reports() {
           )}
         </div>
       </div>
+
+      {activeReport === "profit-loss" ? (
+        <ProfitLossBreakdownModal
+          mode={profitBreakdownMode}
+          onClose={() => setProfitBreakdownMode("")}
+          viewModel={viewModel}
+          currency={currency}
+        />
+      ) : null}
     </div>
   );
 }

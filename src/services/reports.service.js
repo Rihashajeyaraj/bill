@@ -1580,10 +1580,18 @@ export function buildProfitLossReport(dataset, filters = {}) {
     .filter((row) => inDateRange(resolveInvoiceDate(row), fromDate, toDate))
     .reduce((sum, row) => sum + amountFromInvoice(row), 0);
 
+  const totalPurchases = (Array.isArray(dataset?.purchases) ? dataset.purchases : [])
+    .filter((row) => normalizeText(row?.status) !== "draft" && normalizeText(row?.status) !== "cancelled")
+    .filter((row) => inDateRange(resolvePurchaseDate(row), fromDate, toDate))
+    .reduce((sum, row) => sum + amountFromInvoice(row), 0);
+
   const totalExpenses = (Array.isArray(dataset?.expenses) ? dataset.expenses : [])
     .filter((row) => normalizeText(row?.status) !== "draft" && normalizeText(row?.status) !== "cancelled")
     .filter((row) => inDateRange(resolveExpenseDate(row), fromDate, toDate))
     .reduce((sum, row) => sum + amountFromExpense(row), 0);
+
+  const grossProfit = totalSales - totalPurchases;
+  const netProfit = grossProfit - totalExpenses;
 
   const expenseByCategory = new Map();
   (Array.isArray(dataset?.expenses) ? dataset.expenses : [])
@@ -1603,8 +1611,15 @@ export function buildProfitLossReport(dataset, filters = {}) {
     toDate,
     totals: {
       totalSales,
+      totalPurchase: totalPurchases,
+      totalPurchases,
       totalExpenses,
-      netProfit: totalSales - totalExpenses
+      grossProfit,
+      grossLoss: grossProfit < 0 ? Math.abs(grossProfit) : 0,
+      grossResultType: grossProfit < 0 ? "loss" : "profit",
+      netProfit,
+      netLoss: netProfit < 0 ? Math.abs(netProfit) : 0,
+      netResultType: netProfit < 0 ? "loss" : "profit"
     },
     expenseRows
   };
