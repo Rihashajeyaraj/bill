@@ -931,6 +931,10 @@ export function buildPartyStatementReport(dataset, filters = {}, options = {}) {
         runningBalance
       };
     });
+  const periodClosingBalance = rows.reduce(
+    (sum, row) => sum + parseNumber(row.debit) - parseNumber(row.credit),
+    0
+  );
 
   const page = paginate(rows, options.page, options.pageSize);
   return {
@@ -940,7 +944,8 @@ export function buildPartyStatementReport(dataset, filters = {}, options = {}) {
     fromDate,
     toDate,
     openingBalance,
-    closingBalance: runningBalance,
+    closingBalance: periodClosingBalance,
+    endingBalance: runningBalance,
     totals: {
       debit: rows.reduce((sum, row) => sum + parseNumber(row.debit), 0),
       credit: rows.reduce((sum, row) => sum + parseNumber(row.credit), 0),

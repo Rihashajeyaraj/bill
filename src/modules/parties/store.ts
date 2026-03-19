@@ -1271,11 +1271,28 @@ export function buildPartyStatement(
   };
 
   let openingBalance = openingBase;
+  const openingEntries: LedgerEntry[] = [];
+  if (openingBase !== 0) {
+    openingEntries.push({
+      id: `open_base_${party.id}`,
+      date: toIsoDate(party.audit?.createdAt) || "",
+      type: "Opening Balance",
+      documentNo: "Master Opening Balance",
+      debit: openingBase > 0 ? openingBase : 0,
+      credit: openingBase < 0 ? Math.abs(openingBase) : 0,
+      balance: openingBase
+    });
+  }
+
   if (fromDate) {
     sortedAll
       .filter((entry) => entry.date && entry.date < fromDate)
       .forEach((entry) => {
         openingBalance += entry.debit - entry.credit;
+        openingEntries.push({
+          ...entry,
+          balance: openingBalance
+        });
       });
   }
 
@@ -1304,6 +1321,8 @@ export function buildPartyStatement(
 
   return {
     entries: results,
+    openingEntries,
+    openingBase,
     openingBalance,
     closingBalance: running
   };
