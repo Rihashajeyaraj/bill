@@ -13,10 +13,26 @@ export default function Modal({ open, title, onClose, children, footer }) {
 
   useEffect(() => {
     if (!open) return;
-    const previous = document.body.style.overflow;
+    const scrollY = window.scrollY;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousBodyPosition = document.body.style.position;
+    const previousBodyTop = document.body.style.top;
+    const previousBodyWidth = document.body.style.width;
+
+    document.documentElement.style.overflow = "hidden";
     document.body.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
+
     return () => {
-      document.body.style.overflow = previous;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+      document.body.style.position = previousBodyPosition;
+      document.body.style.top = previousBodyTop;
+      document.body.style.width = previousBodyWidth;
+      window.scrollTo(0, scrollY);
     };
   }, [open]);
 
@@ -25,8 +41,8 @@ export default function Modal({ open, title, onClose, children, footer }) {
   return (
     <div className="fixed inset-0 z-[80]">
       <div className="absolute inset-0 app-modal-backdrop" onClick={onClose} />
-      <div className="absolute inset-0 flex items-end justify-center p-3 sm:items-center sm:p-4">
-        <Card className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden sm:max-h-[88vh]">
+      <div className="absolute inset-0 flex items-end justify-center p-0 sm:items-center sm:p-4">
+        <Card className="flex max-h-[100svh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl sm:max-h-[88vh] sm:rounded-3xl">
           <div className="flex items-center justify-between border-b px-4 py-3 app-modal-divider sm:px-5 sm:py-4">
             <div>
               <h3 className="text-base font-semibold app-main-text">{title}</h3>

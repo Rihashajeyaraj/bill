@@ -219,6 +219,20 @@
   color: var(--text);
 }
 
+.app-topbar-search-trigger {
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.app-topbar-search-trigger:hover {
+  background: var(--hover);
+}
+
+.app-topbar-search-trigger:focus-visible {
+  box-shadow: 0 0 0 4px var(--ring);
+}
+
 .app-topbar-search::placeholder {
   color: var(--muted);
 }
@@ -253,6 +267,16 @@
   background: var(--hover);
 }
 
+.app-install-btn {
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, var(--border));
+  background: var(--app-gradient);
+  color: var(--on-primary);
+}
+
+.app-install-btn:hover {
+  filter: brightness(1.02);
+}
+
 .app-topbar-user-avatar {
   background: var(--cream);
   color: var(--text);
@@ -261,6 +285,7 @@
 .app-topbar-menu {
   border: 1px solid var(--border);
   background: var(--card);
+  z-index: 70;
 }
 
 .app-topbar-menu-heading {
@@ -688,6 +713,10 @@
   background: var(--surface-subtle);
 }
 
+.app-modal-footer > * {
+  width: 100%;
+}
+
 .app-topbar-notice {
   background: var(--accent);
   color: var(--on-primary);
@@ -761,6 +790,7 @@
 
 .app-sidebar-item {
   padding: var(--sidebar-item-padding-y) var(--sidebar-item-padding-x);
+  min-height: 44px;
 }
 
 :root[data-sidebar-style="glass"] .app-sidebar {
@@ -844,9 +874,14 @@
 }
 
 @media (max-width: 1023px) {
+  .app-topbar {
+    padding-top: env(safe-area-inset-top);
+  }
+
   .app-sidebar {
     box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
-    max-width: min(260px, calc(100vw - 2.5rem));
+    width: min(280px, calc(100vw - 1.5rem));
+    max-width: min(280px, calc(100vw - 1.5rem));
   }
 
   .app-sidebar-header {
@@ -856,5 +891,11 @@
 
   .app-sidebar-tip-wrap {
     padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  }
+}
+
+@media (min-width: 640px) {
+  .app-modal-footer > * {
+    width: auto;
   }
 }

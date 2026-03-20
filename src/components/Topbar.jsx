@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Building2, Check, ChevronDown, LogOut, Menu } from "lucide-react";
+import { Bell, Building2, Check, ChevronDown, Download, LogOut, Menu, Search } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { authGetRole, authGetUser, authLogout } from "../services/auth.service";
 import { useOrganization } from "../context/OrganizationContext";
@@ -8,6 +8,7 @@ import { useAppShell } from "../context/AppShellContext";
 import { useToast } from "../context/ToastContext";
 import { formatDateByPreference, formatTimeByPreference } from "../lib/formatPreferences";
 import { canAccessPathForRole } from "../services/accessControl";
+import * as installPrompt from "../pwa/installPrompt";
 
 function pathForNext(next) {
   if (next === "organization_setup") return "/company-setup";
@@ -30,12 +31,14 @@ export default function Topbar({ onOpenSidebar }) {
     switchOrganization
   } = useOrganization();
   const { years, selectedYear, selectFinancialYear } = useFinancialYears();
-  const { unreadCount } = useAppShell();
+  const { unreadCount, setCommandOpen } = useAppShell();
   const companyName = String(company?.companyName || "").trim();
 
   const [companyMenu, setCompanyMenu] = useState(false);
   const [menu, setMenu] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const [installAvailable, setInstallAvailable] = useState(() => !!installPrompt.getDeferredInstallPrompt?.());
+  const [installing, setInstalling] = useState(false);
   const companyMenuRef = useRef(null);
   const menuRef = useRef(null);
 
@@ -58,6 +61,23 @@ export default function Topbar({ onOpenSidebar }) {
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const installStateEventName =
+      installPrompt.getInstallStateEventName?.() || "twite:pwa-install-state-change";
+
+    function syncInstallAvailability() {
+      const standalone =
+        window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true;
+      setInstallAvailable(!standalone && !!installPrompt.getDeferredInstallPrompt?.());
+    }
+
+    syncInstallAvailability();
+    window.addEventListener(installStateEventName, syncInstallAvailability);
+    return () => {
+      window.removeEventListener(installStateEventName, syncInstallAvailability);
+    };
   }, []);
 
   useEffect(() => {
@@ -117,53 +137,164 @@ export default function Topbar({ onOpenSidebar }) {
     }
   }
 
+  async function handleInstallClick() {
+    setInstalling(true);
+    try {
+      const result = await (installPrompt.promptAppInstall?.() || Promise.resolve({ outcome: "unavailable" }));
+      if (result?.outcome === "accepted") {
+        toast.success("App install started", "Twite Billing is being installed.");
+      } else if (result?.outcome === "dismissed") {
+        toast.info("Install dismissed", "You can install Twite Billing later from the browser.");
+      } else if (result?.outcome === "unavailable") {
+        toast.info(
+          "Install unavailable",
+          "The install prompt is no longer available. Reload after meeting browser install requirements."
+        );
+      }
+      setInstallAvailable(!!installPrompt.getDeferredInstallPrompt?.());
+    } catch (error) {
+      setInstallAvailable(!!installPrompt.getDeferredInstallPrompt?.());
+      toast.error("Install failed", error?.message || "Unable to start app installation.");
+    } finally {
+      setInstalling(false);
+    }
+  }
+
   return (
     <header className="app-topbar sticky top-0 z-40 backdrop-blur">
-      <div className="flex items-center justify-between gap-2 px-3 py-3 sm:gap-3 sm:px-4 sm:py-4 lg:px-5">
-        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
-          <button
-            type="button"
-            onClick={onOpenSidebar}
-            className="app-topbar-user-btn inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl lg:hidden"
-            aria-label="Open navigation menu"
-          >
-            <Menu className="h-5 w-5" />
-          </button>
-          <div className="flex min-w-0 flex-col">
-            <p className="app-topbar-title truncate text-sm font-semibold sm:text-base">{companyName || "My Shop"}</p>
-            <p className="app-topbar-subtitle truncate text-[11px] sm:text-xs">
-              <span className="hidden sm:inline">
-                {weekdayText} | {dateText} | {timeText}
-              </span>
-              <span className="sm:hidden">
-                {dateText} | {timeText}
-              </span>
-            </p>
+      <div className="flex flex-col gap-3 px-3 py-3 sm:px-4 sm:py-4 lg:px-5">
+        <div className="flex items-start justify-between gap-2 sm:gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={onOpenSidebar}
+              className="app-topbar-user-btn inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl lg:hidden"
+              aria-label="Open navigation menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <div className="flex min-w-0 flex-col">
+              <p className="app-topbar-title truncate text-sm font-semibold sm:text-base lg:text-lg">{companyName || "My Shop"}</p>
+              <p className="app-topbar-subtitle truncate text-[11px] sm:text-xs">
+                <span className="hidden sm:inline">
+                  {weekdayText} | {dateText} | {timeText}
+                </span>
+                <span className="sm:hidden">
+                  {dateText} | {timeText}
+                </span>
+              </p>
+            </div>
           </div>
-          {selectedYear ? (
-            <label className="hidden min-w-[180px] shrink-0 lg:block">
-              <span className="sr-only">Financial year</span>
-              <select
-                value={selectedYear?.id || ""}
-                onChange={(event) => selectFinancialYear(event.target.value)}
-                className="h-10 w-full rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-soft outline-none focus:ring-4 focus:ring-slate-100"
+
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <button
+              type="button"
+              onClick={() => nav("/app/notifications")}
+              className="app-topbar-user-btn relative inline-flex h-11 w-11 items-center justify-center rounded-2xl p-0 shadow-soft"
+              aria-label="Open notifications"
+            >
+              <Bell className="h-4 w-4" />
+              {unreadCount > 0 ? (
+                <span className="app-topbar-notice absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              ) : null}
+            </button>
+
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={() => setMenu((v) => !v)}
+                className="app-topbar-user-btn flex items-center gap-2 rounded-2xl px-2 py-1.5 shadow-soft sm:px-3 sm:py-2"
               >
-                {years.map((year) => (
-                  <option key={year.id} value={year.id}>
-                    FY {year.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
+                <div className="app-topbar-user-avatar flex h-8 w-8 items-center justify-center rounded-2xl text-xs font-bold">
+                  {company?.logoBase64 ? (
+                    <img
+                      src={company.logoBase64}
+                      alt="Company logo"
+                      className="h-full w-full rounded-2xl object-contain bg-white p-1"
+                    />
+                  ) : (
+                    (companyName || user?.name || "U").slice(0, 1).toUpperCase()
+                  )}
+                </div>
+                <div className="hidden max-w-[120px] text-left xl:block">
+                  <p className="app-topbar-title truncate text-sm font-semibold leading-4">{user?.name || "User"}</p>
+                  <p className="app-topbar-subtitle truncate text-xs leading-4">{role}</p>
+                </div>
+                <ChevronDown className="app-topbar-subtitle h-4 w-4" />
+              </button>
+
+              {menu ? (
+                <div className="app-topbar-menu absolute right-0 mt-2 w-56 rounded-2xl shadow-soft overflow-hidden">
+                  <div className="app-topbar-menu-heading px-4 py-3">
+                    <p className="app-topbar-title text-sm font-semibold">{user?.email}</p>
+                    <p className="app-topbar-subtitle text-xs">Role: {role}</p>
+                  </div>
+                  <button
+                    onClick={logout}
+                    className="app-topbar-menu-btn w-full px-4 py-3 text-left text-sm font-semibold flex items-center gap-2"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Logout
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex w-full flex-col gap-2 md:flex-row md:items-center">
+            <button
+              type="button"
+              onClick={() => setCommandOpen(true)}
+              className="app-topbar-search-trigger inline-flex h-11 w-full items-center gap-3 rounded-2xl px-3 text-left shadow-soft md:flex-1"
+              aria-label="Search modules and actions"
+            >
+              <Search className="h-4 w-4 shrink-0 text-slate-400" />
+              <span className="min-w-0 flex-1 truncate text-sm text-slate-500">
+                Search modules, actions, parties, items...
+              </span>
+              <span className="hidden rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-500 md:inline-flex">
+                Ctrl/Cmd + K
+              </span>
+            </button>
+            {selectedYear ? (
+              <label className="w-full md:w-[220px] md:shrink-0">
+                <span className="sr-only">Financial year</span>
+                <select
+                  value={selectedYear?.id || ""}
+                  onChange={(event) => selectFinancialYear(event.target.value)}
+                  className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-soft outline-none focus:ring-4 focus:ring-slate-100"
+                >
+                  {years.map((year) => (
+                    <option key={year.id} value={year.id}>
+                      FY {year.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row lg:justify-end">
+            {installAvailable ? (
+              <button
+                type="button"
+                onClick={() => void handleInstallClick()}
+                disabled={installing}
+                className="app-install-btn inline-flex h-11 items-center justify-center gap-2 rounded-2xl px-4 text-sm font-semibold shadow-soft"
+              >
+                <Download className="h-4 w-4" />
+                {installing ? "Installing..." : "Download App"}
+              </button>
+            ) : null}
+
           <div className="relative" ref={companyMenuRef}>
             <button
               type="button"
               onClick={() => setCompanyMenu((current) => !current)}
-              className="app-topbar-user-btn flex max-w-[220px] items-center gap-2 rounded-2xl px-2 py-1.5 shadow-soft sm:px-3 sm:py-2"
+              className="app-topbar-user-btn flex w-full min-w-0 items-center gap-2 rounded-2xl px-3 py-2 shadow-soft sm:w-auto sm:max-w-[260px]"
               aria-label="Switch company"
             >
               <Building2 className="h-4 w-4 shrink-0" />
@@ -226,59 +357,6 @@ export default function Topbar({ onOpenSidebar }) {
               </div>
             ) : null}
           </div>
-
-          <button
-            type="button"
-            onClick={() => nav("/app/notifications")}
-            className="app-topbar-user-btn relative inline-flex h-10 w-10 items-center justify-center rounded-2xl p-0 shadow-soft"
-            aria-label="Open notifications"
-          >
-            <Bell className="h-4 w-4" />
-            {unreadCount > 0 ? (
-              <span className="app-topbar-notice absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold">
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </span>
-            ) : null}
-          </button>
-
-          <div className="relative" ref={menuRef}>
-            <button
-              onClick={() => setMenu((v) => !v)}
-              className="app-topbar-user-btn flex items-center gap-2 rounded-2xl px-2 py-1.5 shadow-soft sm:px-3 sm:py-2"
-            >
-              <div className="app-topbar-user-avatar h-8 w-8 rounded-2xl flex items-center justify-center text-xs font-bold">
-                {company?.logoBase64 ? (
-                  <img
-                    src={company.logoBase64}
-                    alt="Company logo"
-                    className="h-full w-full rounded-2xl object-contain bg-white p-1"
-                  />
-                ) : (
-                  (companyName || user?.name || "U").slice(0, 1).toUpperCase()
-                )}
-              </div>
-              <div className="hidden text-left sm:block">
-                <p className="app-topbar-title text-sm font-semibold leading-4">{user?.name || "User"}</p>
-                <p className="app-topbar-subtitle text-xs leading-4">{role}</p>
-              </div>
-              <ChevronDown className="app-topbar-subtitle h-4 w-4" />
-            </button>
-
-            {menu ? (
-              <div className="app-topbar-menu absolute right-0 mt-2 w-56 rounded-2xl shadow-soft overflow-hidden">
-                <div className="app-topbar-menu-heading px-4 py-3">
-                  <p className="app-topbar-title text-sm font-semibold">{user?.email}</p>
-                  <p className="app-topbar-subtitle text-xs">Role: {role}</p>
-                </div>
-                <button
-                  onClick={logout}
-                  className="app-topbar-menu-btn w-full px-4 py-3 text-left text-sm font-semibold flex items-center gap-2"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Logout
-                </button>
-              </div>
-            ) : null}
           </div>
         </div>
       </div>

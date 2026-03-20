@@ -12,6 +12,8 @@ body, #root {
 
 html {
   font-size: var(--font-size-base, 16px);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -23,6 +25,19 @@ body {
   font-variant-numeric: lining-nums tabular-nums;
   font-feature-settings: "lnum" 1, "tnum" 1;
   transition: background-color 180ms ease, color 180ms ease;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
 }
 
 @media print {
@@ -91,14 +106,67 @@ body {
   max-width: 100%;
 }
 
+.theme-root button,
+.theme-root [role="button"],
+.theme-root input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.theme-root select,
+.theme-root textarea {
+  max-width: 100%;
+}
+
 .theme-root .overflow-x-auto,
 .theme-root .overflow-auto {
   -webkit-overflow-scrolling: touch;
 }
 
+.theme-root .overflow-x-auto {
+  scrollbar-width: thin;
+}
+
+.theme-root table {
+  width: 100%;
+}
+
+.theme-root input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+.theme-root select,
+.theme-root button,
+.theme-root textarea {
+  min-height: 44px;
+}
+
+.theme-root textarea {
+  min-height: 96px;
+}
+
+.theme-root input,
+.theme-root select,
+.theme-root textarea {
+  font-size: 16px;
+}
+
+.theme-root .app-main > * {
+  min-width: 0;
+}
+
 @media (max-width: 1023px) {
+  html {
+    font-size: 15px;
+  }
+
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
   .app-main {
     padding-bottom: max(1rem, env(safe-area-inset-bottom)) !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .theme-root .overflow-x-auto table,
+  .theme-root .overflow-auto table {
+    min-width: 640px;
   }
 }
 
@@ -145,5 +213,17 @@ body {
   .numeric-input-uniform[type="number"] {
     -moz-appearance: textfield;
     appearance: textfield;
+  }
+
+  .app-page-shell {
+    @apply mx-auto w-full max-w-[1480px] px-0;
+  }
+
+  .app-section-grid {
+    @apply grid grid-cols-1 gap-4 lg:grid-cols-2;
+  }
+
+  .app-form-grid {
+    @apply grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3;
   }
 }

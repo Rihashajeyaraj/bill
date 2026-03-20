@@ -57,6 +57,31 @@ export default function AppLayout() {
     if (isDesktop) setMobileNavOpen(false);
   }, [isDesktop]);
 
+  useEffect(() => {
+    if (!mobileNavOpen) return undefined;
+    const scrollY = window.scrollY;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousBodyPosition = document.body.style.position;
+    const previousBodyTop = document.body.style.top;
+    const previousBodyWidth = document.body.style.width;
+
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
+
+    return () => {
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+      document.body.style.position = previousBodyPosition;
+      document.body.style.top = previousBodyTop;
+      document.body.style.width = previousBodyWidth;
+      window.scrollTo(0, scrollY);
+    };
+  }, [mobileNavOpen]);
+
   useEffect(
     () => () => {
       if (routeTimerRef.current) {
@@ -70,7 +95,7 @@ export default function AppLayout() {
   return (
     <div
       key={organizationId || "no-organization"}
-      className="app-shell h-dvh overflow-hidden lg:h-screen"
+      className="app-shell min-h-[100svh] min-h-dvh overflow-hidden"
       style={{ "--app-sidebar-width": sidebarWidth }}
     >
       {mobileNavOpen ? (
@@ -92,7 +117,7 @@ export default function AppLayout() {
           onNavigate={() => setMobileNavOpen(false)}
         />
       </div>
-      <div className={`${mainOffset} app-main-pad ml-0 flex h-dvh min-w-0 flex-col transition-all duration-200 lg:h-screen`}>
+      <div className={`${mainOffset} app-main-pad ml-0 flex min-h-[100svh] min-h-dvh min-w-0 flex-col transition-all duration-200`}>
         <div className="topbar shrink-0">
           <Topbar onOpenSidebar={() => setMobileNavOpen(true)} />
         </div>

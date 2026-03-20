@@ -3,8 +3,39 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/jpeg" href="/src/images/twite_ai_technologies_logo.jfif" />
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="manifest" href="/manifest.json" />
     <title>Twite Billing</title>
+    <script>
+      (function () {
+        var isLocalhost =
+          location.hostname === "localhost" ||
+          location.hostname === "127.0.0.1" ||
+          location.hostname === "[::1]";
+
+        if (!isLocalhost || !("serviceWorker" in navigator)) return;
+
+        window.__twiteDevServiceWorkerCleanup = (async function () {
+          try {
+            var registrations = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(registrations.map(function (registration) {
+              return registration.unregister();
+            }));
+          } catch (_) {}
+
+          if (!("caches" in window)) return;
+
+          try {
+            var cacheKeys = await caches.keys();
+            await Promise.all(cacheKeys.map(function (key) {
+              return caches.delete(key);
+            }));
+          } catch (_) {}
+        })();
+      })();
+    </script>
   </head>
   <body class="bg-white">
     <div id="root"></div>
