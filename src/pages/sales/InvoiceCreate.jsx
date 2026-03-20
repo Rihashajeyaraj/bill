@@ -1906,12 +1906,20 @@ export default function InvoiceCreate() {
         <PageHeader
           title="Sales - Invoice"
           subtitle="Create invoice with line items and country-wise tax breakdown"
+          className="lg:items-center"
           right={
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-end lg:w-auto">
+              <button
+                type="button"
+                onClick={() => navigate("/app/sales/invoice/history")}
+                className="inline-flex h-11 w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 sm:w-auto"
+              >
+                Invoice History
+              </button>
               <button
                 onClick={handleSaveAndPrint}
                 disabled={!canCreateInvoice || hasStockErrors}
-                className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 flex items-center gap-2"
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-100 bg-white px-3 text-sm font-semibold hover:bg-slate-50 sm:w-auto"
               >
                 <Printer className="h-4 w-4" />
                 Save & Print
@@ -1919,7 +1927,7 @@ export default function InvoiceCreate() {
               <GradientButton
                 onClick={saveInvoice}
                 disabled={!canCreateInvoice || hasStockErrors}
-                className="disabled:cursor-not-allowed disabled:opacity-60"
+                className="h-11 w-full justify-center disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 <Save className="h-4 w-4" />
                 Save
@@ -1933,15 +1941,6 @@ export default function InvoiceCreate() {
           Your role does not have invoice create permission.
         </div>
       ) : null}
-      <div className="print-hide mt-4 flex justify-end">
-        <button
-          type="button"
-          onClick={() => navigate("/app/sales/invoice/history")}
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-        >
-          Invoice History
-        </button>
-      </div>
 
       <div className="grid grid-cols-1 gap-4">
         <Card className="p-5 print-hide">

@@ -657,37 +657,97 @@ export default function Items() {
             ? "Products and services with tax and inventory controls"
             : "Customer returns management"
         }
+        className="mb-3 gap-2 lg:items-center"
         right={
-          <div className="flex flex-wrap items-center gap-2">
-            <Tabs
-              value={pageView}
-              onChange={setPageView}
-              tabs={[
-                { label: "Items", value: "items" },
-                { label: "Returns", value: "returns" }
-              ]}
-            />
-            {pageView === "items" ? (
-              <>
-                <Tabs
-                  value={tab}
-                  onChange={setTab}
-                  tabs={[
-                    { label: "Products", value: "Product" },
-                    { label: "Services", value: "Service" }
-                  ]}
-                />
-                <button
-                  type="button"
-                  onClick={openCreate}
-                  disabled={!canCreateItem}
-                  className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-slate-800"
-                >
-                  <Plus className="h-4 w-4" />
-                  {tab === "Service" ? "Add Service" : "Add Product"}
-                </button>
-              </>
-            ) : null}
+          <div className="w-full lg:w-auto">
+            <div className="space-y-2 lg:hidden">
+              <div className="grid grid-cols-2 gap-1 rounded-2xl border app-tabs-wrap p-1 shadow-soft">
+                {[
+                  { label: "Items", value: "items" },
+                  { label: "Returns", value: "returns" }
+                ].map((entry) => {
+                  const active = pageView === entry.value;
+                  return (
+                    <button
+                      key={entry.value}
+                      type="button"
+                      onClick={() => setPageView(entry.value)}
+                      className={`h-10 rounded-xl px-3 text-sm font-semibold transition ${
+                        active ? "app-tabs-active" : "app-tabs-item"
+                      }`}
+                    >
+                      {entry.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {pageView === "items" ? (
+                <>
+                  <div className="grid grid-cols-2 gap-1 rounded-2xl border app-tabs-wrap p-1 shadow-soft">
+                    {[
+                      { label: "Products", value: "Product" },
+                      { label: "Services", value: "Service" }
+                    ].map((entry) => {
+                      const active = tab === entry.value;
+                      return (
+                        <button
+                          key={entry.value}
+                          type="button"
+                          onClick={() => setTab(entry.value)}
+                          className={`h-10 rounded-xl px-3 text-sm font-semibold transition ${
+                            active ? "app-tabs-active" : "app-tabs-item"
+                          }`}
+                        >
+                          {entry.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openCreate}
+                    disabled={!canCreateItem}
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-3.5 text-sm font-semibold text-white shadow-soft hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Plus className="h-4 w-4" />
+                    {tab === "Service" ? "Add Service" : "Add Product"}
+                  </button>
+                </>
+              ) : null}
+            </div>
+
+            <div className="hidden lg:flex lg:items-center lg:gap-2">
+              <Tabs
+                value={pageView}
+                onChange={setPageView}
+                tabs={[
+                  { label: "Items", value: "items" },
+                  { label: "Returns", value: "returns" }
+                ]}
+              />
+              {pageView === "items" ? (
+                <>
+                  <Tabs
+                    value={tab}
+                    onChange={setTab}
+                    tabs={[
+                      { label: "Products", value: "Product" },
+                      { label: "Services", value: "Service" }
+                    ]}
+                  />
+                  <button
+                    type="button"
+                    onClick={openCreate}
+                    disabled={!canCreateItem}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-slate-900 px-3.5 text-sm font-semibold text-white shadow-soft hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Plus className="h-4 w-4" />
+                    {tab === "Service" ? "Add Service" : "Add Product"}
+                  </button>
+                </>
+              ) : null}
+            </div>
           </div>
         }
       />
@@ -908,7 +968,7 @@ export default function Items() {
             </p>
           </div>
           <div className="relative overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full min-w-[980px] text-left text-sm">
               <thead className="bg-slate-50">
                 <tr>
                   <th className="px-4 py-3 font-semibold text-slate-700">Item</th>
@@ -948,12 +1008,13 @@ export default function Items() {
                       </td>
                       <td className="px-4 py-3 text-right text-slate-700">{entry.returnedQty}</td>
                       <td className="px-4 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex min-w-[220px] flex-col gap-2 lg:min-w-0">
+                          <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
                           <button
                             type="button"
                             onClick={() => handleReturnToSupplier(entry)}
                             disabled={locked}
-                            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="inline-flex h-9 w-full items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Return to Supplier
                           </button>
@@ -961,7 +1022,7 @@ export default function Items() {
                             type="button"
                             onClick={() => handleResellAction(entry)}
                             disabled={locked}
-                            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="inline-flex h-9 w-full items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Resell
                           </button>
@@ -973,10 +1034,11 @@ export default function Items() {
                               })
                             }
                             disabled={locked}
-                            className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="inline-flex h-9 w-full items-center justify-center rounded-full border border-rose-200 bg-rose-50 px-3 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Mark as Loss
                           </button>
+                          </div>
                           <span className="text-[11px] font-semibold text-slate-500">
                             {entry.action?.action
                               ? entry.action.action === "RESELL"
