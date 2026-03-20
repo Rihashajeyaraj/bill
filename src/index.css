@@ -127,6 +127,19 @@ textarea {
   width: 100%;
 }
 
+.theme-root .overflow-x-auto,
+.theme-root .overflow-auto,
+.theme-root [data-table-scroll="true"] {
+  width: 100%;
+  max-width: 100%;
+}
+
+.theme-root .overflow-x-auto table,
+.theme-root .overflow-auto table,
+.theme-root [data-table-scroll="true"] table {
+  min-width: max(100%, var(--app-table-min-width, 640px));
+}
+
 .theme-root input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
 .theme-root select,
 .theme-root button,
@@ -164,9 +177,63 @@ textarea {
 }
 
 @media (max-width: 767px) {
+  .theme-root .overflow-x-auto,
+  .theme-root .overflow-auto,
+  .theme-root [data-table-scroll="true"] {
+    margin-inline: -0.25rem;
+    padding-inline: 0.25rem;
+  }
+
   .theme-root .overflow-x-auto table,
-  .theme-root .overflow-auto table {
-    min-width: 640px;
+  .theme-root .overflow-auto table,
+  .theme-root [data-table-scroll="true"] table {
+    min-width: max(100%, var(--app-table-mobile-min-width, 560px));
+  }
+
+  .theme-root .overflow-x-auto table th,
+  .theme-root .overflow-x-auto table td,
+  .theme-root .overflow-auto table th,
+  .theme-root .overflow-auto table td,
+  .theme-root [data-table-scroll="true"] table th,
+  .theme-root [data-table-scroll="true"] table td {
+    white-space: normal !important;
+    word-break: break-word;
+    vertical-align: top;
+  }
+
+  .theme-root .overflow-x-auto table.table-fixed,
+  .theme-root .overflow-auto table.table-fixed,
+  .theme-root [data-table-scroll="true"] table.table-fixed {
+    table-layout: auto;
+  }
+
+  .theme-root .app-floating-action-bar {
+    left: 0.75rem !important;
+    right: 0.75rem !important;
+    bottom: max(0.75rem, env(safe-area-inset-bottom)) !important;
+    width: auto !important;
+    justify-content: stretch !important;
+    padding: 0.75rem !important;
+  }
+
+  .theme-root .app-floating-action-bar > * {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .theme-root .app-floating-action-bar button,
+  .theme-root .app-floating-action-bar a,
+  .theme-root .app-floating-action-bar label {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .theme-root .app-floating-chip {
+    left: 1rem !important;
+    right: 1rem !important;
+    bottom: calc(max(5.5rem, env(safe-area-inset-bottom) + 5rem)) !important;
+    width: auto !important;
+    justify-content: center;
   }
 }
 

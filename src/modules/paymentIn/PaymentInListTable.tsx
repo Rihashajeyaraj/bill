@@ -40,7 +40,7 @@ export default function PaymentInListTable({
 
   return (
     <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
-      <div className="max-h-[560px] overflow-auto">
+      <div className="max-h-[560px] overflow-auto" data-table-scroll="true">
         <table className="w-full min-w-[1320px] text-left text-sm">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr>
@@ -121,11 +121,11 @@ export default function PaymentInListTable({
         </table>
       </div>
 
-      <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+      <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-slate-500">
           Showing {rows.length ? start + 1 : 0}-{start + rows.length} of {records.length}
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           <button
             type="button"
             onClick={() => onPageChange(currentPage - 1)}

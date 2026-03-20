@@ -116,7 +116,7 @@ export default function DebitNotePremium() {
   const [page, setPage] = useState(1);
   const filterInputClassName =
     "mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none";
-  const filterLabelClassName = "min-w-[170px] flex-1 text-xs font-semibold text-slate-600";
+  const filterLabelClassName = "min-w-0 flex-1 text-xs font-semibold text-slate-600 sm:min-w-[170px]";
   const actionIconButtonClassName =
     "inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
   useGlobalLoadingBridge(loading || editorLoading || switching, "debit-note");
@@ -770,7 +770,7 @@ export default function DebitNotePremium() {
                 </div>
                 <div className="h-full rounded-3xl border border-slate-200 bg-white p-4 shadow-soft">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pending / Applied</p>
-                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <div className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Pending</p>
                       <p className="mt-1 font-semibold text-amber-700">{pendingCount}</p>

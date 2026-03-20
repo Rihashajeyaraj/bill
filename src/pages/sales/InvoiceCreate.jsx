@@ -1971,7 +1971,7 @@ export default function InvoiceCreate() {
                       handleCustomerSearch();
                     }
                   }}
-                  className="min-w-[260px] flex-1 rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                  className="min-w-0 flex-1 rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 sm:min-w-[260px]"
                   style={{ "--tw-ring-color": UI.COLORS.ring }}
                   placeholder="Enter mobile or customer name/email/address"
                 />

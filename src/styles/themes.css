@@ -286,6 +286,7 @@
   border: 1px solid var(--border);
   background: var(--card);
   z-index: 70;
+  max-width: min(22rem, calc(100vw - 1rem));
 }
 
 .app-topbar-menu-heading {
@@ -891,6 +892,26 @@
 
   .app-sidebar-tip-wrap {
     padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 767px) {
+  .app-topbar-menu {
+    width: min(22rem, calc(100vw - 1rem)) !important;
+    max-height: min(75vh, 32rem);
+    overflow-y: auto;
+  }
+
+  .app-topbar-menu-heading {
+    position: sticky;
+    top: 0;
+    background: var(--card);
+    z-index: 1;
+  }
+
+  .app-modal-footer {
+    display: grid;
+    gap: 0.75rem;
   }
 }
 

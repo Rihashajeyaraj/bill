@@ -72,7 +72,7 @@ export default function DebitNoteListTable({
 
   return (
     <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
-      <div className="max-h-[560px] overflow-auto">
+      <div className="max-h-[560px] overflow-auto" data-table-scroll="true">
         <table className="w-full min-w-[1080px] table-fixed text-left text-sm">
           <colgroup>
             <col style={{ width: "14%" }} />
@@ -162,11 +162,11 @@ export default function DebitNoteListTable({
         </table>
       </div>
 
-      <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+      <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-slate-500">
           Showing {rows.length ? start + 1 : 0}-{start + rows.length} of {notes.length}
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           <button
             type="button"
             onClick={() => onPageChange(currentPage - 1)}

@@ -886,7 +886,7 @@ export default function PaymentOutPremium() {
                         }}
                         placeholder="Search customer/supplier by name, phone, email, or address"
                         disabled={readOnly}
-                        className="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100"
+                        className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100 sm:min-w-[220px]"
                       />
                       <button
                         type="button"
@@ -995,7 +995,7 @@ export default function PaymentOutPremium() {
                   </div>
                   <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                      <label className="block min-w-[220px] flex-1">
+                      <label className="block min-w-0 flex-1 sm:min-w-[220px]">
                         <span className="text-xs font-semibold text-slate-600">TDS Category</span>
                         <select
                           value={form.tdsCategory}
@@ -1290,7 +1290,7 @@ export default function PaymentOutPremium() {
           ) : null}
 
           {panelMode === "form" && !readOnly ? (
-            <div className="fixed bottom-4 right-4 z-40 flex flex-wrap items-center justify-end gap-3 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
+            <div className="app-floating-action-bar fixed bottom-4 right-4 z-40 flex flex-wrap items-center justify-end gap-3 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
               <button
                 type="button"
                 onClick={() => persist(confirmStatus)}

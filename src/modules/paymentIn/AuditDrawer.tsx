@@ -16,7 +16,8 @@ export default function AuditDrawer({ open, record, onClose }: AuditDrawerProps)
         onClick={onClose}
       />
       <aside
-        className={`absolute right-0 top-0 h-full w-full max-w-md transform bg-white shadow-xl transition-transform duration-300 ${open ? "translate-x-0" : "translate-x-full"}`}
+        aria-hidden={!open}
+        className={`absolute right-0 top-0 h-full w-full max-w-md transform bg-white shadow-xl transition-transform duration-300 ${open ? "visible translate-x-0" : "invisible translate-x-full"}`}
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>

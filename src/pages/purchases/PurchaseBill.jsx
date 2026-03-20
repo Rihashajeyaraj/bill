@@ -1284,7 +1284,7 @@ export default function PurchaseBill() {
                   }
                 }}
                 placeholder="Enter mobile or supplier name/email/address"
-                className="min-w-[260px] flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100"
+                className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4 focus:ring-blue-100 sm:min-w-[260px]"
               />
               <button
                 type="button"

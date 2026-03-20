@@ -802,9 +802,9 @@ export default function ItemCreate() {
         </div>
       </Card>
 
-      <div className="fixed bottom-4 right-4 left-4 z-30 md:left-auto md:w-[560px]">
+      <div className="app-floating-action-bar fixed bottom-4 right-4 left-4 z-30 md:left-auto md:w-[560px]">
         <div className="rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-2xl backdrop-blur">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-900">{summaryName}</p>
               <p className="text-xs text-slate-500">
@@ -812,11 +812,11 @@ export default function ItemCreate() {
               </p>
               {saveError ? <p className="mt-1 text-xs font-semibold text-rose-600">{saveError}</p> : null}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <button
                 type="button"
                 onClick={() => nav("/items")}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 sm:w-auto"
               >
                 Cancel
               </button>
@@ -826,7 +826,7 @@ export default function ItemCreate() {
                 onClick={() => {
                   void saveItem("new");
                 }}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60 sm:w-auto"
               >
                 Save & New
               </button>
@@ -835,7 +835,7 @@ export default function ItemCreate() {
                 onClick={() => {
                   void saveItem("save");
                 }}
-                className="rounded-xl px-4 py-2 text-xs"
+                className="w-full rounded-xl px-4 py-2 text-xs sm:w-auto"
               >
                 {saving ? "Saving..." : "Save"}
               </GradientButton>

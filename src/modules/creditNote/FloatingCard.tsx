@@ -228,7 +228,7 @@ export default function FloatingCard({ title, previewValue, state, onChange, chi
       <button
         type="button"
         onClick={() => onChange({ ...state, hidden: false })}
-        className="fixed bottom-24 right-4 z-[70] inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-lg"
+        className="app-floating-chip fixed bottom-24 right-4 z-[70] inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-lg"
       >
         {title}
         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-800">{previewValue}</span>
