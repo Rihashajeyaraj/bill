@@ -119,35 +119,120 @@ export default function Topbar({ onOpenSidebar }) {
 
   return (
     <header className="app-topbar sticky top-0 z-40 backdrop-blur">
-      <div className="flex flex-col gap-3 px-3 py-3 sm:px-4 sm:py-4 lg:px-5">
-        <div className="flex items-start justify-between gap-2 sm:gap-3">
-          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
-            <button
-              type="button"
-              onClick={onOpenSidebar}
-              className="app-topbar-user-btn inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl lg:hidden"
-              aria-label="Open navigation menu"
-            >
-              <Menu className="h-5 w-5" />
-            </button>
-            <div className="flex min-w-0 flex-col">
-              <p className="app-topbar-title truncate text-sm font-semibold sm:text-base lg:text-lg">{companyName || "My Shop"}</p>
-              <p className="app-topbar-subtitle truncate text-[11px] sm:text-xs">
-                <span className="hidden sm:inline">
-                  {weekdayText} | {dateText} | {timeText}
-                </span>
-                <span className="sm:hidden">
-                  {dateText} | {timeText}
-                </span>
-              </p>
-            </div>
+      <div className="flex flex-col gap-3 px-3 py-3 sm:px-4 sm:py-4 lg:flex-row lg:items-center lg:justify-between lg:gap-4 lg:px-5">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={onOpenSidebar}
+            className="app-topbar-user-btn inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl lg:hidden"
+            aria-label="Open navigation menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <div className="flex min-w-0 flex-col">
+            <p className="app-topbar-title truncate text-sm font-semibold sm:text-base lg:text-lg">{companyName || "My Shop"}</p>
+            <p className="app-topbar-subtitle truncate text-[11px] sm:text-xs">
+              <span className="hidden sm:inline">
+                {weekdayText} | {dateText} | {timeText}
+              </span>
+              <span className="sm:hidden">
+                {dateText} | {timeText}
+              </span>
+            </p>
           </div>
+        </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end lg:shrink-0">
+          {selectedYear ? (
+            <label className="w-full sm:w-[220px] sm:shrink-0">
+              <span className="sr-only">Financial year</span>
+              <select
+                value={selectedYear?.id || ""}
+                onChange={(event) => selectFinancialYear(event.target.value)}
+                className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-soft outline-none focus:ring-4 focus:ring-slate-100"
+              >
+                {years.map((year) => (
+                  <option key={year.id} value={year.id}>
+                    FY {year.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+            <div className="relative" ref={companyMenuRef}>
+              <button
+                type="button"
+                onClick={() => setCompanyMenu((current) => !current)}
+                className="app-topbar-user-btn flex w-full min-w-0 items-center gap-2 rounded-2xl px-3 py-2 shadow-soft sm:w-auto sm:max-w-[260px]"
+                aria-label="Switch company"
+              >
+                <Building2 className="h-4 w-4 shrink-0" />
+                <div className="min-w-0 text-left">
+                  <p className="truncate text-sm font-semibold text-slate-900">{companyName || "Select Company"}</p>
+                  <p className="truncate text-xs text-slate-500">
+                    {organizationsLoading ? "Loading companies..." : `${organizations.length || 0} companies`}
+                  </p>
+                </div>
+                <ChevronDown className="app-topbar-subtitle h-4 w-4 shrink-0" />
+              </button>
+
+              {companyMenu ? (
+                <div className="app-topbar-menu absolute right-0 mt-2 w-72 rounded-2xl shadow-soft overflow-hidden">
+                  <div className="app-topbar-menu-heading px-4 py-3">
+                    <p className="app-topbar-title text-sm font-semibold">Switch Company</p>
+                    <p className="app-topbar-subtitle text-xs">Choose a company without logging out.</p>
+                  </div>
+
+                  <div className="max-h-80 overflow-y-auto py-1">
+                    {organizations.length ? (
+                      organizations.map((entry) => {
+                        const isCurrent = String(entry?.organizationId || "").trim() === String(organizationId || "").trim();
+                        const isSwitching = switchingOrganizationId === entry?.organizationId;
+                        return (
+                          <button
+                            key={entry.organizationId}
+                            type="button"
+                            onClick={() => {
+                              void handleCompanySwitch(entry.organizationId).catch((error) => {
+                                toast.error("Unable to switch company", error?.message || "Please try again.");
+                              });
+                            }}
+                            disabled={isSwitching}
+                            className="app-topbar-menu-btn flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold text-slate-900">{entry.companyName || "Untitled Company"}</p>
+                              <p className="truncate text-xs text-slate-500">
+                                {entry.role} | {entry.countryCode || "-"}
+                              </p>
+                            </div>
+                            <div className="shrink-0">
+                              {isSwitching ? (
+                                <span className="text-xs font-semibold text-slate-500">Opening...</span>
+                              ) : isCurrent ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-2 py-1 text-[11px] font-semibold text-white">
+                                  <Check className="h-3.5 w-3.5" />
+                                  Current
+                                </span>
+                              ) : null}
+                            </div>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="px-4 py-4 text-sm text-slate-500">No companies available.</div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <button
               type="button"
               onClick={() => nav("/app/notifications")}
-              className="app-topbar-user-btn relative inline-flex h-11 w-11 items-center justify-center rounded-2xl p-0 shadow-soft"
+              className="app-topbar-user-btn relative inline-flex h-11 w-11 items-center justify-center self-end rounded-2xl p-0 shadow-soft sm:self-auto"
               aria-label="Open notifications"
             >
               <Bell className="h-4 w-4" />
@@ -161,7 +246,7 @@ export default function Topbar({ onOpenSidebar }) {
             <div className="relative" ref={menuRef}>
               <button
                 onClick={() => setMenu((v) => !v)}
-                className="app-topbar-user-btn flex items-center gap-2 rounded-2xl px-2 py-1.5 shadow-soft sm:px-3 sm:py-2"
+                className="app-topbar-user-btn flex w-full items-center gap-2 rounded-2xl px-2 py-1.5 shadow-soft sm:w-auto sm:px-3 sm:py-2"
               >
                 <div className="app-topbar-user-avatar flex h-8 w-8 items-center justify-center rounded-2xl text-xs font-bold">
                   {company?.logoBase64 ? (
@@ -174,11 +259,11 @@ export default function Topbar({ onOpenSidebar }) {
                     (companyName || user?.name || "U").slice(0, 1).toUpperCase()
                   )}
                 </div>
-                <div className="hidden max-w-[120px] text-left xl:block">
+                <div className="min-w-0 text-left">
                   <p className="app-topbar-title truncate text-sm font-semibold leading-4">{user?.name || "User"}</p>
                   <p className="app-topbar-subtitle truncate text-xs leading-4">{role}</p>
                 </div>
-                <ChevronDown className="app-topbar-subtitle h-4 w-4" />
+                <ChevronDown className="app-topbar-subtitle h-4 w-4 shrink-0" />
               </button>
 
               {menu ? (
@@ -189,104 +274,13 @@ export default function Topbar({ onOpenSidebar }) {
                   </div>
                   <button
                     onClick={logout}
-                    className="app-topbar-menu-btn w-full px-4 py-3 text-left text-sm font-semibold flex items-center gap-2"
+                    className="app-topbar-menu-btn flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold"
                   >
                     <LogOut className="h-4 w-4" />
                     Logout
                   </button>
                 </div>
               ) : null}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex w-full sm:w-auto">
-            {selectedYear ? (
-              <label className="w-full sm:w-[220px] sm:shrink-0">
-                <span className="sr-only">Financial year</span>
-                <select
-                  value={selectedYear?.id || ""}
-                  onChange={(event) => selectFinancialYear(event.target.value)}
-                  className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-soft outline-none focus:ring-4 focus:ring-slate-100"
-                >
-                  {years.map((year) => (
-                    <option key={year.id} value={year.id}>
-                      FY {year.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-          </div>
-
-          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-            <div className="relative" ref={companyMenuRef}>
-            <button
-              type="button"
-              onClick={() => setCompanyMenu((current) => !current)}
-              className="app-topbar-user-btn flex w-full min-w-0 items-center gap-2 rounded-2xl px-3 py-2 shadow-soft sm:w-auto sm:max-w-[260px]"
-              aria-label="Switch company"
-            >
-              <Building2 className="h-4 w-4 shrink-0" />
-              <div className="min-w-0 text-left">
-                <p className="truncate text-sm font-semibold text-slate-900">{companyName || "Select Company"}</p>
-                <p className="truncate text-xs text-slate-500">
-                  {organizationsLoading ? "Loading companies..." : `${organizations.length || 0} companies`}
-                </p>
-              </div>
-              <ChevronDown className="app-topbar-subtitle h-4 w-4 shrink-0" />
-            </button>
-
-            {companyMenu ? (
-              <div className="app-topbar-menu absolute right-0 mt-2 w-72 rounded-2xl shadow-soft overflow-hidden">
-                <div className="app-topbar-menu-heading px-4 py-3">
-                  <p className="app-topbar-title text-sm font-semibold">Switch Company</p>
-                  <p className="app-topbar-subtitle text-xs">Choose a company without logging out.</p>
-                </div>
-
-                <div className="max-h-80 overflow-y-auto py-1">
-                  {organizations.length ? (
-                    organizations.map((entry) => {
-                      const isCurrent = String(entry?.organizationId || "").trim() === String(organizationId || "").trim();
-                      const isSwitching = switchingOrganizationId === entry?.organizationId;
-                      return (
-                        <button
-                          key={entry.organizationId}
-                          type="button"
-                          onClick={() => {
-                            void handleCompanySwitch(entry.organizationId).catch((error) => {
-                              toast.error("Unable to switch company", error?.message || "Please try again.");
-                            });
-                          }}
-                          disabled={isSwitching}
-                          className="app-topbar-menu-btn flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate font-semibold text-slate-900">{entry.companyName || "Untitled Company"}</p>
-                            <p className="truncate text-xs text-slate-500">
-                              {entry.role} | {entry.countryCode || "-"}
-                            </p>
-                          </div>
-                          <div className="shrink-0">
-                            {isSwitching ? (
-                              <span className="text-xs font-semibold text-slate-500">Opening...</span>
-                            ) : isCurrent ? (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-2 py-1 text-[11px] font-semibold text-white">
-                                <Check className="h-3.5 w-3.5" />
-                                Current
-                              </span>
-                            ) : null}
-                          </div>
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <div className="px-4 py-4 text-sm text-slate-500">No companies available.</div>
-                  )}
-                </div>
-              </div>
-            ) : null}
             </div>
           </div>
         </div>
