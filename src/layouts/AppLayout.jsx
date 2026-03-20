@@ -20,6 +20,7 @@ export default function AppLayout() {
   const [isDesktop, setIsDesktop] = useState(() => isDesktopViewport());
   const location = useLocation();
   const routeTimerRef = useRef(null);
+  const mainRef = useRef(null);
   const { isLoading, setRouteLoading } = usePageLoading();
   const effectiveCollapsed = useMemo(() => (isDesktop ? collapsed : false), [collapsed, isDesktop]);
   const mainOffset = useMemo(
@@ -44,6 +45,10 @@ export default function AppLayout() {
   useEffect(() => {
     setMobileNavOpen(false);
     setRouteLoading(true);
+    const frameId = window.requestAnimationFrame(() => {
+      mainRef.current?.scrollTo?.({ top: 0, left: 0, behavior: "auto" });
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    });
     if (routeTimerRef.current) {
       window.clearTimeout(routeTimerRef.current);
     }
@@ -51,6 +56,7 @@ export default function AppLayout() {
       setRouteLoading(false);
       routeTimerRef.current = null;
     }, 320);
+    return () => window.cancelAnimationFrame(frameId);
   }, [location.pathname, location.search, setRouteLoading]);
 
   useEffect(() => {
@@ -95,7 +101,7 @@ export default function AppLayout() {
   return (
     <div
       key={organizationId || "no-organization"}
-      className="app-shell min-h-[100svh] min-h-dvh overflow-hidden"
+      className="app-shell min-h-[100svh] min-h-dvh overflow-visible lg:overflow-hidden"
       style={{ "--app-sidebar-width": sidebarWidth }}
     >
       {mobileNavOpen ? (
@@ -122,7 +128,8 @@ export default function AppLayout() {
           <Topbar onOpenSidebar={() => setMobileNavOpen(true)} />
         </div>
         <main
-          className="app-main relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-4 sm:py-4 lg:px-5 lg:py-5"
+          ref={mainRef}
+          className="app-main relative min-w-0 flex-none overflow-visible px-3 py-3 sm:px-4 sm:py-4 lg:min-h-0 lg:flex-1 lg:overflow-x-hidden lg:overflow-y-auto lg:overscroll-y-contain lg:px-5 lg:py-5"
           style={{ WebkitOverflowScrolling: "touch" }}
         >
           <Outlet />
