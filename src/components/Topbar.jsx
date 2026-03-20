@@ -142,9 +142,9 @@ export default function Topbar({ onOpenSidebar }) {
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end lg:shrink-0">
+        <div className="flex w-full flex-col gap-2 lg:w-auto lg:shrink-0 lg:items-end">
           {selectedYear ? (
-            <label className="w-full sm:w-[220px] sm:shrink-0">
+            <label className="w-full sm:w-[220px] lg:w-[220px] lg:shrink-0">
               <span className="sr-only">Financial year</span>
               <select
                 value={selectedYear?.id || ""}
@@ -160,7 +160,7 @@ export default function Topbar({ onOpenSidebar }) {
             </label>
           ) : null}
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end lg:w-auto">
             <div className="relative" ref={companyMenuRef}>
               <button
                 type="button"
@@ -229,58 +229,60 @@ export default function Topbar({ onOpenSidebar }) {
               ) : null}
             </div>
 
-            <button
-              type="button"
-              onClick={() => nav("/app/notifications")}
-              className="app-topbar-user-btn relative inline-flex h-11 w-11 items-center justify-center self-end rounded-2xl p-0 shadow-soft sm:self-auto"
-              aria-label="Open notifications"
-            >
-              <Bell className="h-4 w-4" />
-              {unreadCount > 0 ? (
-                <span className="app-topbar-notice absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold">
-                  {unreadCount > 99 ? "99+" : unreadCount}
-                </span>
-              ) : null}
-            </button>
-
-            <div className="relative" ref={menuRef}>
+            <div className="flex items-center justify-end gap-2">
               <button
-                onClick={() => setMenu((v) => !v)}
-                className="app-topbar-user-btn flex w-full items-center gap-2 rounded-2xl px-2 py-1.5 shadow-soft sm:w-auto sm:px-3 sm:py-2"
+                type="button"
+                onClick={() => nav("/app/notifications")}
+                className="app-topbar-user-btn relative inline-flex h-11 w-11 items-center justify-center rounded-2xl p-0 shadow-soft"
+                aria-label="Open notifications"
               >
-                <div className="app-topbar-user-avatar flex h-8 w-8 items-center justify-center rounded-2xl text-xs font-bold">
-                  {company?.logoBase64 ? (
-                    <img
-                      src={company.logoBase64}
-                      alt="Company logo"
-                      className="h-full w-full rounded-2xl object-contain bg-white p-1"
-                    />
-                  ) : (
-                    (companyName || user?.name || "U").slice(0, 1).toUpperCase()
-                  )}
-                </div>
-                <div className="min-w-0 text-left">
-                  <p className="app-topbar-title truncate text-sm font-semibold leading-4">{user?.name || "User"}</p>
-                  <p className="app-topbar-subtitle truncate text-xs leading-4">{role}</p>
-                </div>
-                <ChevronDown className="app-topbar-subtitle h-4 w-4 shrink-0" />
+                <Bell className="h-4 w-4" />
+                {unreadCount > 0 ? (
+                  <span className="app-topbar-notice absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                ) : null}
               </button>
 
-              {menu ? (
-                <div className="app-topbar-menu absolute right-0 mt-2 w-56 rounded-2xl shadow-soft overflow-hidden">
-                  <div className="app-topbar-menu-heading px-4 py-3">
-                    <p className="app-topbar-title text-sm font-semibold">{user?.email}</p>
-                    <p className="app-topbar-subtitle text-xs">Role: {role}</p>
+              <div className="relative" ref={menuRef}>
+                <button
+                  onClick={() => setMenu((v) => !v)}
+                  className="app-topbar-user-btn flex min-w-[150px] max-w-full items-center gap-2 rounded-2xl px-2 py-1.5 shadow-soft sm:w-auto sm:px-3 sm:py-2"
+                >
+                  <div className="app-topbar-user-avatar flex h-8 w-8 items-center justify-center rounded-2xl text-xs font-bold">
+                    {company?.logoBase64 ? (
+                      <img
+                        src={company.logoBase64}
+                        alt="Company logo"
+                        className="h-full w-full rounded-2xl object-contain bg-white p-1"
+                      />
+                    ) : (
+                      (companyName || user?.name || "U").slice(0, 1).toUpperCase()
+                    )}
                   </div>
-                  <button
-                    onClick={logout}
-                    className="app-topbar-menu-btn flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Logout
-                  </button>
-                </div>
-              ) : null}
+                  <div className="min-w-0 flex-1 text-left">
+                    <p className="app-topbar-title truncate text-sm font-semibold leading-4">{user?.name || "User"}</p>
+                    <p className="app-topbar-subtitle truncate text-xs leading-4">{role}</p>
+                  </div>
+                  <ChevronDown className="app-topbar-subtitle h-4 w-4 shrink-0" />
+                </button>
+
+                {menu ? (
+                  <div className="app-topbar-menu absolute right-0 mt-2 w-56 rounded-2xl shadow-soft overflow-hidden">
+                    <div className="app-topbar-menu-heading px-4 py-3">
+                      <p className="app-topbar-title text-sm font-semibold">{user?.email}</p>
+                      <p className="app-topbar-subtitle text-xs">Role: {role}</p>
+                    </div>
+                    <button
+                      onClick={logout}
+                      className="app-topbar-menu-btn flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Logout
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>

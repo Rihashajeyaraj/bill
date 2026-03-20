@@ -660,35 +660,39 @@ export default function Dashboard() {
             <p className="text-sm font-semibold text-slate-700">Income vs Expense</p>
             <p className="text-xs text-slate-500">Date-filtered totals</p>
           </div>
-          <div className="mt-3 h-[clamp(240px,40vw,320px)] w-full rounded-xl border border-slate-200 bg-slate-50 pl-2 pr-1 pt-3 pb-2 sm:pl-3 sm:pr-2 sm:pt-4 sm:pb-3">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={chart}
-                margin={{ top: 8, right: 8, left: 6, bottom: 10 }}
-                barCategoryGap="22%"
-                barGap={6}
-              >
-                <XAxis
-                  dataKey="month"
-                  tickLine={false}
-                  axisLine={false}
-                  interval={0}
-                  tickMargin={10}
-                  padding={{ left: 10, right: 10 }}
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  width={72}
-                  tickMargin={8}
-                  domain={[0, "auto"]}
-                  tickFormatter={compactMoney}
-                />
-                <Tooltip formatter={(value) => money(value)} />
-                <Bar dataKey="income" fill="#4caf50" radius={[6, 6, 0, 0]} maxBarSize={22} />
-                <Bar dataKey="expense" fill="#6b7280" radius={[6, 6, 0, 0]} maxBarSize={22} />
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="mt-3 overflow-x-auto">
+            <div className="h-[260px] min-w-[520px] rounded-xl border border-slate-200 bg-slate-50 pl-2 pr-1 pt-3 pb-2 sm:h-[clamp(240px,40vw,320px)] sm:min-w-0 sm:pl-3 sm:pr-2 sm:pt-4 sm:pb-3">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={chart}
+                  margin={{ top: 8, right: 8, left: 6, bottom: 10 }}
+                  barCategoryGap="22%"
+                  barGap={6}
+                >
+                  <XAxis
+                    dataKey="month"
+                    tickLine={false}
+                    axisLine={false}
+                    interval={0}
+                    tickMargin={10}
+                    padding={{ left: 10, right: 10 }}
+                    tick={{ fontSize: 12 }}
+                  />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    width={64}
+                    tickMargin={8}
+                    domain={[0, "auto"]}
+                    tickFormatter={compactMoney}
+                    tick={{ fontSize: 12 }}
+                  />
+                  <Tooltip formatter={(value) => money(value)} />
+                  <Bar dataKey="income" fill="#4caf50" radius={[6, 6, 0, 0]} maxBarSize={22} />
+                  <Bar dataKey="expense" fill="#6b7280" radius={[6, 6, 0, 0]} maxBarSize={22} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
           <div className="mt-3 flex items-center justify-center gap-4 text-xs text-slate-500 sm:justify-start">
             <span className="inline-flex items-center gap-2">
