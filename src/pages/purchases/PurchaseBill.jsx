@@ -1248,21 +1248,27 @@ export default function PurchaseBill() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <PageHeader title="Purchase Bill" subtitle="Search supplier by mobile and create the bill." />
+      <PageHeader
+        title="Purchase Bill"
+        subtitle="Search supplier by mobile and create the bill."
+        className="lg:items-center"
+        right={
+          <div className="flex w-full sm:justify-end lg:w-auto">
+            <button
+              type="button"
+              onClick={() => navigate("/app/purchase/history")}
+              className="inline-flex h-11 w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 sm:w-auto"
+            >
+              Purchase History
+            </button>
+          </div>
+        }
+      />
       {!canCreatePurchase ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
           Your role does not have purchase-bill create permission.
         </div>
       ) : null}
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => navigate("/app/purchase/history")}
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-        >
-          Purchase History
-        </button>
-      </div>
 
       <Card className="p-5">
         <h2 className="text-base font-semibold text-slate-900">1. Find Supplier</h2>
