@@ -19,6 +19,8 @@ export interface PaymentInFormState {
   amountReceived: string;
   tdsAmount: string;
   tdsCategory: string;
+  tdsRate: string;
+  isManual: boolean;
   paymentMode: PaymentMode;
   referenceNo: string;
   chequeNo: string;

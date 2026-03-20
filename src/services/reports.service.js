@@ -2,7 +2,7 @@ import { listParties, computePartyFinancials, syncPartiesFromRemote } from "../m
 import { listCreditNotes as listPremiumCreditNotes } from "../modules/creditNote/store";
 import { listDebitNotes } from "../modules/debitNote/store";
 import { listPaymentIn, paymentInAllocationSettledAmount, paymentInAllocationTdsShare } from "../modules/paymentIn/store";
-import { listPaymentOut } from "../modules/paymentOut/store";
+import { listPaymentOut, paymentOutAllocationTdsShare } from "../modules/paymentOut/store";
 import { normalizeText, openingBalanceSigned, parseNumber, toIsoDate } from "../modules/parties/utils";
 import { creditNotesList, creditNotesSyncFromRemote } from "./creditNotes.service";
 import { expensesList, expensesSyncFromRemote } from "./expenses.service";
@@ -218,6 +218,10 @@ function paymentInTdsAmount(row) {
   return Math.max(0, parseNumber(row?.totals?.tdsAmount ?? row?.tdsAmount));
 }
 
+function paymentOutTdsAmount(row) {
+  return Math.max(0, parseNumber(row?.totals?.tdsAmount ?? row?.tdsAmount));
+}
+
 function paymentInSettledAmount(row) {
   return Math.max(
     0,
@@ -306,9 +310,9 @@ function normalizeStatusLabel(value, fallback = "Open") {
 }
 
 export function listReportParties(dataset, partyType = PARTY_TYPES.customer) {
-  const normalizedType = normalizePartyType(partyType);
+  const rawType = String(partyType || "").trim().toLowerCase();
   return (Array.isArray(dataset?.parties) ? dataset.parties : [])
-    .filter((party) => matchesPartyType(party, normalizedType))
+    .filter((party) => !rawType || rawType === "all" || matchesPartyType(party, partyType))
     .sort((left, right) => String(left?.name || "").localeCompare(String(right?.name || "")));
 }
 
@@ -1381,6 +1385,23 @@ function buildAllTransactionsBase(dataset) {
       });
     });
 
+  (Array.isArray(dataset?.paymentOuts) ? dataset.paymentOuts : [])
+    .filter((row) => normalizeText(row?.status) !== "draft")
+    .filter((row) => paymentOutTdsAmount(row) > 0)
+    .forEach((row) => {
+      rows.push({
+        id: `tx_tds_out_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}`,
+        date: resolvePaymentDate(row),
+        transactionType: "TDS",
+        reference: String(row?.paymentNo || row?.referenceNo || row?.paymentReference || row?.id || "").trim(),
+        partyId: String(row?.supplierId || ""),
+        partyName: resolvePartyName(row, PARTY_TYPES.supplier, indexes.partiesById),
+        amount: paymentOutTdsAmount(row),
+        status: normalizeStatusLabel(row?.status, "Paid"),
+        note: `TDS deducted${row?.tdsCategory ? ` (${row.tdsCategory})` : ""}`
+      });
+    });
+
   (Array.isArray(dataset?.legacyCreditNotes) ? dataset.legacyCreditNotes : []).forEach((row) => {
     rows.push({
       id: `tx_credit_legacy_${row?.id || row?.creditNoteNo || Math.random().toString(16).slice(2)}`,
@@ -1491,7 +1512,8 @@ export function buildTdsReport(dataset, filters = {}) {
       totals: {
         totalTds: 0,
         customers: 0,
-        invoices: 0
+        suppliers: 0,
+        documents: 0
       }
     };
   }
@@ -1499,13 +1521,15 @@ export function buildTdsReport(dataset, filters = {}) {
   const fromDate = toIsoDate(filters.fromDate);
   const toDate = toIsoDate(filters.toDate);
   const partyId = String(filters.partyId || "").trim();
+  const partyType = normalizePartyType(filters.partyType || PARTY_TYPES.customer);
   const indexes = buildPartyIndexes(dataset);
   const rows = [];
 
   (Array.isArray(dataset?.paymentIns) ? dataset.paymentIns : [])
+    .filter(() => partyType === PARTY_TYPES.customer)
     .filter((row) => normalizeText(row?.status) !== "draft")
     .filter((row) => inDateRange(resolvePaymentDate(row), fromDate, toDate))
-    .filter((row) => !partyId || String(row?.customerId || "") === partyId)
+    .filter((row) => matchesPartyId(row, partyId, PARTY_TYPES.customer))
     .forEach((row) => {
       const allocations = Array.isArray(row?.allocations) ? row.allocations : [];
       const positiveTdsAllocations = allocations.filter(
@@ -1518,6 +1542,9 @@ export function buildTdsReport(dataset, filters = {}) {
         rows.push({
           id: `tds_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}`,
           date: resolvePaymentDate(row),
+          source: "Payment In",
+          partyType: PARTY_TYPES.customer,
+          partyId: String(row?.customerId || ""),
           partyName: resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById),
           invoiceReference: "-",
           tdsAmount: paymentInTdsAmount(row),
@@ -1531,11 +1558,57 @@ export function buildTdsReport(dataset, filters = {}) {
         rows.push({
           id: `tds_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}_${index}`,
           date: resolvePaymentDate(row),
+          source: "Payment In",
+          partyType: PARTY_TYPES.customer,
+          partyId: String(row?.customerId || ""),
           partyName: resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById),
           invoiceReference: String(allocation?.invoiceNo || allocation?.invoiceId || "-").trim() || "-",
           tdsAmount: paymentInAllocationTdsShare(row, allocation),
           category: row?.tdsCategory || "Other",
           status: normalizeStatusLabel(row?.status, "Received")
+        });
+      });
+    });
+
+  (Array.isArray(dataset?.paymentOuts) ? dataset.paymentOuts : [])
+    .filter(() => partyType === PARTY_TYPES.supplier)
+    .filter((row) => normalizeText(row?.status) !== "draft")
+    .filter((row) => inDateRange(resolvePaymentDate(row), fromDate, toDate))
+    .filter((row) => matchesPartyId(row, partyId, PARTY_TYPES.supplier))
+    .forEach((row) => {
+      const allocations = Array.isArray(row?.allocations) ? row.allocations : [];
+      const positiveTdsAllocations = allocations.filter(
+        (allocation) => paymentOutAllocationTdsShare(row, allocation) > 0
+      );
+
+      if (!positiveTdsAllocations.length && paymentOutTdsAmount(row) > 0) {
+        rows.push({
+          id: `tds_out_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}`,
+          date: resolvePaymentDate(row),
+          source: "Payment Out",
+          partyType: PARTY_TYPES.supplier,
+          partyId: String(row?.supplierId || ""),
+          partyName: resolvePartyName(row, PARTY_TYPES.supplier, indexes.partiesById),
+          invoiceReference: "-",
+          tdsAmount: paymentOutTdsAmount(row),
+          category: row?.tdsCategory || "Other",
+          status: normalizeStatusLabel(row?.status, "Paid")
+        });
+        return;
+      }
+
+      positiveTdsAllocations.forEach((allocation, index) => {
+        rows.push({
+          id: `tds_out_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}_${index}`,
+          date: resolvePaymentDate(row),
+          source: "Payment Out",
+          partyType: PARTY_TYPES.supplier,
+          partyId: String(row?.supplierId || ""),
+          partyName: resolvePartyName(row, PARTY_TYPES.supplier, indexes.partiesById),
+          invoiceReference: String(allocation?.billNo || allocation?.billId || "-").trim() || "-",
+          tdsAmount: paymentOutAllocationTdsShare(row, allocation),
+          category: row?.tdsCategory || "Other",
+          status: normalizeStatusLabel(row?.status, "Paid")
         });
       });
     });
@@ -1548,12 +1621,14 @@ export function buildTdsReport(dataset, filters = {}) {
   return {
     fromDate,
     toDate,
+    partyType,
     partyId,
     rows,
     totals: {
       totalTds: rows.reduce((sum, row) => sum + row.tdsAmount, 0),
-      customers: new Set(rows.map((row) => row.partyName)).size,
-      invoices: rows.filter((row) => row.invoiceReference !== "-").length
+      customers: new Set(rows.filter((row) => row.partyType === PARTY_TYPES.customer).map((row) => row.partyId || row.partyName)).size,
+      suppliers: new Set(rows.filter((row) => row.partyType === PARTY_TYPES.supplier).map((row) => row.partyId || row.partyName)).size,
+      documents: rows.filter((row) => row.invoiceReference !== "-").length
     }
   };
 }

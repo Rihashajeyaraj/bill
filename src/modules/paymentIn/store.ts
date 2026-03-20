@@ -73,6 +73,8 @@ export interface PaymentInRecord {
   paymentReference?: string;
   registrationNumber?: string;
   tdsCategory?: string;
+  tdsRate?: number;
+  isManual?: boolean;
   internalNotes?: string;
   customerNotes?: string;
   attachment?: PaymentAttachmentMeta | null;
@@ -120,6 +122,8 @@ export interface SavePaymentInPayload {
   paymentReference?: string;
   registrationNumber?: string;
   tdsCategory?: string;
+  tdsRate?: number;
+  isManual?: boolean;
   internalNotes?: string;
   customerNotes?: string;
   attachment?: PaymentAttachmentMeta | null;
@@ -385,17 +389,8 @@ function computeTotals(payload: SavePaymentInPayload) {
     }
   });
 
-  if (tdsAmount > 0) {
-    const totalRemainingCapacity = allocations.reduce(
-      (sum, line) => sum + Math.max(0, line.balanceDue - line.applyAmount),
-      0
-    );
-    if (totalRemainingCapacity <= 0) {
-      throw new Error("TDS amount requires a linked invoice or proforma with remaining balance.");
-    }
-    if (tdsAmount > totalRemainingCapacity) {
-      throw new Error("TDS amount cannot exceed the remaining balance after payment allocation.");
-    }
+  if (tdsAmount > amountReceived) {
+    throw new Error("TDS amount cannot exceed amount received.");
   }
 
   const amountApplied = allocations.reduce((sum, line) => sum + line.applyAmount, 0);
@@ -670,6 +665,8 @@ export function savePaymentIn(payload: SavePaymentInPayload): PaymentInRecord {
     paymentReference: payload.paymentReference || "",
     registrationNumber: payload.registrationNumber || "",
     tdsCategory: payload.tdsCategory || "",
+    tdsRate: Math.max(0, toNumber(payload.tdsRate)),
+    isManual: !!payload.isManual,
     internalNotes: payload.internalNotes || "",
     customerNotes: payload.customerNotes || "",
     attachment: payload.attachment || null,

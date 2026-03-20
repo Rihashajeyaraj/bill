@@ -138,8 +138,49 @@ function ensureTransition(previous, next) {
   }
 }
 
+export function paymentOutAllocationTdsShare(record, line) {
+  const totalTdsAmount = Math.max(0, parseNumber(record?.totals?.tdsAmount));
+  if (totalTdsAmount <= 0) return 0;
+
+  const allocations = ensureArray(record?.allocations);
+  const positiveAllocations = allocations.filter((entry) => Math.max(0, parseNumber(entry?.applyAmount)) > 0);
+  if (!positiveAllocations.length) return 0;
+
+  const totalApplied = positiveAllocations.reduce(
+    (sum, entry) => sum + Math.max(0, parseNumber(entry?.applyAmount)),
+    0
+  );
+  const lineBillId = String(line?.billId || "").trim();
+  const positiveIndex = positiveAllocations.findIndex(
+    (entry) => String(entry?.billId || "").trim() === lineBillId
+  );
+  if (positiveIndex < 0) return 0;
+
+  const appliedAmount = Math.max(0, parseNumber(line?.applyAmount));
+  if (appliedAmount <= 0 || totalApplied <= 0) return 0;
+
+  if (positiveAllocations.length === 1) {
+    return totalTdsAmount;
+  }
+
+  const rawShare = (appliedAmount / totalApplied) * totalTdsAmount;
+  if (positiveIndex === positiveAllocations.length - 1) {
+    const allocatedBefore = positiveAllocations
+      .slice(0, positiveIndex)
+      .reduce((sum, entry) => sum + paymentOutAllocationTdsShare(record, entry), 0);
+    return Math.max(0, totalTdsAmount - allocatedBefore);
+  }
+
+  return Math.max(0, Number(rawShare.toFixed(2)));
+}
+
+export function paymentOutAllocationSettledAmount(record, line) {
+  return Math.max(0, parseNumber(line?.applyAmount)) + paymentOutAllocationTdsShare(record, line);
+}
+
 function computeTotals(payload) {
   const amountPaid = Math.max(0, parseNumber(payload.amountPaid));
+  const tdsAmount = Math.max(0, parseNumber(payload.tdsAmount));
   const allocations = payload.allocations.map((line) => ({
     ...line,
     billAmount: Math.max(0, parseNumber(line.billAmount)),
@@ -157,15 +198,21 @@ function computeTotals(payload) {
   if (amountApplied > amountPaid) {
     throw new Error("Applied amount cannot exceed amount paid.");
   }
+  if (tdsAmount > amountPaid) {
+    throw new Error("TDS amount cannot exceed amount paid.");
+  }
 
   const supplierOutstandingBefore = Math.max(0, parseNumber(payload.supplierOutstandingBefore));
+  const totalSettled = amountPaid + tdsAmount;
   const unappliedAmount = Math.max(0, amountPaid - amountApplied);
-  const supplierOutstandingAfter = Math.max(0, supplierOutstandingBefore - amountApplied);
+  const supplierOutstandingAfter = Math.max(0, supplierOutstandingBefore - totalSettled);
 
   return {
     allocations,
     totals: {
       amountPaid,
+      tdsAmount,
+      totalSettled,
       amountApplied,
       unappliedAmount,
       supplierOutstandingBefore,
@@ -180,7 +227,13 @@ function appliedPaymentOutForBill(billId) {
     .filter((entry) => String(entry?.direction || "").toUpperCase() === "OUT")
     .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PO:"))
     .filter((entry) => String(entry?.billId || entry?.bill_id || "") === String(billId))
-    .reduce((sum, entry) => sum + Math.max(0, parseNumber(entry?.amount)), 0);
+    .reduce(
+      (sum, entry) =>
+        sum +
+        Math.max(0, parseNumber(entry?.amount)) +
+        Math.max(0, parseNumber(entry?.tdsAmount || entry?.tds_amount)),
+      0
+    );
 
   const premium = getAllPayments()
     .filter((entry) => String(entry?.status || "") === "Applied")
@@ -189,7 +242,7 @@ function appliedPaymentOutForBill(billId) {
         sum +
         ensureArray(entry?.allocations)
           .filter((line) => String(line?.billId || "") === String(billId))
-          .reduce((lineSum, line) => lineSum + Math.max(0, parseNumber(line?.applyAmount)), 0),
+          .reduce((lineSum, line) => lineSum + paymentOutAllocationSettledAmount(entry, line), 0),
       0
     );
 
@@ -218,6 +271,8 @@ function postLedgerEntry(note, actor) {
     supplierName: note.supplierName,
     account: "Accounts Payable",
     amountPaid: note.totals.amountPaid,
+    tdsAmount: note.totals.tdsAmount,
+    totalSettled: note.totals.totalSettled,
     amountApplied: note.totals.amountApplied,
     unappliedAmount: note.totals.unappliedAmount,
     status: note.status,
@@ -389,6 +444,10 @@ export function savePaymentOut(payload) {
     paymentReference: payload.paymentReference || "",
     internalNotes: payload.internalNotes || "",
     attachment: payload.attachment || null,
+    tdsAmount: Math.max(0, parseNumber(payload.tdsAmount)),
+    tdsCategory: payload.tdsCategory || "",
+    tdsRate: Math.max(0, parseNumber(payload.tdsRate)),
+    isManual: !!payload.isManual,
     status: nextStatus,
     allocations: calculated.allocations,
     totals: calculated.totals,
@@ -432,10 +491,14 @@ export function removePaymentOut(id) {
 export function summarizePaymentOut(country) {
   const list = listPaymentOut(country);
   const totalPaid = list.reduce((sum, entry) => sum + parseNumber(entry?.totals?.amountPaid), 0);
+  const totalTds = list.reduce((sum, entry) => sum + parseNumber(entry?.totals?.tdsAmount), 0);
+  const totalSettled = list.reduce((sum, entry) => sum + parseNumber(entry?.totals?.totalSettled), 0);
   const totalUnapplied = list.reduce((sum, entry) => sum + parseNumber(entry?.totals?.unappliedAmount), 0);
   return {
     count: list.length,
     totalPaid,
+    totalTds,
+    totalSettled,
     totalUnapplied
   };
 }
@@ -458,6 +521,10 @@ export function buildPaymentOutPayload(form, supplierOutstandingBefore, actor) {
     attachment: form.attachment,
     desiredStatus: form.desiredStatus,
     amountPaid: form.amountPaid,
+    tdsAmount: form.tdsAmount,
+    tdsCategory: form.tdsCategory,
+    tdsRate: form.tdsRate,
+    isManual: !!form.isManual,
     allocations: form.allocations,
     supplierOutstandingBefore,
     actor
@@ -465,6 +532,7 @@ export function buildPaymentOutPayload(form, supplierOutstandingBefore, actor) {
 }
 
 export function defaultPaymentForm(country, currency) {
+  const defaultTdsCategory = "contractor";
   return {
     id: "",
     country,
@@ -483,6 +551,10 @@ export function defaultPaymentForm(country, currency) {
     internalNotes: "",
     attachment: null,
     amountPaid: 0,
+    tdsAmount: 0,
+    tdsCategory: defaultTdsCategory,
+    tdsRate: "1",
+    isManual: false,
     allocations: [],
     desiredStatus: "Draft"
   };

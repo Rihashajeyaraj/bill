@@ -2,6 +2,7 @@ import { jsPDF } from "jspdf";
 import { formatDateTimeByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
 import { countryCodeFromName, parseNumber } from "./utils";
 import { drawPdfPartyDetails } from "../reports/pdfPartyDetails";
+import { paymentOutAllocationTdsShare } from "./store";
 
 function pdfSafeText(value, fallback = "-") {
   const normalized = String(value ?? "")
@@ -64,9 +65,10 @@ export function exportPaymentOutCsv(records, currency = "", country = "") {
       "Supplier",
       "Payment Mode",
       "Reference No",
-      "Amount Paid",
-      "Advance Amount",
-      "Available Balance",
+      "Cash Paid",
+      "TDS Amount",
+      "Total Settled",
+      "Cash Advance",
       "Status",
       "Currency"
     ],
@@ -77,7 +79,8 @@ export function exportPaymentOutCsv(records, currency = "", country = "") {
       entry?.paymentMode || "",
       entry?.referenceNo || "",
       parseNumber(entry?.totals?.amountPaid).toFixed(2),
-      parseNumber(entry?.totals?.amountApplied).toFixed(2),
+      parseNumber(entry?.totals?.tdsAmount).toFixed(2),
+      parseNumber(entry?.totals?.totalSettled).toFixed(2),
       parseNumber(entry?.totals?.unappliedAmount).toFixed(2),
       entry?.status || "",
       entry?.currency || resolvedCurrency
@@ -134,11 +137,17 @@ export function exportPaymentOutSummaryPdf(records, country = "", currency = "")
   });
 
   const totalPaid = safeRecords.reduce((sum, entry) => sum + parseNumber(entry?.totals?.amountPaid), 0);
+  const totalTds = safeRecords.reduce((sum, entry) => sum + parseNumber(entry?.totals?.tdsAmount), 0);
+  const totalSettled = safeRecords.reduce((sum, entry) => sum + parseNumber(entry?.totals?.totalSettled), 0);
   y += 4;
   doc.line(14, y, 196, y);
   y += 6;
   doc.setFontSize(11);
   doc.text(`Total Paid: ${pdfMoney(totalPaid, resolvedCurrency)}`, 14, y);
+  y += 6;
+  doc.text(`Total TDS: ${pdfMoney(totalTds, resolvedCurrency)}`, 14, y);
+  y += 6;
+  doc.text(`Total Settled: ${pdfMoney(totalSettled, resolvedCurrency)}`, 14, y);
 
   const code = countryCodeFromName(resolvedCountry);
   doc.save(`payment-out-summary-${code}.pdf`);
@@ -181,6 +190,10 @@ export function exportPaymentOutPdf(record) {
   if (record.referenceNo) {
     doc.text(`Reference: ${pdfSafeText(record.referenceNo)}`, 120, y);
   }
+  if (parseNumber(record?.totals?.tdsAmount) > 0) {
+    y += 5;
+    doc.text(`TDS Deducted: ${pdfMoney(record?.totals?.tdsAmount, record.currency)}`, margin, y);
+  }
   y = Math.max(partyBlockBottom, y + 6);
   y += 2;
 
@@ -214,12 +227,16 @@ export function exportPaymentOutPdf(record) {
     y += 5;
 
     allocations.forEach((line) => {
+      const tdsShare = paymentOutAllocationTdsShare(record, line);
       doc.text(pdfSafeText(line?.billNo, "-").slice(0, 34), colX.bill, y);
       doc.text(pdfSafeText(line?.billDate), colX.date, y);
       doc.text(pdfMoney(line?.billAmount, record.currency), colX.total, y, { align: "right" });
       doc.text(pdfMoney(line?.applyAmount, record.currency), colX.paid, y, { align: "right" });
       doc.text(
-        pdfMoney(Math.max(0, parseNumber(line?.balanceDue) - parseNumber(line?.applyAmount)), record.currency),
+        pdfMoney(
+          Math.max(0, parseNumber(line?.balanceDue) - parseNumber(line?.applyAmount) - tdsShare),
+          record.currency
+        ),
         colX.balance,
         y,
         { align: "right" }
@@ -231,16 +248,22 @@ export function exportPaymentOutPdf(record) {
     doc.line(margin, y, pageWidth - margin, y);
     y += 6;
     drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, 54, 9);
-    drawSummaryRow(doc, "Amount Paid", pdfMoney(totalPaid, record.currency), margin + 58, y, 64, 9);
-    drawSummaryRow(doc, "Amount Balance", pdfMoney(totalBalance, record.currency), margin + 126, y, 56, 9, true);
+    drawSummaryRow(doc, "Cash Paid", pdfMoney(totalPaid, record.currency), margin + 58, y, 64, 9);
+    drawSummaryRow(doc, "Balance", pdfMoney(totalBalance, record.currency), margin + 126, y, 56, 9, true);
+    y += 12;
+    drawSummaryRow(doc, "TDS Deducted", pdfMoney(record?.totals?.tdsAmount, record.currency), margin, y, 86, 9);
+    drawSummaryRow(doc, "Total Settled", pdfMoney(record?.totals?.totalSettled, record.currency), margin + 96, y, 86, 9, true);
     y += 14;
   } else {
     const totalAmount = parseNumber(record?.totals?.amountPaid);
     const totalPaid = parseNumber(record?.totals?.amountApplied);
     const totalBalance = parseNumber(record?.totals?.unappliedAmount);
     drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, 54, 9);
-    drawSummaryRow(doc, "Amount Paid", pdfMoney(totalPaid, record.currency), margin + 58, y, 64, 9);
-    drawSummaryRow(doc, "Amount Balance", pdfMoney(totalBalance, record.currency), margin + 126, y, 56, 9, true);
+    drawSummaryRow(doc, "Cash Paid", pdfMoney(totalPaid, record.currency), margin + 58, y, 64, 9);
+    drawSummaryRow(doc, "Cash Advance", pdfMoney(totalBalance, record.currency), margin + 126, y, 56, 9, true);
+    y += 12;
+    drawSummaryRow(doc, "TDS Deducted", pdfMoney(record?.totals?.tdsAmount, record.currency), margin, y, 86, 9);
+    drawSummaryRow(doc, "Total Settled", pdfMoney(record?.totals?.totalSettled, record.currency), margin + 96, y, 86, 9, true);
     y += 14;
   }
 

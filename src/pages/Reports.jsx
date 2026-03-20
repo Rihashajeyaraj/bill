@@ -875,7 +875,7 @@ function GstBreakdownPanel({ totals, currency }) {
 function getDerivedPartyType(activeReport, partyType) {
   if (activeReport === "sale-report") return PARTY_TYPES.customer;
   if (activeReport === "gst-report") return PARTY_TYPES.customer;
-  if (activeReport === "tds-report") return PARTY_TYPES.customer;
+  if (activeReport === "tds-report") return partyType || PARTY_TYPES.customer;
   if (activeReport === "purchase-report") return PARTY_TYPES.supplier;
   return partyType;
 }
@@ -1147,23 +1147,25 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
       const pageInfo = paginateIfNeeded(data.rows);
       return {
         title: "TDS Report",
-        subtitle: "TDS deducted through Payment In entries for the selected period.",
+        subtitle: "TDS deducted through Payment In and Payment Out entries for the selected period.",
         filename: "tds-report",
         metrics: [
           { label: "Total TDS", value: formatMoney(data.totals.totalTds, currency), tone: data.totals.totalTds > 0 ? "positive" : "default" },
           { label: "Customers", value: data.totals.customers },
-          { label: "Invoices", value: data.totals.invoices },
+          { label: "Suppliers", value: data.totals.suppliers },
           { label: "Entries", value: data.rows.length }
         ],
         columns: [
           { key: "date", label: "Date", format: "date" },
-          { key: "partyName", label: "Customer" },
-          { key: "invoiceReference", label: "Invoice" },
+          { key: "source", label: "Source" },
+          { key: "partyType", label: "Party Type" },
+          { key: "partyName", label: "Party" },
+          { key: "invoiceReference", label: "Invoice / Bill" },
           { key: "category", label: "Category" },
           { key: "tdsAmount", label: "TDS Deducted", align: "right", format: "money", emphasis: true },
           { key: "status", label: "Status", align: "right" }
         ],
-        tableTitle: "TDS Deductions",
+        tableTitle: "TDS Entries",
         rows: pageInfo.rows,
         exportRows: data.rows,
         pageInfo
@@ -1446,7 +1448,7 @@ export default function Reports() {
 
   function renderFilters() {
     const showDateRange = ["sale-report", "purchase-report", "cash-flow", "all-transactions", "party-statement", "profit-loss", "gst-report", "tds-report"].includes(activeReport);
-    const showPartyType = ["party-statement", "aging-report", "all-parties"].includes(activeReport);
+    const showPartyType = ["party-statement", "aging-report", "all-parties", "tds-report"].includes(activeReport);
     const showPartySelect = ["sale-report", "purchase-report", "all-transactions", "party-statement", "aging-report", "tds-report"].includes(activeReport);
     const showAsOfDate = activeReport === "aging-report";
     const showTransactionType = activeReport === "all-transactions";
@@ -1457,7 +1459,7 @@ export default function Reports() {
         : activeReport === "purchase-report"
           ? "Supplier"
           : activeReport === "tds-report"
-            ? "Customer"
+            ? "Party"
           : "Party";
     const placeholder =
       activeReport === "sale-report"
@@ -1465,7 +1467,7 @@ export default function Reports() {
         : activeReport === "purchase-report"
           ? "All Suppliers"
           : activeReport === "tds-report"
-            ? "All Customers"
+            ? "All Parties"
           : "All Parties";
 
     return (

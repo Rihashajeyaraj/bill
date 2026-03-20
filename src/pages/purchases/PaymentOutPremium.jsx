@@ -34,7 +34,15 @@ import {
   summarizePaymentOut
 } from "../../modules/paymentOut/store";
 import { exportPaymentOutCsv, exportPaymentOutPdf, exportPaymentOutSummaryPdf } from "../../modules/paymentOut/pdf";
-import { formatMoney, normalizeText, parseNumber } from "../../modules/paymentOut/utils";
+import {
+  calculateTdsAmount,
+  formatMoney,
+  getTdsRateForCategory,
+  isCustomTdsCategory,
+  normalizeText,
+  parseNumber,
+  TDS_CATEGORY_OPTIONS
+} from "../../modules/paymentOut/utils";
 
 const PAYMENT_MODES = ["Cash", "Bank Transfer", "Cheque", "Card", "Online"];
 const STATUSES = ["Draft", "Paid", "Applied"];
@@ -77,6 +85,34 @@ function buildBillAllocation(bill, amountPaid) {
       applyAmount: Math.min(amount, bill.balanceDue)
     }
   ];
+}
+
+function calculatedTdsInputValue(amountPaid, tdsRate) {
+  return String(calculateTdsAmount(amountPaid, tdsRate));
+}
+
+function paymentOutFormFromRecord(record) {
+  const storedAmountPaid = record?.amountPaid ?? record?.totals?.amountPaid ?? 0;
+  const storedTdsAmount = record?.tdsAmount ?? record?.totals?.tdsAmount ?? 0;
+  const storedCategory = record?.tdsCategory || TDS_CATEGORY_OPTIONS[0].value;
+  const storedTdsRate = Math.max(0, parseNumber(record?.tdsRate ?? getTdsRateForCategory(storedCategory)));
+  const inferredManual =
+    typeof record?.isManual === "boolean"
+      ? record.isManual
+      : Math.abs(parseNumber(storedTdsAmount) - calculateTdsAmount(storedAmountPaid, storedTdsRate)) > 0.009;
+
+  return {
+    ...record,
+    amountPaid: storedAmountPaid,
+    tdsAmount: String(storedTdsAmount),
+    tdsCategory: inferredManual ? "custom" : storedCategory,
+    tdsRate: String(inferredManual ? 0 : storedTdsRate),
+    isManual: inferredManual,
+    desiredStatus: record?.status || "Draft",
+    allocationMode: record?.allocations?.length ? "linked" : "normal",
+    selectedBillId: record?.allocations?.[0]?.billId || "",
+    readOnly: false
+  };
 }
 
 export default function PaymentOutPremium() {
@@ -144,9 +180,11 @@ export default function PaymentOutPremium() {
   );
 
   const amountPaid = Math.max(0, parseNumber(form.amountPaid));
+  const tdsAmount = Math.max(0, parseNumber(form.tdsAmount));
   const amountApplied = form.allocations.reduce((sum, line) => sum + parseNumber(line.applyAmount), 0);
   const unappliedAmount = Math.max(0, amountPaid - amountApplied);
-  const outstandingAfter = supplierOutstandingBefore - amountApplied;
+  const totalSettled = amountPaid + tdsAmount;
+  const outstandingAfter = supplierOutstandingBefore - totalSettled;
 
   const filteredPayments = useMemo(() => {
     const query = normalizeText(search);
@@ -201,6 +239,10 @@ export default function PaymentOutPremium() {
       .filter((entry) => entry.supplierId === form.supplierId && entry.status !== "Draft")
       .reduce((sum, entry) => sum + Math.max(0, parseNumber(entry?.totals?.unappliedAmount)), 0);
   }, [payments, form.supplierId]);
+  const autoCalculatedTdsAmount = useMemo(
+    () => calculateTdsAmount(form.amountPaid, form.tdsRate),
+    [form.amountPaid, form.tdsRate]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -302,12 +344,7 @@ export default function PaymentOutPremium() {
       window.alert("You do not have permission to edit payment out entries.");
       return;
     }
-    setForm({
-      ...record,
-      desiredStatus: record.status,
-      allocationMode: record?.allocations?.length ? "linked" : "normal",
-      selectedBillId: record?.allocations?.[0]?.billId || ""
-    });
+    setForm(paymentOutFormFromRecord(record));
     setActivePayment(record);
     setPanelMode("form");
     setActiveStep(mode === "view" ? 2 : 0);
@@ -342,6 +379,67 @@ export default function PaymentOutPremium() {
       }
       return next;
     });
+    setDirty(true);
+  }
+
+  function handleAmountPaidChange(value) {
+    setForm((prev) => {
+      const next = { ...prev, amountPaid: value };
+      if (next.allocationMode === "linked" && next.selectedBillId) {
+        const linkedBill =
+          bills.find(
+            (entry) =>
+              String(entry.id) === String(next.selectedBillId) &&
+              String(entry.supplierId) === String(next.supplierId)
+          ) || null;
+        next.allocations = buildBillAllocation(linkedBill, value);
+      }
+      if (!next.isManual) {
+        next.tdsAmount = calculatedTdsInputValue(value, next.tdsRate);
+      }
+      return next;
+    });
+    setDirty(true);
+  }
+
+  function handleTdsAmountChange(value) {
+    setForm((prev) => ({
+      ...prev,
+      tdsAmount: value,
+      tdsCategory: "custom",
+      tdsRate: "0",
+      isManual: true
+    }));
+    setDirty(true);
+  }
+
+  function handleTdsCategoryChange(category) {
+    const nextRate = getTdsRateForCategory(category);
+    setForm((prev) =>
+      isCustomTdsCategory(category)
+        ? {
+            ...prev,
+            tdsCategory: category,
+            tdsRate: String(nextRate),
+            isManual: true
+          }
+        : {
+            ...prev,
+            tdsCategory: category,
+            tdsRate: String(nextRate),
+            tdsAmount: calculatedTdsInputValue(prev.amountPaid, nextRate),
+            isManual: false
+          }
+    );
+    setDirty(true);
+  }
+
+  function applyCalculatedTds() {
+    setForm((prev) => ({
+      ...prev,
+      tdsAmount: calculatedTdsInputValue(prev.amountPaid, prev.tdsRate),
+      isManual: false
+    }));
     setDirty(true);
   }
 
@@ -450,6 +548,18 @@ export default function PaymentOutPremium() {
       window.alert("Select a purchase invoice before saving.");
       return;
     }
+    if (Math.max(0, parseNumber(form.amountPaid)) <= 0) {
+      window.alert("Amount paid must be greater than zero.");
+      return;
+    }
+    if (parseNumber(form.tdsAmount) < 0) {
+      window.alert("TDS amount cannot be negative.");
+      return;
+    }
+    if (Math.max(0, parseNumber(form.tdsAmount)) > Math.max(0, parseNumber(form.amountPaid))) {
+      window.alert("TDS amount cannot exceed amount paid.");
+      return;
+    }
     try {
       const payload = buildPaymentOutPayload(
         {
@@ -467,7 +577,7 @@ export default function PaymentOutPremium() {
         exportPaymentOutPdf(saved);
       }
       setActivePayment(saved);
-      setForm({ ...saved, desiredStatus: saved.status });
+      setForm(paymentOutFormFromRecord(saved));
       setRefreshKey((prev) => prev + 1);
       setDirty(false);
       window.alert(`Payment ${saved.paymentNo} saved as ${saved.status}.`);
@@ -541,15 +651,18 @@ export default function PaymentOutPremium() {
         </div>
       </div>
       {panelMode === "list" ? (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <FlowCard title="Total Payments" subtitle="Count of supplier payments">
               <p className="text-2xl font-bold text-slate-900">{summary.count}</p>
             </FlowCard>
-            <FlowCard title="Total Paid" subtitle="Across all statuses">
+            <FlowCard title="Cash Paid" subtitle="Actual outgoing payment">
               <p className="text-2xl font-bold text-slate-900">{formatMoney(summary.totalPaid, currency)}</p>
             </FlowCard>
-            <FlowCard title="Advance Balance" subtitle="Amount kept on account">
+            <FlowCard title="Total TDS" subtitle="Deducted on supplier payments">
+              <p className="text-2xl font-bold text-sky-700">{formatMoney(summary.totalTds, currency)}</p>
+            </FlowCard>
+            <FlowCard title="Cash Advance Balance" subtitle="Cash kept on supplier account">
               <p className="text-2xl font-bold text-emerald-700">{formatMoney(summary.totalUnapplied, currency)}</p>
             </FlowCard>
           </div>
@@ -633,7 +746,7 @@ export default function PaymentOutPremium() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1200px] text-left text-sm">
+              <table className="w-full min-w-[1280px] text-left text-sm">
                 <thead className="sticky top-0 bg-slate-50">
                   <tr>
                     <th className="px-4 py-3 font-semibold text-slate-700">Payment No</th>
@@ -641,9 +754,10 @@ export default function PaymentOutPremium() {
                     <th className="px-4 py-3 font-semibold text-slate-700">Supplier</th>
                     <th className="px-4 py-3 font-semibold text-slate-700">Mode</th>
                     <th className="px-4 py-3 font-semibold text-slate-700">Reference</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">Amount Paid</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">Advance</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">Balance / Advance</th>
+                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">Cash Paid</th>
+                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">TDS</th>
+                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">Total Settled</th>
+                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">Cash Advance</th>
                     <th className="px-4 py-3 font-semibold text-slate-700">Status</th>
                     <th className="px-4 py-3 font-semibold text-slate-700">Actions</th>
                   </tr>
@@ -652,6 +766,8 @@ export default function PaymentOutPremium() {
                   {filteredPayments.length ? (
                     filteredPayments.map((entry) => {
                       const advance = Math.max(0, parseNumber(entry?.totals?.unappliedAmount));
+                      const entryTds = Math.max(0, parseNumber(entry?.totals?.tdsAmount));
+                      const entryTotalSettled = Math.max(0, parseNumber(entry?.totals?.totalSettled));
                       return (
                         <tr key={entry.id} className="border-t border-slate-100 hover:bg-slate-50/70">
                           <td className="px-4 py-3 font-semibold text-slate-900">{entry.paymentNo}</td>
@@ -663,10 +779,13 @@ export default function PaymentOutPremium() {
                             {formatMoney(entry.totals?.amountPaid, currency)}
                           </td>
                           <td className="px-4 py-3 text-right text-slate-700">
-                            {formatMoney(advance, currency)}
+                            {formatMoney(entryTds, currency)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                            {formatMoney(entryTotalSettled, currency)}
                           </td>
                           <td className={`px-4 py-3 text-right font-semibold ${advance ? "text-emerald-700" : "text-slate-700"}`}>
-                            {advance ? `Adv ${formatMoney(advance, currency)}` : "-"}
+                            {advance ? formatMoney(advance, currency) : "-"}
                           </td>
                           <td className="px-4 py-3">
                             <Badge tone={statusBadge(entry.status)}>{entry.status}</Badge>
@@ -710,7 +829,7 @@ export default function PaymentOutPremium() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={10} className="px-4 py-10 text-center text-slate-500">
+                      <td colSpan={11} className="px-4 py-10 text-center text-slate-500">
                         No payments found
                       </td>
                     </tr>
@@ -848,18 +967,71 @@ export default function PaymentOutPremium() {
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               <FlowCard title="Payment Details" subtitle="Capture amount and mode details">
                 <div className="space-y-3">
-                  <label className="block">
-                    <span className="text-xs font-semibold text-slate-600">Amount Paid</span>
-                    <input
-                      type="number"
-                      min={0}
-                      value={form.amountPaid}
-                      onChange={(event) => updateField("amountPaid", event.target.value)}
-                      inputMode="decimal"
-                      className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
-                      disabled={readOnly || !form.supplierId}
-                    />
-                  </label>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="text-xs font-semibold text-slate-600">Cash Paid</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={form.amountPaid}
+                        onChange={(event) => handleAmountPaidChange(event.target.value)}
+                        inputMode="decimal"
+                        className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
+                        disabled={readOnly || !form.supplierId}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs font-semibold text-slate-600">TDS Amount</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={form.tdsAmount}
+                        onChange={(event) => handleTdsAmountChange(event.target.value)}
+                        inputMode="decimal"
+                        className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
+                        disabled={readOnly || !form.supplierId}
+                      />
+                    </label>
+                  </div>
+                  <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                      <label className="block min-w-[220px] flex-1">
+                        <span className="text-xs font-semibold text-slate-600">TDS Category</span>
+                        <select
+                          value={form.tdsCategory}
+                          disabled={readOnly || !form.supplierId}
+                          onChange={(event) => handleTdsCategoryChange(event.target.value)}
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                        >
+                          {TDS_CATEGORY_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label} ({option.rate}%)
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="sm:text-right">
+                        <p className="text-xs font-semibold text-slate-600">
+                          {form.isManual
+                            ? `Manual TDS: ${formatMoney(parseNumber(form.tdsAmount), currency)}`
+                            : `Auto TDS (${parseNumber(form.tdsRate).toFixed(2)}%): ${formatMoney(autoCalculatedTdsAmount, currency)}`}
+                        </p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {form.isManual
+                            ? "Manual mode is active. Select any non-custom TDS category to auto-calculate again."
+                            : "Auto-calculation stays in sync until you manually edit the TDS amount."}
+                        </p>
+                        <button
+                          type="button"
+                          disabled={readOnly || form.isManual || isCustomTdsCategory(form.tdsCategory)}
+                          onClick={applyCalculatedTds}
+                          className="mt-2 inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Use Auto Value
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                     <p className="text-xs font-semibold text-slate-600">Is this payment for a specific invoice?</p>
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -924,7 +1096,10 @@ export default function PaymentOutPremium() {
                       <p className="mt-1">
                         Date: {selectedBill.billDate || "-"} | Pending: {formatMoney(selectedBill.balanceDue, currency)}
                       </p>
-                      <p className="mt-1">Allocated now: {formatMoney(amountApplied, currency)}</p>
+                      <p className="mt-1">
+                        Cash Applied: {formatMoney(amountApplied, currency)} | TDS Settled: {formatMoney(tdsAmount, currency)}
+                      </p>
+                      <p className="mt-1">Total Settled: {formatMoney(totalSettled, currency)}</p>
                     </div>
                   ) : null}
                   <label className="block">
@@ -988,15 +1163,22 @@ export default function PaymentOutPremium() {
                 </div>
               </FlowCard>
 
-              <FlowCard title="Advance Handling" subtitle="Choose linked invoice or normal payment entry">
+              <FlowCard title="Advance Handling" subtitle="Cash advance after invoice allocation">
                 <div className="space-y-3">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <p className="text-sm font-semibold text-slate-900">Advance Balance</p>
+                    <p className="text-sm font-semibold text-slate-900">Cash Advance Balance</p>
                     <p className="mt-2 text-2xl font-bold text-emerald-700">{formatMoney(unappliedAmount, currency)}</p>
                     <p className="mt-2 text-xs text-slate-500">
                       {form.allocationMode === "linked"
-                        ? "Any amount above the selected invoice pending amount will stay on the supplier account as advance."
+                        ? "Any cash amount above the selected invoice pending amount stays on the supplier account as advance. TDS is treated as settlement, not cash advance."
                         : "Normal payment entries are saved without purchase invoice linking."}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                    <p className="text-sm font-semibold text-slate-900">Total Settlement</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900">{formatMoney(totalSettled, currency)}</p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Cash paid {formatMoney(amountPaid, currency)} + TDS {formatMoney(tdsAmount, currency)}
                     </p>
                   </div>
                   {!form.supplierId ? (
@@ -1020,11 +1202,19 @@ export default function PaymentOutPremium() {
                     </p>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-500">Amount Paid</span>
+                    <span className="text-slate-500">Cash Paid</span>
                     <span className="font-semibold text-slate-900">{formatMoney(amountPaid, currency)}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-500">Advance</span>
+                    <span className="text-slate-500">TDS Amount</span>
+                    <span className="font-semibold text-sky-700">{formatMoney(tdsAmount, currency)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Total Settled</span>
+                    <span className="font-semibold text-slate-900">{formatMoney(totalSettled, currency)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Cash Advance</span>
                     <span className="font-semibold text-emerald-700">{formatMoney(unappliedAmount, currency)}</span>
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
@@ -1036,7 +1226,7 @@ export default function PaymentOutPremium() {
                     </p>
                     <p className="mt-1 text-slate-500">
                       {selectedBill
-                        ? `Pending ${formatMoney(selectedBill.balanceDue, currency)} | Applied ${formatMoney(amountApplied, currency)}`
+                        ? `Pending ${formatMoney(selectedBill.balanceDue, currency)} | Cash Applied ${formatMoney(amountApplied, currency)} | TDS ${formatMoney(tdsAmount, currency)}`
                         : "Saved without linking to any purchase invoice."}
                     </p>
                   </div>

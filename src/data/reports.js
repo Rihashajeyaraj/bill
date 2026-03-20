@@ -66,7 +66,7 @@ export const reportSections = [
       {
         id: "tds-report",
         label: "TDS Report",
-        description: "Invoice-linked TDS deductions captured from Payment In entries."
+        description: "Customer and supplier TDS deductions captured from Payment In and Payment Out entries."
       }
     ]
   }

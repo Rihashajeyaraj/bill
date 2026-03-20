@@ -59,7 +59,10 @@ function mergeSourceRowsToLocalPayments(sourcePrefix, rows) {
     invoiceId: row?.invoice_id || "",
     billId: row?.bill_id || "",
     amount: parseNumber(row?.amount),
+    amountReceived: parseNumber(row?.amount_received ?? row?.amount),
     tdsAmount: parseNumber(row?.tds_amount),
+    tdsRate: parseNumber(row?.tds_rate),
+    isManual: !!row?.is_manual,
     mode: row?.payment_mode || "",
     referenceNo: row?.reference_no || `${sourcePrefix}${index + 1}`,
     note: row?.notes || "",
@@ -127,7 +130,10 @@ export async function paymentsSyncFromRemote() {
         invoiceId: row?.invoice_id || "",
         billId: row?.bill_id || "",
         amount: parseNumber(row?.amount),
+        amountReceived: parseNumber(row?.amount_received ?? row?.amount),
         tdsAmount: parseNumber(row?.tds_amount),
+        tdsRate: parseNumber(row?.tds_rate),
+        isManual: !!row?.is_manual,
         mode: row?.payment_mode || "",
         referenceNo: row?.reference_no || "",
         note: row?.notes || "",
@@ -170,7 +176,10 @@ export function paymentsCreate(payment) {
           invoice_id: looksLikeUuid(payment?.invoiceId) ? payment.invoiceId : null,
           bill_id: looksLikeUuid(payment?.billId) ? payment.billId : null,
           amount: parseNumber(payment?.amount),
+          amount_received: parseNumber(payment?.amountReceived ?? payment?.amount),
           tds_amount: parseNumber(payment?.tdsAmount),
+          tds_rate: parseNumber(payment?.tdsRate),
+          is_manual: !!payment?.isManual,
           payment_mode: payment?.mode || payment?.paymentMode || null,
           reference_no: payment?.referenceNo || payment?.paymentReference || null,
           notes: payment?.note || payment?.notes || null,
@@ -179,7 +188,7 @@ export function paymentsCreate(payment) {
         };
         let insertResult = await supabase.from("payments").insert(remotePayload);
         if (insertResult.error && isMissingColumnError(insertResult.error)) {
-          const { financial_year_id, ...legacyPayload } = remotePayload;
+          const { financial_year_id, amount_received, tds_rate, is_manual, ...legacyPayload } = remotePayload;
           insertResult = await supabase.from("payments").insert(legacyPayload);
         }
       })();
@@ -211,6 +220,7 @@ export async function syncPaymentInRemote(record) {
   if (shouldPost) {
     const amountReceived = Math.max(0, parseNumber(record?.totals?.amountReceived ?? record?.amountReceived));
     const tdsAmount = Math.max(0, parseNumber(record?.totals?.tdsAmount ?? record?.tdsAmount));
+    const tdsRate = Math.max(0, parseNumber(record?.tdsRate));
     const amountApplied = Math.max(0, parseNumber(record?.totals?.amountApplied));
     const unappliedAmount = Math.max(0, parseNumber(record?.totals?.unappliedAmount));
     const primaryAllocation = allocations.find((line) => Math.max(0, parseNumber(line?.applyAmount)) > 0) || null;
@@ -247,7 +257,10 @@ export async function syncPaymentInRemote(record) {
         party_id: partyId,
         invoice_id: shouldApply && !isProforma ? invoiceId || primaryAllocation?.invoiceId || null : null,
         amount: amountReceived,
+        amount_received: amountReceived,
         tds_amount: tdsAmount,
+        tds_rate: tdsRate,
+        is_manual: !!record?.isManual,
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}ENTRY`,
         notes: noteParts.filter(Boolean).join(" | "),
@@ -281,7 +294,10 @@ export async function syncPaymentInRemote(record) {
         invoice_id: looksLikeUuid(baseRow?.invoice_id) ? baseRow.invoice_id : null,
         bill_id: null,
         amount: parseNumber(baseRow?.amount),
+        amount_received: parseNumber(baseRow?.amount_received ?? baseRow?.amount),
         tds_amount: parseNumber(baseRow?.tds_amount),
+        tds_rate: parseNumber(baseRow?.tds_rate),
+        is_manual: !!baseRow?.is_manual,
         payment_mode: baseRow?.payment_mode || null,
         reference_no: baseRow?.reference_no || `${sourcePrefix}ENTRY`,
         notes: baseRow?.notes || null,
@@ -295,16 +311,33 @@ export async function syncPaymentInRemote(record) {
           .update(remoteRow)
           .eq("organization_id", organizationId)
           .eq("id", primaryRow.id);
-        if (updateError) {
+        if (updateError && isMissingColumnError(updateError)) {
+          const { amount_received, tds_rate, is_manual, ...legacyRow } = remoteRow;
+          const { error: legacyUpdateError } = await supabase
+            .from("payments")
+            .update(legacyRow)
+            .eq("organization_id", organizationId)
+            .eq("id", primaryRow.id);
+          if (legacyUpdateError) {
+            throw new Error(normalizeSupabaseError(legacyUpdateError, "Failed to update payment-in row"));
+          }
+        } else if (updateError) {
           throw new Error(normalizeSupabaseError(updateError, "Failed to update payment-in row"));
         }
       } else {
-        const { error: insertError } = await supabase.from("payments").insert({
+        let insertResult = await supabase.from("payments").insert({
           ...remoteRow,
           created_by: actorUserId
         });
-        if (insertError) {
-          throw new Error(normalizeSupabaseError(insertError, "Failed to save payment-in row"));
+        if (insertResult.error && isMissingColumnError(insertResult.error)) {
+          const { amount_received, tds_rate, is_manual, ...legacyRow } = remoteRow;
+          insertResult = await supabase.from("payments").insert({
+            ...legacyRow,
+            created_by: actorUserId
+          });
+        }
+        if (insertResult.error) {
+          throw new Error(normalizeSupabaseError(insertResult.error, "Failed to save payment-in row"));
         }
       }
 
@@ -363,6 +396,8 @@ export async function syncPaymentOutRemote(record) {
   const partyId = record?.supplierId || null;
   const paymentDate = record?.paymentDate || "";
   const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
+  const tdsAmount = Math.max(0, parseNumber(record?.totals?.tdsAmount ?? record?.tdsAmount));
+  const tdsRate = Math.max(0, parseNumber(record?.tdsRate));
 
   if (shouldPost && shouldApply) {
     for (let index = 0; index < allocations.length; index += 1) {
@@ -380,9 +415,18 @@ export async function syncPaymentOutRemote(record) {
         party_id: partyId,
         bill_id: billId || line?.billId || null,
         amount,
+        tds_amount: index === 0 ? tdsAmount : 0,
+        tds_rate: index === 0 ? tdsRate : 0,
+        is_manual: index === 0 ? !!record?.isManual : false,
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}${index + 1}`,
-        notes: record?.internalNotes || `Payment out ${record?.status || "paid"}`,
+        notes:
+          [
+            record?.internalNotes || `Payment out ${record?.status || "paid"}`,
+            index === 0 && tdsAmount > 0 ? `TDS ${tdsAmount.toFixed(2)}` : ""
+          ]
+            .filter(Boolean)
+            .join(" | "),
         status: "posted"
       });
     }
@@ -396,9 +440,18 @@ export async function syncPaymentOutRemote(record) {
         party_id: partyId,
         bill_id: null,
         amount: unappliedAmount,
+        tds_amount: rows.length ? 0 : tdsAmount,
+        tds_rate: rows.length ? 0 : tdsRate,
+        is_manual: rows.length ? false : !!record?.isManual,
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}UNAPPLIED`,
-        notes: record?.internalNotes || `Unapplied payment out ${record?.status || "paid"}`,
+        notes:
+          [
+            record?.internalNotes || `Unapplied payment out ${record?.status || "paid"}`,
+            !rows.length && tdsAmount > 0 ? `TDS ${tdsAmount.toFixed(2)}` : ""
+          ]
+            .filter(Boolean)
+            .join(" | "),
         status: "posted"
       });
     }
@@ -412,9 +465,15 @@ export async function syncPaymentOutRemote(record) {
         party_id: partyId,
         bill_id: null,
         amount: amountPaid,
+        tds_amount: tdsAmount,
+        tds_rate: tdsRate,
+        is_manual: !!record?.isManual,
         payment_mode: record?.paymentMode || null,
         reference_no: `${sourcePrefix}PAID`,
-        notes: record?.internalNotes || `Payment out ${record?.status || "paid"}`,
+        notes:
+          [record?.internalNotes || `Payment out ${record?.status || "paid"}`, tdsAmount > 0 ? `TDS ${tdsAmount.toFixed(2)}` : ""]
+            .filter(Boolean)
+            .join(" | "),
         status: "posted"
       });
     }
