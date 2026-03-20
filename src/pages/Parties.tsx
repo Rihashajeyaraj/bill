@@ -194,20 +194,23 @@ export default function Parties() {
       <PageHeader
         title="Parties"
         subtitle="Customers and suppliers with statement tracking"
+        className="lg:items-center"
         right={
-          <div className="flex flex-wrap items-center gap-2">
-            <Tabs
-              value={tab}
-              onChange={setTab}
-              tabs={[
-                { label: "Customers", value: "Customer" },
-                { label: "Suppliers", value: "Supplier" }
-              ]}
-            />
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-end lg:w-auto">
+            <div className="min-w-0 sm:flex-1 lg:flex-none">
+              <Tabs
+                value={tab}
+                onChange={setTab}
+                tabs={[
+                  { label: "Customers", value: "Customer" },
+                  { label: "Suppliers", value: "Supplier" }
+                ]}
+              />
+            </div>
             <button
               type="button"
               onClick={openCreate}
-              className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-slate-800"
+              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-4 text-sm font-semibold text-white shadow-soft hover:bg-slate-800 sm:w-auto sm:shrink-0"
             >
               <Plus className="h-4 w-4" />
               {tab === "Customer" ? "Add Customer" : "Add Supplier"}
