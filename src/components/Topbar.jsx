@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Building2, Check, ChevronDown, Download, LogOut, Menu, Search } from "lucide-react";
+import { Bell, Building2, Check, ChevronDown, LogOut, Menu } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { authGetRole, authGetUser, authLogout } from "../services/auth.service";
 import { useOrganization } from "../context/OrganizationContext";
@@ -8,7 +8,6 @@ import { useAppShell } from "../context/AppShellContext";
 import { useToast } from "../context/ToastContext";
 import { formatDateByPreference, formatTimeByPreference } from "../lib/formatPreferences";
 import { canAccessPathForRole } from "../services/accessControl";
-import * as installPrompt from "../pwa/installPrompt";
 
 function pathForNext(next) {
   if (next === "organization_setup") return "/company-setup";
@@ -31,14 +30,12 @@ export default function Topbar({ onOpenSidebar }) {
     switchOrganization
   } = useOrganization();
   const { years, selectedYear, selectFinancialYear } = useFinancialYears();
-  const { unreadCount, setCommandOpen } = useAppShell();
+  const { unreadCount } = useAppShell();
   const companyName = String(company?.companyName || "").trim();
 
   const [companyMenu, setCompanyMenu] = useState(false);
   const [menu, setMenu] = useState(false);
   const [now, setNow] = useState(() => new Date());
-  const [installAvailable, setInstallAvailable] = useState(() => !!installPrompt.getDeferredInstallPrompt?.());
-  const [installing, setInstalling] = useState(false);
   const companyMenuRef = useRef(null);
   const menuRef = useRef(null);
 
@@ -61,23 +58,6 @@ export default function Topbar({ onOpenSidebar }) {
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    const installStateEventName =
-      installPrompt.getInstallStateEventName?.() || "twite:pwa-install-state-change";
-
-    function syncInstallAvailability() {
-      const standalone =
-        window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true;
-      setInstallAvailable(!standalone && !!installPrompt.getDeferredInstallPrompt?.());
-    }
-
-    syncInstallAvailability();
-    window.addEventListener(installStateEventName, syncInstallAvailability);
-    return () => {
-      window.removeEventListener(installStateEventName, syncInstallAvailability);
-    };
   }, []);
 
   useEffect(() => {
@@ -134,29 +114,6 @@ export default function Topbar({ onOpenSidebar }) {
     if (!canAccessPathForRole(authGetRole(), location.pathname)) {
       nav("/dashboard", { replace: true });
       return;
-    }
-  }
-
-  async function handleInstallClick() {
-    setInstalling(true);
-    try {
-      const result = await (installPrompt.promptAppInstall?.() || Promise.resolve({ outcome: "unavailable" }));
-      if (result?.outcome === "accepted") {
-        toast.success("App install started", "Twite Billing is being installed.");
-      } else if (result?.outcome === "dismissed") {
-        toast.info("Install dismissed", "You can install Twite Billing later from the browser.");
-      } else if (result?.outcome === "unavailable") {
-        toast.info(
-          "Install unavailable",
-          "The install prompt is no longer available. Reload after meeting browser install requirements."
-        );
-      }
-      setInstallAvailable(!!installPrompt.getDeferredInstallPrompt?.());
-    } catch (error) {
-      setInstallAvailable(!!installPrompt.getDeferredInstallPrompt?.());
-      toast.error("Install failed", error?.message || "Unable to start app installation.");
-    } finally {
-      setInstalling(false);
     }
   }
 
@@ -243,24 +200,10 @@ export default function Topbar({ onOpenSidebar }) {
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex w-full flex-col gap-2 md:flex-row md:items-center">
-            <button
-              type="button"
-              onClick={() => setCommandOpen(true)}
-              className="app-topbar-search-trigger inline-flex h-11 w-full items-center gap-3 rounded-2xl px-3 text-left shadow-soft md:flex-1"
-              aria-label="Search modules and actions"
-            >
-              <Search className="h-4 w-4 shrink-0 text-slate-400" />
-              <span className="min-w-0 flex-1 truncate text-sm text-slate-500">
-                Search modules, actions, parties, items...
-              </span>
-              <span className="hidden rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-500 md:inline-flex">
-                Ctrl/Cmd + K
-              </span>
-            </button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex w-full sm:w-auto">
             {selectedYear ? (
-              <label className="w-full md:w-[220px] md:shrink-0">
+              <label className="w-full sm:w-[220px] sm:shrink-0">
                 <span className="sr-only">Financial year</span>
                 <select
                   value={selectedYear?.id || ""}
@@ -277,20 +220,8 @@ export default function Topbar({ onOpenSidebar }) {
             ) : null}
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row lg:justify-end">
-            {installAvailable ? (
-              <button
-                type="button"
-                onClick={() => void handleInstallClick()}
-                disabled={installing}
-                className="app-install-btn inline-flex h-11 items-center justify-center gap-2 rounded-2xl px-4 text-sm font-semibold shadow-soft"
-              >
-                <Download className="h-4 w-4" />
-                {installing ? "Installing..." : "Download App"}
-              </button>
-            ) : null}
-
-          <div className="relative" ref={companyMenuRef}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <div className="relative" ref={companyMenuRef}>
             <button
               type="button"
               onClick={() => setCompanyMenu((current) => !current)}
@@ -356,7 +287,7 @@ export default function Topbar({ onOpenSidebar }) {
                 </div>
               </div>
             ) : null}
-          </div>
+            </div>
           </div>
         </div>
       </div>
