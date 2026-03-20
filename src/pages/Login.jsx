@@ -173,6 +173,7 @@ export default function Login() {
         .lp-root {
           font-family: 'Inter', sans-serif;
           min-height: 100dvh;
+          min-height: 100svh;
           background: ${dm ? '#0f172a' : '#dceef5'};
           display: flex;
           align-items: center;
@@ -180,7 +181,9 @@ export default function Login() {
           padding: clamp(12px, 2vw, 24px);
           transition: background 0.3s ease;
           position: relative;
-          overflow: hidden;
+          overflow-x: hidden;
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
           box-sizing: border-box;
         }
         .lp-root::before {
@@ -279,12 +282,41 @@ export default function Login() {
           backdrop-filter: blur(20px);
         }
         @media (max-width: 768px) {
+          .lp-root {
+            align-items: flex-start;
+            justify-content: stretch;
+            padding:
+              max(12px, env(safe-area-inset-top))
+              12px
+              max(16px, env(safe-area-inset-bottom))
+              12px;
+          }
           .lp-card {
             grid-template-columns: 1fr;
             min-height: auto;
-            max-height: calc(100dvh - 24px);
+            max-height: none;
+            overflow: visible;
+            border-radius: 24px;
           }
           .lp-hero { display: none; }
+          .lp-form-panel {
+            overflow: visible;
+          }
+        }
+        @media (max-height: 840px) and (min-width: 769px) {
+          .lp-root {
+            align-items: flex-start;
+            padding-top: 24px;
+            padding-bottom: 24px;
+            overflow-y: auto;
+          }
+          .lp-card {
+            min-height: auto;
+            max-height: none;
+          }
+          .lp-form-panel {
+            overflow: visible;
+          }
         }
 
         /* ── LEFT HERO ── */
@@ -433,7 +465,24 @@ export default function Login() {
           padding-bottom: 18px;
         }
         @media (max-width: 640px) {
-          .lp-form-panel { padding: 28px 20px; }
+          .lp-form-panel {
+            padding: 24px 18px 20px;
+          }
+          .lp-title {
+            font-size: 26px;
+          }
+          .lp-subtitle {
+            margin-bottom: 18px;
+          }
+          .lp-input-wrap {
+            margin-bottom: 10px;
+          }
+          .lp-forgot {
+            margin-bottom: 16px;
+          }
+          .lp-submit {
+            height: 48px;
+          }
         }
 
         .lp-kicker {
@@ -460,6 +509,9 @@ export default function Login() {
           display: flex;
           flex-direction: column;
           gap: 0;
+        }
+        .lp-form-panel--signup .lp-form--signup {
+          min-height: 100%;
         }
         .lp-signup-row {
           display: grid;
@@ -630,8 +682,9 @@ export default function Login() {
         }
         .lp-form--signup .lp-foot-text {
           font-size: 12px;
-          margin-top: 0;
+          margin-top: auto;
           margin-bottom: 0;
+          padding-top: 8px;
         }
 
         .lp-err {
