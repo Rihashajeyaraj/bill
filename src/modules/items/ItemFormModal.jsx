@@ -150,6 +150,10 @@ export default function ItemFormModal({
   const productIdPreview = String(form.itemCode || form.sku || "").trim();
   const inputClassName =
     "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100";
+  const inlineInputClassName =
+    "h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100";
+  const sectionActionClassName =
+    "inline-flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50";
 
   function updateField(key, value) {
     if (key === "type") {
@@ -494,7 +498,7 @@ export default function ItemFormModal({
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-semibold text-slate-900">Price Levels</p>
               <p className="text-xs text-slate-500">Add wholesale or tiered pricing.</p>
@@ -502,20 +506,23 @@ export default function ItemFormModal({
             <button
               type="button"
               onClick={addPriceLevel}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              className={sectionActionClassName}
             >
-              <Plus className="h-3.5 w-3.5" />
+              <Plus className="h-4 w-4" />
               Add
             </button>
           </div>
           {form.priceLevels.length ? (
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="mt-3 space-y-3">
               {form.priceLevels.map((level) => (
-                <div key={level.id} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-2">
+                <div
+                  key={level.id}
+                  className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-3 md:grid-cols-[minmax(0,1fr)_140px_auto] md:items-center"
+                >
                   <input
                     value={level.label}
                     onChange={(event) => updatePriceLevel(level.id, { label: event.target.value })}
-                    className="flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
+                    className={inlineInputClassName}
                     placeholder="Wholesale"
                   />
                   <input
@@ -525,15 +532,16 @@ export default function ItemFormModal({
                     onFocus={(event) => event.target.select()}
                     onChange={(event) => updatePriceLevel(level.id, { price: sanitizeDecimalInput(event.target.value) })}
                     onBlur={() => updatePriceLevel(level.id, { price: decimalLike(level.price || 0) })}
-                    className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
+                    className={inlineInputClassName}
                     placeholder="0.00"
                   />
                   <button
                     type="button"
                     onClick={() => removePriceLevel(level.id)}
-                    className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-rose-50"
+                    className="inline-flex h-11 w-11 items-center justify-center self-start rounded-xl border border-slate-200 bg-white transition hover:bg-rose-50 md:self-center"
+                    aria-label={`Remove price level ${level.label || ""}`.trim() || "Remove price level"}
                   >
-                    <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                    <Trash2 className="h-4 w-4 text-rose-500" />
                   </button>
                 </div>
               ))}
@@ -544,7 +552,7 @@ export default function ItemFormModal({
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-semibold text-slate-900">Country Tax Mapping</p>
               <p className="text-xs text-slate-500">Override tax for specific countries.</p>
@@ -552,36 +560,42 @@ export default function ItemFormModal({
             <button
               type="button"
               onClick={addTaxMapping}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              className={sectionActionClassName}
             >
-              <Plus className="h-3.5 w-3.5" />
+              <Plus className="h-4 w-4" />
               Add
             </button>
           </div>
           {form.taxMappings.length ? (
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="mt-3 space-y-3">
               {form.taxMappings.map((row) => (
-                <div key={row.id} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-2">
+                <div
+                  key={row.id}
+                  className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-3 md:grid-cols-[minmax(0,1fr)_108px_auto] md:items-center"
+                >
                   <input
                     value={row.country}
                     onChange={(event) => updateTaxMapping(row.id, { country: event.target.value })}
-                    className="flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
+                    className={inlineInputClassName}
                     placeholder="Country"
                   />
                   <input
-                    type="number"
-                    min={0}
-                    value={row.rate}
-                    onChange={(event) => updateTaxMapping(row.id, { rate: parseNumber(event.target.value) })}
-                    className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
+                    type="text"
+                    inputMode="decimal"
+                    value={String(row.rate ?? "")}
+                    onFocus={(event) => event.target.select()}
+                    onChange={(event) => updateTaxMapping(row.id, { rate: sanitizeDecimalInput(event.target.value) })}
+                    onBlur={() => updateTaxMapping(row.id, { rate: decimalLike(row.rate || 0) })}
+                    className={inlineInputClassName}
                     placeholder="0"
                   />
                   <button
                     type="button"
                     onClick={() => removeTaxMapping(row.id)}
-                    className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-rose-50"
+                    className="inline-flex h-11 w-11 items-center justify-center self-start rounded-xl border border-slate-200 bg-white transition hover:bg-rose-50 md:self-center"
+                    aria-label={`Remove tax mapping ${row.country || ""}`.trim() || "Remove tax mapping"}
                   >
-                    <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                    <Trash2 className="h-4 w-4 text-rose-500" />
                   </button>
                 </div>
               ))}

@@ -101,7 +101,7 @@ export default function AppLayout() {
   return (
     <div
       key={organizationId || "no-organization"}
-      className="app-shell min-h-[100svh] min-h-dvh overflow-visible lg:overflow-hidden"
+      className="app-shell min-h-[100svh] min-h-dvh overflow-visible"
       style={{ "--app-sidebar-width": sidebarWidth }}
     >
       {mobileNavOpen ? (
@@ -129,7 +129,7 @@ export default function AppLayout() {
         </div>
         <main
           ref={mainRef}
-          className="app-main relative min-w-0 flex-none overflow-visible px-3 py-3 sm:px-4 sm:py-4 lg:min-h-0 lg:flex-1 lg:overflow-x-hidden lg:overflow-y-auto lg:overscroll-y-contain lg:px-5 lg:py-5"
+          className="app-main relative min-h-0 min-w-0 flex-1 overflow-visible px-3 py-3 sm:px-4 sm:py-4 lg:overflow-x-hidden lg:px-5 lg:py-5"
           style={{ WebkitOverflowScrolling: "touch" }}
         >
           <Outlet />

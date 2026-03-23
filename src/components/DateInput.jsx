@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { formatIsoDateToDisplay, parseDateInputToIso } from "../lib/dateUtils";
+import { formatIsoDateToDisplay, isValidDateParts, parseDateInputToIso } from "../lib/dateUtils";
 
 function isOutOfRange(iso, minIso, maxIso) {
   if (!iso) return false;
@@ -16,6 +16,67 @@ function formatDraftDate(value) {
   if (digits.length < 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
   if (digits.length === 4) return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/`;
   return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function maxDaysForMonth(month, year = null) {
+  if (month === 2) {
+    if (typeof year === "number" && Number.isFinite(year)) {
+      return isValidDateParts(year, 2, 29) ? 29 : 28;
+    }
+    return 29;
+  }
+  if ([4, 6, 9, 11].includes(month)) return 30;
+  if (month >= 1 && month <= 12) return 31;
+  return 0;
+}
+
+function isValidPartialDateDigits(digits) {
+  const text = String(digits || "").replace(/\D/g, "").slice(0, 6);
+  if (!text) return true;
+
+  if (text.length >= 1) {
+    const dayTens = Number(text[0]);
+    if (dayTens > 3) return false;
+  }
+
+  if (text.length >= 2) {
+    const day = Number(text.slice(0, 2));
+    if (day < 1 || day > 31) return false;
+  }
+
+  if (text.length >= 3) {
+    const monthTens = Number(text[2]);
+    if (monthTens > 1) return false;
+  }
+
+  if (text.length >= 4) {
+    const day = Number(text.slice(0, 2));
+    const month = Number(text.slice(2, 4));
+    const maxDay = maxDaysForMonth(month);
+    if (month < 1 || month > 12) return false;
+    if (day > maxDay) return false;
+  }
+
+  if (text.length === 6) {
+    const day = Number(text.slice(0, 2));
+    const month = Number(text.slice(2, 4));
+    const year2 = Number(text.slice(4, 6));
+    const year = year2 >= 70 ? 1900 + year2 : 2000 + year2;
+    if (!isValidDateParts(year, month, day)) return false;
+  }
+
+  return true;
+}
+
+function sanitizeDraftDigits(value) {
+  const digits = String(value || "").replace(/\D/g, "").slice(0, 6);
+  let accepted = "";
+  for (const digit of digits) {
+    const candidate = `${accepted}${digit}`;
+    if (!isValidPartialDateDigits(candidate)) continue;
+    accepted = candidate;
+  }
+  return accepted;
 }
 
 function digitCountBeforeCaret(value, caret) {
@@ -35,7 +96,9 @@ function applyDigitsToSelection(currentValue, selectionStart, selectionEnd, inse
   const startDigitIndex = digitCountBeforeCaret(currentValue, selectionStart);
   const endDigitIndex = digitCountBeforeCaret(currentValue, selectionEnd);
   const insertedDigits = String(insertedText || "").replace(/\D/g, "");
-  const nextDigits = `${currentDigits.slice(0, startDigitIndex)}${insertedDigits}${currentDigits.slice(endDigitIndex)}`.slice(0, 6);
+  const nextDigits = sanitizeDraftDigits(
+    `${currentDigits.slice(0, startDigitIndex)}${insertedDigits}${currentDigits.slice(endDigitIndex)}`
+  );
   const nextDigitCaret = Math.min(startDigitIndex + insertedDigits.length, nextDigits.length);
   return {
     nextValue: formatDraftDate(nextDigits),
@@ -93,6 +156,9 @@ export default function DateInput({
 
     const iso = parseDateInputToIso(trimmed);
     if (!iso || isOutOfRange(iso, minIso, maxIso)) {
+      onRawChange?.(trimmed);
+      onChange?.("");
+      setDraftValue(trimmed);
       return;
     }
 
@@ -112,11 +178,12 @@ export default function DateInput({
       disabled={disabled}
       placeholder={placeholder}
       onChange={(event) => {
-        const nextValue = formatDraftDate(event.target.value);
+        const nextDigits = sanitizeDraftDigits(event.target.value);
+        const nextValue = formatDraftDate(nextDigits);
         const nextCaret = caretFromDigitCount(
           Math.min(
             digitCountBeforeCaret(event.target.value, event.target.selectionStart),
-            nextValue.replace(/\D/g, "").length
+            nextDigits.length
           )
         );
         updateDraft(nextValue, nextCaret);
