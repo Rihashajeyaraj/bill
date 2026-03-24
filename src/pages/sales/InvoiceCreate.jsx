@@ -272,10 +272,8 @@ export default function InvoiceCreate() {
   );
   const companyVatRate = company?.tax?.vatRate;
   const defaultRate = gstRuntimeEnabled ? defaultGstRate : isIndiaOrg ? 0 : getVatRate(country, company);
-  const [taxRate, setTaxRate] = useState(defaultRate);
-  const [vatInput, setVatInput] = useState(
-    gstRuntimeEnabled ? "" : `TAX ${Number.isFinite(defaultRate) ? defaultRate : 0}%`
-  );
+  const [taxRate, setTaxRate] = useState("");
+  const [vatInput, setVatInput] = useState("");
   const allCountryOptions = useMemo(() => listAllCountries(), []);
   const customerCreateStateOptions = useMemo(
     () => listStatesByCountry(customerCreateDraft.country),
@@ -359,12 +357,14 @@ export default function InvoiceCreate() {
   }, []);
 
   useEffect(() => {
-    const rate = gstRuntimeEnabled ? defaultGstRate : isIndiaOrg ? 0 : getVatRate(country, company);
-    setTaxRate(rate);
-    if (!gstRuntimeEnabled) {
-      setVatInput(`TAX ${Number.isFinite(rate) ? rate : 0}%`);
+    if (forceZeroTax) {
+      setTaxRate(0);
+      setVatInput("");
+      return;
     }
-  }, [country, isIndiaOrg, gstRuntimeEnabled, defaultGstRate, companyVatRate]);
+    setTaxRate("");
+    setVatInput("");
+  }, [country, isIndiaOrg, gstRuntimeEnabled, defaultGstRate, companyVatRate, forceZeroTax]);
 
   useEffect(() => {
     if (!forceZeroTax) return;
@@ -625,7 +625,7 @@ export default function InvoiceCreate() {
         qty: 1,
         rate: 0,
         discount: 0,
-        tax: forceZeroTax ? 0 : Number(taxRate || 0)
+        tax: forceZeroTax ? 0 : ""
       }
     ]);
   }
@@ -654,7 +654,7 @@ export default function InvoiceCreate() {
         qty: Number.isFinite(maxAssignable) ? Math.min(1, maxAssignable) : 1,
         rate: item.salesRate || item.price || 0,
         discount: 0,
-        tax: forceZeroTax ? 0 : Number(item.taxRate ?? taxRate ?? 0)
+        tax: forceZeroTax ? 0 : ""
       };
       if (emptyIndex >= 0) {
         return prev.map((line, idx) => (idx === emptyIndex ? { ...line, ...nextLine, id: line.id } : line));
@@ -886,7 +886,9 @@ export default function InvoiceCreate() {
       const qty = Number(line.qty || 0);
       const rate = Number(line.rate || 0);
       const discount = Number(line.discount || 0);
-      const taxRatePerLine = forceZeroTax ? 0 : Number(line.tax || fallbackRate || 0);
+      const hasExplicitLineTax =
+        line?.tax !== "" && line?.tax !== null && line?.tax !== undefined && Number.isFinite(Number(line?.tax));
+      const taxRatePerLine = forceZeroTax ? 0 : hasExplicitLineTax ? Number(line.tax || 0) : Number(fallbackRate || 0);
       const net = round2(Math.max(0, qty * rate - discount));
       const lineTax = round2((net * taxRatePerLine) / 100);
       const codeFromItem = itemType === "Service" ? item?.sac || item?.hsn || "" : item?.hsn || item?.sac || "";
@@ -1265,7 +1267,7 @@ export default function InvoiceCreate() {
       unit: matchedItem?.unit ?? line?.unit ?? "pcs",
       qty: nextQty,
       rate: matchedItem?.salesRate || matchedItem?.price || 0,
-      tax: forceZeroTax ? 0 : Number(matchedItem?.taxRate ?? taxRate ?? 0)
+      tax: forceZeroTax ? 0 : ""
     });
   }
 
@@ -1312,7 +1314,7 @@ export default function InvoiceCreate() {
       selectedBatchId: selectedId,
       rate: suggestedRate > 0 ? suggestedRate : line.rate,
       priceTaxMode: "WITHOUT_TAX",
-      tax: forceZeroTax ? 0 : Number(picked?.tax_rate ?? line?.tax ?? taxRate ?? 0),
+      tax: forceZeroTax ? 0 : line?.tax ?? "",
       qty: Number.isFinite(maxAssignable)
         ? Math.min(Math.max(0, Number(line.qty || 0)), maxAssignable)
         : line.qty
@@ -1539,7 +1541,7 @@ export default function InvoiceCreate() {
           unit: line?.unit ?? "pcs",
           salesRate: Number(line?.rate || 0),
           purchaseRate: 0,
-          taxRate: forceZeroTax ? 0 : Number(line?.tax ?? taxRate ?? 0),
+          taxRate: forceZeroTax ? 0 : Number(line?.tax || 0),
           status: "Active",
           trackInventory: false,
           openingStock: 0,
@@ -2184,11 +2186,11 @@ export default function InvoiceCreate() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {gstRuntimeEnabled ? (
                     <p className="rounded-xl border border-slate-100 bg-white px-3 py-2.5 text-sm text-slate-600 md:col-span-2">
-                      GST is auto-calculated from company and customer country/state details. Same India state uses
-                      CGST + SGST, otherwise IGST is applied.
+                      GST split is calculated from company and customer country/state details after you enter a tax
+                      rate on the line item. Same-state India uses CGST + SGST, otherwise IGST is applied.
                     </p>
                   ) : (
-                    <FormField label="Tax Rate" hint="Auto tax % / Type custom">
+                    <FormField label="Tax Rate" hint={`Optional. Select default tax or type custom (${defaultRate}%)`}>
                       <>
                         <input
                           list="vat-presets"
@@ -2204,7 +2206,7 @@ export default function InvoiceCreate() {
                           }}
                           className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
                           style={{ "--tw-ring-color": UI.COLORS.ring }}
-                          placeholder="TAX 20%"
+                          placeholder="Leave empty or select tax"
                         />
                         <datalist id="vat-presets">
                           {[getVatRate(country, company), 0]
