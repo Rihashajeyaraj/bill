@@ -1561,17 +1561,30 @@ export default function PurchaseBill() {
         {formErrors.lines ? <p className="mt-2 text-xs text-rose-600">{formErrors.lines}</p> : null}
 
         <div className="relative mt-4 overflow-x-auto overflow-y-visible rounded-2xl border border-slate-100">
-          <table className="min-w-[920px] w-full text-left text-sm">
+          <table className="min-w-[1280px] w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-[52px]" />
+              <col className="w-[260px]" />
+              <col className="w-[96px]" />
+              <col className="w-[96px]" />
+              <col className="w-[112px]" />
+              <col className="w-[124px]" />
+              <col className="w-[148px]" />
+              <col className="w-[96px]" />
+              <col className="w-[128px]" />
+              <col className="w-[128px]" />
+              <col className="w-[60px]" />
+            </colgroup>
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-3 py-3 font-semibold">#</th>
                 <th className="px-3 py-3 font-semibold">Item</th>
-                <th className="px-3 py-3 font-semibold">Qty</th>
+                <th className="px-3 py-3 text-right font-semibold">Qty</th>
                 <th className="px-3 py-3 font-semibold">Unit</th>
-                <th className="px-3 py-3 font-semibold">Rate</th>
-                <th className="px-3 py-3 font-semibold">Sell Rate</th>
-                <th className="px-3 py-3 font-semibold">Low Stock Threshold</th>
-                <th className="px-3 py-3 font-semibold">Tax %</th>
+                <th className="px-3 py-3 text-right font-semibold">Rate</th>
+                <th className="px-3 py-3 text-right font-semibold">Sell Rate</th>
+                <th className="px-3 py-3 text-right font-semibold">Low Stock Threshold</th>
+                <th className="px-3 py-3 text-right font-semibold">Tax %</th>
                 <th className="px-3 py-3 font-semibold text-right">Net Amount</th>
                 <th className="px-3 py-3 font-semibold text-right">Total Amount</th>
                 <th className="px-3 py-3 font-semibold text-right"></th>
@@ -1648,7 +1661,7 @@ export default function PurchaseBill() {
                         }
                         updateLine(line.id, { qty: e.target.value });
                       }}
-                      className="w-20 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
                     />
                   </td>
                   <td className="px-3 py-3">
@@ -1657,7 +1670,7 @@ export default function PurchaseBill() {
                       onChange={(e) => updateLine(line.id, { unit: e.target.value })}
                       onBlur={(e) => updateLine(line.id, { unit: normalizeUnit(e.target.value) })}
                       list="purchase-bill-unit-options"
-                      className="w-24 rounded-xl border border-slate-100 bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
                       placeholder="Unit"
                     />
                   </td>
@@ -1668,7 +1681,7 @@ export default function PurchaseBill() {
                       step="0.01"
                       value={line.rate}
                       onChange={(e) => updateLine(line.id, { rate: e.target.value })}
-                      className="w-24 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
                     />
                   </td>
                   <td className="px-3 py-3">
@@ -1677,7 +1690,7 @@ export default function PurchaseBill() {
                       min="0"
                       value={line.saleRate ?? ""}
                       onChange={(e) => updateLine(line.id, { saleRate: e.target.value })}
-                      className="w-28 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
                     />
                   </td>
                   <td className="px-3 py-3">
@@ -1686,7 +1699,7 @@ export default function PurchaseBill() {
                       min="0"
                       value={line.lowStockAlert ?? 0}
                       onChange={(e) => updateLine(line.id, { lowStockAlert: e.target.value })}
-                      className="w-32 rounded-xl border border-slate-100 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
                       placeholder="0"
                     />
                   </td>
@@ -1700,14 +1713,14 @@ export default function PurchaseBill() {
                         if (forceZeroTax) return;
                         updateLine(line.id, { tax: e.target.value });
                       }}
-                      className="w-24 rounded-xl border border-slate-100 bg-white px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 bg-white px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500"
                       disabled={forceZeroTax}
                     />
                   </td>
-                  <td className="px-3 py-3 text-right font-medium text-slate-800">
+                  <td className="px-3 py-3 text-right font-medium tabular-nums text-slate-800">
                     {money(line.lineSubTotal)}
                   </td>
-                  <td className="px-3 py-3 text-right font-semibold text-slate-900">
+                  <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-900">
                     {money(line.amount)}
                   </td>
                   <td className="px-3 py-3 text-right">

@@ -1174,10 +1174,11 @@ export default function InvoiceCreate() {
   const stockAlertDedupRef = useRef({ key: "", at: 0 });
 
   const hasStockErrors = stockValidationIssues.length > 0;
-  const invoiceItemGridClassName = "grid grid-cols-[2.5fr_1.5fr_0.8fr_0.9fr_1fr_1fr_0.8fr_1fr_1fr] gap-3";
+  const invoiceItemGridClassName =
+    "grid grid-cols-[minmax(260px,2.6fr)_minmax(180px,1.7fr)_minmax(88px,0.8fr)_minmax(92px,0.9fr)_minmax(110px,1fr)_minmax(110px,1fr)_minmax(96px,0.85fr)_minmax(124px,1fr)_minmax(124px,1fr)] gap-3";
   const invoiceLineInputClassName =
-    "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm leading-5 outline-none";
-  const invoiceLineInputRightClassName = `${invoiceLineInputClassName} text-right`;
+    "h-10 min-w-0 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm leading-5 outline-none";
+  const invoiceLineInputRightClassName = `${invoiceLineInputClassName} text-right tabular-nums`;
 
   function getOpenBatchRows(itemId) {
     const rows = Array.isArray(itemBatchMap[itemId]) ? itemBatchMap[itemId] : [];
@@ -2411,7 +2412,7 @@ export default function InvoiceCreate() {
                 <Card className="overflow-visible">
                   <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
                     <div className="overflow-x-auto">
-                      <div className="min-w-[1120px]">
+                      <div className="min-w-[1280px]">
                         <div className="border-b border-slate-100 bg-slate-50 px-3 py-2.5">
                           <div className={`${invoiceItemGridClassName} items-center text-xs font-semibold text-slate-600`}>
                             <span>Item</span>
@@ -2575,6 +2576,7 @@ export default function InvoiceCreate() {
                                         updateLine(r.id, { qty: raw });
                                       }}
                                       className={invoiceLineInputRightClassName}
+                                      inputMode="decimal"
                                     />
 
                                     <input
@@ -2589,12 +2591,14 @@ export default function InvoiceCreate() {
                                       value={r.rate}
                                       onChange={(e) => updateLine(r.id, { rate: e.target.value })}
                                       className={invoiceLineInputRightClassName}
+                                      inputMode="decimal"
                                     />
 
                                     <input
                                       value={r.discount}
                                       onChange={(e) => updateLine(r.id, { discount: e.target.value })}
                                       className={invoiceLineInputRightClassName}
+                                      inputMode="decimal"
                                     />
 
                                     <input
@@ -2605,13 +2609,14 @@ export default function InvoiceCreate() {
                                       }}
                                       className={`${invoiceLineInputRightClassName} disabled:bg-slate-100 disabled:text-slate-500`}
                                       disabled={forceZeroTax}
+                                      inputMode="decimal"
                                     />
 
-                                    <div className="flex h-10 items-center justify-end rounded-xl border border-slate-200 bg-slate-50 px-3 text-right text-sm font-semibold text-slate-700">
+                                    <div className="flex h-10 min-w-0 items-center justify-end rounded-xl border border-slate-200 bg-slate-50 px-3 text-right text-sm font-semibold tabular-nums text-slate-700">
                                       {money(net)}
                                     </div>
 
-                                    <div className="flex h-10 items-center justify-end rounded-xl border border-slate-200 bg-slate-50 px-3 text-right text-sm font-semibold text-slate-900">
+                                    <div className="flex h-10 min-w-0 items-center justify-end rounded-xl border border-slate-200 bg-slate-50 px-3 text-right text-sm font-semibold tabular-nums text-slate-900">
                                       {money(total)}
                                     </div>
                                   </div>
