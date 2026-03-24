@@ -111,6 +111,15 @@ function formatInvoiceNumber(prefix, counter, year = new Date().getFullYear()) {
   return `${safePrefix}-${safeYear}-${safeCounter}`;
 }
 
+function extractDocumentCounter(documentNumber) {
+  const match = String(documentNumber || "")
+    .trim()
+    .match(/(\d+)(?!.*\d)/);
+  if (!match) return 0;
+  const numeric = Number(match[1]);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.trunc(numeric) : 0;
+}
+
 function normalizeFinancialYearFields(profile = {}) {
   const financialYearDate = normalizeIsoDate(
     profile?.financialYearDate ||
@@ -685,6 +694,41 @@ export function companyConsumeDocumentNumber(documentType, options = {}) {
   };
   companyUpdateProfile({ settings: nextSettings });
   return currentNumber;
+}
+
+export function companySyncDocumentCounter(documentType, documentNumber, options = {}) {
+  const key = normalizeDocumentType(documentType);
+  const usedCounter = extractDocumentCounter(documentNumber);
+  if (!key || !usedCounter) return "";
+
+  const profile = companyGetProfile() || {};
+  const settings = profile?.settings && typeof profile.settings === "object" ? profile.settings : {};
+  const numberingBase = settings?.numbering && typeof settings.numbering === "object" ? settings.numbering : {};
+  const numbering = nextNumberingStateForYear(numberingBase, {
+    forceResetYearly: key === "invoice",
+    resetKeys: key === "invoice" ? ["invoice"] : [],
+    dateValue: options?.dateValue || new Date()
+  });
+  const prefixes = numbering?.prefixes && typeof numbering.prefixes === "object" ? numbering.prefixes : {};
+  const counters = numbering?.counters && typeof numbering.counters === "object" ? numbering.counters : {};
+  const currentCounter = toPositiveCounter(counters[key], 1);
+  const nextCounter = Math.max(currentCounter, usedCounter + 1);
+  if (nextCounter === currentCounter) return String(documentNumber || "").trim();
+
+  companyUpdateProfile({
+    settings: {
+      ...settings,
+      numbering: {
+        ...numbering,
+        prefixes,
+        counters: {
+          ...counters,
+          [key]: nextCounter
+        }
+      }
+    }
+  });
+  return String(documentNumber || "").trim();
 }
 
 async function fetchOrganizationBundle(organizationId) {

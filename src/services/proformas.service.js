@@ -8,10 +8,6 @@ import {
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { invoicesCreate, invoicesList, invoicesSyncFromRemote } from "./invoices.service";
-import {
-  companyConsumeDocumentNumber,
-  companyPeekDocumentNumber
-} from "./company.service";
 import { listPaymentIn, savePaymentIn } from "../modules/paymentIn/store";
 import { syncPaymentInRemote } from "./payments.service";
 
@@ -1020,10 +1016,7 @@ async function convertSalesProformaLocally(proformaId) {
   }
 
   const invoiceDate = current?.proformaDate || new Date().toISOString().slice(0, 10);
-  const invoiceNo =
-    String(companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }) || "").trim() || `INV-${Date.now()}`;
   const invoiceId = await invoicesCreate({
-    invoiceNo,
     invoiceDate,
     dueDate: current?.dueDate || current?.validTill || current?.proformaDate || "",
     partyId: current?.partyId || "",
@@ -1075,8 +1068,6 @@ async function convertSalesProformaLocally(proformaId) {
       }
     }
   });
-
-  companyConsumeDocumentNumber("invoice", { dateValue: invoiceDate });
 
   const convertedAt = new Date().toISOString();
   salesSetAll(

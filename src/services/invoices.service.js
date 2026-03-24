@@ -4,7 +4,7 @@ import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
 import { triggerLowStockNotifications } from "../modules/items/store";
-import { companyPeekDocumentNumber } from "./company.service";
+import { companyPeekDocumentNumber, companySyncDocumentCounter } from "./company.service";
 import {
   annotateWithFinancialYear,
   financialYearsEnsureForDate,
@@ -79,6 +79,120 @@ function normalizeSupabaseError(error, fallback) {
     return `${fallback}. Supabase RLS denied access. Verify organization membership and policies.`;
   }
   return error?.message || fallback;
+}
+
+function isUniqueConstraintError(error) {
+  const code = String(error?.code || "").trim();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "23505" ||
+    message.includes("duplicate key") ||
+    message.includes("unique constraint") ||
+    message.includes("already exists")
+  );
+}
+
+function parseInvoiceNumberParts(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(.*?)(\d+)$/);
+  if (!match) return null;
+  return {
+    raw: text,
+    base: match[1],
+    sequence: parseNumber(match[2]),
+    width: match[2].length
+  };
+}
+
+function hasInvoiceNumberConflict(invoiceNo, excludeId = "") {
+  const normalized = String(invoiceNo || "").trim().toLowerCase();
+  const ignoredId = String(excludeId || "").trim();
+  if (!normalized) return false;
+  return getAll().some((entry) => {
+    if (ignoredId && String(entry?.id || "").trim() === ignoredId) return false;
+    return String(entry?.invoiceNo || "").trim().toLowerCase() === normalized;
+  });
+}
+
+async function fetchLatestRemoteInvoiceNumber(organizationId, basePrefix) {
+  if (!isSupabaseConfigured || !supabase || !organizationId || !basePrefix) return "";
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("invoice_no")
+    .eq("organization_id", organizationId)
+    .like("invoice_no", `${basePrefix}%`)
+    .order("invoice_no", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    if (isMissingColumnError(error)) return "";
+    throw new Error(normalizeSupabaseError(error, "Failed to load latest invoice number"));
+  }
+
+  return String((Array.isArray(data) ? data[0] : null)?.invoice_no || "").trim();
+}
+
+async function invoiceNumberExistsRemotely(organizationId, invoiceNo) {
+  if (!isSupabaseConfigured || !supabase || !organizationId || !invoiceNo) return false;
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("invoice_no", invoiceNo)
+    .limit(1);
+
+  if (error) {
+    if (isMissingColumnError(error)) return false;
+    throw new Error(normalizeSupabaseError(error, "Failed to validate invoice number"));
+  }
+
+  return Array.isArray(data) && data.length > 0;
+}
+
+async function resolveUniqueInvoiceNumber(requestedInvoiceNo, invoiceDate, organizationId) {
+  const normalizedRequested = String(requestedInvoiceNo || "").trim();
+  const previewInvoiceNo = String(
+    companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }) || ""
+  ).trim();
+  const preferredInvoiceNo = normalizedRequested || previewInvoiceNo || `INV-${Date.now()}`;
+  const requestedParts = parseInvoiceNumberParts(preferredInvoiceNo);
+  const fallbackParts = parseInvoiceNumberParts(previewInvoiceNo || preferredInvoiceNo);
+  const baseParts = requestedParts?.sequence > 0 ? requestedParts : fallbackParts;
+
+  if (
+    normalizedRequested &&
+    !hasInvoiceNumberConflict(normalizedRequested) &&
+    !(await invoiceNumberExistsRemotely(organizationId, normalizedRequested))
+  ) {
+    return normalizedRequested;
+  }
+
+  if (!baseParts) return preferredInvoiceNo;
+
+  const localMax = getAll().reduce((maxValue, entry) => {
+    const parts = parseInvoiceNumberParts(entry?.invoiceNo || "");
+    if (!parts || parts.base !== baseParts.base) return maxValue;
+    return Math.max(maxValue, parts.sequence);
+  }, 0);
+  const remoteParts = parseInvoiceNumberParts(
+    await fetchLatestRemoteInvoiceNumber(organizationId, baseParts.base)
+  );
+  const remoteMax = remoteParts?.base === baseParts.base ? remoteParts.sequence : 0;
+  const seedSequence = baseParts.sequence > 0 ? baseParts.sequence - 1 : 0;
+
+  for (let offset = 1; offset <= 5; offset += 1) {
+    const candidate = `${baseParts.base}${String(
+      Math.max(localMax, remoteMax, seedSequence) + offset
+    ).padStart(Math.max(baseParts.width, 4), "0")}`;
+    if (hasInvoiceNumberConflict(candidate)) continue;
+    if (await invoiceNumberExistsRemotely(organizationId, candidate)) continue;
+    return candidate;
+  }
+
+  return `${baseParts.base}${String(Math.max(localMax, remoteMax, seedSequence) + 6).padStart(
+    Math.max(baseParts.width, 4),
+    "0"
+  )}`;
 }
 
 function isMissingRpcError(error) {
@@ -421,10 +535,11 @@ export async function invoicesCreate(invoice) {
   const actor = authGetUser();
   const actorUserId = actor?.id || null;
   const actorName = String(actor?.name || actor?.email || "").trim();
-  const invoiceNo =
-    String(invoice?.invoiceNo || "").trim() ||
-    String(companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }) || "").trim();
-  if (!invoiceNo) {
+  const requestedInvoiceNo = String(invoice?.invoiceNo || "").trim();
+  const previewInvoiceNo = String(
+    companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }) || ""
+  ).trim();
+  if (!requestedInvoiceNo && !previewInvoiceNo) {
     throw new Error("Invoice Number is required.");
   }
   const lines = Array.isArray(invoice?.lines) ? invoice.lines : [];
@@ -443,11 +558,18 @@ export async function invoicesCreate(invoice) {
     (await financialYearsEnsureForDate(invoiceDate).catch(() => null)) ||
     financialYearsResolveForDate(invoiceDate);
 
+  const organizationId = authGetOrganizationId();
   let id = uid("inv_");
+  let invoiceNo = "";
+  let saveError = null;
 
-  if (isSupabaseConfigured && supabase) {
-    const organizationId = authGetOrganizationId();
-    if (organizationId) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    invoiceNo = await resolveUniqueInvoiceNumber(requestedInvoiceNo, invoiceDate, organizationId);
+    if (!invoiceNo || hasInvoiceNumberConflict(invoiceNo)) {
+      continue;
+    }
+
+    if (isSupabaseConfigured && supabase && organizationId) {
       const remotePayload = {
         organization_id: organizationId,
         financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
@@ -541,26 +663,26 @@ export async function invoicesCreate(invoice) {
       if (!postError && postedInvoice?.invoice_id) {
         id = postedInvoice.invoice_id;
       } else {
+        if (postError && isUniqueConstraintError(postError)) {
+          saveError = postError;
+          continue;
+        }
         if (postError && !isMissingRpcError(postError)) {
           throw new Error(normalizeSupabaseError(postError, "Failed to post invoice"));
         }
 
-        let headerResult = await supabase
-          .from("invoices")
-          .upsert(remotePayload, { onConflict: "organization_id,invoice_no" })
-          .select("*")
-          .single();
+        let headerResult = await supabase.from("invoices").insert(remotePayload).select("*").single();
         if (headerResult.error && isMissingColumnError(headerResult.error)) {
           const { financial_year_id, ...legacyPayload } = remotePayload;
-          headerResult = await supabase
-            .from("invoices")
-            .upsert(legacyPayload, { onConflict: "organization_id,invoice_no" })
-            .select("*")
-            .single();
+          headerResult = await supabase.from("invoices").insert(legacyPayload).select("*").single();
         }
         const { data: header, error: headerError } = headerResult;
 
         if (headerError) {
+          if (isUniqueConstraintError(headerError)) {
+            saveError = headerError;
+            continue;
+          }
           throw new Error(normalizeSupabaseError(headerError, "Failed to save invoice"));
         }
 
@@ -585,6 +707,16 @@ export async function invoicesCreate(invoice) {
         }
       }
     }
+
+    saveError = null;
+    break;
+  }
+
+  if (saveError) {
+    throw new Error("Failed to generate a unique invoice number. Please retry.");
+  }
+  if (!invoiceNo || hasInvoiceNumberConflict(invoiceNo)) {
+    throw new Error("Failed to allocate a unique invoice number.");
   }
 
   const next = annotateWithFinancialYear({
@@ -620,6 +752,7 @@ export async function invoicesCreate(invoice) {
   }, invoice?.invoiceDate || now.slice(0, 10));
 
   setAll([next, ...getAll().filter((entry) => entry.id !== id && entry.invoiceNo !== invoiceNo)]);
+  companySyncDocumentCounter("invoice", invoiceNo, { dateValue: invoiceDate });
   applyInvoiceStockDelta(lines);
   console.log("[CreditMonitoring] Triggering notification check from invoicesCreate", {
     invoiceId: id,

@@ -16,7 +16,7 @@ import { invoicesCreate, invoicesSyncFromRemote } from "../../services/invoices.
 import { calculateTaxes } from "../../services/tax";
 import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
 import { authGetRole, authGetUser } from "../../services/auth.service";
-import { companyConsumeDocumentNumber, companyPeekDocumentNumber } from "../../services/company.service";
+import { companyPeekDocumentNumber } from "../../services/company.service";
 import { syncPaymentInRemote } from "../../services/payments.service";
 import { fetchItemStockHistory } from "../../services/inventory.service";
 import { canCreateEntries } from "../../services/roles";
@@ -1871,7 +1871,6 @@ export default function InvoiceCreate() {
       setPaymentNotes("");
       setFormErrors({});
       await invoicesSyncFromRemote();
-      companyConsumeDocumentNumber("invoice", { dateValue: invoiceDate });
       setInvoiceNo(companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }));
 
       if (!silent) {
