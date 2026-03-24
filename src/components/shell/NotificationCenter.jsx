@@ -90,6 +90,9 @@ export default function NotificationCenter() {
 
   if (!notificationOpen) return null;
 
+  const notificationCardMotionClassName =
+    "transition duration-200 ease-out transform-gpu hover:-translate-y-0.5 hover:scale-[1.01] hover:shadow-md";
+
   return (
     <div className="fixed inset-0 z-[125]">
       <div className="absolute inset-0 bg-slate-900/40" onClick={() => setNotificationOpen(false)} />
@@ -147,7 +150,7 @@ export default function NotificationCenter() {
                         }
                         navigateTo("/app/notifications", { log: false });
                       }}
-                      className={`w-full rounded-2xl border px-3 py-2 text-left ${
+                      className={`w-full rounded-2xl border px-3 py-2 text-left ${notificationCardMotionClassName} ${
                         notificationType(entry) === "app"
                           ? entry.isRead
                             ? "border-sky-200 bg-sky-50/40"
@@ -219,7 +222,10 @@ export default function NotificationCenter() {
               <div className="space-y-2">
                 {activities.length ? (
                   activities.map((entry) => (
-                    <div key={entry.id} className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                    <div
+                      key={entry.id}
+                      className={`rounded-2xl border border-slate-200 bg-white px-3 py-2 ${notificationCardMotionClassName}`}
+                    >
                       <p className="text-sm font-semibold text-slate-800">{entry.action}</p>
                       <p className="mt-1 text-[11px] text-slate-500">
                         {formatDateTimeByPreference(entry.createdAt)}
