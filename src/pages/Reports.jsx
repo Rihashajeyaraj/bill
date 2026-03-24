@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -52,6 +52,11 @@ const REPORT_SIDEBAR_MIN_WIDTH = 240;
 const REPORT_SIDEBAR_MAX_WIDTH = 360;
 const REPORT_SIDEBAR_DEFAULT_WIDTH = 290;
 const SORTABLE_TRANSACTION_COLUMNS = new Set(["date", "transactionType", "reference", "partyName", "amount", "status"]);
+
+function hasReportDatasetData(dataset) {
+  if (!dataset || typeof dataset !== "object") return false;
+  return Object.values(dataset).some((value) => Array.isArray(value) && value.length > 0);
+}
 
 function isIndiaCompany(profile = {}) {
   const country = String(profile?.country || profile?.countryCode || "").trim().toLowerCase();
@@ -444,7 +449,7 @@ function ReportSidebar({ sections, activeReport, onSelect }) {
 function ReportTable({ columns, rows, currency, sortKey, sortDirection, onSort, emptyText = "No records found." }) {
   return (
     <div className="overflow-auto rounded-3xl border border-slate-200">
-      <table className="w-full min-w-[880px] text-left text-sm">
+      <table className="w-full min-w-[720px] text-left text-sm xl:min-w-[880px]">
         <thead className="bg-slate-50">
           <tr>
             {columns.map((column) => {
@@ -496,7 +501,7 @@ function ReportTable({ columns, rows, currency, sortKey, sortDirection, onSort, 
 function AgingReportTable({ rows, currency, expandedBucket, onToggle, emptyText = "No records found." }) {
   return (
     <div className="overflow-auto rounded-3xl border border-slate-200">
-      <table className="w-full min-w-[980px] text-left text-sm">
+      <table className="w-full min-w-[760px] text-left text-sm xl:min-w-[980px]">
         <thead className="bg-slate-50">
           <tr>
             <th className="px-4 py-3 font-semibold text-slate-700">Party Name</th>
@@ -846,7 +851,7 @@ function GstBreakdownPanel({ totals, currency }) {
 
   return (
     <div className="mb-4 overflow-auto rounded-3xl border border-slate-200 bg-slate-50/70">
-      <table className="w-full min-w-[720px] text-left text-sm">
+      <table className="w-full min-w-[640px] text-left text-sm xl:min-w-[720px]">
         <thead className="bg-slate-100/80">
           <tr>
             <th className="px-4 py-3 font-semibold text-slate-700">GST Type</th>
@@ -1192,7 +1197,11 @@ export default function Reports() {
   const [agingMetricFilter, setAgingMetricFilter] = useState("totalOutstanding");
   const [profitBreakdownMode, setProfitBreakdownMode] = useState("");
   const resizeStateRef = useRef(null);
-  useGlobalLoadingBridge(loading, "reports-module");
+  const deferredDataset = useDeferredValue(dataset);
+  const deferredFilters = useDeferredValue(filters);
+  const deferredPage = useDeferredValue(page);
+  const hasCachedDataset = useMemo(() => hasReportDatasetData(dataset), [dataset]);
+  useGlobalLoadingBridge(loading && !hasCachedDataset, "reports-module");
 
   const visibleReportSections = useMemo(
     () => getVisibleReportSections(organizationProfile),
@@ -1307,12 +1316,14 @@ export default function Reports() {
     let mounted = true;
 
     async function loadReports() {
-      setLoading(true);
+      if (!hasCachedDataset) setLoading(true);
       setError("");
       try {
         const nextDataset = await syncReportsData(activeRange);
         if (!mounted) return;
-        setDataset(nextDataset);
+        startTransition(() => {
+          setDataset(nextDataset);
+        });
       } catch (loadError) {
         if (!mounted) return;
         setError(loadError?.message || "Failed to load reports.");
@@ -1331,60 +1342,74 @@ export default function Reports() {
     try {
       switch (activeReport) {
         case "sale-report":
-          return buildSaleReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate, partyId: filters.partyId });
+          return buildSaleReport(deferredDataset, {
+            fromDate: deferredFilters.fromDate,
+            toDate: deferredFilters.toDate,
+            partyId: deferredFilters.partyId
+          });
         case "purchase-report":
-          return buildPurchaseReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate, partyId: filters.partyId });
+          return buildPurchaseReport(deferredDataset, {
+            fromDate: deferredFilters.fromDate,
+            toDate: deferredFilters.toDate,
+            partyId: deferredFilters.partyId
+          });
         case "cash-flow":
-          return buildCashFlowReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate });
+          return buildCashFlowReport(deferredDataset, {
+            fromDate: deferredFilters.fromDate,
+            toDate: deferredFilters.toDate
+          });
         case "all-transactions":
           return buildAllTransactionsReport(
-            dataset,
+            deferredDataset,
             {
-              fromDate: filters.fromDate,
-              toDate: filters.toDate,
-              transactionType: filters.transactionType,
-              partyId: filters.partyId,
-              search: filters.search,
-              sortKey: filters.sortKey,
-              sortDirection: filters.sortDirection
+              fromDate: deferredFilters.fromDate,
+              toDate: deferredFilters.toDate,
+              transactionType: deferredFilters.transactionType,
+              partyId: deferredFilters.partyId,
+              search: deferredFilters.search,
+              sortKey: deferredFilters.sortKey,
+              sortDirection: deferredFilters.sortDirection
             },
-            { page, pageSize: REPORT_PAGE_SIZE }
+            { page: deferredPage, pageSize: REPORT_PAGE_SIZE }
           );
         case "party-statement":
           return buildPartyStatementReport(
-            dataset,
+            deferredDataset,
             {
-              partyType: filters.partyType,
-              partyId: filters.partyId,
-              fromDate: filters.fromDate,
-              toDate: filters.toDate
+              partyType: deferredFilters.partyType,
+              partyId: deferredFilters.partyId,
+              fromDate: deferredFilters.fromDate,
+              toDate: deferredFilters.toDate
             },
-            { page, pageSize: REPORT_PAGE_SIZE }
+            { page: deferredPage, pageSize: REPORT_PAGE_SIZE }
           );
         case "aging-report":
-          return buildAgingReport(dataset, {
-            partyType: filters.partyType,
-            partyId: filters.partyId,
-            asOfDate: filters.asOfDate
+          return buildAgingReport(deferredDataset, {
+            partyType: deferredFilters.partyType,
+            partyId: deferredFilters.partyId,
+            asOfDate: deferredFilters.asOfDate
           });
         case "all-parties":
-          return buildAllPartiesReport(dataset, {
-            partyType: filters.partyType,
-            search: filters.search
+          return buildAllPartiesReport(deferredDataset, {
+            partyType: deferredFilters.partyType,
+            search: deferredFilters.search
           });
         case "profit-loss":
-          return buildProfitLossReport(dataset, { fromDate: filters.fromDate, toDate: filters.toDate });
+          return buildProfitLossReport(deferredDataset, {
+            fromDate: deferredFilters.fromDate,
+            toDate: deferredFilters.toDate
+          });
         case "gst-report":
-          return buildGstReport(dataset, {
-            fromDate: filters.fromDate,
-            toDate: filters.toDate,
+          return buildGstReport(deferredDataset, {
+            fromDate: deferredFilters.fromDate,
+            toDate: deferredFilters.toDate,
             organizationCountry: organizationProfile?.country || organizationProfile?.countryCode || ""
           });
         case "tds-report":
-          return buildTdsReport(dataset, {
-            fromDate: filters.fromDate,
-            toDate: filters.toDate,
-            partyId: filters.partyId,
+          return buildTdsReport(deferredDataset, {
+            fromDate: deferredFilters.fromDate,
+            toDate: deferredFilters.toDate,
+            partyId: deferredFilters.partyId,
             organizationCountry: organizationProfile?.country || organizationProfile?.countryCode || ""
           });
         default:
@@ -1393,7 +1418,7 @@ export default function Reports() {
     } catch (reportError) {
       return { error: reportError?.message || "Failed to generate report." };
     }
-  }, [activeReport, dataset, filters, page, organizationProfile]);
+  }, [activeReport, deferredDataset, deferredFilters, deferredPage, organizationProfile]);
 
   const viewModel = useMemo(
     () => (reportResult?.error ? null : buildViewModel({ activeReport, data: reportResult, currency, currentPage: page, agingMetricFilter })),
@@ -1404,7 +1429,11 @@ export default function Reports() {
     setLoading(true);
     setError("");
     syncReportsData(activeRange)
-      .then((nextDataset) => setDataset(nextDataset))
+      .then((nextDataset) =>
+        startTransition(() => {
+          setDataset(nextDataset);
+        })
+      )
       .catch((loadError) => setError(loadError?.message || "Failed to refresh reports."))
       .finally(() => setLoading(false));
   }
@@ -1472,7 +1501,7 @@ export default function Reports() {
 
     return (
       <Card className="p-6">
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
           {years.length ? (
             <label className="text-xs font-semibold text-slate-600">
               Financial Year
@@ -1597,7 +1626,7 @@ export default function Reports() {
   }
 
   return (
-    <div className="mx-auto max-w-[1480px] space-y-4 pb-24">
+    <div className="mx-auto w-full max-w-[1760px] space-y-4 pb-24">
       <PageHeader
         title="Reports"
         subtitle="Clean, business-focused reporting for transactions, parties, and finance."
@@ -1623,7 +1652,7 @@ export default function Reports() {
       ) : null}
 
       <div
-        className="grid gap-4 xl:grid-cols-[var(--reports-sidebar-width)_14px_minmax(0,1fr)] xl:gap-0"
+        className="grid gap-4 2xl:grid-cols-[var(--reports-sidebar-width)_14px_minmax(0,1fr)] 2xl:gap-0"
         style={{ "--reports-sidebar-width": `${sidebarWidth}px` }}
       >
         <div className="min-w-0">
@@ -1634,7 +1663,7 @@ export default function Reports() {
           />
         </div>
 
-        <div className="relative hidden xl:flex items-stretch justify-center">
+        <div className="relative hidden 2xl:flex items-stretch justify-center">
           <div className="w-px bg-slate-200" />
           <button
             type="button"
@@ -1646,7 +1675,7 @@ export default function Reports() {
           </button>
         </div>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {renderFilters()}
 
           {viewModel ? (
@@ -1679,7 +1708,7 @@ export default function Reports() {
                 </div>
 
                 {viewModel.metrics.length ? (
-                  <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                     {viewModel.metrics.map((metric) => (
                       metric.metricKey && activeReport === "aging-report" ? (
                         <InteractiveMetricCard
