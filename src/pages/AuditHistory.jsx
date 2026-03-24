@@ -156,7 +156,7 @@ export default function AuditHistory() {
   }
 
   return (
-    <div className="mx-auto max-w-[1360px] space-y-4 pb-16">
+    <div className="mx-auto flex min-h-full max-w-[1360px] flex-col space-y-4 pb-6">
       <PageHeader
         title="Audit History"
         subtitle="Track create, update, and delete operations across your organization"
@@ -278,13 +278,13 @@ export default function AuditHistory() {
         </div>
       </Card>
 
-      <Card className="overflow-hidden">
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <p className="text-sm font-semibold text-slate-900">Events</p>
           <p className="text-xs font-semibold text-slate-500">{rows.length} records</p>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="min-h-0 flex-1 overflow-auto">
           <table className="w-full min-w-[1050px] text-left text-sm">
             <thead className="bg-slate-50">
               <tr>
