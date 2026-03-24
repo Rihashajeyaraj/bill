@@ -185,6 +185,8 @@ export default function PartyFormModal({
   const inputClassName =
     "w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100";
   const mutedInputClassName = `${inputClassName} disabled:bg-slate-50 disabled:text-slate-500`;
+  const amountInputClassName = `${inputClassName} text-right tabular-nums`;
+  const mutedAmountInputClassName = `${amountInputClassName} disabled:bg-slate-50 disabled:text-slate-500`;
   const suggestionMenuClassName =
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
   const creditLimitDaysValue = Math.max(0, Math.trunc(parseNumber(form.creditLimitDays)));
@@ -645,7 +647,7 @@ export default function PartyFormModal({
                       setOpeningBalanceInput(formatted);
                       updateField("openingBalance", parseNumber(formatted));
                     }}
-                    className={inputClassName}
+                    className={amountInputClassName}
                     placeholder="0.00"
                   />
                 </FormField>
@@ -714,7 +716,7 @@ export default function PartyFormModal({
                         updateField("creditLimit", parseNumber(formatted));
                       }}
                       disabled={!form.creditLimitEnabled}
-                      className={`mt-2 ${mutedInputClassName}`}
+                      className={`mt-2 ${mutedAmountInputClassName}`}
                       placeholder="0.00"
                     />
                   )}

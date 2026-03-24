@@ -40,9 +40,12 @@ export default function FormField({
   const hasError = !!error;
 
   return (
-    <label className={clsx("form-field block", className)} data-invalid={hasError ? "true" : "false"}>
-      <div className="flex items-end justify-between">
-        <span className="text-sm font-semibold app-main-text">
+    <label
+      className={clsx("form-field flex flex-col", className)}
+      data-invalid={hasError ? "true" : "false"}
+    >
+      <div className="flex flex-col gap-1">
+        <span className="text-sm font-semibold leading-6 app-main-text">
           {labelMeta.text}
           {showIndicator && isRequired ? (
             <span className="ml-1 text-rose-600" aria-hidden="true">
@@ -53,9 +56,9 @@ export default function FormField({
             <span className="ml-1 text-xs font-medium app-muted-text">(Optional)</span>
           ) : null}
         </span>
-        {hint ? <span className="text-xs app-muted-text">{hint}</span> : null}
+        {hint ? <span className="text-xs leading-5 app-muted-text">{hint}</span> : null}
       </div>
-      <div className="mt-2">{children}</div>
+      <div className="mt-2 flex flex-col">{children}</div>
     </label>
   );
 }

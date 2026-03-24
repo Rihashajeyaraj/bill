@@ -73,6 +73,12 @@ export default function PartyStatement() {
   }
 
   const balanceMeta = outstandingMeta(party, financials?.outstanding ?? 0);
+  const summaryCardClassName =
+    "flex h-full min-h-[168px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-soft";
+  const summaryTitleClassName = "text-xs font-semibold tracking-[0.02em] text-slate-500";
+  const summaryAmountClassName = "mt-3 text-2xl font-bold leading-none text-slate-900";
+  const summaryBodyClassName = "mt-3 flex flex-1 flex-col justify-between gap-3";
+  const summaryDescriptionClassName = "text-xs leading-5 text-slate-500";
 
   return (
     <div className="mx-auto max-w-[1240px] space-y-4 pb-24">
@@ -91,35 +97,43 @@ export default function PartyStatement() {
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_0.8fr]">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
-            <p className="text-xs font-semibold text-slate-500">Outstanding Balance</p>
-            <p className={`mt-2 text-2xl font-bold ${balanceMeta.color}`}>
-              {formatMoney(balanceMeta.absolute, currency)}
-            </p>
-            <Badge tone={balanceMeta.tone}>{balanceMeta.label}</Badge>
+          <div className={summaryCardClassName}>
+            <p className={summaryTitleClassName}>Outstanding Balance</p>
+            <div className={summaryBodyClassName}>
+              <p className={`${summaryAmountClassName} ${balanceMeta.color}`}>
+                {formatMoney(balanceMeta.absolute, currency)}
+              </p>
+              <div className="flex min-h-[40px] items-end">
+                <Badge tone={balanceMeta.tone}>{balanceMeta.label}</Badge>
+              </div>
+            </div>
           </div>
           <button
             type="button"
             onClick={() => setOpeningDetailsOpen(true)}
-            className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow"
+            className={`${summaryCardClassName} text-left transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow`}
           >
-            <p className="text-xs font-semibold text-slate-500">Opening Balance</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">
-              {formatMoney(statement.openingBalance, currency)}
-            </p>
-            <p className="text-xs text-slate-500">
-              {selectedYear?.label ? `Carry forward into FY ${selectedYear.label}` : "As of selected period start"}
-            </p>
-            <p className="mt-2 text-[11px] font-semibold text-slate-600">
-              Click to view opening balance details
-            </p>
+            <p className={summaryTitleClassName}>Opening Balance</p>
+            <div className={summaryBodyClassName}>
+              <p className={summaryAmountClassName}>{formatMoney(statement.openingBalance, currency)}</p>
+              <div className="min-h-[40px]">
+                <p className={summaryDescriptionClassName}>
+                  {selectedYear?.label ? `Carry forward into FY ${selectedYear.label}` : "As of selected period start"}
+                </p>
+                <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-slate-600">
+                  Click to view opening balance details
+                </p>
+              </div>
+            </div>
           </button>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
-            <p className="text-xs font-semibold text-slate-500">Closing Balance</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">
-              {formatMoney(statement.closingBalance, currency)}
-            </p>
-            <p className="text-xs text-slate-500">After filtered entries</p>
+          <div className={summaryCardClassName}>
+            <p className={summaryTitleClassName}>Closing Balance</p>
+            <div className={summaryBodyClassName}>
+              <p className={summaryAmountClassName}>{formatMoney(statement.closingBalance, currency)}</p>
+              <div className="min-h-[40px]">
+                <p className={summaryDescriptionClassName}>After filtered entries</p>
+              </div>
+            </div>
           </div>
         </div>
 
