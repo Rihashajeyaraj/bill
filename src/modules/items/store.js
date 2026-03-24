@@ -1189,16 +1189,13 @@ export function computeItemUsage(item) {
 export function computeItemStock(item) {
   if (!item.trackInventory) return { available: 0, availableRaw: 0, lowStock: false };
 
-  const stockSource = String(item?.metadata?.stockSource || "").trim().toLowerCase();
-  if (stockSource === "db_current_stock") {
-    const availableRaw = parseNumber(item?.currentStock ?? item?.metadata?.currentStock);
-    const available = Math.max(0, parseNumber(availableRaw));
-    const lowStockAlert = Math.max(0, parseNumber(item.lowStockAlert));
-    const lowStock = available <= lowStockAlert;
-    return { available, availableRaw, lowStock };
-  }
-
-  let availableRaw = parseNumber(item.openingStock);
+  let availableRaw = parseNumber(
+    item?.openingStock ??
+      item?.metadata?.openingStock ??
+      item?.metadata?.openingQty ??
+      item?.quantity ??
+      0
+  );
   const invoices = ensureArray(lsGetOrganizationScoped(LS_KEYS.invoices, [])).filter(
     includeInventoryRecord
   );
