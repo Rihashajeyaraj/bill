@@ -256,13 +256,17 @@ export default function PartyFormModal({
 
   function handleSave(flow: CreateFlowStep = "details") {
     const nextFieldErrors: Record<string, string> = {};
+    const requiresCreditGstin =
+      !!form.creditLimitEnabled &&
+      showGSTINField &&
+      normalizeContactType(form.contactType ?? form.customerType, form.taxId) === "Business";
     if (!form.name.trim()) {
       nextFieldErrors.name = "This field is required";
     }
     if (!phoneDigits(mobileNumber)) {
       nextFieldErrors.mobile = "This field is required";
     }
-    if (showGSTINField && !String(form.taxId || "").trim()) {
+    if (requiresCreditGstin && !String(form.taxId || "").trim()) {
       nextFieldErrors.taxId = "This field is required";
     }
     if (Object.keys(nextFieldErrors).length) {
@@ -595,7 +599,7 @@ export default function PartyFormModal({
                 {showGSTINField ? (
                   <FormField
                     label="GSTIN"
-                    required
+                    required={!!form.creditLimitEnabled}
                     error={fieldErrors.taxId}
                     hint="Shown only for Business + India"
                     className="md:col-span-2"
