@@ -27,6 +27,17 @@ function resolveOrganizationCountry(org = {}) {
   return "";
 }
 
+function resolveContactCountry(contact = {}) {
+  const direct = normalizeText(contact?.country);
+  if (direct) return direct;
+
+  const countryCode = String(contact?.countryCode || contact?.country_code || "")
+    .trim()
+    .toUpperCase();
+  if (countryCode === "IN") return "india";
+  return "";
+}
+
 export function normalizeContactType(contactType, taxId = "") {
   const explicit = normalizeContactTypeValue(contactType);
   if (explicit) return explicit;
@@ -34,7 +45,8 @@ export function normalizeContactType(contactType, taxId = "") {
 }
 
 export function validateContactTax(contact = {}, org = {}) {
-  const isGSTMode = resolveOrganizationCountry(org) === "india";
+  const taxCountry = resolveContactCountry(contact) || resolveOrganizationCountry(org);
+  const isGSTMode = taxCountry === "india";
   const enteredTaxId = String(contact?.taxId ?? contact?.gstin ?? "")
     .trim()
     .toUpperCase();

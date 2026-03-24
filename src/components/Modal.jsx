@@ -41,9 +41,9 @@ export default function Modal({ open, title, onClose, children, footer }) {
   return (
     <div className="fixed inset-0 z-[80]">
       <div className="absolute inset-0 app-modal-backdrop" onClick={onClose} />
-      <div className="absolute inset-0 flex items-end justify-center p-0 sm:items-center sm:p-4">
-        <Card className="flex max-h-[100svh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl sm:max-h-[88vh] sm:rounded-3xl">
-          <div className="flex items-center justify-between border-b px-4 py-3 app-modal-divider sm:px-5 sm:py-4">
+      <div className="absolute inset-0 flex items-end justify-center p-0 sm:items-center sm:px-4 sm:py-6">
+        <Card className="flex max-h-[100svh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl sm:max-h-[88vh] sm:rounded-3xl">
+          <div className="flex items-center justify-between border-b px-5 py-4 app-modal-divider sm:px-6">
             <div>
               <h3 className="text-base font-semibold app-main-text">{title}</h3>
               <div className="h-1 w-20 rounded-full mt-2 app-modal-accent" />
@@ -55,8 +55,8 @@ export default function Modal({ open, title, onClose, children, footer }) {
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">{children}</div>
-          {footer ? <div className="border-t px-4 py-3 app-modal-footer sm:px-5 sm:py-4">{footer}</div> : null}
+          <div className="flex-1 overflow-y-auto px-5 py-4 sm:px-6 sm:py-5">{children}</div>
+          {footer ? <div className="border-t px-5 py-4 app-modal-footer sm:px-6 sm:py-5">{footer}</div> : null}
         </Card>
       </div>
     </div>

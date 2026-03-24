@@ -189,6 +189,11 @@ export default function PartyFormModal({
   const mutedAmountInputClassName = `${amountInputClassName} disabled:bg-slate-50 disabled:text-slate-500`;
   const suggestionMenuClassName =
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
+  const sectionClassName = "rounded-2xl border border-slate-200 bg-white px-5 py-5 sm:px-6";
+  const sectionMutedClassName = "rounded-2xl border border-slate-200 bg-slate-50/50 px-5 py-5 sm:px-6";
+  const formGridClassName = "mt-4 grid grid-cols-1 gap-x-4 gap-y-5 md:grid-cols-2";
+  const footerButtonClassName =
+    "inline-flex min-h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50";
   const creditLimitDaysValue = Math.max(0, Math.trunc(parseNumber(form.creditLimitDays)));
 
   function clearFieldError(fieldKey: string) {
@@ -352,16 +357,16 @@ export default function PartyFormModal({
       title={modalTitle}
       onClose={onClose}
       footer={
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="space-y-1">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0 flex-1 space-y-1">
             {error ? <p className="text-xs font-semibold text-rose-600">{error}</p> : null}
             {!error && warning ? <p className="text-xs font-semibold text-amber-600">{warning}</p> : null}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center sm:justify-end">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+              className={`${footerButtonClassName} w-full sm:min-w-[116px]`}
             >
               Cancel
             </button>
@@ -373,7 +378,7 @@ export default function PartyFormModal({
                   setWarning("");
                   setCreateStep("quick");
                 }}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                className={`${footerButtonClassName} w-full sm:min-w-[116px]`}
               >
                 Back
               </button>
@@ -387,16 +392,16 @@ export default function PartyFormModal({
                     setWarning("");
                     setCreateStep("details");
                   }}
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  className={`${footerButtonClassName} w-full sm:min-w-[116px]`}
                 >
                   Next
                 </button>
-                <GradientButton onClick={() => handleSave("quick")}>
+                <GradientButton className="min-h-11 w-full sm:min-w-[156px]" onClick={() => handleSave("quick")}>
                   Create {entityLabel}
                 </GradientButton>
               </>
             ) : (
-              <GradientButton onClick={() => handleSave("details")}>
+              <GradientButton className="min-h-11 w-full sm:min-w-[156px]" onClick={() => handleSave("details")}>
                 {submitLabel}
               </GradientButton>
             )}
@@ -407,9 +412,9 @@ export default function PartyFormModal({
       <div ref={contentRootRef} className="space-y-4">
         {showQuickSections ? (
           <>
-            <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
+            <section className={sectionMutedClassName}>
               <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">Basic Details</p>
-              <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className={formGridClassName}>
                 <FormField label="Name" required error={fieldErrors.name} className="md:col-span-2">
                   <input
                     value={form.name}
@@ -446,7 +451,7 @@ export default function PartyFormModal({
                   </select>
                 </FormField>
 
-                <FormField label="Mobile Number" required error={fieldErrors.mobile} hint={phoneHint}>
+                <FormField label="Mobile Number" required error={fieldErrors.mobile}>
                   <div className="grid grid-cols-[130px_1fr] gap-2">
                     <select
                       value={countryCode}
@@ -497,10 +502,10 @@ export default function PartyFormModal({
               </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+            <section className={sectionClassName}>
               <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">Address And Tax</p>
-              <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <FormField label="Country">
+              <div className={formGridClassName}>
+                <FormField label="Country" className="w-full">
                   <div className="relative">
                     <input
                       value={form.country}
@@ -543,10 +548,7 @@ export default function PartyFormModal({
                   </div>
                 </FormField>
 
-                <FormField
-                  label="State / Region"
-                  hint={stateOptions.length ? `${stateOptions.length} options available` : "Type manually"}
-                >
+                <FormField label="State / Region" className="w-full">
                   <div className="relative">
                     <input
                       value={form.state}
@@ -628,9 +630,9 @@ export default function PartyFormModal({
 
         {showAdvancedSections ? (
           <>
-            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+            <section className={sectionClassName}>
               <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">Accounting</p>
-              <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className={formGridClassName}>
                 <FormField label="Opening Balance">
                   <input
                     type="text"
@@ -724,11 +726,11 @@ export default function PartyFormModal({
               </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+            <section className={sectionClassName}>
               <p className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-500">
                 {showSupplierAttachments ? "Notes And Files" : "Notes"}
               </p>
-              <div className="mt-3 space-y-4">
+              <div className="mt-4 space-y-4">
                 <FormField label="Notes">
                   <textarea
                     value={form.notes}
