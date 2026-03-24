@@ -146,11 +146,11 @@ function refreshPremiumRecords() {
 export default function AccounterDashboard() {
   const navigate = useNavigate();
   const { currency = "INR", country = "India", countryCode = "IN" } = useOrganization();
-  const { selectedYear } = useFinancialYears();
+  const { selectedYear, activeRange } = useFinancialYears();
 
-  const [invoices, setInvoices] = useState(() => invoicesList());
-  const [purchases, setPurchases] = useState(() => purchasesList());
-  const [payments, setPayments] = useState(() => paymentsList());
+  const [invoices, setInvoices] = useState(() => invoicesList(activeRange));
+  const [purchases, setPurchases] = useState(() => purchasesList(activeRange));
+  const [payments, setPayments] = useState(() => paymentsList(activeRange));
   const [items, setItems] = useState(() => listItems());
   const [parties, setParties] = useState(() => listParties());
   const [premiumRecords, setPremiumRecords] = useState(() => refreshPremiumRecords());
@@ -160,24 +160,24 @@ export default function AccounterDashboard() {
     async function syncDashboardData() {
       try {
         const [syncedInvoices, syncedPurchases, syncedPayments] = await Promise.all([
-          invoicesSyncFromRemote(),
-          purchasesSyncFromRemote(),
-          paymentsSyncFromRemote(),
+          invoicesSyncFromRemote(activeRange),
+          purchasesSyncFromRemote(activeRange),
+          paymentsSyncFromRemote(activeRange),
           syncItemsFromRemote(),
           syncPartiesFromRemote()
         ]);
         if (!mounted) return;
-        setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
-        setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList());
-        setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList());
+        setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList(activeRange));
+        setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList(activeRange));
+        setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList(activeRange));
         setItems(listItems());
         setParties(listParties());
         setPremiumRecords(refreshPremiumRecords());
       } catch {
         if (!mounted) return;
-        setInvoices(invoicesList());
-        setPurchases(purchasesList());
-        setPayments(paymentsList());
+        setInvoices(invoicesList(activeRange));
+        setPurchases(purchasesList(activeRange));
+        setPayments(paymentsList(activeRange));
         setItems(listItems());
         setParties(listParties());
         setPremiumRecords(refreshPremiumRecords());
@@ -187,7 +187,7 @@ export default function AccounterDashboard() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [activeRange]);
 
   useEffect(() => {
     function handleStorage(event) {
@@ -198,9 +198,9 @@ export default function AccounterDashboard() {
         isOrganizationScopedStorageEventKey(LS_KEYS.items, event?.key) ||
         isOrganizationScopedStorageEventKey(LS_KEYS.parties, event?.key)
       ) {
-        setInvoices(invoicesList());
-        setPurchases(purchasesList());
-        setPayments(paymentsList());
+        setInvoices(invoicesList(activeRange));
+        setPurchases(purchasesList(activeRange));
+        setPayments(paymentsList(activeRange));
         setItems(listItems());
         setParties(listParties());
       }
@@ -217,7 +217,7 @@ export default function AccounterDashboard() {
 
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
-  }, []);
+  }, [activeRange]);
 
   const dashboard = useMemo(() => {
     const today = todayIso();

@@ -165,7 +165,7 @@ function countryMatches(recordValue, targetCountry) {
 
 export default function Dashboard() {
   const { currency = "INR", country = "India", countryCode = "IN", profile = {} } = useOrganization();
-  const { selectedYear } = useFinancialYears();
+  const { selectedYear, activeRange } = useFinancialYears();
   const companyTimeZone = useMemo(
     () => resolveCompanyTimeZone(profile, country, countryCode),
     [profile, country, countryCode]
@@ -183,10 +183,10 @@ export default function Dashboard() {
     };
   }, []);
 
-  const [invoices, setInvoices] = useState(() => invoicesList());
-  const [purchases, setPurchases] = useState(() => purchasesList());
-  const [payments, setPayments] = useState(() => paymentsList());
-  const [expenses, setExpenses] = useState(() => expensesList());
+  const [invoices, setInvoices] = useState(() => invoicesList(activeRange));
+  const [purchases, setPurchases] = useState(() => purchasesList(activeRange));
+  const [payments, setPayments] = useState(() => paymentsList(activeRange));
+  const [expenses, setExpenses] = useState(() => expensesList(activeRange));
   const [parties, setParties] = useState(() => listParties());
   const [paymentInPremium, setPaymentInPremium] = useState(() =>
     lsGetOrganizationScoped("paymentInPremiumV1", [])
@@ -206,38 +206,38 @@ export default function Dashboard() {
 
   const refreshExpenses = useCallback(async () => {
     try {
-      const synced = await expensesSyncFromRemote();
-      setExpenses(Array.isArray(synced) ? synced : expensesList());
+      const synced = await expensesSyncFromRemote(activeRange);
+      setExpenses(Array.isArray(synced) ? synced : expensesList(activeRange));
     } catch {
-      setExpenses(expensesList());
+      setExpenses(expensesList(activeRange));
     }
-  }, []);
+  }, [activeRange]);
 
   useEffect(() => {
     let mounted = true;
     async function syncDashboardData() {
       try {
         const [syncedInvoices, syncedPurchases, syncedPayments, syncedExpenses, syncedParties] = await Promise.all([
-          invoicesSyncFromRemote(),
-          purchasesSyncFromRemote(),
-          paymentsSyncFromRemote(),
-          expensesSyncFromRemote(),
+          invoicesSyncFromRemote(activeRange),
+          purchasesSyncFromRemote(activeRange),
+          paymentsSyncFromRemote(activeRange),
+          expensesSyncFromRemote(activeRange),
           syncPartiesFromRemote(),
         ]);
         if (!mounted) return;
-        setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
-        setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList());
-        setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList());
-        setExpenses(Array.isArray(syncedExpenses) ? syncedExpenses : expensesList());
+        setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList(activeRange));
+        setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList(activeRange));
+        setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList(activeRange));
+        setExpenses(Array.isArray(syncedExpenses) ? syncedExpenses : expensesList(activeRange));
         setParties(Array.isArray(syncedParties) ? syncedParties : listParties());
         setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
         setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
       } catch {
         if (!mounted) return;
-        setInvoices(invoicesList());
-        setPurchases(purchasesList());
-        setPayments(paymentsList());
-        setExpenses(expensesList());
+        setInvoices(invoicesList(activeRange));
+        setPurchases(purchasesList(activeRange));
+        setPayments(paymentsList(activeRange));
+        setExpenses(expensesList(activeRange));
         setParties(listParties());
         setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
         setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
@@ -247,7 +247,7 @@ export default function Dashboard() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [activeRange]);
 
   useEffect(() => {
     function handleExpenseChange() {
@@ -267,9 +267,9 @@ export default function Dashboard() {
         isOrganizationScopedStorageEventKey("paymentInPremiumV1", event?.key) ||
         isOrganizationScopedStorageEventKey("paymentOutPremiumV1", event?.key)
       ) {
-        setInvoices(invoicesList());
-        setPurchases(purchasesList());
-        setPayments(paymentsList());
+        setInvoices(invoicesList(activeRange));
+        setPurchases(purchasesList(activeRange));
+        setPayments(paymentsList(activeRange));
         setParties(listParties());
         setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
         setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
@@ -282,7 +282,7 @@ export default function Dashboard() {
       window.removeEventListener(EXPENSES_CHANGED_EVENT, handleExpenseChange);
       window.removeEventListener("storage", handleStorage);
     };
-  }, [refreshExpenses]);
+  }, [refreshExpenses, activeRange]);
 
   const currencyPrefix = currency ? `${currency} ` : "";
   const currencyBadge = currency.slice(0, 3).toUpperCase();

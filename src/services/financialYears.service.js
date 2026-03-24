@@ -378,6 +378,20 @@ export function financialYearsGetActiveRange() {
   };
 }
 
+export function resolveFinancialYearFilterRange(input = financialYearsGetSelected()) {
+  const fromDate = normalizeIsoDate(input?.fromDate || input?.startDate || input?.from || "");
+  const toDate = normalizeIsoDate(input?.toDate || input?.endDate || input?.to || "");
+  return { fromDate, toDate };
+}
+
+export function matchesFinancialYearFilter(dateValue, input = financialYearsGetSelected()) {
+  const safeDate = normalizeIsoDate(dateValue);
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(input);
+  if (fromDate && safeDate && safeDate < fromDate) return false;
+  if (toDate && safeDate && safeDate > toDate) return false;
+  return true;
+}
+
 export function financialYearsSetSelected(selectedId) {
   const safeId = String(selectedId || "").trim();
   const rows = financialYearsList();

@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import Modal from "../../components/Modal";
+import { useFinancialYears } from "../../context/FinancialYearContext";
 import { useToast } from "../../context/ToastContext";
 import { purchasesList, purchasesSyncFromRemote } from "../../services/purchases.service";
 import {
@@ -55,8 +56,9 @@ function sortBarcodeRows(rows) {
 export default function PurchaseHistory() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { activeRange, selectedYear } = useFinancialYears();
   const [loading, setLoading] = useState(true);
-  const [bills, setBills] = useState(() => purchasesList());
+  const [bills, setBills] = useState(() => purchasesList(activeRange));
   const [selectedBill, setSelectedBill] = useState(null);
   const [barcodesByPurchaseId, setBarcodesByPurchaseId] = useState({});
   const [barcodeModalBill, setBarcodeModalBill] = useState(null);
@@ -69,12 +71,12 @@ export default function PurchaseHistory() {
     async function load() {
       setLoading(true);
       try {
-        const synced = await purchasesSyncFromRemote();
+        const synced = await purchasesSyncFromRemote(activeRange);
         if (!mounted) return;
-        setBills(Array.isArray(synced) ? synced : purchasesList());
+        setBills(Array.isArray(synced) ? synced : purchasesList(activeRange));
       } catch (error) {
         if (!mounted) return;
-        setBills(purchasesList());
+        setBills(purchasesList(activeRange));
         toast.error("Failed to load purchase history", error?.message || "Showing local data.");
       } finally {
         if (mounted) setLoading(false);
@@ -84,7 +86,7 @@ export default function PurchaseHistory() {
     return () => {
       mounted = false;
     };
-  }, [toast]);
+  }, [toast, activeRange?.fromDate, activeRange?.toDate]);
 
   useEffect(() => {
     let mounted = true;
@@ -247,7 +249,10 @@ export default function PurchaseHistory() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <PageHeader title="Purchase History" subtitle="All saved purchase bills in one place." />
+      <PageHeader
+        title="Purchase History"
+        subtitle={`All saved purchase bills in one place.${selectedYear?.label ? ` FY ${selectedYear.label}` : ""}`}
+      />
 
       <div className="flex justify-end">
         <button

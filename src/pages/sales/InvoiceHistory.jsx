@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
+import { useFinancialYears } from "../../context/FinancialYearContext";
 import { useToast } from "../../context/ToastContext";
 import { invoicesList, invoicesSyncFromRemote } from "../../services/invoices.service";
 import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
@@ -47,8 +48,9 @@ function invoiceSortValue(invoiceNo) {
 export default function InvoiceHistory() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { activeRange, selectedYear } = useFinancialYears();
   const [loading, setLoading] = useState(true);
-  const [invoices, setInvoices] = useState(() => invoicesList());
+  const [invoices, setInvoices] = useState(() => invoicesList(activeRange));
 
   const sortedInvoices = useMemo(
     () =>
@@ -68,12 +70,12 @@ export default function InvoiceHistory() {
     async function load() {
       setLoading(true);
       try {
-        const synced = await invoicesSyncFromRemote();
+        const synced = await invoicesSyncFromRemote(activeRange);
         if (!mounted) return;
-        setInvoices(Array.isArray(synced) ? synced : invoicesList());
+        setInvoices(Array.isArray(synced) ? synced : invoicesList(activeRange));
       } catch (error) {
         if (!mounted) return;
-        setInvoices(invoicesList());
+        setInvoices(invoicesList(activeRange));
         toast.error("Failed to load invoice history", error?.message || "Showing local data.");
       } finally {
         if (mounted) setLoading(false);
@@ -83,11 +85,14 @@ export default function InvoiceHistory() {
     return () => {
       mounted = false;
     };
-  }, [toast]);
+  }, [toast, activeRange?.fromDate, activeRange?.toDate]);
 
   return (
     <div className="max-w-6xl space-y-6">
-      <PageHeader title="Invoice History" subtitle="All saved sales invoices in one place." />
+      <PageHeader
+        title="Invoice History"
+        subtitle={`All saved sales invoices in one place.${selectedYear?.label ? ` FY ${selectedYear.label}` : ""}`}
+      />
 
       <div className="flex justify-end">
         <button

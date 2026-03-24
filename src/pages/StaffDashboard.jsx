@@ -147,10 +147,10 @@ export default function StaffDashboard() {
   const navigate = useNavigate();
   const role = authGetRole();
   const { country = "India", countryCode = "IN", currency = "INR" } = useOrganization();
-  const { selectedYear } = useFinancialYears();
+  const { selectedYear, activeRange } = useFinancialYears();
 
-  const [invoices, setInvoices] = useState(() => invoicesList());
-  const [purchases, setPurchases] = useState(() => purchasesList());
+  const [invoices, setInvoices] = useState(() => invoicesList(activeRange));
+  const [purchases, setPurchases] = useState(() => purchasesList(activeRange));
   const [items, setItems] = useState(() => listItems());
   const [parties, setParties] = useState(() => listParties());
   const [premiumRecords, setPremiumRecords] = useState(() => refreshPremiumRecords());
@@ -160,21 +160,21 @@ export default function StaffDashboard() {
     async function syncDashboardData() {
       try {
         const [syncedInvoices, syncedPurchases] = await Promise.all([
-          invoicesSyncFromRemote(),
-          purchasesSyncFromRemote(),
+          invoicesSyncFromRemote(activeRange),
+          purchasesSyncFromRemote(activeRange),
           syncItemsFromRemote(),
           syncPartiesFromRemote()
         ]);
         if (!mounted) return;
-        setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList());
-        setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList());
+        setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList(activeRange));
+        setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList(activeRange));
         setItems(listItems());
         setParties(listParties());
         setPremiumRecords(refreshPremiumRecords());
       } catch {
         if (!mounted) return;
-        setInvoices(invoicesList());
-        setPurchases(purchasesList());
+        setInvoices(invoicesList(activeRange));
+        setPurchases(purchasesList(activeRange));
         setItems(listItems());
         setParties(listParties());
         setPremiumRecords(refreshPremiumRecords());
@@ -184,7 +184,7 @@ export default function StaffDashboard() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [activeRange]);
 
   useEffect(() => {
     function handleStorage(event) {
@@ -194,8 +194,8 @@ export default function StaffDashboard() {
         isOrganizationScopedStorageEventKey(LS_KEYS.items, event?.key) ||
         isOrganizationScopedStorageEventKey(LS_KEYS.parties, event?.key)
       ) {
-        setInvoices(invoicesList());
-        setPurchases(purchasesList());
+        setInvoices(invoicesList(activeRange));
+        setPurchases(purchasesList(activeRange));
         setItems(listItems());
         setParties(listParties());
       }
@@ -212,7 +212,7 @@ export default function StaffDashboard() {
 
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
-  }, []);
+  }, [activeRange]);
 
   const dashboard = useMemo(() => {
     const today = todayIso();

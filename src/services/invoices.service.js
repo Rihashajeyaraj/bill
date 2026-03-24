@@ -8,7 +8,9 @@ import { companyPeekDocumentNumber } from "./company.service";
 import {
   annotateWithFinancialYear,
   financialYearsEnsureForDate,
-  financialYearsResolveForDate
+  financialYearsResolveForDate,
+  matchesFinancialYearFilter,
+  resolveFinancialYearFilterRange
 } from "./financialYears.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -300,20 +302,32 @@ export function invoiceCalculateSummary(lines, totalsInput = {}) {
   };
 }
 
-export function invoicesList() {
-  return getAll();
+function invoiceDateForFilter(entry) {
+  return entry?.invoiceDate || entry?.invoice_date || entry?.date || entry?.created_at;
 }
 
-export async function invoicesSyncFromRemote() {
-  if (!isSupabaseConfigured || !supabase) return invoicesList();
+export function invoicesList(range) {
+  const rows = getAll();
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
+  if (!fromDate && !toDate) return rows;
+  return rows.filter((entry) => matchesFinancialYearFilter(invoiceDateForFilter(entry), { fromDate, toDate }));
+}
+
+export async function invoicesSyncFromRemote(range) {
+  if (!isSupabaseConfigured || !supabase) return invoicesList(range);
 
   const organizationId = authGetOrganizationId();
-  if (!organizationId) return invoicesList();
+  if (!organizationId) return invoicesList(range);
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
 
-  const { data: invoiceRows, error: invoiceError } = await supabase
+  let invoiceQuery = supabase
     .from("invoices")
     .select("*")
-    .eq("organization_id", organizationId)
+    .eq("organization_id", organizationId);
+  if (fromDate) invoiceQuery = invoiceQuery.gte("invoice_date", fromDate);
+  if (toDate) invoiceQuery = invoiceQuery.lte("invoice_date", toDate);
+
+  const { data: invoiceRows, error: invoiceError } = await invoiceQuery
     .order("invoice_date", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -392,7 +406,9 @@ export async function invoicesSyncFromRemote() {
     )
   );
 
-  setAll(mapped);
+  if (!fromDate && !toDate) {
+    setAll(mapped);
+  }
   await triggerCreditLimitNotifications();
   await triggerLowStockNotifications();
   return mapped;

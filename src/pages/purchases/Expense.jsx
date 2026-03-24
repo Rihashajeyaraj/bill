@@ -5,6 +5,7 @@ import Card from "../../components/Card";
 import FormField from "../../components/FormField";
 import GradientButton from "../../components/GradientButton";
 import DateInput from "../../components/DateInput";
+import { useFinancialYears } from "../../context/FinancialYearContext";
 import {
   expenseCategoriesList,
   expenseCategoriesSyncFromRemote,
@@ -23,6 +24,7 @@ function formatDate(value) {
 }
 
 export default function Expense() {
+  const { activeRange, selectedYear } = useFinancialYears();
   const [date, setDate] = useState("");
   const [category, setCategory] = useState("Office");
   const [amount, setAmount] = useState("");
@@ -31,7 +33,7 @@ export default function Expense() {
   const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
-  const [historyRows, setHistoryRows] = useState(() => expensesList());
+  const [historyRows, setHistoryRows] = useState(() => expensesList(activeRange));
 
   useEffect(() => {
     let mounted = true;
@@ -40,15 +42,15 @@ export default function Expense() {
       try {
         const [nextCategories, nextHistory] = await Promise.all([
           expenseCategoriesSyncFromRemote().catch(() => expenseCategoriesList()),
-          expensesSyncFromRemote()
+          expensesSyncFromRemote(activeRange)
         ]);
         if (!mounted) return;
         setCategoryOptions(Array.isArray(nextCategories) ? nextCategories : expenseCategoriesList());
-        setHistoryRows(Array.isArray(nextHistory) ? nextHistory : expensesList());
+        setHistoryRows(Array.isArray(nextHistory) ? nextHistory : expensesList(activeRange));
       } catch {
         if (!mounted) return;
         setCategoryOptions(expenseCategoriesList());
-        setHistoryRows(expensesList());
+        setHistoryRows(expensesList(activeRange));
       } finally {
         if (mounted) setLoadingHistory(false);
       }
@@ -57,7 +59,7 @@ export default function Expense() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [activeRange?.fromDate, activeRange?.toDate]);
 
   const historyTotal = useMemo(
     () => historyRows.reduce((sum, entry) => sum + Number(entry?.totalAmount || entry?.amount || 0), 0),
@@ -95,7 +97,7 @@ export default function Expense() {
         amount: numericAmount,
         note
       });
-      setHistoryRows(Array.isArray(updated) ? updated : expensesList());
+      setHistoryRows(Array.isArray(updated) ? updated : expensesList(activeRange));
       setCategoryOptions(expenseCategoriesList());
       setAmount("");
       setNote("");
@@ -116,7 +118,10 @@ export default function Expense() {
 
   return (
     <div className="max-w-6xl space-y-4">
-      <PageHeader title="Purchase - Expense" subtitle="Expense entry and history" />
+      <PageHeader
+        title="Purchase - Expense"
+        subtitle={`Expense entry and history${selectedYear?.label ? ` for FY ${selectedYear.label}` : ""}`}
+      />
       <Card className="p-5">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <FormField label="Date">

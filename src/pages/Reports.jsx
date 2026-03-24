@@ -1180,10 +1180,10 @@ export default function Reports() {
   const role = authGetRole();
   const canAccess = isAuthorizedReportRole(role);
   const { currency = "USD", profile: organizationProfile = {} } = useOrganization();
-  const { years, selectedYear, selectFinancialYear } = useFinancialYears();
+  const { years, selectedYear, selectFinancialYear, activeRange } = useFinancialYears();
   const [searchParams, setSearchParams] = useSearchParams();
   const [filters, setFilters] = useState(() => getDefaultReportFilters());
-  const [dataset, setDataset] = useState(() => getReportsDataset());
+  const [dataset, setDataset] = useState(() => getReportsDataset(activeRange));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
@@ -1310,7 +1310,7 @@ export default function Reports() {
       setLoading(true);
       setError("");
       try {
-        const nextDataset = await syncReportsData();
+        const nextDataset = await syncReportsData(activeRange);
         if (!mounted) return;
         setDataset(nextDataset);
       } catch (loadError) {
@@ -1325,7 +1325,7 @@ export default function Reports() {
     return () => {
       mounted = false;
     };
-  }, [canAccess]);
+  }, [canAccess, activeRange?.fromDate, activeRange?.toDate]);
 
   const reportResult = useMemo(() => {
     try {
@@ -1403,7 +1403,7 @@ export default function Reports() {
   function handleRefresh() {
     setLoading(true);
     setError("");
-    syncReportsData()
+    syncReportsData(activeRange)
       .then((nextDataset) => setDataset(nextDataset))
       .catch((loadError) => setError(loadError?.message || "Failed to refresh reports."))
       .finally(() => setLoading(false));

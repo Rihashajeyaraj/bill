@@ -8,7 +8,9 @@ import { createItemBarcodesForPurchase } from "./itemBarcodes.service";
 import {
   annotateWithFinancialYear,
   financialYearsEnsureForDate,
-  financialYearsResolveForDate
+  financialYearsResolveForDate,
+  matchesFinancialYearFilter,
+  resolveFinancialYearFilterRange
 } from "./financialYears.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -158,8 +160,15 @@ function applyPurchaseStockDelta(lines) {
   lsSetOrganizationScoped(LS_KEYS.items, nextItems);
 }
 
-export function purchasesList() {
-  return getAll();
+function purchaseDateForFilter(entry) {
+  return entry?.billDate || entry?.invoiceDate || entry?.date || entry?.created_at;
+}
+
+export function purchasesList(range) {
+  const rows = getAll();
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
+  if (!fromDate && !toDate) return rows;
+  return rows.filter((entry) => matchesFinancialYearFilter(purchaseDateForFilter(entry), { fromDate, toDate }));
 }
 
 function mapRemotePurchaseBill(row, balanceAmount) {
@@ -209,16 +218,21 @@ function mapRemotePurchaseBill(row, balanceAmount) {
   return annotateWithFinancialYear(mapped, mapped.billDate);
 }
 
-export async function purchasesSyncFromRemote() {
-  if (!isSupabaseConfigured || !supabase) return purchasesList();
+export async function purchasesSyncFromRemote(range) {
+  if (!isSupabaseConfigured || !supabase) return purchasesList(range);
 
   const organizationId = authGetOrganizationId();
-  if (!organizationId) return purchasesList();
+  if (!organizationId) return purchasesList(range);
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("purchase_bills")
     .select("id,supplier_id,financial_year_id,bill_no,bill_date,due_date,subtotal,tax_total,grand_total,status,metadata,created_at")
-    .eq("organization_id", organizationId)
+    .eq("organization_id", organizationId);
+  if (fromDate) query = query.gte("bill_date", fromDate);
+  if (toDate) query = query.lte("bill_date", toDate);
+
+  const { data, error } = await query
     .order("bill_date", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -348,7 +362,9 @@ export async function purchasesSyncFromRemote() {
       lines: lineMap.get(entry.id) || []
     };
   });
-  setAll(mapped);
+  if (!fromDate && !toDate) {
+    setAll(mapped);
+  }
   await triggerCreditLimitNotifications();
   await triggerLowStockNotifications();
   return mapped;

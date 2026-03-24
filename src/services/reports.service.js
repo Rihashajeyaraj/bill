@@ -6,6 +6,7 @@ import { listPaymentOut, paymentOutAllocationTdsShare } from "../modules/payment
 import { normalizeText, openingBalanceSigned, parseNumber, toIsoDate } from "../modules/parties/utils";
 import { creditNotesList, creditNotesSyncFromRemote } from "./creditNotes.service";
 import { expensesList, expensesSyncFromRemote } from "./expenses.service";
+import { matchesFinancialYearFilter, resolveFinancialYearFilterRange } from "./financialYears.service";
 import { invoicesList, invoicesSyncFromRemote } from "./invoices.service";
 import { paymentsList, paymentsSyncFromRemote } from "./payments.service";
 import { purchasesList, purchasesSyncFromRemote } from "./purchases.service";
@@ -56,35 +57,58 @@ export function getDefaultReportFilters() {
   };
 }
 
-export async function syncReportsData() {
+function filterRowsByFinancialYear(rows, resolveDate, range) {
+  const source = Array.isArray(rows) ? rows : [];
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
+  if (!fromDate && !toDate) return source;
+  return source.filter((row) => matchesFinancialYearFilter(resolveDate(row), { fromDate, toDate }));
+}
+
+export async function syncReportsData(range) {
   try {
     await Promise.all([
       syncPartiesFromRemote(),
-      invoicesSyncFromRemote(),
-      purchasesSyncFromRemote(),
-      paymentsSyncFromRemote(),
-      expensesSyncFromRemote(),
-      creditNotesSyncFromRemote()
+      invoicesSyncFromRemote(range),
+      purchasesSyncFromRemote(range),
+      paymentsSyncFromRemote(range),
+      expensesSyncFromRemote(range),
+      creditNotesSyncFromRemote(range)
     ]);
   } catch {
     // Cached local data remains usable.
   }
 
-  return getReportsDataset();
+  return getReportsDataset(range);
 }
 
-export function getReportsDataset() {
+export function getReportsDataset(range) {
   return {
     parties: listParties(),
-    invoices: invoicesList(),
-    purchases: purchasesList(),
-    legacyPayments: paymentsList(),
-    paymentIns: listPaymentIn(),
-    paymentOuts: listPaymentOut(),
-    legacyCreditNotes: creditNotesList(),
-    premiumCreditNotes: listPremiumCreditNotes(),
-    debitNotes: listDebitNotes(),
-    expenses: expensesList()
+    invoices: invoicesList(range),
+    purchases: purchasesList(range),
+    legacyPayments: paymentsList(range),
+    paymentIns: filterRowsByFinancialYear(
+      listPaymentIn(),
+      (row) => row?.paymentDate || row?.payment_date || row?.date || row?.created_at,
+      range
+    ),
+    paymentOuts: filterRowsByFinancialYear(
+      listPaymentOut(),
+      (row) => row?.paymentDate || row?.payment_date || row?.date || row?.created_at,
+      range
+    ),
+    legacyCreditNotes: creditNotesList(range),
+    premiumCreditNotes: filterRowsByFinancialYear(
+      listPremiumCreditNotes(),
+      (row) => row?.creditNoteDate || row?.creditDate || row?.credit_note_date || row?.created_at,
+      range
+    ),
+    debitNotes: filterRowsByFinancialYear(
+      listDebitNotes(),
+      (row) => row?.debitNoteDate || row?.date || row?.created_at,
+      range
+    ),
+    expenses: expensesList(range)
   };
 }
 
@@ -1663,6 +1687,10 @@ function findLatestActivityDate(dataset, party) {
 export function buildAllPartiesReport(dataset, filters = {}) {
   const partyType = filters.partyType ? normalizePartyType(filters.partyType) : "";
   const search = normalizeText(filters.search);
+  const paymentByInvoice = customerPaymentAppliedByInvoice(dataset);
+  const creditByInvoice = customerCreditAppliedByInvoice(dataset);
+  const paymentByBill = supplierPaymentAppliedByBill(dataset);
+  const debitByBill = supplierDebitAppliedByBill(dataset);
 
   const rows = (Array.isArray(dataset?.parties) ? dataset.parties : [])
     .filter((party) => !partyType || matchesPartyType(party, partyType))
@@ -1671,15 +1699,43 @@ export function buildAllPartiesReport(dataset, filters = {}) {
       return normalizeText([party?.name, party?.phone, party?.email, party?.address, party?.city, party?.state].join(" ")).includes(search);
     })
     .map((party) => {
-      const financials = computePartyFinancials(party);
+      const normalizedPartyType = normalizePartyType(party?.type);
+      let outstanding = 0;
+      let maxOverdueDays = 0;
+
+      if (normalizedPartyType === PARTY_TYPES.customer) {
+        (Array.isArray(dataset?.invoices) ? dataset.invoices : [])
+          .filter((row) => normalizeText(row?.status) !== "draft" && normalizeText(row?.status) !== "cancelled")
+          .filter((row) => matchesPartyId(row, party?.id, PARTY_TYPES.customer))
+          .forEach((row) => {
+            const balance = resolveInvoiceBalance(row, paymentByInvoice, creditByInvoice);
+            outstanding += balance;
+            if (balance > 0) {
+              maxOverdueDays = Math.max(maxOverdueDays, ageInDays(resolveInvoiceDate(row), todayIsoDate()));
+            }
+          });
+      } else {
+        (Array.isArray(dataset?.purchases) ? dataset.purchases : [])
+          .filter((row) => normalizeText(row?.status) !== "draft" && normalizeText(row?.status) !== "cancelled")
+          .filter((row) => matchesPartyId(row, party?.id, PARTY_TYPES.supplier))
+          .forEach((row) => {
+            const balance = resolvePurchaseBalance(row, paymentByBill, debitByBill);
+            outstanding += balance;
+            if (balance > 0) {
+              maxOverdueDays = Math.max(maxOverdueDays, ageInDays(resolvePurchaseDate(row), todayIsoDate()));
+            }
+          });
+      }
+
+      const fallbackFinancials = computePartyFinancials(party);
       return {
         id: String(party?.id || ""),
         name: String(party?.name || "").trim(),
-        type: normalizePartyType(party?.type),
+        type: normalizedPartyType,
         phone: String(party?.phone || "").trim(),
         email: String(party?.email || "").trim(),
-        outstanding: financials.outstanding,
-        maxOverdueDays: financials.maxOverdueDays,
+        outstanding: Number(outstanding.toFixed(2)),
+        maxOverdueDays: maxOverdueDays || fallbackFinancials.maxOverdueDays,
         latestActivityDate: findLatestActivityDate(dataset, party)
       };
     })

@@ -4,7 +4,9 @@ import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import {
   annotateWithFinancialYear,
   financialYearsEnsureForDate,
-  financialYearsResolveForDate
+  financialYearsResolveForDate,
+  matchesFinancialYearFilter,
+  resolveFinancialYearFilterRange
 } from "./financialYears.service";
 
 const DEFAULT_EXPENSE_CATEGORIES = ["Office", "Travel", "Utilities", "Marketing", "Maintenance"];
@@ -180,8 +182,15 @@ async function ensureRemoteCategory(category) {
   return rememberCategoryLocal(data?.name || clean);
 }
 
-export function expensesList() {
-  return getAll();
+function expenseDateForFilter(entry) {
+  return entry?.date || entry?.expense_date || entry?.created_at;
+}
+
+export function expensesList(range) {
+  const rows = getAll();
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
+  if (!fromDate && !toDate) return rows;
+  return rows.filter((entry) => matchesFinancialYearFilter(expenseDateForFilter(entry), { fromDate, toDate }));
 }
 
 export async function getDashboardExpenseSummary() {
@@ -251,16 +260,21 @@ export async function expenseCategoriesSyncFromRemote() {
   return merged;
 }
 
-export async function expensesSyncFromRemote() {
-  if (!isSupabaseConfigured || !supabase) return expensesList();
+export async function expensesSyncFromRemote(range) {
+  if (!isSupabaseConfigured || !supabase) return expensesList(range);
 
   const organizationId = authGetOrganizationId();
-  if (!organizationId) return expensesList();
+  if (!organizationId) return expensesList(range);
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("expenses")
     .select("*")
-    .eq("organization_id", organizationId)
+    .eq("organization_id", organizationId);
+  if (fromDate) query = query.gte("expense_date", fromDate);
+  if (toDate) query = query.lte("expense_date", toDate);
+
+  const { data, error } = await query
     .order("expense_date", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -270,8 +284,10 @@ export async function expensesSyncFromRemote() {
 
   const mapped = (Array.isArray(data) ? data : []).map(mapExpenseRow);
 
-  setAll(mapped);
-  setAllCategories(uniqueCategories(getAllCategories(), mapped));
+  if (!fromDate && !toDate) {
+    setAll(mapped);
+    setAllCategories(uniqueCategories(getAllCategories(), mapped));
+  }
   return mapped;
 }
 

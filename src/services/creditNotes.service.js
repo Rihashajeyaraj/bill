@@ -1,6 +1,7 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
 import { authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import { matchesFinancialYearFilter, resolveFinancialYearFilterRange } from "./financialYears.service";
 import { financialYearsEnsureForDate } from "./financialYears.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -462,21 +463,33 @@ function updateStock(lines) {
   lsSetOrganizationScoped(LS_KEYS.items, next);
 }
 
-export function creditNotesList() {
-  return getAll();
+function creditDateForFilter(entry) {
+  return entry?.creditDate || entry?.credit_note_date || entry?.created_at;
 }
 
-export async function creditNotesSyncFromRemote() {
-  if (!isSupabaseConfigured || !supabase) return creditNotesList();
+export function creditNotesList(range) {
+  const rows = getAll();
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
+  if (!fromDate && !toDate) return rows;
+  return rows.filter((entry) => matchesFinancialYearFilter(creditDateForFilter(entry), { fromDate, toDate }));
+}
+
+export async function creditNotesSyncFromRemote(range) {
+  if (!isSupabaseConfigured || !supabase) return creditNotesList(range);
 
   const organizationId = authGetOrganizationId();
-  if (!organizationId) return creditNotesList();
+  if (!organizationId) return creditNotesList(range);
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
 
-  const { data: notes, error } = await supabase
+  let query = supabase
     .from("credit_notes")
     .select("*")
     .eq("organization_id", organizationId)
-    .neq("status", "cancelled")
+    .neq("status", "cancelled");
+  if (fromDate) query = query.gte("credit_note_date", fromDate);
+  if (toDate) query = query.lte("credit_note_date", toDate);
+
+  const { data: notes, error } = await query
     .order("credit_note_date", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -516,7 +529,9 @@ export async function creditNotesSyncFromRemote() {
     };
   });
 
-  setAll(mapped);
+  if (!fromDate && !toDate) {
+    setAll(mapped);
+  }
   return mapped;
 }
 

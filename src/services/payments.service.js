@@ -5,7 +5,9 @@ import { triggerCreditLimitNotifications } from "../modules/parties/store";
 import {
   annotateWithFinancialYear,
   financialYearsEnsureForDate,
-  financialYearsResolveForDate
+  financialYearsResolveForDate,
+  matchesFinancialYearFilter,
+  resolveFinancialYearFilterRange
 } from "./financialYears.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -98,20 +100,32 @@ async function findBillIdByNumber(organizationId, billNo) {
   return data?.id || null;
 }
 
-export function paymentsList() {
-  return getAll();
+function paymentDateForFilter(entry) {
+  return entry?.paymentDate || entry?.payment_date || entry?.date || entry?.created_at;
 }
 
-export async function paymentsSyncFromRemote() {
-  if (!isSupabaseConfigured || !supabase) return paymentsList();
+export function paymentsList(range) {
+  const rows = getAll();
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
+  if (!fromDate && !toDate) return rows;
+  return rows.filter((entry) => matchesFinancialYearFilter(paymentDateForFilter(entry), { fromDate, toDate }));
+}
+
+export async function paymentsSyncFromRemote(range) {
+  if (!isSupabaseConfigured || !supabase) return paymentsList(range);
 
   const organizationId = authGetOrganizationId();
-  if (!organizationId) return paymentsList();
+  if (!organizationId) return paymentsList(range);
+  const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("payments")
     .select("*")
-    .eq("organization_id", organizationId)
+    .eq("organization_id", organizationId);
+  if (fromDate) query = query.gte("payment_date", fromDate);
+  if (toDate) query = query.lte("payment_date", toDate);
+
+  const { data, error } = await query
     .order("payment_date", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -145,7 +159,9 @@ export async function paymentsSyncFromRemote() {
     )
   );
 
-  setAll(mapped);
+  if (!fromDate && !toDate) {
+    setAll(mapped);
+  }
   return mapped;
 }
 
