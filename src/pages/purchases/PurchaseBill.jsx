@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Save, Search, Trash2, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
@@ -13,6 +13,7 @@ import {
   fetchSupplierAddress,
   purchasesCreate
 } from "../../services/purchases.service";
+import { extractPurchaseBillFromFile } from "../../services/purchaseBillPdfImport";
 import { useOrganization } from "../../context/OrganizationContext";
 import { calculateTaxes } from "../../services/tax";
 import { authGetRole, authGetUser } from "../../services/auth.service";
@@ -129,6 +130,31 @@ function supplierAddressSummary(supplier) {
     .join(", ");
 }
 
+function findSupplierImportMatch(suppliers, importedName, importedPhone) {
+  const phoneDigits = extractTenDigitPhone(importedPhone);
+  if (phoneDigits) {
+    const phoneMatch = suppliers.find(
+      (supplier) => normalizePhoneForLookup(supplier?.phone) === normalizePhoneForLookup(phoneDigits)
+    );
+    if (phoneMatch) return phoneMatch;
+  }
+
+  const normalizedImportedName = normalizeItemName(importedName);
+  if (!normalizedImportedName) return null;
+
+  return (
+    suppliers.find((supplier) => normalizeItemName(supplier?.name) === normalizedImportedName) ||
+    suppliers.find((supplier) => {
+      const supplierName = normalizeItemName(supplier?.name);
+      return (
+        supplierName.length >= 3 &&
+        (supplierName.includes(normalizedImportedName) || normalizedImportedName.includes(supplierName))
+      );
+    }) ||
+    null
+  );
+}
+
 function getItemLowStockAlert(item) {
   return nonNegativeNumber(item?.lowStockAlert ?? item?.metadata?.lowStockQty ?? item?.metadata?.lowStockAlert, 0);
 }
@@ -152,6 +178,7 @@ function createLine(defaultTaxRate = 0) {
 
 export default function PurchaseBill() {
   const navigate = useNavigate();
+  const pdfImportInputRef = useRef(null);
   const role = authGetRole();
   const canCreatePurchase = canCreateEntries(role);
   const { country = "", currency = "", profile: company = {} } = useOrganization();
@@ -177,6 +204,8 @@ export default function PurchaseBill() {
   const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
   const [supplierSearchError, setSupplierSearchError] = useState("");
   const [formErrors, setFormErrors] = useState({});
+  const [pdfImporting, setPdfImporting] = useState(false);
+  const [pdfImportMeta, setPdfImportMeta] = useState(null);
   const [supplierCreateLoading, setSupplierCreateLoading] = useState(false);
   const [supplierCreateDraft, setSupplierCreateDraft] = useState({
     name: "",
@@ -807,6 +836,123 @@ export default function PurchaseBill() {
     setSupplierStateMenuOpen(false);
   }
 
+  function applyImportedLines(importedItems) {
+    if (!Array.isArray(importedItems) || !importedItems.length) return;
+    setLines(
+      importedItems.map((item) => ({
+        ...createLine(defaultLineTaxRate),
+        itemInput: item?.description || "",
+        itemName: item?.description || "",
+        qty: nonNegativeNumber(item?.qty, 1) || 1,
+        unit: normalizeUnit(item?.unit || "pcs"),
+        rate: nonNegativeNumber(item?.rate, 0),
+        saleRate: 0,
+        lowStockAlert: 0,
+        tax: forceZeroTax ? 0 : nonNegativeNumber(item?.tax, defaultLineTaxRate)
+      }))
+    );
+    clearFormError("lines");
+  }
+
+  function applyImportedSupplier(parsed) {
+    const matchedSupplier = findSupplierImportMatch(
+      suppliers,
+      parsed?.supplierName || "",
+      parsed?.supplierPhone || ""
+    );
+
+    if (matchedSupplier) {
+      applySupplierSelection(matchedSupplier);
+      return {
+        matchedSupplierName: matchedSupplier.name || "",
+        supplierResolved: true
+      };
+    }
+
+    setPartyId("");
+    setPhone("");
+    setSupplierAddress("");
+    setSupplierLookupQuery(parsed?.supplierPhone || parsed?.supplierName || "");
+    setSupplierCreateDraft((prev) => ({
+      ...prev,
+      name: parsed?.supplierName || prev.name || "",
+      phone: extractTenDigitPhone(parsed?.supplierPhone || prev.phone || ""),
+      country: prev.country || country || ""
+    }));
+
+    if (parsed?.supplierName || parsed?.supplierPhone) {
+      setSupplierSearchError(
+        "Supplier from PDF was not matched. Select an existing supplier or create a new supplier before saving."
+      );
+    }
+
+    return {
+      matchedSupplierName: "",
+      supplierResolved: false
+    };
+  }
+
+  function applyImportedPurchaseBill(parsed, fileName) {
+    const supplierResult = applyImportedSupplier(parsed);
+
+    if (parsed?.billNumber) {
+      clearFormError("billNumber");
+      setBillNumber(parsed.billNumber);
+    }
+    if (parsed?.billDate) {
+      clearFormError("billDate");
+      setBillDate(parsed.billDate);
+      setPaymentDate(parsed.billDate);
+    }
+    if (Array.isArray(parsed?.items) && parsed.items.length) {
+      applyImportedLines(parsed.items);
+    }
+
+    setPdfImportMeta({
+      fileName,
+      itemCount: Array.isArray(parsed?.items) ? parsed.items.length : 0,
+      supplierName: parsed?.supplierName || "",
+      matchedSupplierName: supplierResult.matchedSupplierName,
+      billNumber: parsed?.billNumber || "",
+      billDate: parsed?.billDate || "",
+      importSource: parsed?.importSource || "text",
+      warnings: Array.isArray(parsed?.warnings) ? parsed.warnings : [],
+      supplierResolved: supplierResult.supplierResolved
+    });
+  }
+
+  async function handlePurchaseImportChange(event) {
+    const selectedFile = event?.target?.files?.[0];
+    if (!selectedFile) return;
+
+    setPdfImporting(true);
+    setSupplierSearchError("");
+    try {
+      const parsed = await extractPurchaseBillFromFile(selectedFile);
+      applyImportedPurchaseBill(parsed, selectedFile.name || "purchase-bill-import");
+
+      const warningCount = Array.isArray(parsed?.warnings) ? parsed.warnings.length : 0;
+      toast.success(
+        "File imported",
+        parsed?.importSource === "excel"
+          ? "Excel file imported. Review the values before saving."
+          : parsed?.importSource === "ocr"
+          ? "Scanned PDF imported with OCR. Review the values carefully before saving."
+          : warningCount
+            ? `Imported with ${warningCount} warning${warningCount > 1 ? "s" : ""}. You can edit everything before saving.`
+            : "Purchase bill fields were filled. You can edit everything before saving."
+      );
+    } catch (error) {
+      setPdfImportMeta(null);
+      toast.error("File import failed", error?.message || "Could not read the selected file.");
+    } finally {
+      setPdfImporting(false);
+      if (event?.target) {
+        event.target.value = "";
+      }
+    }
+  }
+
   const computed = useMemo(() => {
     const detailedBase = lines.map((line) => {
       const qty = Number(line.qty || 0);
@@ -1253,7 +1399,24 @@ export default function PurchaseBill() {
         subtitle="Search supplier by mobile and create the bill."
         className="lg:items-center"
         right={
-          <div className="flex w-full sm:justify-end lg:w-auto">
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-end lg:w-auto">
+            <input
+              ref={pdfImportInputRef}
+              type="file"
+              accept="application/pdf,.pdf,.xlsx,.xls,text/csv,.csv"
+              onChange={(event) => {
+                void handlePurchaseImportChange(event);
+              }}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => pdfImportInputRef.current?.click()}
+              disabled={pdfImporting || saving}
+              className="inline-flex h-11 w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+            >
+              {pdfImporting ? "Reading File..." : "Import PDF / Excel"}
+            </button>
             <button
               type="button"
               onClick={() => navigate("/app/purchase/history")}
@@ -1269,6 +1432,44 @@ export default function PurchaseBill() {
           Your role does not have purchase-bill create permission.
         </div>
       ) : null}
+
+      <Card className="p-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">Bill File Import</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Upload a purchase-bill PDF, Excel, or CSV file to fill supplier, bill number, bill date, and item rows. You can modify any imported value before saving.
+            </p>
+            <p className="mt-1 text-xs text-amber-700">
+              Text PDFs are read directly, scanned PDFs use OCR, and Excel or CSV files read table rows directly.
+            </p>
+          </div>
+          {pdfImportMeta ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-700 md:max-w-sm">
+              <p className="font-semibold text-slate-900">{pdfImportMeta.fileName}</p>
+              <p className="mt-1">
+                Mode: {pdfImportMeta.importSource === "excel" ? "Excel / CSV" : pdfImportMeta.importSource === "ocr" ? "OCR scan" : "Text PDF"}
+              </p>
+              <p className="mt-1">Items imported: {pdfImportMeta.itemCount}</p>
+              <p className="mt-1">
+                Supplier: {pdfImportMeta.matchedSupplierName || pdfImportMeta.supplierName || "Not detected"}
+              </p>
+              <p className="mt-1">Bill No: {pdfImportMeta.billNumber || "Not detected"}</p>
+              <p className="mt-1">Bill Date: {pdfImportMeta.billDate || "Not detected"}</p>
+              {!pdfImportMeta.supplierResolved ? (
+                <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-2 py-2 text-amber-800">
+                  Confirm or create the supplier before you save this bill.
+                </p>
+              ) : null}
+              {pdfImportMeta.warnings?.length ? (
+                <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-2 py-2 text-amber-800">
+                  {pdfImportMeta.warnings[0]}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </Card>
 
       <Card className="p-5">
         <h2 className="text-base font-semibold text-slate-900">1. Find Supplier</h2>
