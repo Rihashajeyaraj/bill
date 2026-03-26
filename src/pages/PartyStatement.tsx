@@ -74,7 +74,7 @@ export default function PartyStatement() {
 
   const balanceMeta = outstandingMeta(party, financials?.outstanding ?? 0);
   const summaryCardClassName =
-    "flex h-full min-h-[168px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-soft";
+    "flex h-full min-h-[168px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-soft transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow";
   const summaryTitleClassName = "text-xs font-semibold tracking-[0.02em] text-slate-500";
   const summaryAmountClassName = "mt-3 text-2xl font-bold leading-none text-slate-900";
   const summaryBodyClassName = "mt-3 flex flex-1 flex-col justify-between gap-3";
@@ -111,7 +111,7 @@ export default function PartyStatement() {
           <button
             type="button"
             onClick={() => setOpeningDetailsOpen(true)}
-            className={`${summaryCardClassName} text-left transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow`}
+            className={`${summaryCardClassName} text-left`}
           >
             <p className={summaryTitleClassName}>Opening Balance</p>
             <div className={summaryBodyClassName}>
@@ -137,7 +137,7 @@ export default function PartyStatement() {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
+        <div className={`${summaryCardClassName} min-h-[168px]`}>
           <p className="text-sm font-semibold text-slate-900">Party Details</p>
           <div className="mt-3 space-y-2 text-sm text-slate-600">
             <p>{party.phone || "No phone on file"}</p>
