@@ -239,6 +239,7 @@ export default function InvoiceCreate() {
   const [lastSavedInvoiceId, setLastSavedInvoiceId] = useState("");
   const [printInvoiceData, setPrintInvoiceData] = useState(null);
   const [printQueued, setPrintQueued] = useState(false);
+  const printContainerRef = useRef(null);
   const [markAsPaid, setMarkAsPaid] = useState(false);
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [paymentDate, setPaymentDate] = useState("");
@@ -383,21 +384,84 @@ export default function InvoiceCreate() {
 
   useEffect(() => {
     if (!printQueued || !printInvoiceData) return;
+    let cancelled = false;
+    let closeWatcher = null;
+    let printWindow = null;
 
-    const handleAfterPrint = () => {
+    async function openPrintWindow() {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const markup = printContainerRef.current?.innerHTML || "";
+        if (markup.trim()) {
+          printWindow = window.open("", "_blank");
+          if (!printWindow) break;
+
+          const copiedStyles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
+            .map((node) => node.outerHTML)
+            .join("\n");
+          const title = String(printInvoiceData?.invoiceNo || "invoice").trim() || "invoice";
+          const escapedTitle = title.replace(/[<>&"]/g, (char) => {
+            if (char === "<") return "&lt;";
+            if (char === ">") return "&gt;";
+            if (char === "&") return "&amp;";
+            return "&quot;";
+          });
+
+          printWindow.document.open();
+          printWindow.document.write(`<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapedTitle}</title>
+    <base href="${window.location.origin}" />
+    ${copiedStyles}
+  </head>
+  <body>
+    <div class="print-sheet">
+      ${markup}
+    </div>
+  </body>
+</html>`);
+          printWindow.document.close();
+          printWindow.onload = () => {
+            window.setTimeout(() => {
+              if (printWindow?.closed) return;
+              printWindow.focus();
+              printWindow.print();
+            }, 200);
+          };
+          printWindow.onafterprint = () => {
+            if (!printWindow?.closed) {
+              printWindow.close();
+            }
+          };
+          closeWatcher = window.setInterval(() => {
+            if (!printWindow || !printWindow.closed) return;
+            window.clearInterval(closeWatcher);
+            setPrintQueued(false);
+            setPrintInvoiceData(null);
+          }, 300);
+          return;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 80));
+        if (cancelled) return;
+      }
+
       setPrintQueued(false);
       setPrintInvoiceData(null);
-      window.removeEventListener("afterprint", handleAfterPrint);
-    };
+      window.setTimeout(() => window.print(), 80);
+    }
 
-    window.addEventListener("afterprint", handleAfterPrint);
-    const timerId = window.setTimeout(() => {
-      window.print();
-    }, 80);
+    void openPrintWindow();
 
     return () => {
-      window.clearTimeout(timerId);
-      window.removeEventListener("afterprint", handleAfterPrint);
+      cancelled = true;
+      if (closeWatcher) {
+        window.clearInterval(closeWatcher);
+      }
+      if (printWindow && !printWindow.closed) {
+        printWindow.close();
+      }
     };
   }, [printQueued, printInvoiceData]);
 
@@ -1380,6 +1444,7 @@ export default function InvoiceCreate() {
       title: gstRuntimeEnabled ? "Tax Invoice" : "Invoice",
       country,
       companyName: company?.companyName || "",
+      companyLogoUrl: company?.logoBase64 || "",
       currencySymbol: resolveCurrencySymbol(currencySymbol, currency),
       invoiceNo: invoiceNo || "-",
       invoiceDate,
@@ -1938,14 +2003,15 @@ export default function InvoiceCreate() {
           }
         />
       </div>
-      {!canCreateInvoice ? (
-        <div className="print-hide mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+      <div className="print-hide">
+        {!canCreateInvoice ? (
+          <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
           Your role does not have invoice create permission.
-        </div>
-      ) : null}
+          </div>
+        ) : null}
 
-      <div className="grid grid-cols-1 gap-4">
-        <Card className="p-5 print-hide">
+        <div className="grid grid-cols-1 gap-4">
+          <Card className="p-5">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-semibold text-slate-900">1. Find Customer</p>
@@ -2946,9 +3012,10 @@ export default function InvoiceCreate() {
           </Card>
         </div>
       </div>
+      </div>
 
       {printInvoiceData ? (
-        <div className="hidden print:block print-sheet">
+        <div ref={printContainerRef} className="hidden print:block print-sheet">
           <div className="invoice-preview">
             <InvoicePreview
               templateId={templateConfig.templateId}
@@ -2956,7 +3023,7 @@ export default function InvoiceCreate() {
                 primaryColor: templateConfig.primaryColor,
                 bgColor: templateConfig.bgColor,
                 fontFamily: templateConfig.fontFamily,
-                logoUrl: templateConfig.logoUrl,
+                logoUrl: templateConfig.logoUrl || company?.logoBase64 || "",
                 logoPosition: templateConfig.logoPosition
               }}
               invoiceData={printInvoiceData}

@@ -178,6 +178,8 @@ function normalizeCountry(value) {
 export default function InvoicePreview({ templateId, styleConfig, invoiceData }) {
   const variant = VARIANTS[templateId] || VARIANTS.standard;
   const { primaryColor, bgColor, fontFamily, logoUrl, logoPosition } = styleConfig || {};
+  const resolvedLogoUrl =
+    logoUrl || invoiceData?.companyLogoUrl || invoiceData?.seller?.logoUrl || invoiceData?.logoUrl || "";
   const font = fontFamily
     ? `"${fontFamily}", "Helvetica Neue", Arial, sans-serif`
     : "var(--invoice-font-family, var(--app-font-family))";
@@ -319,8 +321,12 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
                   : "flex items-start text-left"
             )}
           >
-            {logoUrl ? (
-              <img src={logoUrl} alt="logo" className="h-12 w-12 rounded-xl border border-slate-200 object-cover" />
+            {resolvedLogoUrl ? (
+              <img
+                src={resolvedLogoUrl}
+                alt="logo"
+                className="h-12 w-12 rounded-xl border border-slate-200 object-cover"
+              />
             ) : (
               <div className="h-12 w-12 rounded-xl border border-slate-200 bg-slate-50" />
             )}
@@ -487,9 +493,9 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
         {logoPos === "center" ? (
           <>
             <div className="flex flex-col items-center gap-2">
-              {logoUrl ? (
+              {resolvedLogoUrl ? (
                 <img
-                  src={logoUrl}
+                  src={resolvedLogoUrl}
                   alt="logo"
                   className="h-12 w-12 rounded-xl border border-slate-200 object-cover"
                 />
@@ -524,8 +530,12 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
             ) : null}
 
             <div className={clsx("flex items-center gap-3", companyAlign)}>
-              {logoUrl ? (
-                <img src={logoUrl} alt="logo" className="h-12 w-12 rounded-xl border border-slate-200 object-cover" />
+              {resolvedLogoUrl ? (
+                <img
+                  src={resolvedLogoUrl}
+                  alt="logo"
+                  className="h-12 w-12 rounded-xl border border-slate-200 object-cover"
+                />
               ) : (
                 <div className="h-12 w-12 rounded-xl border border-slate-200 bg-slate-50" />
               )}
