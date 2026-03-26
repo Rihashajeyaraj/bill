@@ -27,6 +27,12 @@ function normalizeKey(value) {
   return cleanLine(value).toLowerCase();
 }
 
+function hasAnyTerm(value, terms) {
+  const normalized = normalizeKey(value);
+  if (!normalized) return false;
+  return terms.some((term) => normalized.includes(term));
+}
+
 function extractNumber(value) {
   const cleaned = String(value || "")
     .replace(/,/g, "")
@@ -64,7 +70,11 @@ function parseDateCandidate(value) {
     return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   }
 
-  const monthDate = Date.parse(text);
+  const looksLikeMonthDate =
+    /[A-Za-z]{3,}/.test(text) &&
+    /\d{1,4}/.test(text) &&
+    /[,\s/-]/.test(text);
+  const monthDate = looksLikeMonthDate ? Date.parse(text) : Number.NaN;
   if (Number.isFinite(monthDate)) {
     return new Date(monthDate).toISOString().slice(0, 10);
   }
@@ -277,7 +287,7 @@ function extractBillNumber(lines) {
     "bill id"
   ];
   const rawValue = extractLabeledValue(lines, labels);
-  if (!rawValue) return "";
+  if (!rawValue || ["date", "invoice", "bill"].includes(normalizeKey(rawValue))) return "";
   const match = rawValue.match(/[A-Z0-9][A-Z0-9/_-]*/i);
   return match ? match[0] : rawValue;
 }
@@ -302,20 +312,59 @@ function extractBillDate(lines) {
 }
 
 function extractSupplierName(lines) {
-  const labels = ["supplier", "vendor", "bill from", "from"];
+  const labels = ["supplier", "supplier name", "vendor", "vendor name", "bill from"];
   const direct = extractLabeledValue(lines, labels);
   if (direct) return direct;
 
   const firstUseful = lines.find((line) => {
-    const normalized = normalizeKey(line);
+    const candidate = cleanLine(
+      String(line || "").replace(
+        /\b(invoice|invoice no|invoice number|bill no|bill number|date|payment terms|delivery terms)\b.*$/i,
+        ""
+      )
+    );
+    const normalized = normalizeKey(candidate);
     if (!normalized) return false;
     if (normalized.length < 3) return false;
     if (lineLooksLikeSummary(normalized) || lineLooksLikeHeader(normalized)) return false;
-    if (normalized.includes("invoice") || normalized.includes("bill")) return false;
+    if (
+      hasAnyTerm(normalized, [
+        "invoice",
+        "bill",
+        "consignee",
+        "buyer",
+        "authorised signatory",
+        "statement of",
+        "product of india",
+        "note"
+      ])
+    ) {
+      return false;
+    }
+    if (
+      hasAnyTerm(normalized, [
+        "layout",
+        "floor",
+        "cross",
+        "road",
+        "street",
+        "nagar",
+        "bangalore",
+        "india",
+        "italy"
+      ])
+    ) {
+      return false;
+    }
     if (extractNumber(normalized) !== null) return false;
     return true;
   });
-  return firstUseful || "";
+  return cleanLine(
+    String(firstUseful || "").replace(
+      /\b(invoice|invoice no|invoice number|bill no|bill number|date)\b.*$/i,
+      ""
+    )
+  );
 }
 
 function extractPhone(text) {
@@ -487,36 +536,178 @@ export function parsePurchaseBillSpreadsheetRows(rows) {
   return hasUsefulPurchaseData(matrixParsed) ? matrixParsed : parsed;
 }
 
+function inferUnitFromHeader(value) {
+  const normalized = normalizeKey(value);
+  if (!normalized) return "";
+  if (hasAnyTerm(normalized, ["sqm", "sq m", "sqmt", "sq.mt"])) return "sqm";
+  if (hasAnyTerm(normalized, ["sqft", "sq ft"])) return "sqft";
+  if (hasAnyTerm(normalized, ["kg", "kgs", "kilo"])) return "kg";
+  if (hasAnyTerm(normalized, ["ltr", "litre", "liter"])) return "ltr";
+  if (hasAnyTerm(normalized, ["slab", "slabs"])) return "slab";
+  if (hasAnyTerm(normalized, ["pcs", "pieces", "nos", "no. of", "no of"])) return "pcs";
+  if (hasAnyTerm(normalized, ["box", "boxes"])) return "box";
+  if (hasAnyTerm(normalized, ["pack", "packs"])) return "pack";
+  if (hasAnyTerm(normalized, ["meter", "metre", "mtr"])) return "mtr";
+  return "";
+}
+
 function classifySpreadsheetColumn(value) {
   const normalized = normalizeKey(value);
   if (!normalized) return "";
   if (
-    [
+    hasAnyTerm(normalized, [
       "item",
       "item name",
       "description",
+      "description of goods",
+      "goods",
       "product",
       "product name",
       "particulars",
       "service"
-    ].includes(normalized)
+    ])
   ) {
     return "description";
   }
-  if (["qty", "quantity", "qnty", "purchase qty", "bill qty"].includes(normalized)) {
-    return "qty";
-  }
-  if (["unit", "uom", "unit type"].includes(normalized)) {
+  if (hasAnyTerm(normalized, ["unit", "uom", "unit type"])) {
     return "unit";
   }
-  if (["rate", "price", "unit price", "purchase rate", "cost", "unit cost"].includes(normalized)) {
+  if (
+    hasAnyTerm(normalized, [
+      "rate",
+      "price",
+      "unit price",
+      "purchase rate",
+      "unit cost",
+      "price/",
+      "per sqm",
+      "per sq",
+      "price per"
+    ])
+  ) {
     return "rate";
   }
-  if (["amount", "line total", "total", "net amount", "value", "line amount"].includes(normalized)) {
+  if (
+    hasAnyTerm(normalized, ["qty", "quantity", "qnty", "purchase qty", "bill qty"]) ||
+    hasAnyTerm(normalized, [
+      "total sqm",
+      "sqm",
+      "sq m",
+      "sqmt",
+      "sq.mt",
+      "sqft",
+      "sq ft",
+      "no. of",
+      "no of",
+      "nos",
+      "slabs",
+      "pieces",
+      "pcs",
+      "kg",
+      "kgs",
+      "weight",
+      "ltr",
+      "liter",
+      "litre",
+      "meter",
+      "metre",
+      "mtr"
+    ])
+  ) {
+    return "qty";
+  }
+  if (
+    hasAnyTerm(normalized, ["amount", "line total", "net amount", "value", "line amount"]) ||
+    (normalized.includes("total") && !inferUnitFromHeader(normalized))
+  ) {
     return "amount";
   }
-  if (["tax", "tax %", "tax rate", "gst", "vat"].includes(normalized)) {
+  if (hasAnyTerm(normalized, ["tax", "tax %", "tax rate", "gst", "vat"])) {
     return "tax";
+  }
+  return "";
+}
+
+function scoreSpreadsheetColumn(field, value) {
+  const normalized = normalizeKey(value);
+  if (!normalized || !field) return 0;
+  if (field === "description") {
+    if (normalized.includes("description of goods")) return 7;
+    if (normalized.includes("description")) return 6;
+    if (normalized.includes("item")) return 5;
+    return 4;
+  }
+  if (field === "qty") {
+    if (hasAnyTerm(normalized, ["total sqm", "sqm", "sq m", "sqmt", "sq.ft", "sq ft"])) return 7;
+    if (hasAnyTerm(normalized, ["qty", "quantity", "qnty"])) return 6;
+    if (hasAnyTerm(normalized, ["weight", "kg", "kgs", "ltr", "liter", "litre", "meter", "mtr"])) return 5;
+    if (hasAnyTerm(normalized, ["slab", "pieces", "pcs", "no. of", "no of", "nos"])) return 4;
+    return 3;
+  }
+  if (field === "rate") {
+    if (normalized.includes("price/") || normalized.includes("price per")) return 7;
+    if (normalized.includes("unit price")) return 6;
+    return 5;
+  }
+  if (field === "amount") {
+    if (normalized.includes("net amount")) return 6;
+    if (normalized.includes("amount")) return 5;
+    if (normalized.includes("total")) return 4;
+    return 3;
+  }
+  if (field === "unit") return 5;
+  if (field === "tax") return 5;
+  return 1;
+}
+
+function sortSpreadsheetCandidates(candidates) {
+  return [...candidates].sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score;
+    return left.columnIndex - right.columnIndex;
+  });
+}
+
+function valueLooksLikeMetadataLabel(value) {
+  return hasAnyTerm(value, [
+    "supplier",
+    "vendor",
+    "bill no",
+    "bill number",
+    "invoice no",
+    "invoice number",
+    "bill date",
+    "invoice date",
+    "date",
+    "mobile",
+    "phone",
+    "payment terms",
+    "delivery terms"
+  ]);
+}
+
+function findMatrixValueAroundLabel(matrix, labels, reader) {
+  for (let rowIndex = 0; rowIndex < matrix.length; rowIndex += 1) {
+    const row = rowToCells(matrix[rowIndex]);
+    for (let columnIndex = 0; columnIndex < row.length; columnIndex += 1) {
+      const normalizedCell = normalizeKey(row[columnIndex]);
+      if (!labels.some((label) => normalizedCell === label || normalizedCell.includes(label))) continue;
+
+      for (let offset = 1; offset <= 3; offset += 1) {
+        const parsedSameRow = reader(row[columnIndex + offset]);
+        if (parsedSameRow) return parsedSameRow;
+      }
+
+      for (let offset = 1; offset <= 4; offset += 1) {
+        const nextRow = rowToCells(matrix[rowIndex + offset] || []);
+        const parsedSameColumn = reader(nextRow[columnIndex]);
+        if (parsedSameColumn) return parsedSameColumn;
+
+        for (let delta = -1; delta <= 2; delta += 1) {
+          const parsedNearby = reader(nextRow[columnIndex + delta]);
+          if (parsedNearby) return parsedNearby;
+        }
+      }
+    }
   }
   return "";
 }
@@ -526,18 +717,55 @@ function detectSpreadsheetTable(matrix) {
 
   for (let rowIndex = 0; rowIndex < matrix.length; rowIndex += 1) {
     const row = rowToCells(matrix[rowIndex]);
-    const columnMap = {};
-    row.forEach((cell, columnIndex) => {
-      const field = classifySpreadsheetColumn(cell);
-      if (field && columnMap[field] === undefined) {
-        columnMap[field] = columnIndex;
-      }
-    });
-
-    const recognizedCount = Object.keys(columnMap).length;
+    const candidates = row
+      .map((cell, columnIndex) => {
+        const field = classifySpreadsheetColumn(cell);
+        if (!field) return null;
+        return {
+          field,
+          columnIndex,
+          score: scoreSpreadsheetColumn(field, cell),
+          unit: field === "qty" ? inferUnitFromHeader(cell) : ""
+        };
+      })
+      .filter(Boolean);
+    const descriptionCandidate = sortSpreadsheetCandidates(
+      candidates.filter((candidate) => candidate.field === "description")
+    )[0];
+    const rateCandidate = sortSpreadsheetCandidates(
+      candidates.filter((candidate) => candidate.field === "rate")
+    )[0];
+    const amountCandidate = sortSpreadsheetCandidates(
+      candidates.filter((candidate) => candidate.field === "amount")
+    )[0];
+    const unitCandidate = sortSpreadsheetCandidates(
+      candidates.filter((candidate) => candidate.field === "unit")
+    )[0];
+    const taxCandidate = sortSpreadsheetCandidates(
+      candidates.filter((candidate) => candidate.field === "tax")
+    )[0];
+    const qtyCandidates = sortSpreadsheetCandidates(
+      candidates.filter((candidate) => candidate.field === "qty")
+    );
+    const columnMap = {
+      description: descriptionCandidate?.columnIndex,
+      rate: rateCandidate?.columnIndex,
+      amount: amountCandidate?.columnIndex,
+      unit: unitCandidate?.columnIndex,
+      tax: taxCandidate?.columnIndex,
+      qtyCandidates
+    };
+    const recognizedCount = [
+      descriptionCandidate,
+      rateCandidate,
+      amountCandidate,
+      unitCandidate,
+      taxCandidate,
+      ...qtyCandidates
+    ].filter(Boolean).length;
     if (
       columnMap.description === undefined ||
-      (columnMap.qty === undefined && columnMap.amount === undefined && columnMap.rate === undefined) ||
+      (!qtyCandidates.length && columnMap.amount === undefined && columnMap.rate === undefined) ||
       recognizedCount < 2
     ) {
       continue;
@@ -560,18 +788,32 @@ function detectSpreadsheetTable(matrix) {
       const description = cleanLine(nextRow[columnMap.description] || "");
       if (!description || classifySpreadsheetColumn(description)) continue;
 
-      const qty =
-        columnMap.qty !== undefined ? extractNumber(nextRow[columnMap.qty]) : null;
+      let qty = null;
+      let inferredUnit = "";
+      for (const qtyCandidate of qtyCandidates) {
+        const candidateValue = extractNumber(nextRow[qtyCandidate.columnIndex]);
+        if (candidateValue === null || candidateValue <= 0) continue;
+        qty = candidateValue;
+        inferredUnit = qtyCandidate.unit;
+        break;
+      }
       const rate =
         columnMap.rate !== undefined ? extractNumber(nextRow[columnMap.rate]) : null;
       const amount =
         columnMap.amount !== undefined ? extractNumber(nextRow[columnMap.amount]) : null;
       const unit =
-        columnMap.unit !== undefined ? cleanLine(nextRow[columnMap.unit] || "").toLowerCase() : "";
+        columnMap.unit !== undefined
+          ? cleanLine(nextRow[columnMap.unit] || "").toLowerCase()
+          : inferredUnit;
       const tax =
         columnMap.tax !== undefined ? extractNumber(nextRow[columnMap.tax]) : null;
 
-      const safeQty = qty && qty > 0 ? qty : 1;
+      const safeQty =
+        qty && qty > 0
+          ? qty
+          : rate !== null && rate > 0 && amount !== null && amount > 0
+            ? round2(amount / rate)
+            : 1;
       const safeRate = rate !== null && rate >= 0 ? rate : amount !== null ? round2(amount / safeQty) : 0;
       const safeAmount = amount !== null ? amount : round2(safeQty * safeRate);
       if (safeRate <= 0 && safeAmount <= 0) continue;
@@ -605,10 +847,35 @@ function detectSpreadsheetTable(matrix) {
 
 function extractSpreadsheetMetadataFromMatrix(matrix) {
   const lines = matrixToLines(matrix);
-  let supplierName = "";
-  let supplierPhone = "";
-  let billNumber = "";
-  let billDate = "";
+  let supplierName = findMatrixValueAroundLabel(
+    matrix,
+    ["supplier", "supplier name", "vendor", "vendor name", "party"],
+    (value) => {
+      const text = cleanLine(value);
+      if (!text || valueLooksLikeMetadataLabel(text)) return "";
+      return text;
+    }
+  );
+  let supplierPhone = findMatrixValueAroundLabel(
+    matrix,
+    ["phone", "mobile", "supplier phone", "vendor phone"],
+    (value) => extractPhone(value)
+  );
+  let billNumber = findMatrixValueAroundLabel(
+    matrix,
+    ["bill no", "bill number", "invoice no", "invoice number", "bill id"],
+    (value) => {
+      const text = cleanLine(value);
+      if (!text || valueLooksLikeMetadataLabel(text)) return "";
+      if ((/[./-]/.test(text) || /[A-Za-z]{3,}/.test(text)) && parseDateCandidate(text)) return "";
+      return /[A-Z0-9]/i.test(text) ? text : "";
+    }
+  );
+  let billDate = findMatrixValueAroundLabel(
+    matrix,
+    ["bill date", "invoice date", "date"],
+    (value) => parseSpreadsheetDate(value)
+  );
 
   for (const row of matrix) {
     const cells = rowToCells(row).filter(Boolean);
@@ -647,7 +914,7 @@ function extractSpreadsheetMetadataFromMatrix(matrix) {
   };
 }
 
-function parsePurchaseBillSpreadsheetMatrix(matrix) {
+export function parsePurchaseBillSpreadsheetMatrix(matrix) {
   const normalizedMatrix = Array.isArray(matrix)
     ? matrix.map((row) => rowToCells(row)).filter((row) => row.some(Boolean))
     : [];

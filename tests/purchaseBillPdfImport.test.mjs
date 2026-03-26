@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  parsePurchaseBillSpreadsheetMatrix,
   parsePurchaseBillSpreadsheetRows,
   parsePurchaseBillText
 } from "../src/services/purchaseBillPdfImport.js";
@@ -131,6 +132,34 @@ verify("extracts spreadsheet data from metadata rows and later item table", () =
   assert.equal(parsed.supplierName, "Metro Stores");
   assert.equal(parsed.billNumber, "PB-2001");
   assert.equal(parsed.billDate, "2026-03-27");
+});
+
+verify("extracts custom export invoice layouts from spreadsheet matrices", () => {
+  const parsed = parsePurchaseBillSpreadsheetMatrix([
+    ["INVOICE", "", "", "", "", "", "", ""],
+    ["WESTONE", "", "", "", "INVOICE NO", "", "DATE", ""],
+    ["# 63, GROUND FLOOR, 3RD CROSS", "", "", "", "", "", "", ""],
+    ["JNANAKSHI LAYOUT, OPP- SHARADA LAYOUT.", "", "", "", "423", "", "23.03.2026", ""],
+    ["GST NO", "", "29AACFW3479R1Z4", "", "", "", "", ""],
+    ["Sl.No.", "Description of Goods", "", "", "NO. OF SLABS", "TOTAL SQM", "PRICE/SQM IN EURO", "AMOUNT IN EURO"],
+    [1, "COFFEE BROWN(FQ) -LEATHER FINISH-2CM", "", "", 53, 330.5081, 35, 11567.7835],
+    [2, "COFFEE BROWN(ST) -LEATHER FINISH-2CM", "", "", 15, 94.99, 30, 2849.7],
+    [3, "COFFEE BROWN(FQ) -LEATHER FINISH-3CM", "", "", 3, 16.5984, 44.9, 745.26816],
+    ["", "", "", "", 71, 442.0965, "", 15162.75166]
+  ]);
+
+  assert.equal(parsed.supplierName, "WESTONE");
+  assert.equal(parsed.billNumber, "423");
+  assert.equal(parsed.billDate, "2026-03-23");
+  assert.equal(parsed.items.length, 3);
+  assert.deepEqual(parsed.items[0], {
+    description: "COFFEE BROWN(FQ) -LEATHER FINISH-2CM",
+    qty: 330.5081,
+    unit: "sqm",
+    rate: 35,
+    amount: 11567.7835,
+    tax: null
+  });
 });
 
 console.log("Purchase bill PDF import tests passed.");
