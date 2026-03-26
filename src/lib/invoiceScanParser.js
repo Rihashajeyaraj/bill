@@ -1,0 +1,485 @@
+function normalizeWhitespace(value) {
+  return String(value || "").replace(/\r/g, "\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function cleanLine(value) {
+  return normalizeWhitespace(String(value || "").replace(/[|]/g, " ").replace(/\t/g, " "));
+}
+
+function normalizeKey(value) {
+  return cleanLine(value).toLowerCase();
+}
+
+const INVALID_INVOICE_TOKENS = new Set([
+  "date",
+  "invoice",
+  "bill",
+  "tax",
+  "gst",
+  "gstin",
+  "po",
+  "order"
+]);
+
+function uniqueNonEmpty(values) {
+  return [...new Set(values.map((value) => cleanLine(value)).filter(Boolean))];
+}
+
+function extractAmountCandidates(value) {
+  const matches =
+    String(value || "").match(
+      /(?:\()?\b(?:\d{1,3}(?:,\d{2,3})+|\d+)(?:\.\d{2})\b(?:\))?|\b\d+\.\d{2}\b/g
+    ) || [];
+  return matches
+    .map((match) => {
+      const normalized = match.replace(/[(),]/g, "").trim();
+      const amount = Number(normalized);
+      return Number.isFinite(amount) ? amount : null;
+    })
+    .filter((amount) => amount !== null);
+}
+
+function formatAmount(value) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "";
+  return numeric.toFixed(2);
+}
+
+function looksLikeTableHeader(line) {
+  const key = normalizeKey(line);
+  if (!key) return false;
+  const signals = [
+    "qty",
+    "quantity",
+    "rate",
+    "price",
+    "amount",
+    "hsn",
+    "description",
+    "item",
+    "unit"
+  ];
+  return signals.filter((signal) => key.includes(signal)).length >= 3;
+}
+
+function looksLikeTableRow(line) {
+  const key = normalizeKey(line);
+  if (!key) return false;
+  const numericCount = (line.match(/\d+(?:[.,]\d+)?/g) || []).length;
+  return numericCount >= 3 && /\b(qty|pcs|nos|kg|rate|amount|price)\b/i.test(line);
+}
+
+function splitLines(rawText) {
+  return uniqueNonEmpty(String(rawText || "").split(/\n+/).map(cleanLine));
+}
+
+function sanitizeInvoiceNumber(value) {
+  const candidate = cleanLine(String(value || "").replace(/^[#: -]+/, "").replace(/[,:;]+$/, ""));
+  if (!candidate) return "";
+  const normalized = normalizeKey(candidate);
+  if (INVALID_INVOICE_TOKENS.has(normalized)) return "";
+  if (normalized === "show") return "";
+  if (/^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/.test(candidate)) return "";
+  if (!/[a-z0-9]/i.test(candidate)) return "";
+  return candidate;
+}
+
+function isLikelySupplierLine(line) {
+  const key = normalizeKey(line);
+  if (!key || key.length < 3) return false;
+  if (/\b(invoice|tax invoice|bill|original|duplicate|date|phone|mobile|gst|gstin|state|code|email|website)\b/i.test(line)) {
+    return false;
+  }
+  if (looksLikeTableHeader(line) || looksLikeTableRow(line)) return false;
+  if (extractAmountCandidates(line).length) return false;
+  return /[a-z]/i.test(line);
+}
+
+function toDisplayDate(day, month, year) {
+  const yyyy = Number(year);
+  const mm = Number(month);
+  const dd = Number(day);
+  if (!Number.isFinite(yyyy) || !Number.isFinite(mm) || !Number.isFinite(dd)) return "";
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return "";
+  return `${String(dd).padStart(2, "0")}-${String(mm).padStart(2, "0")}-${String(yyyy).padStart(4, "0")}`;
+}
+
+function isValidDateString(value) {
+  const match = String(value || "").match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (!match) return false;
+  const [_, dd, mm, yyyy] = match;
+  const date = new Date(`${yyyy}-${mm}-${dd}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.getUTCDate() === Number(dd) && date.getUTCMonth() + 1 === Number(mm);
+}
+
+function extractInvoiceNumber(lines, rawText) {
+  const strictGlobalPatterns = [
+    /\bINVOICE\s*#\s*([A-Z0-9][A-Z0-9/_-]{0,})\b/i,
+    /\bINVOICE\s*(?:NO|NUMBER)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{0,})\b/i,
+    /\bBILL\s*(?:NO|NUMBER)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{0,})\b/i
+  ];
+
+  for (const pattern of strictGlobalPatterns) {
+    const match = String(rawText || "").match(pattern);
+    const sanitized = sanitizeInvoiceNumber(match?.[1] || "");
+    if (sanitized) return sanitized;
+  }
+
+  const labelPatterns = [
+    /\b(?:invoice\s*(?:no|number|#)|bill\s*(?:no|number|#)|inv\s*(?:no|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/_-]{0,})/i
+  ];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    for (const pattern of labelPatterns) {
+      const match = line.match(pattern);
+      const sanitized = sanitizeInvoiceNumber(match?.[1] || "");
+      if (sanitized) return sanitized;
+    }
+
+    if (/\bINVOICE\s*#\s*DATE\b/i.test(line) || /\bINVOICE\s*(?:NO|NUMBER)\s*[:#-]?\s*DATE\b/i.test(line)) {
+      const nextLine = cleanLine(lines[index + 1] || "");
+      const nextMatch = nextLine.match(/\b([A-Z0-9][A-Z0-9/_-]{0,})\b(?:\s+\d{1,2}[-/.]\d{1,2}[-/.]\d{4})?/i);
+      const sanitized = sanitizeInvoiceNumber(nextMatch?.[1] || "");
+      if (sanitized) return sanitized;
+    }
+
+    const splitMatch = line.match(/\b(invoice|bill)\b/i);
+    if (splitMatch && /(?:no|number|#)/i.test(line)) {
+      const tokens = line.split(/\s+/).map((token) => token.replace(/[,:;]/g, "").trim()).filter(Boolean);
+      for (let index = 0; index < tokens.length; index += 1) {
+        if (!/^invoice|bill$/i.test(tokens[index])) continue;
+        for (let next = index + 1; next < Math.min(tokens.length, index + 5); next += 1) {
+          const sanitized = sanitizeInvoiceNumber(tokens[next]);
+          if (sanitized) return sanitized;
+        }
+      }
+    }
+  }
+
+  const fallbackToken = String(rawText || "").match(/\b#\s*([A-Z0-9][A-Z0-9/_-]{0,})\b/);
+  return sanitizeInvoiceNumber(fallbackToken?.[1] || "");
+}
+
+function extractDate(lines, rawText) {
+  const preferredPatterns = [
+    /\b(?:invoice\s*date|bill\s*date|date)\s*[:#-]?\s*(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\b/i,
+    /\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\b/
+  ];
+
+  for (const line of lines) {
+    for (const pattern of preferredPatterns) {
+      const match = line.match(pattern);
+      if (!match) continue;
+      const formatted = toDisplayDate(match[1], match[2], match[3]);
+      if (formatted && isValidDateString(formatted)) return formatted;
+    }
+  }
+
+  const fallback = String(rawText || "").match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\b/);
+  if (!fallback) return "";
+  const formatted = toDisplayDate(fallback[1], fallback[2], fallback[3]);
+  return isValidDateString(formatted) ? formatted : "";
+}
+
+function extractSupplier(lines) {
+  const directLabel = lines.find((line) => /\b(?:supplier|vendor|bill from)\b\s*[:#-]/i.test(line));
+  if (directLabel) {
+    const labeledValue = cleanLine(directLabel.replace(/^.*?(supplier|vendor|bill from)\s*[:#-]?\s*/i, ""));
+    if (labeledValue) return labeledValue;
+  }
+
+  const huesLine = lines.find((line) => /hues\s+granites/i.test(line));
+  if (huesLine) {
+    const match = huesLine.match(/(HUES\s+GRANITES(?:\s+(?!PO\b)[A-Z]+){0,4})/i);
+    if (match?.[1]) return cleanLine(match[1]);
+  }
+
+  return lines.find(isLikelySupplierLine) || "";
+}
+
+function extractPhone(rawText) {
+  const labeledMatch =
+    String(rawText || "").match(/\b(?:ph\s*no|phone\s*no|mobile)\s*[:#-]?\s*(\d{10})\b/i) ||
+    String(rawText || "").match(/\b(\d{10})\b/);
+  return cleanLine(labeledMatch?.[1] || "");
+}
+
+function extractContactBlock(lines, phone) {
+  if (!phone) return [];
+  const phoneIndex = lines.findIndex((line) => line.includes(phone));
+  if (phoneIndex < 0) return [];
+  const start = Math.max(0, phoneIndex - 3);
+  return lines.slice(start, phoneIndex + 1).filter(Boolean);
+}
+
+function extractAddressDetails(lines, rawText) {
+  const phone = extractPhone(rawText);
+  const block = extractContactBlock(lines, phone);
+  const joinedBlock = block.join("\n");
+  const locationLine =
+    block.find((line) => /,\s*[A-Za-z][A-Za-z.\s]+,\s*\d{6}\b/.test(line)) ||
+    lines.find((line) => /,\s*[A-Za-z][A-Za-z.\s]+,\s*\d{6}\b/.test(line)) ||
+    "";
+  const locationMatch = locationLine.match(/([A-Za-z][A-Za-z.\s]+),\s*([A-Za-z][A-Za-z.\s]+)\s*,\s*(\d{6})\b/);
+  const city = cleanLine(locationMatch?.[1] || "");
+  const state = cleanLine(locationMatch?.[2] || "");
+
+  const addressLines = block
+    .filter((line) => {
+      const key = normalizeKey(line);
+      if (!key) return false;
+      if (line.includes(phone)) return false;
+      if (/^(westone|consignee|buyer)/i.test(line)) return false;
+      return true;
+    });
+
+  const address = cleanLine(addressLines.join(", "));
+  const country = /\bindia\b/i.test(joinedBlock) || /\bindia\b/i.test(rawText) ? "India" : "";
+
+  return {
+    city,
+    state,
+    address,
+    country
+  };
+}
+
+function round2(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
+function round3(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 1000) / 1000;
+}
+
+function parseNumber(value) {
+  const cleaned = String(value || "").replace(/,/g, "").replace(/[^\d.-]/g, "");
+  if (!cleaned || cleaned === "-" || cleaned === "." || cleaned === "-.") return null;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function dedupeItems(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = JSON.stringify([item.description, item.qty, item.unit, item.rate, item.tax]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function extractInvoiceLevelGst(lines) {
+  const gstLine = lines.find((line) => /\b[isc]?\s*gst\b/i.test(line) && /%/.test(line));
+  const match = gstLine?.match(/(\d+(?:\.\d+)?)\s*%/);
+  const rate = Number(match?.[1] || 0);
+  return Number.isFinite(rate) ? rate : 0;
+}
+
+function parseHuesGranitesItems(lines) {
+  const items = [];
+  const gstRate = extractInvoiceLevelGst(lines);
+  let tableStarted = false;
+
+  for (const line of lines) {
+    if (/S\.NO\s+DESCRIPTION OF GOODS/i.test(line)) {
+      tableStarted = true;
+      continue;
+    }
+    if (!tableStarted) continue;
+    if (/\bSUB TOTAL\b/i.test(line)) break;
+
+    const match = line.match(
+      /^\s*(\d+)\s+\d+\s+(.+?)\s+(\d+)\s+(\d+(?:,\d{2,3})*(?:\.\d+)?)\s+(\d+(?:,\d{2,3})*(?:\.\d+)?)\s+(\d+(?:,\d{2,3})*(?:\.\d+)?)\s*$/
+    );
+    if (!match) continue;
+
+    const description = cleanLine(match[2]);
+    const slabCount = parseNumber(match[3]);
+    const qtySqm = parseNumber(match[4]);
+    const rate = parseNumber(match[5]);
+    const amount = parseNumber(match[6]);
+    if (!description || !qtySqm || !rate) continue;
+
+    items.push({
+      description,
+      qty: round3(qtySqm),
+      unit: "sqm",
+      rate: round2(rate),
+      amount: round2(amount || qtySqm * rate),
+      tax: gstRate,
+      metadata: {
+        slabs: slabCount || 0
+      }
+    });
+  }
+
+  return dedupeItems(items);
+}
+
+function scoreTotalLine(line, amount, index, totalLineIndexes) {
+  const key = normalizeKey(line);
+  let score = amount;
+  if (/\bgrand total\b/.test(key)) score += 5000;
+  if (/\bnet total\b/.test(key)) score += 3500;
+  if (/\btotal amount\b/.test(key)) score += 3200;
+  if (/\bamount payable\b/.test(key)) score += 3000;
+  if (/\btotal\b/.test(key)) score += 2500;
+  if (/\bsubtotal\b|\bsub total\b/.test(key)) score -= 4000;
+  if (/\b(cgst|sgst|igst|vat|tax|cess|discount|round off|freight|packing|loading|balance)\b/.test(key)) score -= 2500;
+  if (looksLikeTableRow(line)) score -= 5000;
+  if (/^\s*total\b/i.test(line)) score += 4000;
+  score += index * 25;
+  if (totalLineIndexes.includes(index)) score += 1000;
+  return score;
+}
+
+function extractTotal(lines) {
+  const candidateLines = [];
+  const totalLineIndexes = lines
+    .map((line, index) => (/\btotal\b/i.test(line) ? index : -1))
+    .filter((index) => index >= 0);
+
+  lines.forEach((line, index) => {
+    if (looksLikeTableHeader(line)) return;
+    const amounts = extractAmountCandidates(line);
+    if (!amounts.length) return;
+    amounts.forEach((amount) => {
+      candidateLines.push({
+        line,
+        index,
+        amount,
+        score: scoreTotalLine(line, amount, index, totalLineIndexes)
+      });
+    });
+  });
+
+  const strongCandidates = candidateLines
+    .filter((entry) => entry.amount > 0)
+    .sort((left, right) => right.score - left.score || right.index - left.index || right.amount - left.amount);
+
+  if (strongCandidates.length) {
+    return formatAmount(strongCandidates[0].amount);
+  }
+
+  const fallbackAmounts = lines
+    .flatMap((line, index) =>
+      extractAmountCandidates(line).map((amount) => ({
+        amount,
+        index,
+        line
+      }))
+    )
+    .filter((entry) => !looksLikeTableRow(entry.line))
+    .sort((left, right) => right.index - left.index || right.amount - left.amount);
+
+  return formatAmount(fallbackAmounts[0]?.amount || 0);
+}
+
+function parseHuesGranites(lines) {
+  const text = lines.join("\n");
+  const explicitInvoice = sanitizeInvoiceNumber(
+    text.match(/\bINVOICE\s*#\s*([A-Z0-9][A-Z0-9/_-]{0,})\b/i)?.[1] || ""
+  );
+  const splitInvoiceLineIndex = lines.findIndex((line) => /\bINVOICE\s*#\s*DATE\b/i.test(line));
+  const splitInvoiceNumber =
+    splitInvoiceLineIndex >= 0
+      ? sanitizeInvoiceNumber(
+          cleanLine(lines[splitInvoiceLineIndex + 1] || "").match(/\b([A-Z0-9][A-Z0-9/_-]{0,})\b/i)?.[1] || ""
+        )
+      : "";
+  const lastLargeAmount = lines
+    .flatMap((line, index) =>
+      extractAmountCandidates(line)
+        .filter((amount) => amount >= 100)
+        .map((amount) => ({ amount, index, line }))
+    )
+    .filter((entry) => !looksLikeTableRow(entry.line))
+    .sort((left, right) => right.index - left.index || right.amount - left.amount)[0];
+
+  return {
+    supplier: extractSupplier(lines),
+    invoiceNumber: explicitInvoice || splitInvoiceNumber || extractInvoiceNumber(lines, text),
+    date: extractDate(lines, text),
+    total: formatAmount(lastLargeAmount?.amount || 0) || extractTotal(lines),
+    supplierPhone: extractPhone(text),
+    items: parseHuesGranitesItems(lines),
+    ...extractAddressDetails(lines, text)
+  };
+}
+
+const VENDOR_PARSERS = [
+  {
+    id: "hues_granites",
+    match: (text) => /hues\s+granites/i.test(text),
+    parse: parseHuesGranites
+  }
+];
+
+export function parseInvoiceScan(rawText) {
+  const normalizedText = normalizeWhitespace(rawText);
+  const lines = splitLines(normalizedText);
+  const joinedText = lines.join("\n");
+  const vendorParser = VENDOR_PARSERS.find((entry) => entry.match(joinedText));
+
+  const baseResult = {
+    invoiceNumber: "",
+    date: "",
+    supplier: "",
+    total: "",
+    confidence: 0,
+    warnings: [],
+    vendorParser: vendorParser?.id || ""
+  };
+
+  if (!lines.length) {
+    return {
+      ...baseResult,
+      warnings: ["No readable text was extracted from the document."]
+    };
+  }
+
+  const vendorResult = vendorParser ? vendorParser.parse(lines) : null;
+  const result = {
+    invoiceNumber: cleanLine(vendorResult?.invoiceNumber || extractInvoiceNumber(lines, joinedText)),
+    date: cleanLine(vendorResult?.date || extractDate(lines, joinedText)),
+    supplier: cleanLine(vendorResult?.supplier || extractSupplier(lines)),
+    supplierPhone: cleanLine(vendorResult?.supplierPhone || extractPhone(joinedText)),
+    city: cleanLine(vendorResult?.city || extractAddressDetails(lines, joinedText).city),
+    state: cleanLine(vendorResult?.state || extractAddressDetails(lines, joinedText).state),
+    address: cleanLine(vendorResult?.address || extractAddressDetails(lines, joinedText).address),
+    country: cleanLine(vendorResult?.country || extractAddressDetails(lines, joinedText).country),
+    items: Array.isArray(vendorResult?.items) ? vendorResult.items : [],
+    total: cleanLine(vendorResult?.total || extractTotal(lines)),
+    confidence: 0,
+    warnings: [],
+    vendorParser: vendorParser?.id || ""
+  };
+
+  let confidence = 0;
+  if (result.invoiceNumber) confidence += 25;
+  if (result.supplier) confidence += 25;
+  if (result.date && isValidDateString(result.date)) confidence += 20;
+  if (Number(result.total) > 0) confidence += 30;
+
+  if (!result.invoiceNumber) result.warnings.push("Invoice number could not be detected confidently.");
+  if (!result.date || !isValidDateString(result.date)) result.warnings.push("Invoice date could not be validated.");
+  if (!result.supplier) result.warnings.push("Supplier name could not be detected confidently.");
+  if (!(Number(result.total) > 0)) result.warnings.push("Final total could not be detected confidently.");
+
+  result.confidence = Math.max(0, Math.min(100, confidence));
+  return result;
+}
+
+export function validateInvoiceScan(parsed) {
+  const issues = [];
+  if (!parsed?.invoiceNumber) issues.push("invoiceNumber");
+  if (!parsed?.supplier) issues.push("supplier");
+  if (!parsed?.date || !isValidDateString(parsed.date)) issues.push("date");
+  if (!(Number(parsed?.total) > 0)) issues.push("total");
+  return {
+    valid: issues.length === 0,
+    issues
+  };
+}

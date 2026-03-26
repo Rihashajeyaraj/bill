@@ -13,7 +13,7 @@ import {
   fetchSupplierAddress,
   purchasesCreate
 } from "../../services/purchases.service";
-import { extractPurchaseBillFromFile } from "../../services/purchaseBillPdfImport";
+import { scanInvoiceFree } from "../../services/freeInvoiceScan.service";
 import { useOrganization } from "../../context/OrganizationContext";
 import { calculateTaxes } from "../../services/tax";
 import { authGetRole, authGetUser } from "../../services/auth.service";
@@ -178,7 +178,7 @@ function createLine(defaultTaxRate = 0) {
 
 export default function PurchaseBill() {
   const navigate = useNavigate();
-  const pdfImportInputRef = useRef(null);
+  const invoiceScanInputRef = useRef(null);
   const role = authGetRole();
   const canCreatePurchase = canCreateEntries(role);
   const { country = "", currency = "", profile: company = {} } = useOrganization();
@@ -204,14 +204,17 @@ export default function PurchaseBill() {
   const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
   const [supplierSearchError, setSupplierSearchError] = useState("");
   const [formErrors, setFormErrors] = useState({});
-  const [pdfImporting, setPdfImporting] = useState(false);
-  const [pdfImportMeta, setPdfImportMeta] = useState(null);
+  const [invoiceScanning, setInvoiceScanning] = useState(false);
+  const [invoiceScanMeta, setInvoiceScanMeta] = useState(null);
+  const [scannedInvoiceTotal, setScannedInvoiceTotal] = useState("");
   const [supplierCreateLoading, setSupplierCreateLoading] = useState(false);
   const [supplierCreateDraft, setSupplierCreateDraft] = useState({
     name: "",
     phone: "",
     country: country || "",
-    state: ""
+    state: "",
+    city: "",
+    address: ""
   });
   const [supplierCountryMenuOpen, setSupplierCountryMenuOpen] = useState(false);
   const [supplierStateMenuOpen, setSupplierStateMenuOpen] = useState(false);
@@ -749,6 +752,8 @@ export default function PurchaseBill() {
     const phone = extractTenDigitPhone(supplierCreateDraft.phone);
     const draftCountry = String(supplierCreateDraft.country || country || "").trim();
     const draftState = String(supplierCreateDraft.state || "").trim();
+    const draftCity = String(supplierCreateDraft.city || "").trim();
+    const draftAddress = String(supplierCreateDraft.address || "").trim();
 
     if (!name) {
       setSupplierSearchError("Supplier name is required.");
@@ -771,7 +776,8 @@ export default function PurchaseBill() {
         email: "",
         country: draftCountry,
         state: draftState,
-        address: "",
+        city: draftCity,
+        address: draftAddress,
         taxId: "",
         notes: "",
         openingBalance: 0,
@@ -789,7 +795,9 @@ export default function PurchaseBill() {
         name: "",
         phone: "",
         country: country || "",
-        state: ""
+        state: "",
+        city: "",
+        address: ""
       });
       setSupplierCountryMenuOpen(false);
       setSupplierStateMenuOpen(false);
@@ -830,7 +838,9 @@ export default function PurchaseBill() {
       name: "",
       phone: "",
       country: country || "",
-      state: ""
+      state: "",
+      city: "",
+      address: ""
     });
     setSupplierCountryMenuOpen(false);
     setSupplierStateMenuOpen(false);
@@ -854,17 +864,45 @@ export default function PurchaseBill() {
     clearFormError("lines");
   }
 
-  function applyImportedSupplier(parsed) {
+  async function applyImportedSupplier(parsed) {
+    const parsedSupplierName = parsed?.supplier || parsed?.supplierName || "";
+    const parsedSupplierPhone = parsed?.supplierPhone || "";
     const matchedSupplier = findSupplierImportMatch(
       suppliers,
-      parsed?.supplierName || "",
-      parsed?.supplierPhone || ""
+      parsedSupplierName,
+      parsedSupplierPhone
     );
 
     if (matchedSupplier) {
-      applySupplierSelection(matchedSupplier);
+      const nextSupplierPayload = {
+        ...matchedSupplier,
+        city: matchedSupplier?.city || parsed?.city || "",
+        state: matchedSupplier?.state || parsed?.state || "",
+        address: matchedSupplier?.address || parsed?.address || "",
+        country: matchedSupplier?.country || parsed?.country || country || ""
+      };
+
+      let effectiveSupplier = matchedSupplier;
+      const hasScannedLocation =
+        Boolean(parsed?.city || parsed?.state || parsed?.address || parsed?.country) &&
+        (nextSupplierPayload.city !== matchedSupplier?.city ||
+          nextSupplierPayload.state !== matchedSupplier?.state ||
+          nextSupplierPayload.address !== matchedSupplier?.address ||
+          nextSupplierPayload.country !== matchedSupplier?.country);
+
+      if (hasScannedLocation) {
+        try {
+          effectiveSupplier = await upsertPartyRemote(nextSupplierPayload);
+          const nextSuppliers = listParties().filter((entry) => entry.type === "Supplier");
+          setSuppliers(nextSuppliers);
+        } catch {
+          effectiveSupplier = nextSupplierPayload;
+        }
+      }
+
+      applySupplierSelection(effectiveSupplier);
       return {
-        matchedSupplierName: matchedSupplier.name || "",
+        matchedSupplierName: effectiveSupplier.name || "",
         supplierResolved: true
       };
     }
@@ -872,15 +910,18 @@ export default function PurchaseBill() {
     setPartyId("");
     setPhone("");
     setSupplierAddress("");
-    setSupplierLookupQuery(parsed?.supplierPhone || parsed?.supplierName || "");
+    setSupplierLookupQuery(parsedSupplierPhone || parsedSupplierName || "");
     setSupplierCreateDraft((prev) => ({
       ...prev,
-      name: parsed?.supplierName || prev.name || "",
-      phone: extractTenDigitPhone(parsed?.supplierPhone || prev.phone || ""),
-      country: prev.country || country || ""
+      name: parsedSupplierName || prev.name || "",
+      phone: extractTenDigitPhone(parsedSupplierPhone || prev.phone || ""),
+      country: parsed?.country || prev.country || country || "",
+      state: parsed?.state || prev.state || "",
+      city: parsed?.city || prev.city || "",
+      address: parsed?.address || prev.address || ""
     }));
 
-    if (parsed?.supplierName || parsed?.supplierPhone) {
+    if (parsedSupplierName || parsedSupplierPhone) {
       setSupplierSearchError(
         "Supplier from PDF was not matched. Select an existing supplier or create a new supplier before saving."
       );
@@ -892,61 +933,68 @@ export default function PurchaseBill() {
     };
   }
 
-  function applyImportedPurchaseBill(parsed, fileName) {
-    const supplierResult = applyImportedSupplier(parsed);
+  async function applyScannedInvoice(parsed, fileName) {
+    const supplierResult = await applyImportedSupplier(parsed);
 
-    if (parsed?.billNumber) {
+    if (parsed?.invoiceNumber) {
       clearFormError("billNumber");
-      setBillNumber(parsed.billNumber);
+      setBillNumber(parsed.invoiceNumber);
     }
-    if (parsed?.billDate) {
+    if (parsed?.date) {
       clearFormError("billDate");
-      setBillDate(parsed.billDate);
-      setPaymentDate(parsed.billDate);
+      setBillDate(parsed.date);
+      setPaymentDate(parsed.date);
+    }
+    if (parsed?.total) {
+      setScannedInvoiceTotal(parsed.total);
     }
     if (Array.isArray(parsed?.items) && parsed.items.length) {
       applyImportedLines(parsed.items);
     }
 
-    setPdfImportMeta({
+    setInvoiceScanMeta({
       fileName,
-      itemCount: Array.isArray(parsed?.items) ? parsed.items.length : 0,
-      supplierName: parsed?.supplierName || "",
+      supplierName: parsed?.supplier || "",
       matchedSupplierName: supplierResult.matchedSupplierName,
-      billNumber: parsed?.billNumber || "",
-      billDate: parsed?.billDate || "",
-      importSource: parsed?.importSource || "text",
+      invoiceNumber: parsed?.invoiceNumber || "",
+      date: parsed?.date || "",
+      total: parsed?.total || "",
+      itemCount: Array.isArray(parsed?.items) ? parsed.items.length : 0,
+      confidence: Number(parsed?.confidence || 0),
       warnings: Array.isArray(parsed?.warnings) ? parsed.warnings : [],
-      supplierResolved: supplierResult.supplierResolved
+      supplierResolved: supplierResult.supplierResolved,
+      extractionMethod: parsed?.meta?.extractionMethod || "",
+      validation: parsed?.validation || { valid: false, issues: [] }
     });
   }
 
-  async function handlePurchaseImportChange(event) {
+  async function handleInvoiceScanChange(event) {
     const selectedFile = event?.target?.files?.[0];
     if (!selectedFile) return;
 
-    setPdfImporting(true);
+    setInvoiceScanning(true);
     setSupplierSearchError("");
     try {
-      const parsed = await extractPurchaseBillFromFile(selectedFile);
-      applyImportedPurchaseBill(parsed, selectedFile.name || "purchase-bill-import");
+      const parsed = await scanInvoiceFree(selectedFile);
+      await applyScannedInvoice(parsed, selectedFile.name || "invoice-scan");
 
       const warningCount = Array.isArray(parsed?.warnings) ? parsed.warnings.length : 0;
-      toast.success(
-        "File imported",
-        parsed?.importSource === "excel"
-          ? "Excel file imported. Review the values before saving."
-          : parsed?.importSource === "ocr"
-          ? "Scanned PDF imported with OCR. Review the values carefully before saving."
-          : warningCount
-            ? `Imported with ${warningCount} warning${warningCount > 1 ? "s" : ""}. You can edit everything before saving.`
-            : "Purchase bill fields were filled. You can edit everything before saving."
-      );
+      const hasParsedFields = Boolean(parsed?.invoiceNumber || parsed?.date || parsed?.supplier || parsed?.total);
+      if (hasParsedFields) {
+        toast.success(
+          "Invoice scanned",
+          warningCount
+            ? `Autofill completed with ${warningCount} warning${warningCount > 1 ? "s" : ""}. Review the values before saving.`
+            : "Invoice fields were filled. You can edit everything before saving."
+        );
+      } else {
+        toast.error("Scan needs manual review", "No reliable values were detected. Enter the bill manually.");
+      }
     } catch (error) {
-      setPdfImportMeta(null);
-      toast.error("File import failed", error?.message || "Could not read the selected file.");
+      setInvoiceScanMeta(null);
+      toast.error("Invoice scan failed", error?.message || "Could not read the selected file.");
     } finally {
-      setPdfImporting(false);
+      setInvoiceScanning(false);
       if (event?.target) {
         event.target.value = "";
       }
@@ -1401,21 +1449,21 @@ export default function PurchaseBill() {
         right={
           <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-end lg:w-auto">
             <input
-              ref={pdfImportInputRef}
+              ref={invoiceScanInputRef}
               type="file"
-              accept="application/pdf,.pdf,.xlsx,.xls,text/csv,.csv"
+              accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg,.xlsx,.xls,.csv,text/csv"
               onChange={(event) => {
-                void handlePurchaseImportChange(event);
+                void handleInvoiceScanChange(event);
               }}
               className="hidden"
             />
             <button
               type="button"
-              onClick={() => pdfImportInputRef.current?.click()}
-              disabled={pdfImporting || saving}
+              onClick={() => invoiceScanInputRef.current?.click()}
+              disabled={invoiceScanning || saving}
               className="inline-flex h-11 w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
             >
-              {pdfImporting ? "Reading File..." : "Import PDF / Excel"}
+              {invoiceScanning ? "Scanning..." : "Scan Invoice (Free)"}
             </button>
             <button
               type="button"
@@ -1436,34 +1484,39 @@ export default function PurchaseBill() {
       <Card className="p-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-slate-900">Bill File Import</h2>
+            <h2 className="text-sm font-semibold text-slate-900">Free Invoice Scan</h2>
             <p className="mt-1 text-xs text-slate-500">
-              Upload a purchase-bill PDF, Excel, or CSV file to fill supplier, bill number, bill date, and item rows. You can modify any imported value before saving.
+              Upload a purchase invoice PDF, JPG, PNG, Excel, or CSV to autofill supplier, invoice number, date, total, and line items. You can modify every scanned value before saving.
             </p>
             <p className="mt-1 text-xs text-amber-700">
-              Text PDFs are read directly, scanned PDFs use OCR, and Excel or CSV files read table rows directly.
+              PDFs are read from embedded text when possible. Images use free OCR. Line items are ignored on purpose so the scan focuses on header accuracy.
             </p>
           </div>
-          {pdfImportMeta ? (
+          {invoiceScanMeta ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-700 md:max-w-sm">
-              <p className="font-semibold text-slate-900">{pdfImportMeta.fileName}</p>
+              <p className="font-semibold text-slate-900">{invoiceScanMeta.fileName}</p>
+              <p className="mt-1">Mode: {invoiceScanMeta.extractionMethod || "free-scan"}</p>
+              <p className="mt-1">Confidence: {invoiceScanMeta.confidence}%</p>
+              <p className="mt-1">Items: {invoiceScanMeta.itemCount || 0}</p>
               <p className="mt-1">
-                Mode: {pdfImportMeta.importSource === "excel" ? "Excel / CSV" : pdfImportMeta.importSource === "ocr" ? "OCR scan" : "Text PDF"}
+                Supplier: {invoiceScanMeta.matchedSupplierName || invoiceScanMeta.supplierName || "Not detected"}
               </p>
-              <p className="mt-1">Items imported: {pdfImportMeta.itemCount}</p>
-              <p className="mt-1">
-                Supplier: {pdfImportMeta.matchedSupplierName || pdfImportMeta.supplierName || "Not detected"}
-              </p>
-              <p className="mt-1">Bill No: {pdfImportMeta.billNumber || "Not detected"}</p>
-              <p className="mt-1">Bill Date: {pdfImportMeta.billDate || "Not detected"}</p>
-              {!pdfImportMeta.supplierResolved ? (
+              <p className="mt-1">Invoice No: {invoiceScanMeta.invoiceNumber || "Not detected"}</p>
+              <p className="mt-1">Invoice Date: {invoiceScanMeta.date || "Not detected"}</p>
+              <p className="mt-1">Final Total: {invoiceScanMeta.total || "Not detected"}</p>
+              {!invoiceScanMeta.supplierResolved ? (
                 <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-2 py-2 text-amber-800">
                   Confirm or create the supplier before you save this bill.
                 </p>
               ) : null}
-              {pdfImportMeta.warnings?.length ? (
+              {!invoiceScanMeta.validation?.valid ? (
                 <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-2 py-2 text-amber-800">
-                  {pdfImportMeta.warnings[0]}
+                  Some values need manual review before save.
+                </div>
+              ) : null}
+              {invoiceScanMeta.warnings?.length ? (
+                <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-2 py-2 text-amber-800">
+                  {invoiceScanMeta.warnings[0]}
                 </div>
               ) : null}
             </div>
@@ -1702,7 +1755,7 @@ export default function PurchaseBill() {
           </Card>
 
           <Card className="p-5">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
           <FormField label="Invoice / Bill ID" required error={formErrors.billNumber}>
             <input
               value={billNumber}
@@ -1726,7 +1779,16 @@ export default function PurchaseBill() {
             />
             {formErrors.billDate ? <p className="mt-1 text-xs text-rose-600">{formErrors.billDate}</p> : null}
           </FormField>
-          <div className="md:col-span-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+          <FormField label="Scanned Invoice Total">
+            <input
+              value={scannedInvoiceTotal}
+              onChange={(e) => setScannedInvoiceTotal(e.target.value)}
+              placeholder="Auto-filled from scan"
+              inputMode="decimal"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-blue-100"
+            />
+          </FormField>
+          <div className="md:col-span-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
             <div className="flex flex-wrap items-center gap-3">
               <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
                 <input
