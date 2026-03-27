@@ -2362,12 +2362,15 @@ export default function InvoiceCreate() {
                   <FormField label="Invoice Number" required error={formErrors.invoiceNo}>
                     <input
                       value={invoiceNo}
-                      readOnly
-                      placeholder="Auto generated"
+                      onChange={(event) => {
+                        clearFormError("invoiceNo");
+                        setInvoiceNo(event.target.value);
+                      }}
+                      placeholder="Auto generated, editable if needed"
                       className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-mono text-slate-700 outline-none focus:ring-4"
                       style={{ "--tw-ring-color": UI.COLORS.ring }}
                     />
-                    <p className="mt-1 text-xs text-slate-500">Invoice number is generated automatically.</p>
+                    <p className="mt-1 text-xs text-slate-500">Invoice number is generated automatically, and you can edit it if needed.</p>
                     {formErrors.invoiceNo ? <p className="mt-1 text-xs text-rose-600">{formErrors.invoiceNo}</p> : null}
                   </FormField>
                   <FormField label="Invoice Date" required error={formErrors.invoiceDate}>
