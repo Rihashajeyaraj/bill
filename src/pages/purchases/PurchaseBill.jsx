@@ -1463,7 +1463,7 @@ export default function PurchaseBill() {
               disabled={invoiceScanning || saving}
               className="inline-flex h-11 w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
             >
-              {invoiceScanning ? "Scanning..." : "Scan Invoice (Free)"}
+              {invoiceScanning ? "Scanning..." : "Scan Invoice"}
             </button>
             <button
               type="button"
