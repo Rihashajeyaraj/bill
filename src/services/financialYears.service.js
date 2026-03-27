@@ -1,4 +1,4 @@
-import { authGetOrganizationId, authGetUser } from "./auth.service";
+import { authEnsureOrganizationAccess, authGetOrganizationId, authGetUser } from "./auth.service";
 import {
   LS_KEYS,
   lsGetOrganizationScoped,
@@ -427,7 +427,7 @@ export async function financialYearsSyncFromRemote(profileFallback = null) {
     return persistRows(buildFallbackRows(profileFallback || {}), financialYearsGetSelectedId(), profileFallback);
   }
 
-  const organizationId = authGetOrganizationId();
+  const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
   if (!organizationId) {
     return persistRows(buildFallbackRows(profileFallback || {}), financialYearsGetSelectedId(), profileFallback);
   }
@@ -457,7 +457,11 @@ export async function ensureFinancialYearForProfile(profile = {}, options = {}) 
   }
 
   const dateValue = normalizeIsoDate(options?.dateValue || new Date()) || normalizeIsoDate(new Date());
-  const organizationId = String(options?.organizationId || authGetOrganizationId() || "").trim();
+  const requestedOrganizationId = String(options?.organizationId || authGetOrganizationId() || "").trim();
+  const organizationId =
+    isSupabaseConfigured && supabase
+      ? String((await authEnsureOrganizationAccess(requestedOrganizationId)) || "").trim()
+      : requestedOrganizationId;
   const existingRows = financialYearsList();
   const row = buildFinancialYearRowForDate(dateValue, {
     rows: existingRows,

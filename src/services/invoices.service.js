@@ -1,5 +1,10 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
-import { authGetOrganizationId, authGetRole, authGetUser } from "./auth.service";
+import {
+  authEnsureOrganizationAccess,
+  authGetOrganizationId,
+  authGetRole,
+  authGetUser
+} from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
@@ -430,7 +435,7 @@ export function invoicesList(range) {
 export async function invoicesSyncFromRemote(range) {
   if (!isSupabaseConfigured || !supabase) return invoicesList(range);
 
-  const organizationId = authGetOrganizationId();
+  const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
   if (!organizationId) return invoicesList(range);
   const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
 
@@ -532,6 +537,10 @@ export async function invoicesCreate(invoice) {
   assertInvoiceWritePermission();
   const now = new Date().toISOString();
   const invoiceDate = invoice?.invoiceDate || now.slice(0, 10);
+  const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
+  if (isSupabaseConfigured && supabase && !organizationId) {
+    throw new Error("Organization is required to save invoices.");
+  }
   const actor = authGetUser();
   const actorUserId = actor?.id || null;
   const actorName = String(actor?.name || actor?.email || "").trim();
@@ -555,10 +564,8 @@ export async function invoicesCreate(invoice) {
   const subTotal = summary.subTotal;
   const grandTotal = summary.grandTotal;
   const matchedFinancialYear =
-    (await financialYearsEnsureForDate(invoiceDate).catch(() => null)) ||
+    (await financialYearsEnsureForDate(invoiceDate, null, { organizationId }).catch(() => null)) ||
     financialYearsResolveForDate(invoiceDate);
-
-  const organizationId = authGetOrganizationId();
   let id = uid("inv_");
   let invoiceNo = "";
   let saveError = null;
