@@ -4,6 +4,8 @@ import { AppRouteAccessGuard, AuthGuard, CompanySetupGuard, InvoiceTemplateGuard
 
 import AppLayout from "../layouts/AppLayout";
 import Login from "../pages/Login";
+import ForgotPassword from "../pages/ForgotPassword";
+import ResetPassword from "../pages/ResetPassword";
 import CompanySetup from "../pages/CompanySetup";
 import OrganizationSelect from "../pages/OrganizationSelect";
 import InvoiceTemplateSetup from "../pages/InvoiceTemplateSetup";
@@ -39,6 +41,8 @@ import NotFound from "../pages/NotFound";
 
 export const routes = [
   { path: "/login", element: <Login /> },
+  { path: "/forgot-password", element: <ForgotPassword /> },
+  { path: "/reset-password", element: <ResetPassword /> },
 
   {
     element: <AuthGuard />,

@@ -77,6 +77,86 @@ function normalizeEmail(value) {
   return (value || "").trim().toLowerCase();
 }
 
+function nowMs() {
+  return Date.now();
+}
+
+function toBase64Url(bytes) {
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function createSecureToken(size = 32) {
+  const bytes = new Uint8Array(size);
+  crypto.getRandomValues(bytes);
+  return toBase64Url(bytes);
+}
+
+async function sha256Hex(value) {
+  const buffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value || "")));
+  return Array.from(new Uint8Array(buffer))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function hashLocalPassword(password, salt = "") {
+  const safeSalt = String(salt || createSecureToken(16));
+  const hash = await sha256Hex(`${safeSalt}:${String(password || "")}`);
+  return { salt: safeSalt, hash };
+}
+
+async function verifyLocalPassword(user, password) {
+  const safePassword = String(password || "");
+  if (String(user?.password || "") && String(user.password) === safePassword) {
+    return true;
+  }
+  if (!user?.passwordHash || !user?.passwordSalt) return false;
+  const candidate = await sha256Hex(`${user.passwordSalt}:${safePassword}`);
+  return candidate === String(user.passwordHash || "");
+}
+
+function sanitizeStoredLocalUser(user) {
+  if (!user || typeof user !== "object") return user;
+  const next = { ...user };
+  delete next.password;
+  return next;
+}
+
+function replaceStoredLocalUser(nextUser) {
+  const safeEmail = normalizeEmail(nextUser?.email);
+  if (!safeEmail) return;
+  const users = getStoredUsers();
+  const nextList = users.map((entry) =>
+    normalizeEmail(entry?.email) === safeEmail ? sanitizeStoredLocalUser(nextUser) : sanitizeStoredLocalUser(entry)
+  );
+  setStoredUsers(nextList);
+}
+
+function buildPasswordResetLink(token, baseUrl = "") {
+  const safeToken = String(token || "").trim();
+  const safeBaseUrl = String(baseUrl || "").trim() || (typeof window !== "undefined" ? window.location.origin : "");
+  if (!safeToken || !safeBaseUrl) return "";
+  const url = new URL("/reset-password", safeBaseUrl);
+  url.searchParams.set("token", safeToken);
+  return url.toString();
+}
+
+function normalizePasswordResetFunctionError(error, fallbackMessage) {
+  const message = String(error?.message || "").trim();
+  const status = Number(error?.context?.status || error?.status || 0);
+  if (
+    status === 404 ||
+    /function was not found/i.test(message) ||
+    /failed to send a request to the edge function/i.test(message)
+  ) {
+    return "Password reset service is not deployed yet. Deploy the Supabase Edge Function `password-reset` and run the reset-token SQL migration.";
+  }
+  return message || fallbackMessage;
+}
+
 function isOrganizationSoftDeleted(organization) {
   const settings = organization?.settings;
   if (!settings || typeof settings !== "object") return false;
@@ -329,9 +409,16 @@ async function fetchAllMemberships(userId) {
 
 async function localLogin({ email, password }) {
   const users = [...DEMO_USERS, ...getStoredUsers()];
-  const found = users.find(
-    (u) => normalizeEmail(u.email) === normalizeEmail(email) && u.password === password
-  );
+  let found = null;
+  for (const user of users) {
+    if (normalizeEmail(user?.email) !== normalizeEmail(email)) continue;
+    // Support both legacy plain-text passwords and new hashed local passwords.
+    // Demo users continue to work with their bundled plain-text passwords.
+    if (await verifyLocalPassword(user, password)) {
+      found = user;
+      break;
+    }
+  }
   if (!found) {
     const err = new Error("Invalid email or password");
     err.code = "AUTH_INVALID";
@@ -375,7 +462,7 @@ async function localLogin({ email, password }) {
   };
 }
 
-function localRegister({ name, email, password, role, registerCode }) {
+async function localRegister({ name, email, password, role, registerCode }) {
   const safeEmail = normalizeEmail(email);
   const safeName = (name || "").trim() || safeEmail.split("@")[0] || "User";
   const safeRole = normalizeRoleLabel(role || ROLE_LABELS.owner);
@@ -401,11 +488,13 @@ function localRegister({ name, email, password, role, registerCode }) {
   }
 
   const localUserId = toLocalUserId(safeEmail);
+  const passwordState = await hashLocalPassword(password);
   const next = {
     id: localUserId,
     name: safeName,
     email: safeEmail,
-    password,
+    passwordHash: passwordState.hash,
+    passwordSalt: passwordState.salt,
     role: safeRole
   };
   setStoredUsers([next, ...getStoredUsers()]);
@@ -449,6 +538,161 @@ export function authGetOrganizationId() {
 
 export function authUsingSupabase() {
   return isSupabaseConfigured;
+}
+
+async function localRequestPasswordReset({ email, baseUrl = "" }) {
+  const safeEmail = normalizeEmail(email);
+  if (!safeEmail) {
+    throw new Error("Email is required.");
+  }
+
+  const users = getStoredUsers();
+  const matchedUser = users.find((entry) => normalizeEmail(entry?.email) === safeEmail) || null;
+  if (!matchedUser) {
+    return { delivered: true };
+  }
+
+  const resetToken = createSecureToken(32);
+  const tokenHash = await sha256Hex(resetToken);
+  const expiresAt = new Date(nowMs() + 60 * 60 * 1000).toISOString();
+
+  replaceStoredLocalUser({
+    ...matchedUser,
+    passwordResetTokenHash: tokenHash,
+    passwordResetTokenExpiresAt: expiresAt,
+    passwordResetRequestedAt: new Date().toISOString(),
+    passwordResetUsedAt: ""
+  });
+
+  return {
+    delivered: true,
+    resetLink: buildPasswordResetLink(resetToken, baseUrl)
+  };
+}
+
+async function localValidatePasswordResetToken(token) {
+  const safeToken = String(token || "").trim();
+  if (!safeToken) {
+    throw new Error("Reset token is required.");
+  }
+
+  const tokenHash = await sha256Hex(safeToken);
+  const matchedUser =
+    getStoredUsers().find(
+      (entry) =>
+        String(entry?.passwordResetTokenHash || "") === tokenHash &&
+        !String(entry?.passwordResetUsedAt || "").trim()
+    ) || null;
+
+  if (!matchedUser) {
+    throw new Error("Reset link is invalid or already used.");
+  }
+
+  const expiresAt = new Date(matchedUser.passwordResetTokenExpiresAt || "").getTime();
+  if (!Number.isFinite(expiresAt) || expiresAt < nowMs()) {
+    throw new Error("Reset link has expired.");
+  }
+
+  return {
+    valid: true,
+    email: matchedUser.email || ""
+  };
+}
+
+async function localResetPassword({ token, password }) {
+  const safeToken = String(token || "").trim();
+  const safePassword = String(password || "");
+  if (!safeToken) throw new Error("Reset token is required.");
+  if (!safePassword) throw new Error("Password is required.");
+
+  const tokenHash = await sha256Hex(safeToken);
+  const matchedUser =
+    getStoredUsers().find(
+      (entry) =>
+        String(entry?.passwordResetTokenHash || "") === tokenHash &&
+        !String(entry?.passwordResetUsedAt || "").trim()
+    ) || null;
+
+  if (!matchedUser) {
+    throw new Error("Reset link is invalid or already used.");
+  }
+
+  const expiresAt = new Date(matchedUser.passwordResetTokenExpiresAt || "").getTime();
+  if (!Number.isFinite(expiresAt) || expiresAt < nowMs()) {
+    throw new Error("Reset link has expired.");
+  }
+
+  const passwordState = await hashLocalPassword(safePassword);
+  replaceStoredLocalUser({
+    ...matchedUser,
+    passwordHash: passwordState.hash,
+    passwordSalt: passwordState.salt,
+    passwordResetTokenHash: "",
+    passwordResetTokenExpiresAt: "",
+    passwordResetRequestedAt: matchedUser.passwordResetRequestedAt || "",
+    passwordResetUsedAt: new Date().toISOString()
+  });
+
+  return { updated: true };
+}
+
+export async function authRequestPasswordReset({ email, baseUrl = "" }) {
+  if (!isSupabaseConfigured || !supabase) {
+    return localRequestPasswordReset({ email, baseUrl });
+  }
+
+  const { data, error } = await supabase.functions.invoke("password-reset", {
+    body: {
+      action: "request",
+      email: normalizeEmail(email),
+      base_url: String(baseUrl || "").trim()
+    }
+  });
+  if (error) {
+    throw new Error(normalizePasswordResetFunctionError(error, "Failed to send password reset email."));
+  }
+  return data || { delivered: true };
+}
+
+export async function authValidatePasswordResetToken(token) {
+  if (!isSupabaseConfigured || !supabase) {
+    return localValidatePasswordResetToken(token);
+  }
+
+  const { data, error } = await supabase.functions.invoke("password-reset", {
+    body: {
+      action: "validate",
+      token: String(token || "").trim()
+    }
+  });
+  if (error) {
+    throw new Error(normalizePasswordResetFunctionError(error, "Failed to validate reset link."));
+  }
+  if (!data?.valid) {
+    throw new Error(data?.error || "Reset link is invalid or expired.");
+  }
+  return data;
+}
+
+export async function authResetPassword({ token, password }) {
+  if (!isSupabaseConfigured || !supabase) {
+    return localResetPassword({ token, password });
+  }
+
+  const { data, error } = await supabase.functions.invoke("password-reset", {
+    body: {
+      action: "reset",
+      token: String(token || "").trim(),
+      password: String(password || "")
+    }
+  });
+  if (error) {
+    throw new Error(normalizePasswordResetFunctionError(error, "Failed to reset password."));
+  }
+  if (!data?.updated) {
+    throw new Error(data?.error || "Failed to reset password.");
+  }
+  return data;
 }
 
 export async function authEnsureOrganizationAccess(preferredOrganizationId = "") {

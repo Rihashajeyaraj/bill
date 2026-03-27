@@ -903,7 +903,12 @@ export default function Login() {
 
                   {/* Forgot */}
                   <div className="lp-forgot">
-                    <button type="button" className="lp-forgot-btn" id="forgot-password-btn">
+                    <button
+                      type="button"
+                      className="lp-forgot-btn"
+                      id="forgot-password-btn"
+                      onClick={() => nav("/forgot-password")}
+                    >
                       Forgot Password?
                     </button>
                   </div>
