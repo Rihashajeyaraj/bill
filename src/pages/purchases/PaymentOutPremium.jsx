@@ -15,6 +15,7 @@ import DateInput from "../../components/DateInput";
 import EmptyState from "../../components/EmptyState";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
+import PaymentModePicker from "../../modules/paymentIn/PaymentModePicker";
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
@@ -46,7 +47,7 @@ import {
 
 const PAYMENT_MODES = ["Cash", "Bank Transfer", "Cheque", "Card", "Online"];
 const STATUSES = ["Draft", "Paid", "Applied"];
-const FORM_STEPS = ["Supplier & Context", "Payment Details", "Review & Confirm"];
+const FORM_STEPS = ["Supplier & Country", "Payment Details", "Review & Confirm"];
 
 const ACTION_BAR_BASE =
   "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold";
@@ -130,7 +131,7 @@ export default function PaymentOutPremium() {
   const canDeletePayment = canDeleteEntries(role);
   const actorName = user?.name || user?.email || "System User";
 
-  const [panelMode, setPanelMode] = useState("list");
+  const [panelMode, setPanelMode] = useState("feed");
   const [activeStep, setActiveStep] = useState(0);
   const [form, setForm] = useState(defaultPaymentForm(country, currency));
   const [activePayment, setActivePayment] = useState(null);
@@ -316,7 +317,7 @@ export default function PaymentOutPremium() {
       selectedBillId: bill.id,
       allocations: buildBillAllocation(bill, 0)
     }));
-    setPanelMode("form");
+    setPanelMode("flow");
     setActiveStep(1);
     setDirty(false);
 
@@ -332,7 +333,7 @@ export default function PaymentOutPremium() {
     }
     setForm(defaultPaymentForm(country, currency));
     setActivePayment(null);
-    setPanelMode("form");
+    setPanelMode("flow");
     setActiveStep(0);
     setDirty(false);
     setSupplierLookupQuery("");
@@ -346,7 +347,7 @@ export default function PaymentOutPremium() {
     }
     setForm(paymentOutFormFromRecord(record));
     setActivePayment(record);
-    setPanelMode("form");
+    setPanelMode("flow");
     setActiveStep(mode === "view" ? 2 : 0);
     setDirty(false);
     if (mode === "view") {
@@ -356,7 +357,7 @@ export default function PaymentOutPremium() {
 
   function backToList() {
     if (dirty && !window.confirm("Discard unsaved changes?")) return;
-    setPanelMode("list");
+    setPanelMode("feed");
     setActiveStep(0);
     setForm(defaultPaymentForm(country, currency));
     setActivePayment(null);
@@ -600,7 +601,7 @@ export default function PaymentOutPremium() {
       removePaymentOut(record.id);
       await deletePaymentOutRemote(record.id);
       if (activePayment?.id === record.id) {
-        setPanelMode("list");
+        setPanelMode("feed");
         setActiveStep(0);
         setForm(defaultPaymentForm(country, currency));
         setActivePayment(null);
@@ -623,34 +624,23 @@ export default function PaymentOutPremium() {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <p className="text-base font-semibold text-slate-900">Payment Out</p>
-            <p className="text-xs text-slate-500">Pay suppliers and track payables</p>
+            <p className="text-xs text-slate-500">Pay money to suppliers</p>
           </div>
           <div className="mx-auto w-full max-w-xs rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm font-semibold text-slate-700 sm:mx-0 sm:flex-1 sm:max-w-sm">
             {country} | {currencySymbol || currency || "N/A"}
           </div>
-          {panelMode === "list" ? (
-            <button
-              type="button"
-              onClick={startNew}
-              disabled={!canCreatePayment}
-              className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Plus className="h-4 w-4" />
-              New Payment
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={backToList}
-              className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back to list
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={startNew}
+            disabled={!canCreatePayment}
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4" />
+            New Payment
+          </button>
         </div>
       </div>
-      {panelMode === "list" ? (
+      {panelMode === "feed" ? (
       <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <FlowCard title="Total Payments" subtitle="Count of supplier payments">
@@ -667,9 +657,8 @@ export default function PaymentOutPremium() {
             </FlowCard>
           </div>
 
-          <FlowCard title="Supplier Payments" subtitle="Search by supplier, payment number, or reference.">
-            <div className="space-y-3 border-b border-slate-100 px-4 py-4">
-              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
+          <FlowCard>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6 2xl:grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr]">
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
@@ -722,8 +711,8 @@ export default function PaymentOutPremium() {
                   onChange={(nextValue) => setToDate(nextValue)}
                   className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 />
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => exportPaymentOutSummaryPdf(filteredPayments, country, currency)}
@@ -742,24 +731,24 @@ export default function PaymentOutPremium() {
                   <FileSpreadsheet className="h-3.5 w-3.5" />
                   CSV
                 </button>
-              </div>
             </div>
+          </FlowCard>
 
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1280px] text-left text-sm">
-                <thead className="sticky top-0 bg-slate-50">
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+              <table className="w-full min-w-[1180px] text-left text-sm">
+                <thead className="bg-slate-50 text-slate-600">
                   <tr>
-                    <th className="px-4 py-3 font-semibold text-slate-700">Payment No</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700">Date</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700">Supplier</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700">Mode</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700">Reference</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">Cash Paid</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">TDS</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">Total Settled</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700 text-right">Cash Advance</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700">Status</th>
-                    <th className="px-4 py-3 font-semibold text-slate-700">Actions</th>
+                    <th className="px-3 py-3 font-semibold">Payment No</th>
+                    <th className="px-3 py-3 font-semibold">Date</th>
+                    <th className="px-3 py-3 font-semibold">Supplier</th>
+                    <th className="px-3 py-3 font-semibold">Mode</th>
+                    <th className="px-3 py-3 font-semibold">Reference</th>
+                    <th className="px-3 py-3 font-semibold text-right">Cash Paid</th>
+                    <th className="px-3 py-3 font-semibold text-right">TDS</th>
+                    <th className="px-3 py-3 font-semibold text-right">Total Settled</th>
+                    <th className="px-3 py-3 font-semibold text-right">Cash Advance</th>
+                    <th className="px-3 py-3 font-semibold">Status</th>
+                    <th className="px-3 py-3 font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -769,28 +758,28 @@ export default function PaymentOutPremium() {
                       const entryTds = Math.max(0, parseNumber(entry?.totals?.tdsAmount));
                       const entryTotalSettled = Math.max(0, parseNumber(entry?.totals?.totalSettled));
                       return (
-                        <tr key={entry.id} className="border-t border-slate-100 hover:bg-slate-50/70">
-                          <td className="px-4 py-3 font-semibold text-slate-900">{entry.paymentNo}</td>
-                          <td className="px-4 py-3 text-slate-700">{entry.paymentDate}</td>
-                          <td className="px-4 py-3 text-slate-700">{entry.supplierName}</td>
-                          <td className="px-4 py-3 text-slate-700">{entry.paymentMode}</td>
-                          <td className="px-4 py-3 text-slate-700">{entry.referenceNo || "-"}</td>
-                          <td className="px-4 py-3 text-right text-slate-700">
+                        <tr key={entry.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                          <td className="px-3 py-3 font-semibold text-slate-900">{entry.paymentNo}</td>
+                          <td className="px-3 py-3 text-slate-700">{entry.paymentDate}</td>
+                          <td className="px-3 py-3 text-slate-700">{entry.supplierName}</td>
+                          <td className="px-3 py-3 text-slate-700">{entry.paymentMode}</td>
+                          <td className="px-3 py-3 text-slate-700">{entry.referenceNo || "-"}</td>
+                          <td className="px-3 py-3 text-right text-slate-700">
                             {formatMoney(entry.totals?.amountPaid, currency)}
                           </td>
-                          <td className="px-4 py-3 text-right text-slate-700">
+                          <td className="px-3 py-3 text-right text-slate-700">
                             {formatMoney(entryTds, currency)}
                           </td>
-                          <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                          <td className="px-3 py-3 text-right font-semibold text-slate-900">
                             {formatMoney(entryTotalSettled, currency)}
                           </td>
-                          <td className={`px-4 py-3 text-right font-semibold ${advance ? "text-emerald-700" : "text-slate-700"}`}>
+                          <td className={`px-3 py-3 text-right font-semibold ${advance ? "text-emerald-700" : "text-slate-700"}`}>
                             {advance ? formatMoney(advance, currency) : "-"}
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-3">
                             <Badge tone={statusBadge(entry.status)}>{entry.status}</Badge>
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-3">
                             <div className="flex flex-wrap items-center gap-2">
                               <button
                                 type="button"
@@ -829,18 +818,27 @@ export default function PaymentOutPremium() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={11} className="px-4 py-10 text-center text-slate-500">
-                        No payments found
+                      <td colSpan={11} className="px-3 py-6 text-center text-slate-500">
+                        No payments found. Create a new payment to get started.
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
-          </FlowCard>
         </div>
       ) : (
         <div className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={backToList}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back
+            </button>
+          </div>
           <FlowStepTabs steps={FORM_STEPS} activeStep={activeStep} onChange={setActiveStep} />
 
           {activeStep === 0 ? (
@@ -1104,18 +1102,16 @@ export default function PaymentOutPremium() {
                   ) : null}
                   <label className="block">
                     <span className="text-xs font-semibold text-slate-600">Payment Mode</span>
-                    <select
-                      value={form.paymentMode}
-                      onChange={(event) => updateField("paymentMode", event.target.value)}
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                      disabled={readOnly}
-                    >
-                      {PAYMENT_MODES.map((mode) => (
-                        <option key={mode} value={mode}>
-                          {mode}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="mt-1">
+                      <PaymentModePicker
+                        options={PAYMENT_MODES}
+                        value={form.paymentMode}
+                        onChange={(mode) => {
+                          if (readOnly) return;
+                          updateField("paymentMode", mode);
+                        }}
+                      />
+                    </div>
                   </label>
                   {form.paymentMode === "Bank Transfer" ? (
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -1192,53 +1188,66 @@ export default function PaymentOutPremium() {
           ) : null}
 
           {activeStep === 2 ? (
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <FlowCard title="Review Summary" subtitle="Validate totals before final action">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+              <FlowCard title="Review & Confirm" subtitle="Final check before posting this payment">
                 <div className="space-y-3 text-sm">
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Supplier</p>
                     <p className="font-semibold text-slate-900">{selectedSupplier?.name || form.supplierName || "-"}</p>
-                    <p className="text-xs text-slate-500">
-                      {country} | {currencySymbol || currency || "-"} | {form.paymentDate || "-"}
+                    <p className="mt-1 text-xs text-slate-500">
+                      {country} | {currencySymbol || currency || "-"}
                     </p>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-500">Cash Paid</span>
-                    <span className="font-semibold text-slate-900">{formatMoney(amountPaid, currency)}</span>
+                  <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="text-slate-500">Cash Paid</p>
+                      <p className="text-base font-semibold text-slate-900">{formatMoney(amountPaid, currency)}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="text-slate-500">TDS Amount</p>
+                      <p className="text-base font-semibold text-sky-700">{formatMoney(tdsAmount, currency)}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="text-slate-500">Total Settled</p>
+                      <p className="text-base font-semibold text-emerald-700">{formatMoney(totalSettled, currency)}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="text-slate-500">Cash Advance</p>
+                      <p className="text-base font-semibold text-amber-700">{formatMoney(unappliedAmount, currency)}</p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Extra paid amount stays on the supplier account.
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="text-slate-500">Payment Mode</p>
+                      <p className="text-base font-semibold text-slate-900">{form.paymentMode}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="text-slate-500">
+                        {form.allocationMode === "linked" ? "Selected Document" : "Payment Flow"}
+                      </p>
+                      <p className="text-base font-semibold text-slate-900">
+                        {selectedBill ? `Invoice - ${selectedBill.billNo}` : "Normal Payment Entry"}
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {selectedBill
+                          ? `Pending ${formatMoney(selectedBill.balanceDue, currency)} | Settled ${formatMoney(totalSettled, currency)}`
+                          : "Saved without linking to any purchase invoice."}
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-500">TDS Amount</span>
-                    <span className="font-semibold text-sky-700">{formatMoney(tdsAmount, currency)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-500">Total Settled</span>
-                    <span className="font-semibold text-slate-900">{formatMoney(totalSettled, currency)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-500">Cash Advance</span>
-                    <span className="font-semibold text-emerald-700">{formatMoney(unappliedAmount, currency)}</span>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
-                    <p className="text-slate-500">
-                      {form.allocationMode === "linked" ? "Selected Invoice" : "Payment Flow"}
-                    </p>
-                    <p className="font-semibold text-slate-700">
-                      {selectedBill ? `Invoice - ${selectedBill.billNo}` : "Normal Payment Entry"}
-                    </p>
-                    <p className="mt-1 text-slate-500">
-                      {selectedBill
-                        ? `Pending ${formatMoney(selectedBill.balanceDue, currency)} | Cash Applied ${formatMoney(amountApplied, currency)} | TDS ${formatMoney(tdsAmount, currency)}`
-                        : "Saved without linking to any purchase invoice."}
-                    </p>
-                  </div>
+                  {unappliedAmount > 0 ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      {form.allocationMode === "linked"
+                        ? "Pending balance on the selected document updates automatically. Any excess amount is retained as advance."
+                        : "This payment is stored as a normal payment entry without invoice allocation."}
+                    </div>
+                  ) : null}
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
                     <p className="text-slate-500">Supplier Outstanding After Payment</p>
                     <p className={`text-base font-semibold ${outstandingAfter <= 0 ? "text-emerald-700" : "text-rose-600"}`}>
                       {formatMoney(outstandingAfter, currency)}
                     </p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
-                    <p className="text-slate-500">Approval Role</p>
-                    <p className="font-semibold text-slate-700">{role}</p>
                     <p className="mt-1 text-slate-500">
                       {selectedBill
                         ? "Pending amount updates automatically for the selected purchase invoice."
@@ -1248,48 +1257,38 @@ export default function PaymentOutPremium() {
                 </div>
               </FlowCard>
 
-              <FlowCard title="Notes & Attachments" subtitle="Store internal context and payment proof">
+              <FlowCard title="Receipt Snapshot" subtitle="Country wording + legal labels">
                 <div className="space-y-3">
-                  <textarea
-                    value={form.internalNotes}
-                    onChange={(event) => updateField("internalNotes", event.target.value)}
-                    rows={4}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                    placeholder="Internal notes (finance team)."
-                    disabled={readOnly}
-                  />
-                  <label className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-500">
-                    <input
-                      type="file"
-                      className="hidden"
-                      disabled={readOnly}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0] || null;
-                        updateField(
-                          "attachment",
-                          file ? { name: file.name, size: file.size, type: file.type || "application/octet-stream" } : null
-                        );
-                      }}
-                    />
-                    {form.attachment ? (
-                      <div className="text-center">
-                        <p className="text-sm font-semibold text-slate-700">{form.attachment.name}</p>
-                        <p className="text-xs text-slate-500">{Math.round(form.attachment.size / 1024)} KB</p>
-                      </div>
-                    ) : (
-                      "Upload payment proof"
-                    )}
-                  </label>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                    <p>Mode: <span className="font-semibold text-slate-800">{form.paymentMode}</span></p>
-                    <p>Reference: <span className="font-semibold text-slate-800">{form.referenceNo || "-"}</span></p>
+                  <p className="text-xs text-slate-500">Payment Out Snapshot</p>
+                  <p className="text-3xl font-bold tracking-tight text-slate-900">{formatMoney(totalSettled, currency)}</p>
+                  <p className="text-xs text-slate-500">
+                    Cash paid {formatMoney(amountPaid, currency)} + TDS {formatMoney(tdsAmount, currency)}
+                  </p>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                    <p>Payment out flow records supplier settlements and keeps any balance as advance.</p>
+                    <p className="mt-2">
+                      Reference: <span className="font-semibold text-slate-800">{form.referenceNo || "-"}</span>
+                    </p>
+                    <p className="mt-1">
+                      Payment Date: <span className="font-semibold text-slate-800">{form.paymentDate || "-"}</span>
+                    </p>
                   </div>
+                  {activePayment ? (
+                    <button
+                      type="button"
+                      onClick={() => exportPaymentOutPdf(activePayment)}
+                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"
+                    >
+                      <FileDown className="h-3.5 w-3.5" />
+                      Download Current PDF
+                    </button>
+                  ) : null}
                 </div>
               </FlowCard>
             </div>
           ) : null}
 
-          {panelMode === "form" && !readOnly ? (
+          {panelMode === "flow" && !readOnly ? (
             <div className="app-floating-action-bar fixed bottom-4 right-4 z-40 flex flex-wrap items-center justify-end gap-3 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
               <button
                 type="button"
@@ -1320,7 +1319,7 @@ export default function PaymentOutPremium() {
         </div>
       )}
 
-      {!suppliers.length && panelMode === "list" ? (
+      {!suppliers.length && panelMode === "feed" ? (
         <EmptyState
           title="No suppliers yet"
           description="Add suppliers in Parties before creating payment out transactions."
