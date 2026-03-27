@@ -28,6 +28,7 @@ export default function Expense() {
   const [date, setDate] = useState("");
   const [category, setCategory] = useState("Office");
   const [amount, setAmount] = useState("");
+  const [paymentMode, setPaymentMode] = useState("Cash");
   const [note, setNote] = useState("");
   const [categoryOptions, setCategoryOptions] = useState(() => expenseCategoriesList());
   const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
@@ -95,6 +96,7 @@ export default function Expense() {
         date,
         category: cleanCategory,
         amount: numericAmount,
+        paymentMode,
         note
       });
       setHistoryRows(Array.isArray(updated) ? updated : expensesList(activeRange));
@@ -113,6 +115,7 @@ export default function Expense() {
     setDate(row?.date || "");
     setCategory(row?.category || "");
     setAmount(String(Number(row?.amount || 0)));
+    setPaymentMode(row?.paymentMode || "Cash");
     setNote(row?.note || "");
   }
 
@@ -177,6 +180,17 @@ export default function Expense() {
             />
           </FormField>
 
+          <FormField label="Payment Method">
+            <select
+              value={paymentMode}
+              onChange={(event) => setPaymentMode(event.target.value)}
+              className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none"
+            >
+              <option value="Cash">Cash</option>
+              <option value="Bank">Bank</option>
+            </select>
+          </FormField>
+
           <FormField label="Note">
             <input
               value={note}
@@ -211,6 +225,7 @@ export default function Expense() {
               <tr>
                 <th className="px-3 py-3 font-semibold">Date</th>
                 <th className="px-3 py-3 font-semibold">Category</th>
+                <th className="px-3 py-3 font-semibold">Payment Method</th>
                 <th className="px-3 py-3 font-semibold text-right">Amount</th>
                 <th className="px-3 py-3 font-semibold">Note</th>
                 <th className="px-3 py-3 font-semibold">Actions</th>
@@ -219,13 +234,13 @@ export default function Expense() {
             <tbody>
               {loadingHistory ? (
                 <tr className="border-t border-slate-100">
-                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                  <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
                     Loading expense history...
                   </td>
                 </tr>
               ) : historyRows.length === 0 ? (
                 <tr className="border-t border-slate-100">
-                  <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                  <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
                     No expenses saved yet.
                   </td>
                 </tr>
@@ -234,6 +249,7 @@ export default function Expense() {
                   <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                     <td className="px-3 py-3 text-slate-700">{formatDate(row?.date)}</td>
                     <td className="px-3 py-3 font-medium text-slate-900">{row?.category || "-"}</td>
+                    <td className="px-3 py-3 text-slate-600">{row?.paymentMode || "-"}</td>
                     <td className="px-3 py-3 text-right font-semibold text-slate-900">{money(row?.amount)}</td>
                     <td className="px-3 py-3 text-slate-600">{row?.note || "-"}</td>
                     <td className="px-3 py-3">
