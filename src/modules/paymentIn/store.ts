@@ -466,7 +466,18 @@ export function listPaymentLedger(country?: CountryCode) {
   return ledger.filter((entry) => entry.country === country);
 }
 
-export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvoice[] {
+function rawAdvanceWalletByCustomer(country: CountryCode, customerId: string) {
+  if (!customerId) return 0;
+  return listPaymentIn(country)
+    .filter((entry) => entry.customerId === customerId)
+    .filter((entry) => entry.status !== "Draft")
+    .reduce((sum, entry) => sum + entry.totals.unappliedAmount, 0);
+}
+
+function mapOpenInvoicesByCountryInternal(
+  country: CountryCode,
+  { applyAdvance = true }: { applyAdvance?: boolean } = {}
+): CustomerOpenInvoice[] {
   const rawInvoices = lsGetOrganizationScoped(LS_KEYS.invoices, []);
   const rawProformas = lsGetOrganizationScoped(SALES_PROFORMAS_KEY, []);
   const fromStorage: CustomerOpenInvoice[] = (Array.isArray(rawInvoices) ? rawInvoices : [])
@@ -535,7 +546,48 @@ export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvo
     })
     .filter(Boolean) as CustomerOpenInvoice[];
 
-  return [...fromStorage, ...fromProformas].sort((a, b) => (a.invoiceDate < b.invoiceDate ? 1 : -1));
+  const combined = [...fromStorage, ...fromProformas];
+  if (!applyAdvance) {
+    return combined.sort((a, b) => (a.invoiceDate < b.invoiceDate ? 1 : -1));
+  }
+
+  const documentsByCustomer = new Map<string, CustomerOpenInvoice[]>();
+  combined.forEach((document) => {
+    const customerId = String(document?.customerId || "").trim();
+    if (!customerId) return;
+    const list = documentsByCustomer.get(customerId) || [];
+    list.push({ ...document });
+    documentsByCustomer.set(customerId, list);
+  });
+
+  const adjusted: CustomerOpenInvoice[] = [];
+  documentsByCustomer.forEach((documents, customerId) => {
+    let remainingAdvance = Math.max(0, rawAdvanceWalletByCustomer(country, customerId));
+    const sortedDocuments = [...documents].sort((left, right) => {
+      const leftDate = String(left?.invoiceDate || "");
+      const rightDate = String(right?.invoiceDate || "");
+      if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+      return String(left?.invoiceNo || "").localeCompare(String(right?.invoiceNo || ""));
+    });
+
+    sortedDocuments.forEach((document) => {
+      const baseBalance = Math.max(0, toNumber(document?.balanceDue));
+      const adjustedBalance = Math.max(0, baseBalance - remainingAdvance);
+      const consumedAdvance = Math.min(baseBalance, remainingAdvance);
+      remainingAdvance = Math.max(0, remainingAdvance - consumedAdvance);
+      if (adjustedBalance <= 0) return;
+      adjusted.push({
+        ...document,
+        balanceDue: adjustedBalance
+      });
+    });
+  });
+
+  return adjusted.sort((a, b) => (a.invoiceDate < b.invoiceDate ? 1 : -1));
+}
+
+export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvoice[] {
+  return mapOpenInvoicesByCountryInternal(country, { applyAdvance: true });
 }
 
 export function mapCustomersByCountry(country: CountryCode): CustomerOption[] {
@@ -587,12 +639,14 @@ export function paymentInsightsByCustomer(country: CountryCode, customerId: stri
 
   const records = listPaymentIn(country).filter((entry) => entry.customerId === customerId);
   const sorted = [...records].sort((a, b) => (a.paymentDate < b.paymentDate ? 1 : -1));
+  const rawAdvanceWallet = rawAdvanceWalletByCustomer(country, customerId);
+  const rawOutstandingBeforeAdvance = mapOpenInvoicesByCountryInternal(country, { applyAdvance: false })
+    .filter((invoice) => invoice.customerId === customerId)
+    .reduce((sum, invoice) => sum + invoice.balanceDue, 0);
 
   return {
     lastPaymentDate: sorted[0]?.paymentDate || "",
-    advanceWallet: records
-      .filter((entry) => entry.status !== "Draft")
-      .reduce((sum, entry) => sum + entry.totals.unappliedAmount, 0),
+    advanceWallet: Math.max(0, rawAdvanceWallet - rawOutstandingBeforeAdvance),
     totalReceived: records
       .filter((entry) => entry.status !== "Draft")
       .reduce((sum, entry) => sum + entry.totals.amountReceived, 0),
