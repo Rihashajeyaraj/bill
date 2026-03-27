@@ -178,6 +178,42 @@ export function paymentOutAllocationSettledAmount(record, line) {
   return Math.max(0, parseNumber(line?.applyAmount)) + paymentOutAllocationTdsShare(record, line);
 }
 
+export function listBillTdsHistory(country, billId) {
+  const normalizedBillId = String(billId || "").trim();
+  if (!normalizedBillId) return [];
+
+  return listPaymentOut(country)
+    .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
+    .flatMap((entry) => {
+      const allocations = ensureArray(entry?.allocations);
+      return allocations
+        .filter((line) => String(line?.billId || "").trim() === normalizedBillId)
+        .map((line) => {
+          const tdsAmount = paymentOutAllocationTdsShare(entry, line);
+          if (tdsAmount <= 0) return null;
+          return {
+            paymentId: entry?.id || "",
+            paymentNo: entry?.paymentNo || "",
+            billId: normalizedBillId,
+            billNo: line?.billNo || "",
+            supplierId: entry?.supplierId || "",
+            supplierName: entry?.supplierName || "",
+            date: entry?.paymentDate || "",
+            tdsAmount,
+            tdsRate: Math.max(0, parseNumber(entry?.tdsRate)),
+            category: entry?.tdsCategory || ""
+          };
+        })
+        .filter(Boolean);
+    })
+    .sort((left, right) => {
+      const leftDate = String(left?.date || "");
+      const rightDate = String(right?.date || "");
+      if (leftDate !== rightDate) return rightDate.localeCompare(leftDate);
+      return String(right?.paymentNo || "").localeCompare(String(left?.paymentNo || ""));
+    });
+}
+
 function computeTotals(payload) {
   const amountPaid = Math.max(0, parseNumber(payload.amountPaid));
   const tdsAmount = Math.max(0, parseNumber(payload.tdsAmount));

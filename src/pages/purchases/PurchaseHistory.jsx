@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Printer } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../../components/PageHeader";
@@ -7,6 +7,7 @@ import Modal from "../../components/Modal";
 import { useFinancialYears } from "../../context/FinancialYearContext";
 import { useToast } from "../../context/ToastContext";
 import { purchasesList, purchasesSyncFromRemote } from "../../services/purchases.service";
+import { listBillTdsHistory } from "../../modules/paymentOut/store";
 import {
   createItemBarcodesForPurchase,
   getBarcodeImageUrl,
@@ -65,6 +66,14 @@ export default function PurchaseHistory() {
   const [barcodeModalRows, setBarcodeModalRows] = useState([]);
   const [barcodeLoading, setBarcodeLoading] = useState(false);
   const [barcodeActionBillId, setBarcodeActionBillId] = useState("");
+  const selectedBillTdsRows = useMemo(
+    () => (selectedBill?.id ? listBillTdsHistory(selectedBill?.country, selectedBill.id) : []),
+    [selectedBill]
+  );
+  const selectedBillTdsTotal = useMemo(
+    () => selectedBillTdsRows.reduce((sum, entry) => sum + Number(entry?.tdsAmount || 0), 0),
+    [selectedBillTdsRows]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -550,6 +559,47 @@ export default function PurchaseHistory() {
                 <p className="text-xs text-slate-500">Pending Balance</p>
                 <p className="font-semibold text-slate-900">{money(selectedBill?.remainingBalance ?? selectedBill?.totals?.balance)}</p>
               </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">TDS Tracking</p>
+                  <p className="text-xs text-slate-500">Track TDS amount, date, and supplier for this bill.</p>
+                </div>
+                <div className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+                  Total TDS {money(selectedBillTdsTotal)}
+                </div>
+              </div>
+
+              {selectedBillTdsRows.length ? (
+                <div className="overflow-auto">
+                  <table className="w-full min-w-[520px] text-left text-sm">
+                    <thead className="bg-slate-50 text-slate-600">
+                      <tr>
+                        <th className="px-3 py-2 font-semibold">Date</th>
+                        <th className="px-3 py-2 font-semibold">Supplier</th>
+                        <th className="px-3 py-2 font-semibold">Payment No</th>
+                        <th className="px-3 py-2 text-right font-semibold">TDS Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedBillTdsRows.map((entry) => (
+                        <tr key={`${entry.paymentId}_${entry.billId}_${entry.paymentNo}`} className="border-t border-slate-100">
+                          <td className="px-3 py-2 text-slate-700">{formatDate(entry?.date)}</td>
+                          <td className="px-3 py-2 text-slate-700">{entry?.supplierName || selectedBill?.partyName || "-"}</td>
+                          <td className="px-3 py-2 text-slate-600">{entry?.paymentNo || "-"}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-sky-700">{money(entry?.tdsAmount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="px-3 py-4 text-sm text-slate-500">
+                  No TDS tracked for this bill yet.
+                </div>
+              )}
             </div>
           </div>
         ) : null}
