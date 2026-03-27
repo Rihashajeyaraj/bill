@@ -8,6 +8,12 @@ function isOutOfRange(iso, minIso, maxIso) {
   return false;
 }
 
+function draftDigitsToIso(digits) {
+  const text = String(digits || "").replace(/\D/g, "").slice(0, 6);
+  if (text.length !== 6) return "";
+  return parseDateInputToIso(formatDraftDate(text));
+}
+
 function formatDraftDate(value) {
   const digits = String(value || "").replace(/\D/g, "").slice(0, 6);
   if (!digits) return "";
@@ -68,12 +74,14 @@ function isValidPartialDateDigits(digits) {
   return true;
 }
 
-function sanitizeDraftDigits(value) {
+function sanitizeDraftDigits(value, minIso = "", maxIso = "") {
   const digits = String(value || "").replace(/\D/g, "").slice(0, 6);
   let accepted = "";
   for (const digit of digits) {
     const candidate = `${accepted}${digit}`;
     if (!isValidPartialDateDigits(candidate)) continue;
+    const candidateIso = draftDigitsToIso(candidate);
+    if (candidateIso && isOutOfRange(candidateIso, minIso, maxIso)) continue;
     accepted = candidate;
   }
   return accepted;
@@ -91,13 +99,15 @@ function caretFromDigitCount(count) {
   return Math.min(8, digits + Math.min(2, Math.floor(digits / 2)));
 }
 
-function applyDigitsToSelection(currentValue, selectionStart, selectionEnd, insertedText) {
+function applyDigitsToSelection(currentValue, selectionStart, selectionEnd, insertedText, minIso = "", maxIso = "") {
   const currentDigits = String(currentValue || "").replace(/\D/g, "");
   const startDigitIndex = digitCountBeforeCaret(currentValue, selectionStart);
   const endDigitIndex = digitCountBeforeCaret(currentValue, selectionEnd);
   const insertedDigits = String(insertedText || "").replace(/\D/g, "");
   const nextDigits = sanitizeDraftDigits(
-    `${currentDigits.slice(0, startDigitIndex)}${insertedDigits}${currentDigits.slice(endDigitIndex)}`
+    `${currentDigits.slice(0, startDigitIndex)}${insertedDigits}${currentDigits.slice(endDigitIndex)}`,
+    minIso,
+    maxIso
   );
   const nextDigitCaret = Math.min(startDigitIndex + insertedDigits.length, nextDigits.length);
   return {
@@ -178,7 +188,7 @@ export default function DateInput({
       disabled={disabled}
       placeholder={placeholder}
       onChange={(event) => {
-        const nextDigits = sanitizeDraftDigits(event.target.value);
+        const nextDigits = sanitizeDraftDigits(event.target.value, minIso, maxIso);
         const nextValue = formatDraftDate(nextDigits);
         const nextCaret = caretFromDigitCount(
           Math.min(
@@ -195,7 +205,9 @@ export default function DateInput({
           draftValue,
           event.currentTarget.selectionStart,
           event.currentTarget.selectionEnd,
-          pasted
+          pasted,
+          minIso,
+          maxIso
         );
         updateDraft(nextValue, nextCaret);
       }}

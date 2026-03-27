@@ -147,14 +147,27 @@ function createEmptyLine() {
   };
 }
 
+function nextIsoDate(value: unknown) {
+  const iso = String(value || "").trim();
+  if (!iso) return "";
+  const candidate = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(candidate.getTime())) return "";
+  candidate.setUTCDate(candidate.getUTCDate() + 1);
+  return candidate.toISOString().slice(0, 10);
+}
+
 function validateSalesProformaForm(form: any) {
   const errors: any = {};
   const lineErrors: Record<string, { item?: string; qty?: string }> = {};
   let hasBlockingLineError = false;
 
   const proformaDate = String(form?.proformaDate || "").trim();
+  const validTill = String(form?.validTill || "").trim();
   if (!proformaDate) {
     errors.proformaDate = "Pro Forma Date is required.";
+  }
+  if (proformaDate && validTill && validTill <= proformaDate) {
+    errors.validTill = "Valid Till must be after the Pro Forma Date.";
   }
 
   if (!String(form?.partyId || "").trim()) {
@@ -197,6 +210,7 @@ function validateSalesProformaForm(form: any) {
 
   const hasErrors =
     !!errors.proformaDate ||
+    !!errors.validTill ||
     !!errors.partyId ||
     !!errors.lines ||
     (!validLineCount && hasBlockingLineError);
@@ -357,11 +371,13 @@ export default function SalesProformaEditor() {
             navigate("/app/sales/proformas/history", { replace: true });
             return;
           }
+          const nextProformaDate = found.proformaDate || "";
+          const nextValidTill = found.validTill || "";
           setForm({
             id: found.id || "",
             proformaNo: found.proformaNo || "",
-            proformaDate: found.proformaDate || "",
-            validTill: found.validTill || "",
+            proformaDate: nextProformaDate,
+            validTill: nextValidTill && nextProformaDate && nextValidTill <= nextProformaDate ? "" : nextValidTill,
             dueDate: found.dueDate || "",
             partyId: found.partyId || "",
             partyName: found.partyName || "",
@@ -408,7 +424,13 @@ export default function SalesProformaEditor() {
   }, [id, isNew, navigate, toast]);
 
   function updateForm(patch: any) {
-    setForm((prev: any) => ({ ...prev, ...patch }));
+    setForm((prev: any) => {
+      const next = { ...prev, ...patch };
+      if (next.proformaDate && next.validTill && next.validTill <= next.proformaDate) {
+        next.validTill = "";
+      }
+      return next;
+    });
   }
 
   function updateLine(lineId: string, patch: any) {
@@ -885,11 +907,17 @@ export default function SalesProformaEditor() {
               <label className="text-sm text-slate-600">
                 Valid Till
                 <DateInput
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm ${
+                    validation?.validTill ? "border-rose-300" : "border-slate-200"
+                  }`}
                   value={form.validTill || ""}
                   disabled={locked}
+                  min={nextIsoDate(form.proformaDate)}
                   onChange={(nextValue) => updateForm({ validTill: nextValue })}
                 />
+                {validation?.validTill ? (
+                  <p className="mt-1 text-xs font-medium text-rose-600">{validation.validTill}</p>
+                ) : null}
               </label>
             </div>
 

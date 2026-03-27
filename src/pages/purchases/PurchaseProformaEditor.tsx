@@ -165,6 +165,15 @@ function createEmptyLine() {
   };
 }
 
+function nextIsoDate(value: unknown) {
+  const iso = String(value || "").trim();
+  if (!iso) return "";
+  const candidate = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(candidate.getTime())) return "";
+  candidate.setUTCDate(candidate.getUTCDate() + 1);
+  return candidate.toISOString().slice(0, 10);
+}
+
 export default function PurchaseProformaEditor() {
   const { id = "new" } = useParams();
   const [searchParams] = useSearchParams();
@@ -325,11 +334,13 @@ export default function PurchaseProformaEditor() {
             navigate("/app/purchase/proformas/history", { replace: true });
             return;
           }
+          const nextProformaDate = found.proformaDate || "";
+          const nextValidTill = found.validTill || "";
           setForm({
             id: found.id || "",
             proformaNo: found.proformaNo || "",
-            proformaDate: found.proformaDate || "",
-            validTill: found.validTill || "",
+            proformaDate: nextProformaDate,
+            validTill: nextValidTill && nextProformaDate && nextValidTill <= nextProformaDate ? "" : nextValidTill,
             dueDate: found.dueDate || "",
             supplierId: found.supplierId || "",
             partyName: found.partyName || "",
@@ -369,7 +380,13 @@ export default function PurchaseProformaEditor() {
   }, [id, isNew, navigate, toast]);
 
   function updateForm(patch: any) {
-    setForm((prev: any) => ({ ...prev, ...patch }));
+    setForm((prev: any) => {
+      const next = { ...prev, ...patch };
+      if (next.proformaDate && next.validTill && next.validTill <= next.proformaDate) {
+        next.validTill = "";
+      }
+      return next;
+    });
   }
 
   function updateLine(lineId: string, patch: any) {
@@ -579,6 +596,14 @@ export default function PurchaseProformaEditor() {
 
   async function onSave() {
     if (locked) return;
+    if (!form.proformaDate) {
+      toast.warning("Pro Forma Date required", "Enter the Pro Forma Date before saving.");
+      return;
+    }
+    if (form.validTill && form.validTill <= form.proformaDate) {
+      toast.warning("Invalid Valid Till", "Valid Till must be after the Pro Forma Date.");
+      return;
+    }
     if (!form.supplierId) {
       toast.warning("Supplier required", "Select a supplier before saving.");
       return;
@@ -729,6 +754,7 @@ export default function PurchaseProformaEditor() {
                   className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                   value={form.validTill || ""}
                   disabled={locked}
+                  min={nextIsoDate(form.proformaDate)}
                   onChange={(nextValue) => updateForm({ validTill: nextValue })}
                 />
               </label>
