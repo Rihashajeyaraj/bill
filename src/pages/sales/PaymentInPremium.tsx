@@ -2,7 +2,16 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Search, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import DateInput from "../../components/DateInput";
-import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, COUNTRY_OPTIONS, type CountryCode, type PaymentMode, type PaymentStatus } from "../../modules/paymentIn/countryConfig";
+import {
+  COUNTRY_CONFIG,
+  COUNTRY_NAME_TO_CODE,
+  COUNTRY_OPTIONS,
+  formatPaymentModeLabel,
+  normalizePaymentMode,
+  type CountryCode,
+  type PaymentMode,
+  type PaymentStatus
+} from "../../modules/paymentIn/countryConfig";
 import {
   getSelectedPaymentCountry,
   listPaymentIn,
@@ -208,7 +217,14 @@ export default function PaymentInPremium() {
     const q = search.trim().toLowerCase();
     const matchFrom = fromDate ? entry.paymentDate >= fromDate : true;
     const matchTo = toDate ? entry.paymentDate <= toDate : true;
-    return (!q || haystack.includes(q)) && (!statusFilter || entry.status === statusFilter) && (!customerFilter || entry.customerId === customerFilter) && (!modeFilter || entry.paymentMode === modeFilter) && matchFrom && matchTo;
+    return (
+      (!q || haystack.includes(q)) &&
+      (!statusFilter || entry.status === statusFilter) &&
+      (!customerFilter || entry.customerId === customerFilter) &&
+      (!modeFilter || normalizePaymentMode(entry.paymentMode) === normalizePaymentMode(modeFilter)) &&
+      matchFrom &&
+      matchTo
+    );
   }), [payments, search, statusFilter, customerFilter, modeFilter, fromDate, toDate]);
   const customerLookupResults = useMemo(() => {
     const query = String(customerLookupQuery || "").trim().toLowerCase();
@@ -585,8 +601,8 @@ export default function PaymentInPremium() {
       if (!form.chequeNo.trim()) errors.chequeNo = "Cheque number is required.";
       if (!form.bankName.trim()) errors.bankName = "Bank name is required.";
     }
-    if (form.paymentMode === "Bank Transfer" && !form.bankAccount.trim()) errors.bankAccount = "Bank account is required.";
-    if ((form.paymentMode === "Bank Transfer" || form.paymentMode === "Card" || form.paymentMode === "UPI" || form.paymentMode === "Online Gateway") && !form.transactionId.trim()) errors.transactionId = "Transaction ID is required.";
+    if (form.paymentMode === "Net Banking" && !form.bankAccount.trim()) errors.bankAccount = "Bank account is required.";
+    if ((form.paymentMode === "Net Banking" || form.paymentMode === "Card" || form.paymentMode === "UPI" || form.paymentMode === "Online Gateway") && !form.transactionId.trim()) errors.transactionId = "Transaction ID is required.";
     if (targetStatus === "Applied") {
       if (form.allocationMode !== "linked" || !form.selectedDocumentId) {
         errors.selectedDocumentId = "Select an invoice or proforma and confirm the payment before applying it.";
@@ -850,7 +866,7 @@ export default function PaymentInPremium() {
                             <td className="px-3 py-3 font-semibold text-slate-900">{record.receiptNo}</td>
                             <td className="px-3 py-3 text-slate-600">{record.paymentDate || "-"}</td>
                             <td className="px-3 py-3 text-slate-700">{record.customerName || "-"}</td>
-                            <td className="px-3 py-3 text-slate-600">{record.paymentMode}</td>
+                            <td className="px-3 py-3 text-slate-600">{formatPaymentModeLabel(record.paymentMode)}</td>
                             <td className="px-3 py-3 text-right font-semibold text-slate-900">
                               {formatMoney(record?.totals?.amountReceived || 0, country)}
                             </td>
@@ -1198,7 +1214,7 @@ export default function PaymentInPremium() {
                           <div><input value={form.bankName} disabled={readOnly} onChange={(event) => updateForm("bankName", event.target.value)} placeholder="Bank Name" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.bankName ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.bankName}</p> : null}</div>
                         </div>
                       ) : null}
-                      {form.paymentMode === "Bank Transfer" ? (
+                      {form.paymentMode === "Net Banking" ? (
                         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                           <div><input value={form.bankAccount} disabled={readOnly} onChange={(event) => updateForm("bankAccount", event.target.value)} placeholder="Bank Account" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.bankAccount ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.bankAccount}</p> : null}</div>
                           <div><input value={form.transactionId} disabled={readOnly} onChange={(event) => updateForm("transactionId", event.target.value)} placeholder="Transaction ID" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.transactionId ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.transactionId}</p> : null}</div>
@@ -1277,7 +1293,7 @@ export default function PaymentInPremium() {
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Payment Mode</p>
-                          <p className="text-base font-semibold text-slate-900">{form.paymentMode}</p>
+                          <p className="text-base font-semibold text-slate-900">{formatPaymentModeLabel(form.paymentMode)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">

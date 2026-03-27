@@ -1,4 +1,4 @@
-import { COUNTRY_CONFIG, type CountryCode } from "./countryConfig";
+import { COUNTRY_CONFIG, normalizePaymentMode, type CountryCode } from "./countryConfig";
 import type { PaymentInRecord } from "./store";
 import type { PaymentInFormState } from "./types";
 import { formatCurrencyByPreference } from "../../lib/formatPreferences";
@@ -131,7 +131,7 @@ export function formFromRecord(note: PaymentInRecord): PaymentInFormState {
     tdsCategory,
     tdsRate: String(tdsRate),
     isManual: inferredManual,
-    paymentMode: note.paymentMode,
+    paymentMode: normalizePaymentMode(note.paymentMode),
     referenceNo: note.referenceNo || "",
     chequeNo: note.chequeNo || "",
     bankName: note.bankName || "",

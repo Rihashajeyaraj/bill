@@ -4,11 +4,13 @@ export type PaymentStatus = "Draft" | "Confirmed" | "Applied";
 
 export type PaymentMode =
   | "Cash"
-  | "Bank Transfer"
+  | "Net Banking"
   | "Cheque"
   | "Card"
   | "UPI"
   | "Online Gateway";
+
+type LegacyPaymentMode = PaymentMode | "Bank Transfer" | "Online";
 
 export interface CountryConfig {
   code: CountryCode;
@@ -26,7 +28,7 @@ export interface CountryConfig {
   paymentModes: PaymentMode[];
 }
 
-const COMMON_MODES: PaymentMode[] = ["Cash", "Bank Transfer", "Cheque", "Card", "Online Gateway"];
+const COMMON_MODES: PaymentMode[] = ["Cash", "Net Banking", "Cheque", "Card", "Online Gateway"];
 
 export const COUNTRY_CONFIG: Record<CountryCode, CountryConfig> = {
   SL: {
@@ -162,4 +164,25 @@ export function normalizePaymentStatus(value: unknown): PaymentStatus {
   if (normalized === "applied") return "Applied";
   if (normalized === "confirmed" || normalized === "received") return "Confirmed";
   return "Draft";
+}
+
+export function normalizePaymentMode(value: unknown): PaymentMode {
+  const raw = String(value || "").trim() as LegacyPaymentMode;
+  if (raw === "Bank Transfer") return "Net Banking";
+  if (raw === "Online") return "UPI";
+  if (
+    raw === "Cash" ||
+    raw === "Net Banking" ||
+    raw === "Cheque" ||
+    raw === "Card" ||
+    raw === "UPI" ||
+    raw === "Online Gateway"
+  ) {
+    return raw;
+  }
+  return "Cash";
+}
+
+export function formatPaymentModeLabel(value: unknown) {
+  return normalizePaymentMode(value);
 }

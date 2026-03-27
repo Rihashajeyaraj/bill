@@ -45,7 +45,7 @@ import {
   TDS_CATEGORY_OPTIONS
 } from "../../modules/paymentOut/utils";
 
-const PAYMENT_MODES = ["Cash", "Bank Transfer", "Cheque", "Card", "Online"];
+const PAYMENT_MODES = ["Cash", "Net Banking", "Cheque", "Card", "UPI"];
 const STATUSES = ["Draft", "Paid", "Applied"];
 const FORM_STEPS = ["Supplier & Country", "Payment Details", "Review & Confirm"];
 
@@ -92,6 +92,18 @@ function calculatedTdsInputValue(amountPaid, tdsRate) {
   return String(calculateTdsAmount(amountPaid, tdsRate));
 }
 
+function normalizePaymentMode(value) {
+  const mode = String(value || "").trim();
+  if (mode === "Bank Transfer") return "Net Banking";
+  if (mode === "Online") return "UPI";
+  if (PAYMENT_MODES.includes(mode)) return mode;
+  return "Cash";
+}
+
+function paymentModeLabel(value) {
+  return normalizePaymentMode(value);
+}
+
 function paymentOutFormFromRecord(record) {
   const storedAmountPaid = record?.amountPaid ?? record?.totals?.amountPaid ?? 0;
   const storedTdsAmount = record?.tdsAmount ?? record?.totals?.tdsAmount ?? 0;
@@ -104,6 +116,7 @@ function paymentOutFormFromRecord(record) {
 
   return {
     ...record,
+    paymentMode: normalizePaymentMode(record?.paymentMode),
     amountPaid: storedAmountPaid,
     tdsAmount: String(storedTdsAmount),
     tdsCategory: inferredManual ? "custom" : storedCategory,
@@ -194,7 +207,8 @@ export default function PaymentOutPremium() {
       const matchQuery = !query || haystack.includes(query);
       const matchSupplier = !supplierFilter || entry.supplierId === supplierFilter;
       const matchStatus = !statusFilter || entry.status === statusFilter;
-      const matchMode = !modeFilter || entry.paymentMode === modeFilter;
+      const matchMode =
+        !modeFilter || normalizePaymentMode(entry.paymentMode) === normalizePaymentMode(modeFilter);
       const matchFrom = fromDate ? entry.paymentDate >= fromDate : true;
       const matchTo = toDate ? entry.paymentDate <= toDate : true;
       return matchQuery && matchSupplier && matchStatus && matchMode && matchFrom && matchTo;
@@ -764,7 +778,7 @@ export default function PaymentOutPremium() {
                           <td className="px-3 py-3 font-semibold text-slate-900">{entry.paymentNo}</td>
                           <td className="px-3 py-3 text-slate-700">{entry.paymentDate}</td>
                           <td className="px-3 py-3 text-slate-700">{entry.supplierName}</td>
-                          <td className="px-3 py-3 text-slate-700">{entry.paymentMode}</td>
+                          <td className="px-3 py-3 text-slate-700">{paymentModeLabel(entry.paymentMode)}</td>
                           <td className="px-3 py-3 text-slate-700">{entry.referenceNo || "-"}</td>
                           <td className="px-3 py-3 text-right text-slate-700">
                             {formatMoney(entry.totals?.amountPaid, currency)}
@@ -1115,7 +1129,7 @@ export default function PaymentOutPremium() {
                       />
                     </div>
                   </label>
-                  {form.paymentMode === "Bank Transfer" ? (
+                  {form.paymentMode === "Net Banking" ? (
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <input
                         value={form.bankName}
@@ -1142,7 +1156,7 @@ export default function PaymentOutPremium() {
                       disabled={readOnly}
                     />
                   ) : null}
-                  {form.paymentMode === "Card" || form.paymentMode === "Online" ? (
+                  {form.paymentMode === "Card" || form.paymentMode === "UPI" ? (
                     <input
                       value={form.transactionId}
                       onChange={(event) => updateField("transactionId", event.target.value)}
@@ -1222,7 +1236,7 @@ export default function PaymentOutPremium() {
                     </div>
                     <div className="rounded-xl border border-slate-200 p-3">
                       <p className="text-slate-500">Payment Mode</p>
-                      <p className="text-base font-semibold text-slate-900">{form.paymentMode}</p>
+                      <p className="text-base font-semibold text-slate-900">{paymentModeLabel(form.paymentMode)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-3">
                       <p className="text-slate-500">

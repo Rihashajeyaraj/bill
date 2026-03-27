@@ -11,7 +11,7 @@ interface PaymentModePickerProps {
 
 function iconFor(mode: PaymentMode) {
   if (mode === "Cash") return Wallet;
-  if (mode === "Bank Transfer") return Landmark;
+  if (mode === "Net Banking") return Landmark;
   if (mode === "Cheque") return Building2;
   if (mode === "Card") return CreditCard;
   return Smartphone;
