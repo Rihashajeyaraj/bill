@@ -667,7 +667,11 @@ export default function PurchaseProformaEditor() {
         lines: cleanedLines,
         totals
       });
-      toast.success("Pro Forma Purchase Order saved", result?.proformaNo || "Saved successfully.");
+      if (result?.savedLocallyOnly) {
+        toast.warning("Pro Forma Purchase Order saved locally", result?.remoteSyncMessage || "Supabase denied access. Saved in local storage only.");
+      } else {
+        toast.success("Pro Forma Purchase Order saved", result?.proformaNo || "Saved successfully.");
+      }
       if (isNew && result?.id) {
         navigate(`/app/purchase/proformas/${encodeURIComponent(result.id)}`, { replace: true });
       } else {

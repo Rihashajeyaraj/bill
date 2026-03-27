@@ -56,6 +56,17 @@ function isOrganizationAccessError(error) {
   return code === "P0001" && message.includes("access denied for organization");
 }
 
+function isPermissionLikeError(error) {
+  const code = String(error?.code || "").toUpperCase();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "42501" ||
+    isOrganizationAccessError(error) ||
+    message.includes("rls denied access") ||
+    message.includes("access denied for organization")
+  );
+}
+
 function normalizeStatus(value, fallback = "DRAFT") {
   const status = String(value || "").trim().toUpperCase();
   if (PROFORMA_STATUSES.has(status)) return status;
@@ -542,148 +553,162 @@ export async function salesProformaUpsert(input) {
   let id = String(input?.id || "").trim();
   let proformaNo = String(input?.proformaNo || "").trim();
 
+  let savedLocallyOnly = false;
+  let remoteSyncMessage = "";
+
   if (isSupabaseConfigured && supabase) {
-    const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
-    if (!organizationId) {
-      throw new Error("Organization is required to save sales proforma.");
-    }
-
-    const headerPayload = {
-      organization_id: organizationId,
-      proforma_no: proformaNo || `PI-${Date.now()}`,
-      proforma_date: proformaDate,
-      valid_till: validTill || null,
-      due_date: dueDate || validTill || proformaDate,
-      party_id: looksLikeUuid(input?.partyId) ? input.partyId : null,
-      place_of_supply_state: input?.placeOfSupply || null,
-      currency_code: String(input?.currencyCode || "INR").toUpperCase(),
-      exchange_rate: parseNumber(input?.exchangeRate || 1) || 1,
-      subtotal: totals.subTotal,
-      discount_total: totals.discountTotal,
-      taxable_total: totals.taxableTotal,
-      cgst_total: totals.cgst,
-      sgst_total: totals.sgst,
-      igst_total: totals.igst,
-      cess_total: totals.cess,
-      vat_total: totals.vat,
-      tax_total: totals.taxTotal,
-      round_off: totals.roundOff,
-      grand_total: totals.grandTotal,
-      status,
-      notes: input?.notes || null,
-      terms: input?.terms || null,
-      metadata: {
-        country: input?.country || "",
-        partyName: input?.partyName || "",
-        taxMode: input?.taxMode || "",
-        supplyType: input?.supplyType || "",
-        createdByName: actorName
-      },
-      created_by: actorUserId
-    };
-
-    let headerRow = null;
-    if (looksLikeUuid(id)) {
-      const { data, error } = await supabase
-        .from("proforma_invoices")
-        .update(headerPayload)
-        .eq("id", id)
-        .eq("organization_id", organizationId)
-        .select("*")
-        .single();
-      if (error) {
-        throw new Error(normalizeSupabaseError(error, "Failed to update sales proforma"));
+    try {
+      const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
+      if (!organizationId) {
+        throw new Error("Organization is required to save sales proforma.");
       }
-      headerRow = data;
-    } else {
-      let created = null;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        if (!proformaNo || attempt > 0) {
-          const { data: nextNo, error: noError } = await supabase.rpc("allocate_sales_proforma_no", {
-            p_organization_id: organizationId,
-            p_proforma_date: proformaDate
-          });
-          if (noError) {
-            throw new Error(normalizeSupabaseError(noError, "Failed to allocate sales proforma number"));
-          }
-          proformaNo = String(nextNo || "").trim();
-          headerPayload.proforma_no = proformaNo || `PI-${Date.now()}`;
-        }
 
+      const headerPayload = {
+        organization_id: organizationId,
+        proforma_no: proformaNo || `PI-${Date.now()}`,
+        proforma_date: proformaDate,
+        valid_till: validTill || null,
+        due_date: dueDate || validTill || proformaDate,
+        party_id: looksLikeUuid(input?.partyId) ? input.partyId : null,
+        place_of_supply_state: input?.placeOfSupply || null,
+        currency_code: String(input?.currencyCode || "INR").toUpperCase(),
+        exchange_rate: parseNumber(input?.exchangeRate || 1) || 1,
+        subtotal: totals.subTotal,
+        discount_total: totals.discountTotal,
+        taxable_total: totals.taxableTotal,
+        cgst_total: totals.cgst,
+        sgst_total: totals.sgst,
+        igst_total: totals.igst,
+        cess_total: totals.cess,
+        vat_total: totals.vat,
+        tax_total: totals.taxTotal,
+        round_off: totals.roundOff,
+        grand_total: totals.grandTotal,
+        status,
+        notes: input?.notes || null,
+        terms: input?.terms || null,
+        metadata: {
+          country: input?.country || "",
+          partyName: input?.partyName || "",
+          taxMode: input?.taxMode || "",
+          supplyType: input?.supplyType || "",
+          createdByName: actorName
+        },
+        created_by: actorUserId
+      };
+
+      let headerRow = null;
+      if (looksLikeUuid(id)) {
         const { data, error } = await supabase
           .from("proforma_invoices")
-          .insert(headerPayload)
+          .update(headerPayload)
+          .eq("id", id)
+          .eq("organization_id", organizationId)
           .select("*")
           .single();
-        if (!error) {
-          created = data;
-          break;
+        if (error) {
+          throw error;
         }
-        if (!isUniqueConstraintConflict(error)) {
-          throw new Error(normalizeSupabaseError(error, "Failed to create sales proforma"));
+        headerRow = data;
+      } else {
+        let created = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (!proformaNo || attempt > 0) {
+            const { data: nextNo, error: noError } = await supabase.rpc("allocate_sales_proforma_no", {
+              p_organization_id: organizationId,
+              p_proforma_date: proformaDate
+            });
+            if (noError) {
+              throw noError;
+            }
+            proformaNo = String(nextNo || "").trim();
+            headerPayload.proforma_no = proformaNo || `PI-${Date.now()}`;
+          }
+
+          const { data, error } = await supabase
+            .from("proforma_invoices")
+            .insert(headerPayload)
+            .select("*")
+            .single();
+          if (!error) {
+            created = data;
+            break;
+          }
+          if (!isUniqueConstraintConflict(error)) {
+            throw error;
+          }
+          if (attempt === 2) {
+            throw new Error("Failed to create sales proforma due to number conflict. Please retry.");
+          }
         }
-        if (attempt === 2) {
-          throw new Error("Failed to create sales proforma due to number conflict. Please retry.");
+        headerRow = created;
+      }
+
+      id = String(headerRow?.id || id || "");
+      proformaNo = String(headerRow?.proforma_no || proformaNo || "");
+
+      if (!id) {
+        throw new Error("Sales proforma save failed. Missing proforma id.");
+      }
+
+      const { error: deleteError } = await supabase
+        .from("proforma_invoice_items")
+        .delete()
+        .eq("proforma_id", id);
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      const remoteLines = lines.map((line, index) => {
+        const qty = parseNumber(line?.qty);
+        const rate = parseNumber(line?.rate ?? line?.unitPrice);
+        const discountAmount = parseNumber(line?.discountAmount);
+        const taxableAmount = parseNumber(line?.taxableAmount) || Math.max(0, qty * rate - discountAmount);
+        const taxRate = parseNumber(line?.taxRate);
+        const explicitTax =
+          parseNumber(line?.cgstAmount) +
+          parseNumber(line?.sgstAmount) +
+          parseNumber(line?.igstAmount) +
+          parseNumber(line?.vatAmount) +
+          parseNumber(line?.cessAmount);
+        const impliedTax = round2((taxableAmount * taxRate) / 100);
+        return {
+          proforma_id: id,
+          item_id: looksLikeUuid(line?.itemId) ? line.itemId : null,
+          line_no: parseNumber(line?.lineNo) || index + 1,
+          description: line?.description || line?.itemName || `Line ${index + 1}`,
+          hsn_sac: line?.hsnSac || null,
+          qty,
+          unit: line?.unit || null,
+          unit_price: rate,
+          discount_percent: parseNumber(line?.discountPercent),
+          discount_amount: discountAmount,
+          taxable_amount: taxableAmount,
+          tax_rate: taxRate,
+          cgst_amount: parseNumber(line?.cgstAmount),
+          sgst_amount: parseNumber(line?.sgstAmount),
+          igst_amount: parseNumber(line?.igstAmount),
+          cess_amount: parseNumber(line?.cessAmount),
+          vat_amount: parseNumber(line?.vatAmount),
+          line_total: parseNumber(line?.lineTotal) || round2(taxableAmount + (explicitTax || impliedTax))
+        };
+      });
+
+      if (remoteLines.length) {
+        const { error: lineError } = await supabase.from("proforma_invoice_items").insert(remoteLines);
+        if (lineError) {
+          throw lineError;
         }
       }
-      headerRow = created;
-    }
-
-    id = String(headerRow?.id || id || "");
-    proformaNo = String(headerRow?.proforma_no || proformaNo || "");
-
-    if (!id) {
-      throw new Error("Sales proforma save failed. Missing proforma id.");
-    }
-
-    const { error: deleteError } = await supabase
-      .from("proforma_invoice_items")
-      .delete()
-      .eq("proforma_id", id);
-    if (deleteError) {
-      throw new Error(normalizeSupabaseError(deleteError, "Failed to refresh sales proforma line items"));
-    }
-
-    const remoteLines = lines.map((line, index) => {
-      const qty = parseNumber(line?.qty);
-      const rate = parseNumber(line?.rate ?? line?.unitPrice);
-      const discountAmount = parseNumber(line?.discountAmount);
-      const taxableAmount = parseNumber(line?.taxableAmount) || Math.max(0, qty * rate - discountAmount);
-      const taxRate = parseNumber(line?.taxRate);
-      const explicitTax =
-        parseNumber(line?.cgstAmount) +
-        parseNumber(line?.sgstAmount) +
-        parseNumber(line?.igstAmount) +
-        parseNumber(line?.vatAmount) +
-        parseNumber(line?.cessAmount);
-      const impliedTax = round2((taxableAmount * taxRate) / 100);
-      return {
-        proforma_id: id,
-        item_id: looksLikeUuid(line?.itemId) ? line.itemId : null,
-        line_no: parseNumber(line?.lineNo) || index + 1,
-        description: line?.description || line?.itemName || `Line ${index + 1}`,
-        hsn_sac: line?.hsnSac || null,
-        qty,
-        unit: line?.unit || null,
-        unit_price: rate,
-        discount_percent: parseNumber(line?.discountPercent),
-        discount_amount: discountAmount,
-        taxable_amount: taxableAmount,
-        tax_rate: taxRate,
-        cgst_amount: parseNumber(line?.cgstAmount),
-        sgst_amount: parseNumber(line?.sgstAmount),
-        igst_amount: parseNumber(line?.igstAmount),
-        cess_amount: parseNumber(line?.cessAmount),
-        vat_amount: parseNumber(line?.vatAmount),
-        line_total: parseNumber(line?.lineTotal) || round2(taxableAmount + (explicitTax || impliedTax))
-      };
-    });
-
-    if (remoteLines.length) {
-      const { error: lineError } = await supabase.from("proforma_invoice_items").insert(remoteLines);
-      if (lineError) {
-        throw new Error(normalizeSupabaseError(lineError, "Failed to save sales proforma line items"));
+    } catch (error) {
+      if (!isPermissionLikeError(error)) {
+        throw new Error(normalizeSupabaseError(error, "Failed to save sales proforma"));
       }
+      savedLocallyOnly = true;
+      remoteSyncMessage = normalizeSupabaseError(
+        error,
+        "Saved locally only because Supabase denied access"
+      );
     }
   }
 
@@ -730,7 +755,7 @@ export async function salesProformaUpsert(input) {
 
   const existing = salesGetAll().filter((entry) => String(entry?.id || "") !== String(localEntry.id));
   salesSetAll([localEntry, ...existing]);
-  return { id: localEntry.id, proformaNo: localEntry.proformaNo };
+  return { id: localEntry.id, proformaNo: localEntry.proformaNo, savedLocallyOnly, remoteSyncMessage };
 }
 
 export async function purchaseProformaUpsert(input) {
@@ -751,137 +776,151 @@ export async function purchaseProformaUpsert(input) {
   let id = String(input?.id || "").trim();
   let proformaNo = String(input?.proformaNo || "").trim();
 
+  let savedLocallyOnly = false;
+  let remoteSyncMessage = "";
+
   if (isSupabaseConfigured && supabase) {
-    const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
-    if (!organizationId) {
-      throw new Error("Organization is required to save purchase proforma.");
-    }
-
-    const headerPayload = {
-      organization_id: organizationId,
-      proforma_no: proformaNo || `PPI-${Date.now()}`,
-      proforma_date: proformaDate,
-      valid_till: validTill || null,
-      due_date: dueDate || validTill || proformaDate,
-      supplier_id: looksLikeUuid(input?.supplierId) ? input.supplierId : null,
-      subtotal: totals.subTotal,
-      taxable_total: totals.taxableTotal,
-      cgst_total: totals.cgst,
-      sgst_total: totals.sgst,
-      igst_total: totals.igst,
-      vat_total: totals.vat,
-      tax_total: totals.taxTotal,
-      grand_total: totals.grandTotal,
-      status,
-      metadata: {
-        country: input?.country || "",
-        partyName: input?.partyName || "",
-        partyAddress: input?.partyAddress || "",
-        phone: input?.phone || "",
-        taxMode: input?.taxMode || "",
-        supplyType: input?.supplyType || "",
-        createdByName: actorName
-      },
-      created_by: actorUserId
-    };
-
-    let headerRow = null;
-    if (looksLikeUuid(id)) {
-      const { data, error } = await supabase
-        .from("purchase_proformas")
-        .update(headerPayload)
-        .eq("id", id)
-        .eq("organization_id", organizationId)
-        .select("*")
-        .single();
-      if (error) {
-        throw new Error(normalizeSupabaseError(error, "Failed to update purchase proforma"));
+    try {
+      const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
+      if (!organizationId) {
+        throw new Error("Organization is required to save purchase proforma.");
       }
-      headerRow = data;
-    } else {
-      let created = null;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        if (!proformaNo || attempt > 0) {
-          const { data: nextNo, error: noError } = await supabase.rpc("allocate_purchase_proforma_no", {
-            p_organization_id: organizationId,
-            p_proforma_date: proformaDate
-          });
-          if (noError) {
-            throw new Error(normalizeSupabaseError(noError, "Failed to allocate purchase proforma number"));
-          }
-          proformaNo = String(nextNo || "").trim();
-          headerPayload.proforma_no = proformaNo || `PPI-${Date.now()}`;
-        }
 
+      const headerPayload = {
+        organization_id: organizationId,
+        proforma_no: proformaNo || `PPI-${Date.now()}`,
+        proforma_date: proformaDate,
+        valid_till: validTill || null,
+        due_date: dueDate || validTill || proformaDate,
+        supplier_id: looksLikeUuid(input?.supplierId) ? input.supplierId : null,
+        subtotal: totals.subTotal,
+        taxable_total: totals.taxableTotal,
+        cgst_total: totals.cgst,
+        sgst_total: totals.sgst,
+        igst_total: totals.igst,
+        vat_total: totals.vat,
+        tax_total: totals.taxTotal,
+        grand_total: totals.grandTotal,
+        status,
+        metadata: {
+          country: input?.country || "",
+          partyName: input?.partyName || "",
+          partyAddress: input?.partyAddress || "",
+          phone: input?.phone || "",
+          taxMode: input?.taxMode || "",
+          supplyType: input?.supplyType || "",
+          createdByName: actorName
+        },
+        created_by: actorUserId
+      };
+
+      let headerRow = null;
+      if (looksLikeUuid(id)) {
         const { data, error } = await supabase
           .from("purchase_proformas")
-          .insert(headerPayload)
+          .update(headerPayload)
+          .eq("id", id)
+          .eq("organization_id", organizationId)
           .select("*")
           .single();
-        if (!error) {
-          created = data;
-          break;
+        if (error) {
+          throw error;
         }
-        if (!isUniqueConstraintConflict(error)) {
-          throw new Error(normalizeSupabaseError(error, "Failed to create purchase proforma"));
+        headerRow = data;
+      } else {
+        let created = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (!proformaNo || attempt > 0) {
+            const { data: nextNo, error: noError } = await supabase.rpc("allocate_purchase_proforma_no", {
+              p_organization_id: organizationId,
+              p_proforma_date: proformaDate
+            });
+            if (noError) {
+              throw noError;
+            }
+            proformaNo = String(nextNo || "").trim();
+            headerPayload.proforma_no = proformaNo || `PPI-${Date.now()}`;
+          }
+
+          const { data, error } = await supabase
+            .from("purchase_proformas")
+            .insert(headerPayload)
+            .select("*")
+            .single();
+          if (!error) {
+            created = data;
+            break;
+          }
+          if (!isUniqueConstraintConflict(error)) {
+            throw error;
+          }
+          if (attempt === 2) {
+            throw new Error("Failed to create purchase proforma due to number conflict. Please retry.");
+          }
         }
-        if (attempt === 2) {
-          throw new Error("Failed to create purchase proforma due to number conflict. Please retry.");
+        headerRow = created;
+      }
+
+      id = String(headerRow?.id || id || "");
+      proformaNo = String(headerRow?.proforma_no || proformaNo || "");
+      if (!id) {
+        throw new Error("Purchase proforma save failed. Missing proforma id.");
+      }
+
+      const { error: deleteError } = await supabase
+        .from("purchase_proforma_items")
+        .delete()
+        .eq("proforma_id", id);
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      const remoteLines = lines.map((line, index) => {
+        const qty = parseNumber(line?.qty);
+        const rate = parseNumber(line?.rate ?? line?.unitPrice);
+        const taxableAmount = parseNumber(line?.taxableAmount) || Math.max(0, qty * rate);
+        const taxRate = parseNumber(line?.taxRate);
+        const explicitTax =
+          parseNumber(line?.cgstAmount) +
+          parseNumber(line?.sgstAmount) +
+          parseNumber(line?.igstAmount) +
+          parseNumber(line?.vatAmount);
+        const impliedTax = round2((taxableAmount * taxRate) / 100);
+        return {
+          proforma_id: id,
+          item_id: looksLikeUuid(line?.itemId) ? line.itemId : null,
+          line_no: parseNumber(line?.lineNo) || index + 1,
+          item_code: line?.itemCode || null,
+          description: line?.description || line?.itemName || `Line ${index + 1}`,
+          qty,
+          unit_price: rate,
+          tax_rate: taxRate,
+          taxable_amount: taxableAmount,
+          tax_amount: parseNumber(line?.taxAmount) || explicitTax || impliedTax,
+          tax_inclusive: !!line?.taxInclusive,
+          cgst_amount: parseNumber(line?.cgstAmount),
+          sgst_amount: parseNumber(line?.sgstAmount),
+          igst_amount: parseNumber(line?.igstAmount),
+          vat_amount: parseNumber(line?.vatAmount),
+          line_total: parseNumber(line?.lineTotal) || round2(taxableAmount + (explicitTax || impliedTax))
+        };
+      });
+
+      if (remoteLines.length) {
+        const { error: lineError } = await supabase.from("purchase_proforma_items").insert(remoteLines);
+        if (lineError) {
+          throw lineError;
         }
       }
-      headerRow = created;
-    }
-
-    id = String(headerRow?.id || id || "");
-    proformaNo = String(headerRow?.proforma_no || proformaNo || "");
-    if (!id) {
-      throw new Error("Purchase proforma save failed. Missing proforma id.");
-    }
-
-    const { error: deleteError } = await supabase
-      .from("purchase_proforma_items")
-      .delete()
-      .eq("proforma_id", id);
-    if (deleteError) {
-      throw new Error(normalizeSupabaseError(deleteError, "Failed to refresh purchase proforma line items"));
-    }
-
-    const remoteLines = lines.map((line, index) => {
-      const qty = parseNumber(line?.qty);
-      const rate = parseNumber(line?.rate ?? line?.unitPrice);
-      const taxableAmount = parseNumber(line?.taxableAmount) || Math.max(0, qty * rate);
-      const taxRate = parseNumber(line?.taxRate);
-      const explicitTax =
-        parseNumber(line?.cgstAmount) +
-        parseNumber(line?.sgstAmount) +
-        parseNumber(line?.igstAmount) +
-        parseNumber(line?.vatAmount);
-      const impliedTax = round2((taxableAmount * taxRate) / 100);
-      return {
-        proforma_id: id,
-        item_id: looksLikeUuid(line?.itemId) ? line.itemId : null,
-        line_no: parseNumber(line?.lineNo) || index + 1,
-        item_code: line?.itemCode || null,
-        description: line?.description || line?.itemName || `Line ${index + 1}`,
-        qty,
-        unit_price: rate,
-        tax_rate: taxRate,
-        taxable_amount: taxableAmount,
-        tax_amount: parseNumber(line?.taxAmount) || explicitTax || impliedTax,
-        tax_inclusive: !!line?.taxInclusive,
-        cgst_amount: parseNumber(line?.cgstAmount),
-        sgst_amount: parseNumber(line?.sgstAmount),
-        igst_amount: parseNumber(line?.igstAmount),
-        vat_amount: parseNumber(line?.vatAmount),
-        line_total: parseNumber(line?.lineTotal) || round2(taxableAmount + (explicitTax || impliedTax))
-      };
-    });
-
-    if (remoteLines.length) {
-      const { error: lineError } = await supabase.from("purchase_proforma_items").insert(remoteLines);
-      if (lineError) {
-        throw new Error(normalizeSupabaseError(lineError, "Failed to save purchase proforma line items"));
+    } catch (error) {
+      if (!isPermissionLikeError(error)) {
+        throw new Error(normalizeSupabaseError(error, "Failed to save purchase proforma"));
       }
+      savedLocallyOnly = true;
+      remoteSyncMessage = normalizeSupabaseError(
+        error,
+        "Saved locally only because Supabase denied access"
+      );
     }
   }
 
@@ -933,7 +972,7 @@ export async function purchaseProformaUpsert(input) {
     lsSetOrganizationScoped(LS_KEYS.items, Array.isArray(stockSnapshot) ? stockSnapshot : []);
   }
 
-  return { id: localEntry.id, proformaNo: localEntry.proformaNo };
+  return { id: localEntry.id, proformaNo: localEntry.proformaNo, savedLocallyOnly, remoteSyncMessage };
 }
 
 async function relinkSalesProformaPayments(proformaId, invoiceId, invoiceNo) {

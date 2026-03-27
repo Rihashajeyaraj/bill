@@ -763,6 +763,8 @@ export default function PaymentInPremium() {
     activePayment?.status === "Applied" || activePayment?.status === "Confirmed" || activeStep === 2
       ? "Confirmed"
       : "Draft";
+  const hasPreviousStep = activeStep > 0;
+  const hasNextStep = activeStep < STEPS.length - 1;
   const canSaveCurrentFlow = form?.id ? canEditPayment : canCreatePayment;
 
   return (
@@ -1335,6 +1337,27 @@ export default function PaymentInPremium() {
               {successMessage ? (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
                   {successMessage}
+                </div>
+              ) : null}
+
+              {!readOnly ? (
+                <div className="flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setActiveStep((current) => Math.max(0, current - 1))}
+                    disabled={!hasPreviousStep}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveStep((current) => Math.min(STEPS.length - 1, current + 1))}
+                    disabled={!hasNextStep}
+                    className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                  </button>
                 </div>
               ) : null}
             </>

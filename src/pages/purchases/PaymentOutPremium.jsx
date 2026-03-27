@@ -617,6 +617,8 @@ export default function PaymentOutPremium() {
   const readOnly = !!form.readOnly;
   const canSaveCurrentFlow = form?.id ? canEditPayment : canCreatePayment;
   const confirmStatus = form.allocationMode === "linked" && form.allocations.length ? "Applied" : "Paid";
+  const hasPreviousStep = activeStep > 0;
+  const hasNextStep = activeStep < FORM_STEPS.length - 1;
 
   return (
     <div className="mx-auto min-h-full max-w-[1360px] space-y-4 pb-32">
@@ -1285,6 +1287,27 @@ export default function PaymentOutPremium() {
                   ) : null}
                 </div>
               </FlowCard>
+            </div>
+          ) : null}
+
+          {panelMode === "flow" && !readOnly ? (
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setActiveStep((current) => Math.max(0, current - 1))}
+                disabled={!hasPreviousStep}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveStep((current) => Math.min(FORM_STEPS.length - 1, current + 1))}
+                disabled={!hasNextStep}
+                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next
+              </button>
             </div>
           ) : null}
 

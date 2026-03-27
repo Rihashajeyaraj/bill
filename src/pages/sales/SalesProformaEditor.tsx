@@ -766,7 +766,11 @@ export default function SalesProformaEditor() {
         lines: cleanedLines,
         totals
       });
-      toast.success("Pro Forma Invoice saved", result?.proformaNo || "Saved successfully.");
+      if (result?.savedLocallyOnly) {
+        toast.warning("Pro Forma Invoice saved locally", result?.remoteSyncMessage || "Supabase denied access. Saved in local storage only.");
+      } else {
+        toast.success("Pro Forma Invoice saved", result?.proformaNo || "Saved successfully.");
+      }
       if (isNew && result?.id) {
         navigate(`/app/sales/proformas/${encodeURIComponent(result.id)}`, { replace: true });
       } else {
