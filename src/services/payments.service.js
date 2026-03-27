@@ -1,5 +1,5 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
-import { authGetOrganizationId, authGetUser } from "./auth.service";
+import { authEnsureOrganizationAccess, authGetOrganizationId, authGetUser } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
 import {
@@ -33,6 +33,23 @@ function normalizeSupabaseError(error, fallback) {
     return `${fallback}. Supabase RLS denied access. Verify organization membership and policies.`;
   }
   return error?.message || fallback;
+}
+
+function isOrganizationAccessError(error) {
+  const code = String(error?.code || "").toUpperCase();
+  const message = String(error?.message || "").toLowerCase();
+  return code === "P0001" && message.includes("access denied for organization");
+}
+
+function isPermissionLikeError(error) {
+  const code = String(error?.code || "").toUpperCase();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "42501" ||
+    isOrganizationAccessError(error) ||
+    message.includes("rls denied access") ||
+    message.includes("access denied for organization")
+  );
 }
 
 function isMissingColumnError(error) {
@@ -223,7 +240,7 @@ export function paymentsCreate(payment) {
 export async function syncPaymentInRemote(record) {
   if (!record) return;
 
-  const organizationId = authGetOrganizationId();
+  const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
   const actorUserId = authGetUser()?.id || null;
   const sourcePrefix = `PI:${record.id}:`;
   const shouldApply = String(record?.status || "").toLowerCase() === "applied";
@@ -285,108 +302,122 @@ export async function syncPaymentInRemote(record) {
     }
   }
 
+  let savedLocallyOnly = false;
+  let remoteSyncMessage = "";
+
   if (isSupabaseConfigured && supabase && organizationId) {
-    const { data: existingRows, error: fetchError } = await supabase
-      .from("payments")
-      .select("id")
-      .eq("organization_id", organizationId)
-      .ilike("reference_no", `${sourcePrefix}%`);
-    if (fetchError) {
-      throw new Error(normalizeSupabaseError(fetchError, "Failed to load existing payment-in rows"));
-    }
-
-    const matchingRows = Array.isArray(existingRows) ? existingRows : [];
-    const [primaryRow, ...extraRows] = matchingRows;
-    const timestamp = new Date().toISOString();
-
-    if (rows.length) {
-      const baseRow = rows[0];
-      const remoteRow = {
-        organization_id: organizationId,
-        payment_no: baseRow?.payment_no || `RCPT-${Date.now()}`,
-        payment_date: baseRow?.payment_date || "",
-        direction: "in",
-        party_id: looksLikeUuid(baseRow?.party_id) ? baseRow.party_id : null,
-        invoice_id: looksLikeUuid(baseRow?.invoice_id) ? baseRow.invoice_id : null,
-        bill_id: null,
-        amount: parseNumber(baseRow?.amount),
-        amount_received: parseNumber(baseRow?.amount_received ?? baseRow?.amount),
-        tds_amount: parseNumber(baseRow?.tds_amount),
-        tds_rate: parseNumber(baseRow?.tds_rate),
-        is_manual: !!baseRow?.is_manual,
-        payment_mode: baseRow?.payment_mode || null,
-        reference_no: baseRow?.reference_no || `${sourcePrefix}ENTRY`,
-        notes: baseRow?.notes || null,
-        status: "posted",
-        updated_at: timestamp
-      };
-
-      if (primaryRow?.id) {
-        const { error: updateError } = await supabase
-          .from("payments")
-          .update(remoteRow)
-          .eq("organization_id", organizationId)
-          .eq("id", primaryRow.id);
-        if (updateError && isMissingColumnError(updateError)) {
-          const { amount_received, tds_rate, is_manual, ...legacyRow } = remoteRow;
-          const { error: legacyUpdateError } = await supabase
-            .from("payments")
-            .update(legacyRow)
-            .eq("organization_id", organizationId)
-            .eq("id", primaryRow.id);
-          if (legacyUpdateError) {
-            throw new Error(normalizeSupabaseError(legacyUpdateError, "Failed to update payment-in row"));
-          }
-        } else if (updateError) {
-          throw new Error(normalizeSupabaseError(updateError, "Failed to update payment-in row"));
-        }
-      } else {
-        let insertResult = await supabase.from("payments").insert({
-          ...remoteRow,
-          created_by: actorUserId
-        });
-        if (insertResult.error && isMissingColumnError(insertResult.error)) {
-          const { amount_received, tds_rate, is_manual, ...legacyRow } = remoteRow;
-          insertResult = await supabase.from("payments").insert({
-            ...legacyRow,
-            created_by: actorUserId
-          });
-        }
-        if (insertResult.error) {
-          throw new Error(normalizeSupabaseError(insertResult.error, "Failed to save payment-in row"));
-        }
+    try {
+      const { data: existingRows, error: fetchError } = await supabase
+        .from("payments")
+        .select("id")
+        .eq("organization_id", organizationId)
+        .ilike("reference_no", `${sourcePrefix}%`);
+      if (fetchError) {
+        throw fetchError;
       }
 
-      if (extraRows.length) {
-        const { error: cleanupError } = await supabase
+      const matchingRows = Array.isArray(existingRows) ? existingRows : [];
+      const [primaryRow, ...extraRows] = matchingRows;
+      const timestamp = new Date().toISOString();
+
+      if (rows.length) {
+        const baseRow = rows[0];
+        const remoteRow = {
+          organization_id: organizationId,
+          payment_no: baseRow?.payment_no || `RCPT-${Date.now()}`,
+          payment_date: baseRow?.payment_date || "",
+          direction: "in",
+          party_id: looksLikeUuid(baseRow?.party_id) ? baseRow.party_id : null,
+          invoice_id: looksLikeUuid(baseRow?.invoice_id) ? baseRow.invoice_id : null,
+          bill_id: null,
+          amount: parseNumber(baseRow?.amount),
+          amount_received: parseNumber(baseRow?.amount_received ?? baseRow?.amount),
+          tds_amount: parseNumber(baseRow?.tds_amount),
+          tds_rate: parseNumber(baseRow?.tds_rate),
+          is_manual: !!baseRow?.is_manual,
+          payment_mode: baseRow?.payment_mode || null,
+          reference_no: baseRow?.reference_no || `${sourcePrefix}ENTRY`,
+          notes: baseRow?.notes || null,
+          status: "posted",
+          updated_at: timestamp
+        };
+
+        if (primaryRow?.id) {
+          const { error: updateError } = await supabase
+            .from("payments")
+            .update(remoteRow)
+            .eq("organization_id", organizationId)
+            .eq("id", primaryRow.id);
+          if (updateError && isMissingColumnError(updateError)) {
+            const { amount_received, tds_rate, is_manual, ...legacyRow } = remoteRow;
+            const { error: legacyUpdateError } = await supabase
+              .from("payments")
+              .update(legacyRow)
+              .eq("organization_id", organizationId)
+              .eq("id", primaryRow.id);
+            if (legacyUpdateError) {
+              throw legacyUpdateError;
+            }
+          } else if (updateError) {
+            throw updateError;
+          }
+        } else {
+          let insertResult = await supabase.from("payments").insert({
+            ...remoteRow,
+            created_by: actorUserId
+          });
+          if (insertResult.error && isMissingColumnError(insertResult.error)) {
+            const { amount_received, tds_rate, is_manual, ...legacyRow } = remoteRow;
+            insertResult = await supabase.from("payments").insert({
+              ...legacyRow,
+              created_by: actorUserId
+            });
+          }
+          if (insertResult.error) {
+            throw insertResult.error;
+          }
+        }
+
+        if (extraRows.length) {
+          const { error: cleanupError } = await supabase
+            .from("payments")
+            .update({
+              status: "cancelled",
+              notes: `Cancelled duplicate payment-in rows (${timestamp})`,
+              updated_at: timestamp
+            })
+            .eq("organization_id", organizationId)
+            .in(
+              "id",
+              extraRows.map((row) => row.id).filter(Boolean)
+            );
+          if (cleanupError) {
+            throw cleanupError;
+          }
+        }
+      } else if (matchingRows.length) {
+        const { error: cancelError } = await supabase
           .from("payments")
           .update({
             status: "cancelled",
-            notes: `Cancelled duplicate payment-in rows (${timestamp})`,
+            notes: `Superseded by latest payment-in update (${timestamp})`,
             updated_at: timestamp
           })
           .eq("organization_id", organizationId)
-          .in(
-            "id",
-            extraRows.map((row) => row.id).filter(Boolean)
-          );
-        if (cleanupError) {
-          throw new Error(normalizeSupabaseError(cleanupError, "Failed to archive duplicate payment-in rows"));
+          .ilike("reference_no", `${sourcePrefix}%`);
+        if (cancelError) {
+          throw cancelError;
         }
       }
-    } else if (matchingRows.length) {
-      const { error: cancelError } = await supabase
-        .from("payments")
-        .update({
-          status: "cancelled",
-          notes: `Superseded by latest payment-in update (${timestamp})`,
-          updated_at: timestamp
-        })
-        .eq("organization_id", organizationId)
-        .ilike("reference_no", `${sourcePrefix}%`);
-      if (cancelError) {
-        throw new Error(normalizeSupabaseError(cancelError, "Failed to archive previous payment-in rows"));
+    } catch (error) {
+      if (!isPermissionLikeError(error)) {
+        throw new Error(normalizeSupabaseError(error, "Failed to save payment-in row"));
       }
+      savedLocallyOnly = true;
+      remoteSyncMessage = normalizeSupabaseError(
+        error,
+        "Saved locally only because Supabase denied access"
+      );
     }
   }
 
@@ -398,6 +429,7 @@ export async function syncPaymentInRemote(record) {
     postedRows: rows.length
   });
   await triggerCreditLimitNotifications();
+  return { savedLocallyOnly, remoteSyncMessage };
 }
 
 export async function syncPaymentOutRemote(record) {

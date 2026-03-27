@@ -675,7 +675,7 @@ export default function PaymentInPremium() {
       if (!payload) return;
       const saved = savePaymentIn(payload);
       if (!saved) return;
-      await syncPaymentInRemote(saved);
+      const remoteResult = await syncPaymentInRemote(saved);
       if ((saved?.totals?.tdsAmount || 0) > 0) {
         syncTdsComplianceReminders();
       }
@@ -687,8 +687,13 @@ export default function PaymentInPremium() {
       setFlowMode("edit");
       setActiveStep(2);
       setDirty(false);
-      setSuccessMessage(`${saved.receiptNo} saved as ${saved.status}.`);
-      setErrorMessage("");
+      if (remoteResult?.savedLocallyOnly) {
+        setSuccessMessage(`${saved.receiptNo} saved locally.`);
+        setErrorMessage(remoteResult?.remoteSyncMessage || "Supabase denied access. Saved in local storage only.");
+      } else {
+        setSuccessMessage(`${saved.receiptNo} saved as ${saved.status}.`);
+        setErrorMessage("");
+      }
       return saved;
     } catch (error: any) {
       setErrorMessage(error?.message || "Unable to save payment.");
