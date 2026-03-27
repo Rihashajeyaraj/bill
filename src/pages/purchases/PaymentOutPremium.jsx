@@ -92,6 +92,14 @@ function calculatedTdsInputValue(amountPaid, tdsRate) {
   return String(calculateTdsAmount(amountPaid, tdsRate));
 }
 
+function autoTdsBaseAmount(bill, allocationMode, fallbackAmount) {
+  if (allocationMode === "linked") {
+    const taxableAmount = Math.max(0, parseNumber(bill?.taxableAmount));
+    if (taxableAmount > 0) return taxableAmount;
+  }
+  return Math.max(0, parseNumber(fallbackAmount));
+}
+
 function normalizePaymentMode(value) {
   const mode = String(value || "").trim();
   if (mode === "Bank Transfer") return "Net Banking";
@@ -255,8 +263,8 @@ export default function PaymentOutPremium() {
       .reduce((sum, entry) => sum + Math.max(0, parseNumber(entry?.totals?.unappliedAmount)), 0);
   }, [payments, form.supplierId]);
   const autoCalculatedTdsAmount = useMemo(
-    () => calculateTdsAmount(form.amountPaid, form.tdsRate),
-    [form.amountPaid, form.tdsRate]
+    () => calculateTdsAmount(autoTdsBaseAmount(selectedBill, form.allocationMode, form.amountPaid), form.tdsRate),
+    [selectedBill, form.allocationMode, form.amountPaid, form.tdsRate]
   );
 
   useEffect(() => {
@@ -408,9 +416,19 @@ export default function PaymentOutPremium() {
               String(entry.supplierId) === String(next.supplierId)
           ) || null;
         next.allocations = buildBillAllocation(linkedBill, value);
+        if (!next.isManual) {
+          next.tdsAmount = calculatedTdsInputValue(
+            autoTdsBaseAmount(linkedBill, next.allocationMode, value),
+            next.tdsRate
+          );
+        }
+        return next;
       }
       if (!next.isManual) {
-        next.tdsAmount = calculatedTdsInputValue(value, next.tdsRate);
+        next.tdsAmount = calculatedTdsInputValue(
+          autoTdsBaseAmount(null, next.allocationMode, value),
+          next.tdsRate
+        );
       }
       return next;
     });
@@ -442,7 +460,10 @@ export default function PaymentOutPremium() {
             ...prev,
             tdsCategory: category,
             tdsRate: String(nextRate),
-            tdsAmount: calculatedTdsInputValue(prev.amountPaid, nextRate),
+            tdsAmount: calculatedTdsInputValue(
+              autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
+              nextRate
+            ),
             isManual: false
           }
     );
@@ -452,7 +473,10 @@ export default function PaymentOutPremium() {
   function applyCalculatedTds() {
     setForm((prev) => ({
       ...prev,
-      tdsAmount: calculatedTdsInputValue(prev.amountPaid, prev.tdsRate),
+      tdsAmount: calculatedTdsInputValue(
+        autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
+        prev.tdsRate
+      ),
       isManual: false
     }));
     setDirty(true);
@@ -482,23 +506,39 @@ export default function PaymentOutPremium() {
         };
       }
       const linkedBill = supplierBills.find((entry) => String(entry.id) === String(prev.selectedBillId)) || null;
-      return {
+      const next = {
         ...prev,
         allocationMode: "linked",
         allocations: buildBillAllocation(linkedBill, prev.amountPaid)
       };
+      if (!next.isManual) {
+        next.tdsAmount = calculatedTdsInputValue(
+          autoTdsBaseAmount(linkedBill, next.allocationMode, next.amountPaid),
+          next.tdsRate
+        );
+      }
+      return next;
     });
     setDirty(true);
   }
 
   function handleBillSelection(billId) {
     const linkedBill = supplierBills.find((entry) => String(entry.id) === String(billId)) || null;
-    setForm((prev) => ({
-      ...prev,
-      allocationMode: "linked",
-      selectedBillId: linkedBill?.id || "",
-      allocations: buildBillAllocation(linkedBill, prev.amountPaid)
-    }));
+    setForm((prev) => {
+      const next = {
+        ...prev,
+        allocationMode: "linked",
+        selectedBillId: linkedBill?.id || "",
+        allocations: buildBillAllocation(linkedBill, prev.amountPaid)
+      };
+      if (!next.isManual) {
+        next.tdsAmount = calculatedTdsInputValue(
+          autoTdsBaseAmount(linkedBill, next.allocationMode, next.amountPaid),
+          next.tdsRate
+        );
+      }
+      return next;
+    });
     setDirty(true);
   }
 

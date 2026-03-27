@@ -139,6 +139,18 @@ function buildAllocation(document: CustomerOpenInvoice | null, amountReceived: u
   ];
 }
 
+function autoTdsBaseAmount(
+  document: Pick<CustomerOpenInvoice, "taxableAmount"> | null | undefined,
+  allocationMode: "linked" | "normal",
+  fallbackAmount: unknown
+) {
+  if (allocationMode === "linked") {
+    const taxableAmount = Math.max(0, parseNumber(document?.taxableAmount as any));
+    if (taxableAmount > 0) return taxableAmount;
+  }
+  return Math.max(0, parseNumber(fallbackAmount as any));
+}
+
 export default function PaymentInPremium() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
@@ -208,6 +220,7 @@ export default function PaymentInPremium() {
       customerName: form?.customerInput || "",
       invoiceDate: savedDocument.invoiceDate,
       invoiceAmount: savedDocument.invoiceAmount,
+      taxableAmount: savedDocument.invoiceAmount,
       balanceDue: savedDocument.balanceDue,
       documentType: savedDocument.documentType || "invoice"
     } satisfies CustomerOpenInvoice;
@@ -254,8 +267,8 @@ export default function PaymentInPremium() {
   const readOnly = flowMode === "view";
   const prefillInvoiceId = searchParams.get("invoiceId") || "";
   const autoCalculatedTdsAmount = useMemo(
-    () => calculateTdsAmount(form?.amountReceived, form?.tdsRate),
-    [form?.amountReceived, form?.tdsRate]
+    () => calculateTdsAmount(autoTdsBaseAmount(selectedCustomerDocument, form?.allocationMode || "normal", form?.amountReceived), form?.tdsRate),
+    [selectedCustomerDocument, form?.allocationMode, form?.amountReceived, form?.tdsRate]
   );
 
   useEffect(() => {
@@ -410,9 +423,19 @@ export default function PaymentInPremium() {
             (entry) => entry.id === next.selectedDocumentId && entry.customerId === next.customerId
           ) || null;
         next.allocations = buildAllocation(linkedDocument, value);
+        if (!next.isManual) {
+          next.tdsAmount = calculatedTdsInputValue(
+            autoTdsBaseAmount(linkedDocument, next.allocationMode, value),
+            next.tdsRate
+          );
+        }
+        return next;
       }
       if (!next.isManual) {
-        next.tdsAmount = calculatedTdsInputValue(value, next.tdsRate);
+        next.tdsAmount = calculatedTdsInputValue(
+          autoTdsBaseAmount(null, next.allocationMode, value),
+          next.tdsRate
+        );
       }
       return next;
     });
@@ -452,7 +475,10 @@ export default function PaymentInPremium() {
               ...prev,
               tdsCategory: category,
               tdsRate: String(nextRate),
-              tdsAmount: calculatedTdsInputValue(prev.amountReceived, nextRate),
+              tdsAmount: calculatedTdsInputValue(
+                autoTdsBaseAmount(selectedCustomerDocument, prev.allocationMode, prev.amountReceived),
+                nextRate
+              ),
               isManual: false
             }
         : prev
@@ -466,7 +492,10 @@ export default function PaymentInPremium() {
       prev
         ? {
             ...prev,
-            tdsAmount: calculatedTdsInputValue(prev.amountReceived, prev.tdsRate),
+            tdsAmount: calculatedTdsInputValue(
+              autoTdsBaseAmount(selectedCustomerDocument, prev.allocationMode, prev.amountReceived),
+              prev.tdsRate
+            ),
             isManual: false
           }
         : prev
@@ -488,11 +517,18 @@ export default function PaymentInPremium() {
       }
       const linkedDocument =
         customerDocuments.find((entry) => entry.id === prev.selectedDocumentId) || null;
-      return {
+      const next = {
         ...prev,
         allocationMode: "linked",
         allocations: buildAllocation(linkedDocument, prev.amountReceived)
       };
+      if (!next.isManual) {
+        next.tdsAmount = calculatedTdsInputValue(
+          autoTdsBaseAmount(linkedDocument, next.allocationMode, next.amountReceived),
+          next.tdsRate
+        );
+      }
+      return next;
     });
     clearFieldError("selectedDocumentId");
     setDirty(true);
@@ -502,12 +538,21 @@ export default function PaymentInPremium() {
     const linkedDocument = customerDocuments.find((entry) => entry.id === documentId) || null;
     setForm((prev) =>
       prev
-        ? {
-            ...prev,
-            allocationMode: "linked",
-            selectedDocumentId: linkedDocument?.id || "",
-            allocations: buildAllocation(linkedDocument, prev.amountReceived)
-          }
+        ? (() => {
+            const next = {
+              ...prev,
+              allocationMode: "linked" as const,
+              selectedDocumentId: linkedDocument?.id || "",
+              allocations: buildAllocation(linkedDocument, prev.amountReceived)
+            };
+            if (!next.isManual) {
+              next.tdsAmount = calculatedTdsInputValue(
+                autoTdsBaseAmount(linkedDocument, next.allocationMode, next.amountReceived),
+                next.tdsRate
+              );
+            }
+            return next;
+          })()
         : prev
     );
     clearFieldError("selectedDocumentId");

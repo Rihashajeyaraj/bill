@@ -20,6 +20,8 @@ export interface CustomerOpenInvoice {
   customerName: string;
   invoiceDate: string;
   invoiceAmount: number;
+  taxableAmount?: number;
+  taxAmount?: number;
   balanceDue: number;
   documentType: "invoice" | "proforma";
 }
@@ -488,6 +490,14 @@ function mapOpenInvoicesByCountryInternal(
         0,
         toNumber(invoice?.totals?.grandTotal ?? invoice?.totals?.total ?? invoice?.totals?.subTotal)
       );
+      const taxableAmount = Math.max(
+        0,
+        toNumber(invoice?.totals?.subTotal ?? invoice?.totals?.taxableTotal ?? invoiceTotal)
+      );
+      const taxAmount = Math.max(
+        0,
+        toNumber(invoice?.totals?.taxTotal ?? invoice?.totals?.taxAmount ?? invoiceTotal - taxableAmount)
+      );
       const paymentApplied = appliedPaymentInForDocument(invoice?.id, "invoice");
       const creditApplied = appliedCreditForInvoice(invoice?.id, "invoice");
       const storedBalance = Math.max(
@@ -507,6 +517,8 @@ function mapOpenInvoicesByCountryInternal(
         customerName: invoice.partyName || invoice.customerName || invoice.buyer?.name || "Customer",
         invoiceDate: invoice.invoiceDate || invoice.date || "",
         invoiceAmount: invoiceTotal,
+        taxableAmount,
+        taxAmount,
         balanceDue,
         documentType: "invoice"
       } satisfies CustomerOpenInvoice;
@@ -528,6 +540,14 @@ function mapOpenInvoicesByCountryInternal(
             proforma?.grandTotal
         )
       );
+      const taxableAmount = Math.max(
+        0,
+        toNumber(proforma?.totals?.subTotal ?? proforma?.totals?.taxableTotal ?? invoiceAmount)
+      );
+      const taxAmount = Math.max(
+        0,
+        toNumber(proforma?.totals?.taxTotal ?? proforma?.totals?.taxAmount ?? invoiceAmount - taxableAmount)
+      );
       const paymentApplied = appliedPaymentInForDocument(proforma?.id, "proforma");
       const balanceDue = Math.max(0, invoiceAmount - paymentApplied);
       if (balanceDue <= 0) return null;
@@ -540,6 +560,8 @@ function mapOpenInvoicesByCountryInternal(
         customerName: proforma?.partyName || proforma?.customerName || proforma?.buyer?.name || "Customer",
         invoiceDate: proforma?.proformaDate || proforma?.date || "",
         invoiceAmount,
+        taxableAmount,
+        taxAmount,
         balanceDue,
         documentType: "proforma"
       } satisfies CustomerOpenInvoice;

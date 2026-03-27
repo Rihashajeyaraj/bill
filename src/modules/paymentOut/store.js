@@ -344,6 +344,14 @@ export function mapOpenBillsByCountry(country) {
           bill?.grandTotal ??
           bill?.total
       );
+      const taxableAmount = Math.max(
+        0,
+        parseNumber(bill?.totals?.subTotal ?? bill?.totals?.taxableTotal ?? billAmount)
+      );
+      const taxAmount = Math.max(
+        0,
+        parseNumber(bill?.totals?.taxTotal ?? bill?.totals?.taxAmount ?? billAmount - taxableAmount)
+      );
       const paymentApplied = appliedPaymentOutForBill(bill?.id);
       const debitApplied = appliedDebitForBill(bill?.id);
       const storedBalance = Math.max(
@@ -370,6 +378,8 @@ export function mapOpenBillsByCountry(country) {
         supplierId: bill.partyId || bill.supplierId || bill.vendorId || bill.partyName || "unknown_supplier",
         supplierName: bill.partyName || bill.supplierName || bill.vendorName || "Supplier",
         billAmount,
+        taxableAmount,
+        taxAmount,
         balanceDue
       };
     })
