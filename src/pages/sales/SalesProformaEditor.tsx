@@ -15,6 +15,7 @@ import {
   listStatesByCountry,
   resolveCountryIsoCode
 } from "../../lib/geoData";
+import { formatDecimalByPreference } from "../../lib/formatPreferences";
 import {
   convertSalesProforma,
   salesProformaComputeTotals,
@@ -316,7 +317,7 @@ export default function SalesProformaEditor() {
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
   const lineItemInputClassName =
     "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm leading-5 outline-none";
-  const lineItemInputRightClassName = `${lineItemInputClassName} text-right`;
+  const lineItemInputRightClassName = `${lineItemInputClassName} min-w-0 px-2 text-right tabular-nums`;
   const customerSearchTerm = String(customerLookupQuery || "").trim();
   const customerLookupResults = useMemo(() => {
     const query = customerSearchTerm.toLowerCase();
@@ -1150,28 +1151,28 @@ export default function SalesProformaEditor() {
               </div>
 
               <div className="overflow-x-auto rounded-2xl border border-slate-100">
-                <table className="min-w-[1080px] w-full table-fixed text-left text-sm">
+                <table className="min-w-[1300px] w-full table-fixed text-left text-sm">
                   <colgroup>
-                    <col style={{ width: "30%" }} />
-                    <col style={{ width: "8%" }} />
+                    <col style={{ width: "25%" }} />
+                    <col style={{ width: "9%" }} />
                     <col style={{ width: "10%" }} />
-                    <col style={{ width: "10%" }} />
-                    <col style={{ width: "10%" }} />
-                    <col style={{ width: "12%" }} />
-                    <col style={{ width: "8%" }} />
+                    <col style={{ width: "11%" }} />
                     <col style={{ width: "10%" }} />
                     <col style={{ width: "12%" }} />
+                    <col style={{ width: "9%" }} />
+                    <col style={{ width: "14%" }} />
+                    <col style={{ width: "10%" }} />
                   </colgroup>
                   <thead className="bg-slate-50 text-slate-600">
                     <tr>
                       <th className="px-3 py-2.5 align-middle font-semibold">Item</th>
-                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Qty</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Qty</th>
                       <th className="px-3 py-2.5 align-middle font-semibold">Unit</th>
-                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Rate</th>
-                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Discount %</th>
-                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Discount Amt</th>
-                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Tax %</th>
-                      <th className="px-3 py-2.5 align-middle text-right font-semibold">Amount</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Rate</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Discount %</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Discount Amt</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Tax %</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Amount</th>
                       <th className="px-3 py-2.5 align-middle font-semibold">Action</th>
                     </tr>
                   </thead>
@@ -1179,9 +1180,9 @@ export default function SalesProformaEditor() {
                     {(form.lines || []).map((line: any) => {
                       const lineError = validation?.lineErrors?.[String(line.id)] || {};
                       return (
-                      <tr key={line.id} className="border-t border-slate-100 align-top">
-                        <td className="px-3 py-2">
-                          <div className="relative">
+                      <tr key={line.id} className="border-t border-slate-100 align-middle">
+                        <td className="px-3 py-2 align-middle">
+                          <div className="relative flex min-h-[40px] flex-col justify-center">
                             <input
                               id={`sales-proforma-item-input-${line.id}`}
                               className={`${lineItemInputClassName} pr-9 ${
@@ -1228,7 +1229,7 @@ export default function SalesProformaEditor() {
                             ) : null}
                           </div>
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 align-middle">
                           <input
                             type="number"
                             min={0}
@@ -1244,16 +1245,16 @@ export default function SalesProformaEditor() {
                             <p className="mt-1 text-[11px] font-medium text-rose-600">{lineError.qty}</p>
                           ) : null}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 align-middle">
                           <input
-                            className={lineItemInputClassName}
+                            className={`${lineItemInputClassName} min-w-[64px]`}
                             value={line.unit ?? ""}
                             disabled={locked}
                             placeholder="Unit"
                             onChange={(event) => updateLine(line.id, { unit: event.target.value })}
                           />
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 align-middle">
                           <input
                             type="number"
                             min={0}
@@ -1264,7 +1265,7 @@ export default function SalesProformaEditor() {
                             onChange={(event) => updateLine(line.id, { rate: event.target.value })}
                           />
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 align-middle">
                           <input
                             type="number"
                             min={0}
@@ -1284,7 +1285,7 @@ export default function SalesProformaEditor() {
                             }}
                           />
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 align-middle">
                           <input
                             type="number"
                             min={0}
@@ -1305,7 +1306,7 @@ export default function SalesProformaEditor() {
                             }}
                           />
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 align-middle">
                           <input
                             type="number"
                             min={0}
@@ -1316,12 +1317,12 @@ export default function SalesProformaEditor() {
                             onChange={(event) => updateLine(line.id, { taxRate: event.target.value })}
                           />
                         </td>
-                        <td className="px-3 py-2">
-                          <div className="flex h-10 items-center justify-end rounded-xl border border-slate-200 bg-slate-50 px-3 text-right font-semibold text-slate-900">
-                            {lineAmount(line).toFixed(2)}
+                        <td className="px-3 py-2 align-middle">
+                          <div className="flex h-10 items-center justify-end overflow-hidden rounded-xl border border-slate-200 bg-slate-50 px-3 text-right font-semibold tabular-nums text-slate-900 whitespace-nowrap">
+                            {formatDecimalByPreference(lineAmount(line))}
                           </div>
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 align-middle">
                           <button
                             type="button"
                             onClick={() => removeLine(line.id)}
@@ -1400,15 +1401,15 @@ export default function SalesProformaEditor() {
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                 <p className="text-slate-500">Sub Total</p>
-                <p className="font-semibold text-slate-900">{totals.subTotal.toFixed(2)}</p>
+                <p className="font-semibold text-slate-900">{formatDecimalByPreference(totals.subTotal)}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                 <p className="text-slate-500">Tax Total</p>
-                <p className="font-semibold text-slate-900">{totals.taxTotal.toFixed(2)}</p>
+                <p className="font-semibold text-slate-900">{formatDecimalByPreference(totals.taxTotal)}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                 <p className="text-slate-500">Grand Total</p>
-                <p className="font-semibold text-slate-900">{totals.grandTotal.toFixed(2)}</p>
+                <p className="font-semibold text-slate-900">{formatDecimalByPreference(totals.grandTotal)}</p>
               </div>
             </div>
 
