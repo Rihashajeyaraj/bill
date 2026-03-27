@@ -171,7 +171,7 @@ function MetricCard({ label, value, tone = "default" }) {
         : "border-slate-200 bg-white text-slate-900";
 
   return (
-    <div className={clsx("rounded-3xl border p-4", toneClasses)}>
+    <div className={clsx("rounded-3xl border p-4 sm:p-5", toneClasses)}>
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-3 text-2xl font-bold">{value}</p>
     </div>
@@ -191,7 +191,7 @@ function InteractiveMetricCard({ label, value, tone = "default", active = false,
       type="button"
       onClick={onClick}
       className={clsx(
-        "rounded-3xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
+        "rounded-3xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 sm:p-5",
         toneClasses,
         active && "ring-2 ring-slate-900/70 shadow-md"
       )}
@@ -384,7 +384,7 @@ function ReportSidebar({ sections, activeReport, onSelect }) {
   return (
     <div className="space-y-2">
       {sections.map((section) => (
-        <Card key={section.id} className="p-2.5">
+        <Card key={section.id} className="p-2.5 sm:p-3">
           <div className="mb-1.5">
             <p className="text-[13px] font-semibold text-slate-900">{section.title}</p>
             <p
@@ -411,7 +411,7 @@ function ReportSidebar({ sections, activeReport, onSelect }) {
                   type="button"
                   onClick={() => onSelect(item.id)}
                   className={clsx(
-                    "w-full cursor-pointer rounded-xl border px-2.5 py-1.5 text-left transform-gpu transition-all duration-200 ease-out will-change-transform md:hover:-translate-y-0.5 md:hover:scale-[1.02] md:hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
+                    "w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transform-gpu transition-all duration-200 ease-out will-change-transform md:hover:-translate-y-0.5 md:hover:scale-[1.02] md:hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
                     isActive
                       ? meta.activeAccent
                       : "border-slate-200 bg-white md:hover:border-slate-300 md:hover:bg-slate-50"
@@ -448,15 +448,15 @@ function ReportSidebar({ sections, activeReport, onSelect }) {
 
 function ReportTable({ columns, rows, currency, sortKey, sortDirection, onSort, emptyText = "No records found." }) {
   return (
-    <div className="overflow-auto rounded-3xl border border-slate-200">
-      <table className="w-full min-w-[720px] text-left text-sm xl:min-w-[880px]">
+    <div className="overflow-x-auto rounded-3xl border border-slate-200">
+      <table className="w-full min-w-[620px] text-left text-xs sm:min-w-[720px] sm:text-sm xl:min-w-[880px]">
         <thead className="bg-slate-50">
           <tr>
             {columns.map((column) => {
               const sortable = typeof onSort === "function" && column.sortable;
               const active = sortable && sortKey === column.key;
               return (
-                <th key={column.key} className={clsx("px-4 py-3 font-semibold text-slate-700", column.align === "right" && "text-right")}>
+                <th key={column.key} className={clsx("whitespace-nowrap px-3 py-3 font-semibold text-slate-700 sm:px-4", column.align === "right" && "text-right")}>
                   {sortable ? (
                     <button
                       type="button"
@@ -479,7 +479,7 @@ function ReportTable({ columns, rows, currency, sortKey, sortDirection, onSort, 
             rows.map((row) => (
               <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50/70">
                 {columns.map((column) => (
-                  <td key={`${row.id}_${column.key}`} className={clsx("px-4 py-3 text-slate-700", column.align === "right" && "text-right", column.emphasis && "font-semibold text-slate-900")}>
+                  <td key={`${row.id}_${column.key}`} className={clsx("whitespace-nowrap px-3 py-3 text-slate-700 sm:px-4", column.align === "right" && "text-right", column.emphasis && "font-semibold text-slate-900")}>
                     {formatCell(row, column, currency)}
                   </td>
                 ))}
@@ -500,14 +500,14 @@ function ReportTable({ columns, rows, currency, sortKey, sortDirection, onSort, 
 
 function AgingReportTable({ rows, currency, expandedBucket, onToggle, emptyText = "No records found." }) {
   return (
-    <div className="overflow-auto rounded-3xl border border-slate-200">
-      <table className="w-full min-w-[760px] text-left text-sm xl:min-w-[980px]">
+    <div className="overflow-x-auto rounded-3xl border border-slate-200">
+      <table className="w-full min-w-[680px] text-left text-xs sm:min-w-[760px] sm:text-sm xl:min-w-[980px]">
         <thead className="bg-slate-50">
           <tr>
-            <th className="px-4 py-3 font-semibold text-slate-700">Party Name</th>
-            <th className="px-4 py-3 text-right font-semibold text-slate-700">Total Outstanding</th>
+            <th className="whitespace-nowrap px-3 py-3 font-semibold text-slate-700 sm:px-4">Party Name</th>
+            <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-700 sm:px-4">Total Outstanding</th>
             {AGING_BUCKET_COLUMNS.map((column) => (
-              <th key={column.key} className="px-4 py-3 text-right font-semibold text-slate-700">
+              <th key={column.key} className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-700 sm:px-4">
                 {column.label}
               </th>
             ))}
@@ -524,8 +524,8 @@ function AgingReportTable({ rows, currency, expandedBucket, onToggle, emptyText 
               return (
                 <React.Fragment key={row.id}>
                   <tr className={clsx("border-t border-slate-100", isExpandedRow && "bg-slate-50/60")}>
-                    <td className="px-4 py-3 font-medium text-slate-900">{row.partyName || "-"}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatMoney(row.totalOutstanding, currency)}</td>
+                    <td className="whitespace-nowrap px-3 py-3 font-medium text-slate-900 sm:px-4">{row.partyName || "-"}</td>
+                    <td className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-900 sm:px-4">{formatMoney(row.totalOutstanding, currency)}</td>
                     {AGING_BUCKET_COLUMNS.map((column) => {
                       const bucketValue = row?.[column.key] || 0;
                       const bucketDetails = row?.bucketDetails?.[column.key] || [];
@@ -533,7 +533,7 @@ function AgingReportTable({ rows, currency, expandedBucket, onToggle, emptyText 
                       const isActive = activeBucketKey === column.key;
 
                       return (
-                        <td key={`${row.id}_${column.key}`} className="px-4 py-3 text-right">
+                        <td key={`${row.id}_${column.key}`} className="whitespace-nowrap px-3 py-3 text-right sm:px-4">
                           {canExpand ? (
                             <button
                               type="button"
@@ -561,7 +561,7 @@ function AgingReportTable({ rows, currency, expandedBucket, onToggle, emptyText 
                     <td colSpan={2 + AGING_BUCKET_COLUMNS.length} className="p-0">
                       <div className={clsx("grid transition-all duration-200 ease-out", isExpandedRow ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
                         <div className="overflow-hidden">
-                          <div className="border-t border-slate-100 bg-slate-50/70 px-4 py-4">
+                          <div className="border-t border-slate-100 bg-slate-50/70 px-3 py-4 sm:px-4">
                             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                               <div>
                                 <p className="text-sm font-semibold text-slate-900">
@@ -582,32 +582,32 @@ function AgingReportTable({ rows, currency, expandedBucket, onToggle, emptyText 
                               ) : null}
                             </div>
 
-                            <div className="overflow-auto rounded-2xl border border-slate-200 bg-white">
-                              <table className="w-full min-w-[760px] text-left text-xs">
+                            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+                              <table className="w-full min-w-[680px] text-left text-xs sm:min-w-[760px]">
                                 <thead className="bg-slate-50">
                                   <tr>
-                                    <th className="px-4 py-3 font-semibold text-slate-600">Date</th>
-                                    <th className="px-4 py-3 font-semibold text-slate-600">Transaction Type</th>
-                                    <th className="px-4 py-3 font-semibold text-slate-600">Reference Number</th>
-                                    <th className="px-4 py-3 text-right font-semibold text-slate-600">Amount</th>
-                                    <th className="px-4 py-3 text-right font-semibold text-slate-600">Days Pending</th>
+                                    <th className="whitespace-nowrap px-3 py-3 font-semibold text-slate-600 sm:px-4">Date</th>
+                                    <th className="whitespace-nowrap px-3 py-3 font-semibold text-slate-600 sm:px-4">Transaction Type</th>
+                                    <th className="whitespace-nowrap px-3 py-3 font-semibold text-slate-600 sm:px-4">Reference Number</th>
+                                    <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-600 sm:px-4">Amount</th>
+                                    <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-600 sm:px-4">Days Pending</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {activeDetails.length ? (
                                     activeDetails.map((detail) => (
                                       <tr key={detail.id} className="border-t border-slate-100">
-                                        <td className="px-4 py-3 text-slate-700">{formatDateByPreference(detail.date, "-")}</td>
-                                        <td className="px-4 py-3">
+                                        <td className="whitespace-nowrap px-3 py-3 text-slate-700 sm:px-4">{formatDateByPreference(detail.date, "-")}</td>
+                                        <td className="whitespace-nowrap px-3 py-3 sm:px-4">
                                           <span className={clsx("inline-flex rounded-full px-2.5 py-1 font-semibold", AGING_TRANSACTION_BADGES[detail.transactionType] || "bg-slate-100 text-slate-700")}>
                                             {detail.transactionType}
                                           </span>
                                         </td>
-                                        <td className="px-4 py-3 text-slate-700">{detail.reference || "-"}</td>
-                                        <td className={clsx("px-4 py-3 text-right font-semibold", detail.amount < 0 ? "text-rose-700" : "text-slate-900")}>
+                                        <td className="whitespace-nowrap px-3 py-3 text-slate-700 sm:px-4">{detail.reference || "-"}</td>
+                                        <td className={clsx("whitespace-nowrap px-3 py-3 text-right font-semibold sm:px-4", detail.amount < 0 ? "text-rose-700" : "text-slate-900")}>
                                           {formatMoney(detail.amount, currency)}
                                         </td>
-                                        <td className="px-4 py-3 text-right text-slate-700">{detail.daysPending ?? 0}</td>
+                                        <td className="whitespace-nowrap px-3 py-3 text-right text-slate-700 sm:px-4">{detail.daysPending ?? 0}</td>
                                       </tr>
                                     ))
                                   ) : (
@@ -644,11 +644,11 @@ function AgingReportTable({ rows, currency, expandedBucket, onToggle, emptyText 
 function PaginationBar({ pageInfo, onChange }) {
   if (!pageInfo || pageInfo.totalPages <= 1) return null;
   return (
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <p className="text-xs text-slate-500">
         Showing {pageInfo.startIndex + 1}-{pageInfo.endIndex} of {pageInfo.totalRows}
       </p>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => onChange(pageInfo.page - 1)}
@@ -693,7 +693,7 @@ function ProfitLossInsights({ viewModel, currency }) {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.7fr)]">
-        <div className="rounded-3xl border border-slate-200 bg-white p-5">
+        <div className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-slate-900">Top Expense Categories</p>
@@ -732,7 +732,7 @@ function ProfitLossInsights({ viewModel, currency }) {
           )}
         </div>
 
-        <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-5">
+        <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4 sm:p-5">
           <p className="text-sm font-semibold text-slate-900">Profit Snapshot</p>
           <p className="mt-1 text-xs text-slate-500">Summary values remain aligned with the simplified profit and loss formula.</p>
 
@@ -764,12 +764,12 @@ function ProfitLossBreakdownModal({ mode, onClose, viewModel, currency }) {
   const isGrossMode = mode === "gross-breakdown";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/40 p-3 sm:p-4" onClick={onClose}>
       <Card
-        className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl"
+        className="my-auto w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-4 shadow-2xl sm:p-6"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-lg font-semibold text-slate-900">{isGrossMode ? "Gross Profit Breakdown" : "Net Profit Breakdown"}</p>
             <p className="mt-1 text-sm text-slate-500">Uses the same current filters and summary card totals.</p>
@@ -783,7 +783,7 @@ function ProfitLossBreakdownModal({ mode, onClose, viewModel, currency }) {
           </button>
         </div>
 
-        <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
+        <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
           <div className="space-y-3 text-sm">
             <div className="flex items-center justify-between gap-3">
               <span className="font-medium text-slate-700">Sales</span>
@@ -850,23 +850,23 @@ function GstBreakdownPanel({ totals, currency }) {
   ];
 
   return (
-    <div className="mb-4 overflow-auto rounded-3xl border border-slate-200 bg-slate-50/70">
-      <table className="w-full min-w-[640px] text-left text-sm xl:min-w-[720px]">
+    <div className="mb-4 overflow-x-auto rounded-3xl border border-slate-200 bg-slate-50/70">
+      <table className="w-full min-w-[560px] text-left text-xs sm:min-w-[640px] sm:text-sm xl:min-w-[720px]">
         <thead className="bg-slate-100/80">
           <tr>
-            <th className="px-4 py-3 font-semibold text-slate-700">GST Type</th>
-            <th className="px-4 py-3 text-right font-semibold text-slate-700">Output GST</th>
-            <th className="px-4 py-3 text-right font-semibold text-slate-700">Input GST</th>
-            <th className="px-4 py-3 text-right font-semibold text-slate-700">Payable</th>
+            <th className="whitespace-nowrap px-3 py-3 font-semibold text-slate-700 sm:px-4">GST Type</th>
+            <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-700 sm:px-4">Output GST</th>
+            <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-700 sm:px-4">Input GST</th>
+            <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-700 sm:px-4">Payable</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.label} className="border-t border-slate-200">
-              <td className="px-4 py-3 font-medium text-slate-900">{row.label}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{formatMoney(row.output, currency)}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{formatMoney(row.input, currency)}</td>
-              <td className={clsx("px-4 py-3 text-right font-semibold", row.payable >= 0 ? "text-emerald-700" : "text-rose-700")}>
+              <td className="whitespace-nowrap px-3 py-3 font-medium text-slate-900 sm:px-4">{row.label}</td>
+              <td className="whitespace-nowrap px-3 py-3 text-right text-slate-700 sm:px-4">{formatMoney(row.output, currency)}</td>
+              <td className="whitespace-nowrap px-3 py-3 text-right text-slate-700 sm:px-4">{formatMoney(row.input, currency)}</td>
+              <td className={clsx("whitespace-nowrap px-3 py-3 text-right font-semibold sm:px-4", row.payable >= 0 ? "text-emerald-700" : "text-rose-700")}>
                 {formatMoney(row.payable, currency)}
               </td>
             </tr>
@@ -1500,7 +1500,7 @@ export default function Reports() {
           : "All Parties";
 
     return (
-      <Card className="p-6">
+      <Card className="p-4 sm:p-6">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
           {years.length ? (
             <label className="text-xs font-semibold text-slate-600">
@@ -1680,27 +1680,27 @@ export default function Reports() {
 
           {viewModel ? (
             <>
-              <Card className="p-6">
-                <div className="flex flex-wrap items-start justify-between gap-4">
+              <Card className="p-4 sm:p-6">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <p className="text-lg font-semibold text-slate-900">{viewModel.title}</p>
                     <p className="mt-1 text-sm text-slate-500">{viewModel.subtitle}</p>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button type="button" onClick={() => handleExport("print")} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                  <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:w-auto lg:flex-wrap lg:items-center">
+                    <button type="button" onClick={() => handleExport("print")} className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 lg:w-auto">
                       <Printer className="h-4 w-4" />
                       Print
                     </button>
-                    <button type="button" onClick={() => handleExport("pdf")} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                    <button type="button" onClick={() => handleExport("pdf")} className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 lg:w-auto">
                       <FileDown className="h-4 w-4" />
                       Export PDF
                     </button>
-                    <button type="button" onClick={() => handleExport("excel")} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                    <button type="button" onClick={() => handleExport("excel")} className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 lg:w-auto">
                       <FileSpreadsheet className="h-4 w-4" />
                       Export Excel
                     </button>
-                    <button type="button" onClick={() => handleExport("json")} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                    <button type="button" onClick={() => handleExport("json")} className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 lg:w-auto">
                       <FileDown className="h-4 w-4" />
                       Export JSON
                     </button>
@@ -1708,7 +1708,7 @@ export default function Reports() {
                 </div>
 
                 {viewModel.metrics.length ? (
-                  <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                     {viewModel.metrics.map((metric) => (
                       metric.metricKey && activeReport === "aging-report" ? (
                         <InteractiveMetricCard
@@ -1740,12 +1740,12 @@ export default function Reports() {
                 ) : null}
               </Card>
 
-              <Card className="p-6">
+              <Card className="p-4 sm:p-6">
                 {activeReport === "profit-loss" ? (
                   <ProfitLossInsights viewModel={viewModel} currency={currency} />
                 ) : (
                   <>
-                    <div className="mb-4 flex items-center justify-between gap-3">
+                    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <p className="text-sm font-semibold text-slate-900">{viewModel.tableTitle}</p>
                         <p className="text-xs text-slate-500">Built for large datasets with filtered exports and paginated viewing.</p>
