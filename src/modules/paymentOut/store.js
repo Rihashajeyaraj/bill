@@ -523,7 +523,7 @@ export function savePaymentOut(payload) {
     existingAppliedByBill.set(billId, current + Math.max(0, parseNumber(line?.applyAmount)));
   });
 
-  const openBills = mapOpenBillsByCountry(payload.country).filter(
+  const openBills = mapOpenBillsByCountryInternal(payload.country, { applyAdvance: false }).filter(
     (bill) => String(bill.supplierId) === String(payload.supplierId)
   );
   const openBillMap = new Map(openBills.map((bill) => [String(bill.id), bill]));
@@ -590,6 +590,101 @@ export function savePaymentOut(payload) {
   const next = existing ? list.map((entry) => (entry.id === existing.id ? note : entry)) : [note, ...list];
   setAllPayments(next);
   return note;
+}
+
+export function applyAdvanceWalletToSupplierBill({
+  country,
+  supplierId,
+  billId,
+  billNo,
+  billDate,
+  billAmount,
+  actor
+}) {
+  const normalizedSupplierId = String(supplierId || "").trim();
+  const normalizedBillId = String(billId || "").trim();
+  const normalizedBillNo = String(billNo || normalizedBillId).trim();
+  const safeBillAmount = Math.max(0, parseNumber(billAmount));
+
+  if (!normalizedSupplierId || !normalizedBillId || safeBillAmount <= 0) {
+    return [];
+  }
+
+  const existingAppliedAmount = listPaymentOut(country)
+    .filter((entry) => String(entry?.status || "") !== "Draft")
+    .reduce(
+      (sum, entry) =>
+        sum +
+        ensureArray(entry?.allocations)
+          .filter((line) => String(line?.billId || "") === normalizedBillId)
+          .reduce((lineSum, line) => lineSum + Math.max(0, parseNumber(line?.applyAmount)), 0),
+      0
+    );
+  let remainingBalance = Math.max(0, safeBillAmount - existingAppliedAmount);
+  if (remainingBalance <= 0) return [];
+
+  const records = listPaymentOut(country)
+    .filter((entry) => String(entry?.supplierId || "") === normalizedSupplierId)
+    .filter((entry) => String(entry?.status || "") !== "Draft")
+    .filter((entry) => Math.max(0, parseNumber(entry?.totals?.unappliedAmount)) > 0)
+    .sort((left, right) => {
+      const leftDate = String(left?.paymentDate || "");
+      const rightDate = String(right?.paymentDate || "");
+      if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+      return String(left?.paymentNo || "").localeCompare(String(right?.paymentNo || ""));
+    });
+
+  const updatedRecords = [];
+
+  records.forEach((record) => {
+    if (remainingBalance <= 0) return;
+    const availableAdvance = Math.max(0, parseNumber(record?.totals?.unappliedAmount));
+    if (availableAdvance <= 0) return;
+
+    const applyAmount = Math.min(availableAdvance, remainingBalance);
+    const nextAllocations = [
+      ...ensureArray(record?.allocations),
+      {
+        billId: normalizedBillId,
+        billNo: normalizedBillNo,
+        billDate: billDate || "",
+        billAmount: safeBillAmount,
+        balanceDue: remainingBalance,
+        applyAmount
+      }
+    ];
+
+    const updated = savePaymentOut({
+      id: record.id,
+      country: record.country || country,
+      paymentDate: record.paymentDate,
+      supplierId: record.supplierId,
+      supplierName: record.supplierName,
+      currency: record.currency || "",
+      paymentMode: record.paymentMode,
+      referenceNo: record.referenceNo || "",
+      chequeNo: record.chequeNo || "",
+      bankName: record.bankName || "",
+      transactionId: record.transactionId || "",
+      paymentReference: record.paymentReference || "",
+      internalNotes: record.internalNotes || "",
+      attachment: record.attachment || null,
+      desiredStatus: "Applied",
+      amountPaid: record?.totals?.amountPaid ?? record?.amountPaid ?? 0,
+      tdsAmount: record?.totals?.tdsAmount ?? record?.tdsAmount ?? 0,
+      tdsCategory: record?.tdsCategory || "",
+      tdsRate: record?.tdsRate ?? 0,
+      isManual: !!record?.isManual,
+      allocations: nextAllocations,
+      supplierOutstandingBefore: record?.totals?.supplierOutstandingBefore ?? safeBillAmount,
+      actor: actor || "System User"
+    });
+
+    updatedRecords.push(updated);
+    remainingBalance = Math.max(0, remainingBalance - applyAmount);
+  });
+
+  return updatedRecords;
 }
 
 export function removePaymentOut(id) {

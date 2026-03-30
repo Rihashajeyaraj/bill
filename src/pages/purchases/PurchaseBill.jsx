@@ -18,7 +18,12 @@ import { useOrganization } from "../../context/OrganizationContext";
 import { calculateTaxes } from "../../services/tax";
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { syncPaymentOutRemote } from "../../services/payments.service";
-import { outstandingBySupplier, paymentInsightsBySupplier, savePaymentOut } from "../../modules/paymentOut/store";
+import {
+  applyAdvanceWalletToSupplierBill,
+  outstandingBySupplier,
+  paymentInsightsBySupplier,
+  savePaymentOut
+} from "../../modules/paymentOut/store";
 import { canCreateEntries } from "../../services/roles";
 import { companyPeekDocumentNumber } from "../../services/company.service";
 import {
@@ -1087,20 +1092,30 @@ export default function PurchaseBill() {
     return { detailed, totalQty, subTotal, tax, taxTotal, grandTotal, roundOff, finalTotal, effectiveRate };
   }, [lines, roundOffEnabled, roundOffValue, companyCountry, company?.address?.state, supplierCountry, party?.state, party?.gstin, party?.taxId, isIndiaOrg, gstRuntimeEnabled, forceZeroTax]);
 
-  const pendingAmount = useMemo(
-    () => round2(Math.max(0, Number(computed.finalTotal || 0) - Number(paymentAmount || 0))),
-    [computed.finalTotal, paymentAmount]
-  );
-  const advanceAmount = useMemo(
-    () => round2(Math.max(0, Number(paymentAmount || 0) - Number(computed.finalTotal || 0))),
-    [paymentAmount, computed.finalTotal]
-  );
   const supplierPaymentInsights = useMemo(
     () => paymentInsightsBySupplier(country, partyId),
     [country, partyId]
   );
   const supplierAdvanceWallet = round2(Number(supplierPaymentInsights?.advanceWallet || 0));
-  const projectedAdvanceWallet = round2(supplierAdvanceWallet + advanceAmount);
+  const advanceAppliedFromWallet = useMemo(
+    () => round2(Math.min(supplierAdvanceWallet, Number(computed.finalTotal || 0))),
+    [supplierAdvanceWallet, computed.finalTotal]
+  );
+  const balanceAfterExistingAdvance = useMemo(
+    () => round2(Math.max(0, Number(computed.finalTotal || 0) - advanceAppliedFromWallet)),
+    [computed.finalTotal, advanceAppliedFromWallet]
+  );
+  const pendingAmount = useMemo(
+    () => round2(Math.max(0, balanceAfterExistingAdvance - Number(paymentAmount || 0))),
+    [balanceAfterExistingAdvance, paymentAmount]
+  );
+  const advanceAmount = useMemo(
+    () => round2(Math.max(0, Number(paymentAmount || 0) - balanceAfterExistingAdvance)),
+    [paymentAmount, balanceAfterExistingAdvance]
+  );
+  const projectedAdvanceWallet = round2(
+    Math.max(0, supplierAdvanceWallet - advanceAppliedFromWallet) + advanceAmount
+  );
 
   async function resolveLinesWithItems(detailedLines) {
     const nextLines = [];
@@ -1370,12 +1385,27 @@ export default function PurchaseBill() {
         }
       });
 
+      const autoAppliedAdvanceRecords = applyAdvanceWalletToSupplierBill({
+        country,
+        supplierId: partyId,
+        billId: createdBillId,
+        billNo: effectiveBillNumber,
+        billDate,
+        billAmount: Number(computed.finalTotal || 0),
+        actor: authGetUser()?.name || authGetUser()?.email || "System User"
+      });
+      if (autoAppliedAdvanceRecords.length) {
+        await Promise.all(
+          autoAppliedAdvanceRecords.map((record) => syncPaymentOutRemote(record))
+        );
+      }
+
       let paymentSaved = false;
       let paymentSavedUnapplied = false;
       if (paymentAmount > 0) {
         try {
           const payableBefore = outstandingBySupplier(country, partyId);
-          const applyAmount = Math.min(paymentAmount, Number(computed.finalTotal || 0));
+          const applyAmount = Math.min(paymentAmount, Math.max(0, Number(computed.finalTotal || 0) - advanceAppliedFromWallet));
           const paymentOutRecord = savePaymentOut({
             country,
             paymentDate: paymentDate || billDate,
@@ -2392,6 +2422,12 @@ export default function PurchaseBill() {
                   <div className="flex items-center justify-between">
                     <span className="text-slate-600">Existing Advance Wallet</span>
                     <span className="font-semibold text-emerald-700">{money(supplierAdvanceWallet)}</span>
+                  </div>
+                ) : null}
+                {advanceAppliedFromWallet > 0 ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">Advance Applied Now</span>
+                    <span className="font-semibold text-emerald-700">{money(advanceAppliedFromWallet)}</span>
                   </div>
                 ) : null}
                 {advanceAmount > 0 ? (
