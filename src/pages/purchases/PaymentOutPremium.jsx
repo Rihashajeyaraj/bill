@@ -98,6 +98,10 @@ function calculatedTdsInputValue(amountPaid, tdsRate) {
   return String(calculateTdsAmount(amountPaid, tdsRate));
 }
 
+function calculateFinalPayable(grossTotal, tdsAmount) {
+  return Math.max(0, parseNumber(grossTotal) - Math.max(0, parseNumber(tdsAmount)));
+}
+
 function autoTdsBaseAmount(bill, allocationMode, fallbackAmount) {
   if (allocationMode === "linked") {
     const taxableAmount = Math.max(0, parseNumber(bill?.taxableAmount));
@@ -232,9 +236,10 @@ export default function PaymentOutPremium() {
 
   const amountPaid = Math.max(0, parseNumber(form.amountPaid));
   const tdsAmount = Math.max(0, parseNumber(form.tdsAmount));
-  const linkedCashPayable = selectedBill
-    ? Math.max(0, parseNumber(selectedBill.balanceDue) - Math.min(tdsAmount, parseNumber(selectedBill.balanceDue)))
-    : 0;
+  const taxableAmount = selectedBill ? Math.max(0, parseNumber(selectedBill.taxableAmount)) : 0;
+  const gstAmount = selectedBill ? Math.max(0, parseNumber(selectedBill.taxAmount)) : 0;
+  const grossTotal = selectedBill ? Math.max(0, parseNumber(selectedBill.billAmount)) : 0;
+  const linkedCashPayable = selectedBill ? calculateFinalPayable(grossTotal, tdsAmount) : 0;
   const amountApplied = form.allocations.reduce((sum, line) => sum + parseNumber(line.applyAmount), 0);
   const unappliedAmount = Math.max(0, amountPaid - amountApplied);
   const totalSettled = amountPaid + tdsAmount;
@@ -296,6 +301,24 @@ export default function PaymentOutPremium() {
     () => calculateTdsAmount(autoTdsBaseAmount(selectedBill, form.allocationMode, form.amountPaid), form.tdsRate),
     [selectedBill, form.allocationMode, form.amountPaid, form.tdsRate]
   );
+  const readOnly = !!form?.readOnly;
+
+  useEffect(() => {
+    if (readOnly || form.allocationMode !== "linked" || !selectedBill) return;
+    const nextAmountPaid = calculateFinalPayable(grossTotal, form.tdsAmount);
+    const currentAmountPaid = Math.max(0, parseNumber(form.amountPaid));
+    const nextAllocations = buildBillAllocation(selectedBill, nextAmountPaid, form.tdsAmount);
+    const currentApplied = form.allocations.reduce((sum, line) => sum + parseNumber(line.applyAmount), 0);
+    const nextApplied = nextAllocations.reduce((sum, line) => sum + parseNumber(line.applyAmount), 0);
+    if (Math.abs(currentAmountPaid - nextAmountPaid) < 0.009 && Math.abs(currentApplied - nextApplied) < 0.009) {
+      return;
+    }
+    setForm((prev) => ({
+      ...prev,
+      amountPaid: nextAmountPaid,
+      allocations: buildBillAllocation(selectedBill, nextAmountPaid, prev.tdsAmount)
+    }));
+  }, [form.allocationMode, form.amountPaid, form.allocations, form.tdsAmount, grossTotal, readOnly, selectedBill]);
 
   useEffect(() => {
     let mounted = true;
@@ -724,7 +747,6 @@ export default function PaymentOutPremium() {
     }
   }
 
-  const readOnly = !!form.readOnly;
   const canSaveCurrentFlow = form?.id ? canEditPayment : canCreatePayment;
   const confirmStatus = form.allocationMode === "linked" && form.allocations.length ? "Applied" : "Paid";
   const hasPreviousStep = activeStep > 0;
@@ -1118,15 +1140,20 @@ export default function PaymentOutPremium() {
                 <div className="space-y-3">
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block">
-                      <span className="text-xs font-semibold text-slate-600">Cash Paid</span>
+                      <span className="text-xs font-semibold text-slate-600">
+                        {form.allocationMode === "linked" && selectedBill ? "Final Payable Amount" : "Cash Paid"}
+                      </span>
                       <input
                         type="text"
                         value={formatInputNumberByPreference(form.amountPaid)}
                         onChange={(event) => handleAmountPaidChange(normalizeFormattedNumberInput(event.target.value))}
                         inputMode="decimal"
                         className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
-                        disabled={readOnly || !form.supplierId}
+                        disabled={readOnly || !form.supplierId || (form.allocationMode === "linked" && !!selectedBill)}
                       />
+                      {form.allocationMode === "linked" && selectedBill ? (
+                        <p className="mt-1 text-xs text-slate-500">Auto-calculated as Gross Total - TDS Amount.</p>
+                      ) : null}
                     </label>
                     <label className="block">
                       <span className="text-xs font-semibold text-slate-600">TDS Amount</span>
@@ -1144,7 +1171,7 @@ export default function PaymentOutPremium() {
                   <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                       <label className="block min-w-0 flex-1 sm:min-w-[220px]">
-                        <span className="text-xs font-semibold text-slate-600">TDS Category</span>
+                        <span className="text-xs font-semibold text-slate-600">TDS Percentage</span>
                         <select
                           value={form.tdsCategory}
                           disabled={readOnly || !form.supplierId}
@@ -1160,23 +1187,11 @@ export default function PaymentOutPremium() {
                       </label>
                       <div className="sm:text-right">
                         <p className="text-xs font-semibold text-slate-600">
-                          {form.isManual
-                            ? `Manual TDS: ${formatMoney(parseNumber(form.tdsAmount), effectiveCurrency)}`
-                            : `Auto TDS (${parseNumber(form.tdsRate).toFixed(2)}%): ${formatMoney(autoCalculatedTdsAmount, effectiveCurrency)}`}
+                          Auto TDS on taxable amount ({parseNumber(form.tdsRate).toFixed(2)}%): {formatMoney(autoCalculatedTdsAmount, effectiveCurrency)}
                         </p>
                         <p className="mt-1 text-[11px] text-slate-500">
-                          {form.isManual
-                            ? "Manual mode is active. Select any non-custom TDS category to auto-calculate again."
-                            : "Auto-calculation stays in sync until you manually edit the TDS amount."}
+                          GST is added to the taxable value first, then TDS is deducted from the gross total.
                         </p>
-                        <button
-                          type="button"
-                          disabled={readOnly || form.isManual || isCustomTdsCategory(form.tdsCategory)}
-                          onClick={applyCalculatedTds}
-                          className="mt-2 inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Use Auto Value
-                        </button>
                       </div>
                     </div>
                   </div>
@@ -1245,13 +1260,13 @@ export default function PaymentOutPremium() {
                         Date: {selectedBill.billDate || "-"} | Pending: {formatMoney(selectedBill.balanceDue, effectiveCurrency)}
                       </p>
                       <p className="mt-1">
-                        Taxable: {formatMoney(selectedBill.taxableAmount, effectiveCurrency)} | Tax: {formatMoney(selectedBill.taxAmount, effectiveCurrency)}
+                        Taxable Amount: {formatMoney(taxableAmount, effectiveCurrency)} | GST Amount: {formatMoney(gstAmount, effectiveCurrency)}
                       </p>
                       <p className="mt-1">
-                        TDS Deducted: {formatMoney(tdsAmount, effectiveCurrency)} | Net Cash Payable: {formatMoney(linkedCashPayable, effectiveCurrency)}
+                        Gross Total: {formatMoney(grossTotal, effectiveCurrency)} | TDS Amount: {formatMoney(tdsAmount, effectiveCurrency)}
                       </p>
                       <p className="mt-1">
-                        Cash Applied: {formatMoney(amountApplied, effectiveCurrency)} | TDS Settled: {formatMoney(tdsAmount, effectiveCurrency)}
+                        TDS Percentage: {parseNumber(form.tdsRate).toFixed(2)}% | Final Payable Amount: {formatMoney(linkedCashPayable, effectiveCurrency)}
                       </p>
                       <p className="mt-1">Total Settled: {formatMoney(totalSettled, effectiveCurrency)}</p>
                     </div>
@@ -1317,6 +1332,21 @@ export default function PaymentOutPremium() {
 
               <FlowCard title="Advance Handling" subtitle="Cash advance after invoice allocation">
                 <div className="space-y-3">
+                  {selectedBill ? (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                        <p className="text-sm font-semibold text-slate-900">Bill TDS Summary</p>
+                        <div className="mt-3 space-y-1 text-xs text-slate-600">
+                          <p>Taxable Amount: <span className="font-semibold text-slate-900">{formatMoney(taxableAmount, effectiveCurrency)}</span></p>
+                          <p>GST Amount: <span className="font-semibold text-slate-900">{formatMoney(gstAmount, effectiveCurrency)}</span></p>
+                          <p>Gross Total: <span className="font-semibold text-slate-900">{formatMoney(grossTotal, effectiveCurrency)}</span></p>
+                          <p>TDS Percentage: <span className="font-semibold text-slate-900">{parseNumber(form.tdsRate).toFixed(2)}%</span></p>
+                          <p>TDS Amount: <span className="font-semibold text-sky-700">{formatMoney(tdsAmount, effectiveCurrency)}</span></p>
+                          <p>Final Payable Amount: <span className="font-semibold text-emerald-700">{formatMoney(linkedCashPayable, effectiveCurrency)}</span></p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <p className="text-sm font-semibold text-slate-900">Cash Advance Balance</p>
                     <p className="mt-2 text-2xl font-bold text-emerald-700">{formatMoney(unappliedAmount, effectiveCurrency)}</p>
@@ -1418,7 +1448,7 @@ export default function PaymentOutPremium() {
                   <p className="text-xs text-slate-500">Payment Out Snapshot</p>
                   <p className="text-3xl font-bold tracking-tight text-slate-900">{formatMoney(totalSettled, effectiveCurrency)}</p>
                   <p className="text-xs text-slate-500">
-                    Cash paid {formatMoney(amountPaid, effectiveCurrency)} + TDS {formatMoney(tdsAmount, effectiveCurrency)}
+                    Final payable {formatMoney(amountPaid, effectiveCurrency)} + TDS {formatMoney(tdsAmount, effectiveCurrency)} = Gross {formatMoney(totalSettled, effectiveCurrency)}
                   </p>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
                     <p>Payment out flow records supplier settlements and keeps any balance as advance.</p>

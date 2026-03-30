@@ -1,4 +1,4 @@
-import { listPaymentIn } from "../modules/paymentIn/store";
+import { listPaymentOut } from "../modules/paymentOut/store";
 import { listNotifications, pushNotification } from "./activity.service";
 import { companyGetProfile } from "./company.service";
 
@@ -57,7 +57,7 @@ export function syncTdsComplianceReminders(referenceDate = new Date()) {
 
   const monthPeriodKey = monthKey(referenceDate);
   const quarterPeriodKey = quarterKey(referenceDate);
-  const payments = listPaymentIn().filter((entry) => parseNumber(entry?.totals?.tdsAmount) > 0);
+  const payments = listPaymentOut().filter((entry) => parseNumber(entry?.totals?.tdsAmount) > 0);
 
   const monthPayments = payments.filter((entry) => monthKey(entry?.paymentDate || referenceDate) === monthPeriodKey);
   if (monthPayments.length && !reminderExists("tds_deposit", monthPeriodKey)) {

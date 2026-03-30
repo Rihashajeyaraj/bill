@@ -28,15 +28,11 @@ import {
   type PaymentInRecord
 } from "../../modules/paymentIn/store";
 import {
-  calculateTdsAmount,
   computeEditorTotals,
   defaultForm,
   formFromRecord,
   formatMoney,
-  getTdsRateForCategory,
-  isCustomTdsCategory,
-  parseNumber,
-  TDS_CATEGORY_OPTIONS
+  parseNumber
 } from "../../modules/paymentIn/utils";
 import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf } from "../../modules/paymentIn/pdf";
 import type { PaymentInFormState } from "../../modules/paymentIn/types";
@@ -46,7 +42,6 @@ import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesSyncFromRemote } from "../../services/invoices.service";
 import { deletePaymentInRemote, syncPaymentInRemote } from "../../services/payments.service";
 import { salesProformasSyncFromRemote } from "../../services/proformas.service";
-import { syncTdsComplianceReminders } from "../../services/tds.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
 import { formatInputNumberByPreference, normalizeFormattedNumberInput } from "../../lib/formatPreferences";
 import FlowCard from "../../modules/paymentIn/FlowCard";
@@ -117,10 +112,6 @@ function numberInputValue(value: unknown) {
   return formatInputNumberByPreference(value);
 }
 
-function calculatedTdsInputValue(amountReceived: unknown, tdsRate: unknown) {
-  return String(calculateTdsAmount(amountReceived, tdsRate));
-}
-
 function documentTypeLabel(documentType: "invoice" | "proforma") {
   return documentType === "proforma" ? "Proforma" : "Invoice";
 }
@@ -139,21 +130,6 @@ function buildAllocation(document: CustomerOpenInvoice | null, amountReceived: u
       documentType: document.documentType
     }
   ];
-}
-
-function autoTdsBaseAmount(
-  document: Pick<CustomerOpenInvoice, "taxableAmount"> | null | undefined,
-  allocationMode: "linked" | "normal",
-  fallbackAmount: unknown
-) {
-  const paymentAmount = Math.max(0, parseNumber(fallbackAmount as any));
-  if (allocationMode === "linked") {
-    const taxableAmount = Math.max(0, parseNumber(document?.taxableAmount as any));
-    if (taxableAmount > 0) {
-      return paymentAmount > 0 ? Math.min(taxableAmount, paymentAmount) : taxableAmount;
-    }
-  }
-  return paymentAmount;
 }
 
 export default function PaymentInPremium() {
@@ -279,11 +255,6 @@ export default function PaymentInPremium() {
   const allowed = access.allowedCountries.includes(country);
   const readOnly = flowMode === "view";
   const prefillInvoiceId = searchParams.get("invoiceId") || "";
-  const autoCalculatedTdsAmount = useMemo(
-    () => calculateTdsAmount(autoTdsBaseAmount(selectedCustomerDocument, form?.allocationMode || "normal", form?.amountReceived), form?.tdsRate),
-    [selectedCustomerDocument, form?.allocationMode, form?.amountReceived, form?.tdsRate]
-  );
-
   useEffect(() => {
     setSelectedPaymentCountry(country);
   }, [country]);
@@ -642,14 +613,9 @@ export default function PaymentInPremium() {
     const cfg = COUNTRY_CONFIG[country];
     const errors: Record<string, string> = {};
     const amountReceived = Math.max(0, parseNumber(form.amountReceived));
-    const rawTdsAmount = parseNumber(form.tdsAmount);
-    const tdsAmount = Math.max(0, rawTdsAmount);
-
     if (!form.paymentDate) errors.paymentDate = "Payment date is required.";
     if (!form.customerId) errors.customerId = "Customer is required.";
     if (amountReceived <= 0) errors.amountReceived = "Amount received must be greater than zero.";
-    if (rawTdsAmount < 0) errors.tdsAmount = "TDS amount cannot be negative.";
-    if (tdsAmount > amountReceived) errors.tdsAmount = "TDS amount cannot exceed amount received.";
     if (form.allocationMode === "linked" && !form.selectedDocumentId) {
       errors.selectedDocumentId = "Select an invoice or proforma invoice.";
     }
@@ -675,7 +641,6 @@ export default function PaymentInPremium() {
         setActiveStep(0);
       } else if (
         errors.amountReceived ||
-        errors.tdsAmount ||
         errors.selectedDocumentId ||
         errors.paymentDate ||
         errors.registrationNumber ||
@@ -715,10 +680,10 @@ export default function PaymentInPremium() {
       attachment: form.attachment,
       desiredStatus: targetStatus,
       amountReceived: parseNumber(form.amountReceived),
-      tdsRate: parseNumber(form.tdsRate),
-      tdsAmount: parseNumber(form.tdsAmount),
-      tdsCategory: form.tdsCategory,
-      isManual: !!form.isManual,
+      tdsRate: 0,
+      tdsAmount: 0,
+      tdsCategory: "",
+      isManual: false,
       allocations: form.allocations,
       customerOutstandingBefore:
         typeof options?.outstandingOverride === "number" ? options.outstandingOverride : customerOutstandingBefore,
@@ -750,9 +715,6 @@ export default function PaymentInPremium() {
       const saved = savePaymentIn(payload);
       if (!saved) return;
       const remoteResult = await syncPaymentInRemote(saved);
-      if ((saved?.totals?.tdsAmount || 0) > 0) {
-        syncTdsComplianceReminders();
-      }
       if (options?.download) exportSinglePaymentInPdf(saved);
       if (options?.email) window.alert(`Email queued for ${saved.receiptNo}.`);
       setRefreshKey((prev) => prev + 1);
@@ -873,7 +835,7 @@ export default function PaymentInPremium() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
                 <FlowCard title="Total Payments" subtitle="Count of receipts">{loading ? <PaymentInSkeleton /> : <p className="text-2xl font-bold text-slate-900">{summary?.count || 0}</p>}</FlowCard>
                 <FlowCard title="Cash Received" subtitle="Actual incoming payment"><p className="text-2xl font-bold text-slate-900">{formatMoney(summary?.totalReceived || 0, country)}</p></FlowCard>
-                <FlowCard title="Total TDS" subtitle="Deducted and settled"><p className="text-2xl font-bold text-sky-700">{formatMoney(summary?.totalTds || 0, country)}</p></FlowCard>
+                <FlowCard title="Total Settled" subtitle="Customer payments recorded"><p className="text-2xl font-bold text-emerald-700">{formatMoney(summary?.totalReceived || 0, country)}</p></FlowCard>
                 <FlowCard title="Cash Advance Balance" subtitle="Cash kept on account"><p className="text-2xl font-bold text-amber-700">{formatMoney(summary?.totalUnallocated || 0, country)}</p></FlowCard>
               </div>
 
@@ -904,7 +866,6 @@ export default function PaymentInPremium() {
                         <th className="px-3 py-3 font-semibold">Customer</th>
                         <th className="px-3 py-3 font-semibold">Mode</th>
                         <th className="px-3 py-3 font-semibold text-right">Cash Received</th>
-                        <th className="px-3 py-3 font-semibold text-right">TDS</th>
                         <th className="px-3 py-3 font-semibold text-right">Total Settled</th>
                         <th className="px-3 py-3 font-semibold text-right">Cash Advance</th>
                         <th className="px-3 py-3 font-semibold">Status</th>
@@ -914,7 +875,7 @@ export default function PaymentInPremium() {
                     <tbody>
                       {!filteredPayments.length ? (
                         <tr className="border-t border-slate-100">
-                          <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
+                          <td className="px-3 py-6 text-center text-slate-500" colSpan={9}>
                             No payments found. Create a new payment to get started.
                           </td>
                         </tr>
@@ -927,9 +888,6 @@ export default function PaymentInPremium() {
                             <td className="px-3 py-3 text-slate-600">{formatPaymentModeLabel(record.paymentMode)}</td>
                             <td className="px-3 py-3 text-right font-semibold text-slate-900">
                               {formatMoney(record?.totals?.amountReceived || 0, country)}
-                            </td>
-                            <td className="px-3 py-3 text-right font-semibold text-sky-700">
-                              {formatMoney(record?.totals?.tdsAmount || 0, country)}
                             </td>
                             <td className="px-3 py-3 text-right font-semibold text-slate-900">
                               {formatMoney(record?.totals?.totalSettled || 0, country)}
@@ -1135,7 +1093,7 @@ export default function PaymentInPremium() {
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                   <FlowCard title="Payment Details" subtitle="Core details for this receipt">
                     <div className="space-y-3">
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-3">
                         <label className="block">
                           <span className="text-xs font-semibold text-slate-600">Cash Received</span>
                           <input
@@ -1149,59 +1107,6 @@ export default function PaymentInPremium() {
                           />
                           {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
                         </label>
-                        <label className="block">
-                          <span className="text-xs font-semibold text-slate-600">TDS Amount</span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={form.tdsAmount}
-                            placeholder="0"
-                            disabled={readOnly}
-                            onChange={(event) => handleTdsAmountChange(event.target.value)}
-                            inputMode="decimal"
-                            className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
-                          />
-                          {fieldErrors.tdsAmount ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.tdsAmount}</p> : null}
-                        </label>
-                      </div>
-                      <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                          <label className="block min-w-0 flex-1 sm:min-w-[220px]">
-                            <span className="text-xs font-semibold text-slate-600">TDS Category</span>
-                            <select
-                              value={form.tdsCategory}
-                              disabled={readOnly}
-                              onChange={(event) => handleTdsCategoryChange(event.target.value)}
-                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                            >
-                              {TDS_CATEGORY_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label} ({option.rate}%)
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <div className="sm:text-right">
-                            <p className="text-xs font-semibold text-slate-600">
-                              {form.isManual
-                                ? `Manual TDS: ${formatMoney(parseNumber(form.tdsAmount), country)}`
-                                : `Auto TDS (${parseNumber(form.tdsRate).toFixed(2)}%): ${formatMoney(autoCalculatedTdsAmount, country)}`}
-                            </p>
-                            <p className="mt-1 text-[11px] text-slate-500">
-                              {form.isManual
-                                ? "Manual mode is active. Select any non-custom TDS category to auto-calculate again."
-                                : "Auto-calculation stays in sync until you manually edit the TDS amount."}
-                            </p>
-                            <button
-                              type="button"
-                              disabled={readOnly || form.isManual || isCustomTdsCategory(form.tdsCategory)}
-                              onClick={applyCalculatedTds}
-                              className="mt-2 inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              Use Auto Value
-                            </button>
-                          </div>
-                        </div>
                       </div>
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                         <p className="text-xs font-semibold text-slate-600">Is this payment for a specific invoice?</p>
@@ -1273,7 +1178,7 @@ export default function PaymentInPremium() {
                             Date: {selectedCustomerDocument.invoiceDate || "-"} | Pending: {formatMoney(selectedCustomerDocument.balanceDue, country)}
                           </p>
                           <p className="mt-1">
-                            Cash Applied: {formatMoney(totals.amountApplied, country)} | TDS Settled: {formatMoney(totals.tdsAmount, country)}
+                            Cash Applied: {formatMoney(totals.amountApplied, country)}
                           </p>
                           <p className="mt-1">
                             Total Settled: {formatMoney(totals.totalSettled, country)}
@@ -1285,7 +1190,7 @@ export default function PaymentInPremium() {
                         <p className="mt-1 text-lg font-semibold text-slate-900">{formatMoney(totals.unappliedAmount, country)}</p>
                         <p className="mt-1 text-xs text-slate-500">
                           {form.allocationMode === "linked"
-                            ? "Any cash amount above the selected document pending amount will stay as advance balance. TDS is treated as settlement, not cash advance."
+                            ? "Any cash amount above the selected document pending amount will stay as advance balance."
                             : "Normal payment entries are saved without invoice linking."}
                         </p>
                       </div>
@@ -1373,10 +1278,6 @@ export default function PaymentInPremium() {
                           <p className="text-base font-semibold text-slate-900">{formatMoney(totals.amountReceived, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">TDS Amount</p>
-                          <p className="text-base font-semibold text-sky-700">{formatMoney(totals.tdsAmount, country)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Total Settled</p>
                           <p className="text-base font-semibold text-emerald-700">{formatMoney(totals.totalSettled, country)}</p>
                         </div>
@@ -1420,10 +1321,10 @@ export default function PaymentInPremium() {
                   <FlowCard title="Receipt Snapshot" subtitle="Country wording + legal labels">
                     <div className="space-y-3">
                       <p className="text-xs text-slate-500">{COUNTRY_CONFIG[country].receiptLabel}</p>
-                      <p className="text-3xl font-bold tracking-tight text-slate-900">{formatMoney(totals.totalSettled, country)}</p>
-                      <p className="text-xs text-slate-500">
-                        Cash received {formatMoney(totals.amountReceived, country)} + TDS {formatMoney(totals.tdsAmount, country)}
-                      </p>
+                  <p className="text-3xl font-bold tracking-tight text-slate-900">{formatMoney(totals.totalSettled, country)}</p>
+                  <p className="text-xs text-slate-500">
+                    Cash received {formatMoney(totals.amountReceived, country)}
+                  </p>
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
                         <p>{COUNTRY_CONFIG[country].legalWording}</p>
                         <p className="mt-2">

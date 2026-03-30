@@ -1,12 +1,11 @@
 import { formatCurrencyByPreference, formatNumberByPreference, parseFormattedNumber } from "../../lib/formatPreferences";
 
 export const TDS_CATEGORY_OPTIONS = [
-  { value: "contractor", label: "Contractor", rate: 1 },
-  { value: "professional", label: "Professional", rate: 10 },
-  { value: "commission", label: "Commission", rate: 5 },
-  { value: "rent", label: "Rent", rate: 10 },
-  { value: "other", label: "Other", rate: 2 },
-  { value: "custom", label: "Custom (Manual)", rate: 0 }
+  { value: "none", label: "None", rate: 0 },
+  { value: "1", label: "1%", rate: 1 },
+  { value: "2", label: "2%", rate: 2 },
+  { value: "5", label: "5%", rate: 5 },
+  { value: "10", label: "10%", rate: 10 }
 ];
 
 export function parseNumber(value) {
@@ -27,7 +26,7 @@ export function calculateTdsAmount(amountPaid, tdsRate) {
 }
 
 export function isCustomTdsCategory(category) {
-  return String(category || "").trim().toLowerCase() === "custom";
+  return false;
 }
 
 export function formatMoney(value, currency) {
