@@ -74,9 +74,11 @@ function supplierAddressSummary(supplier) {
     .join(", ");
 }
 
-function buildBillAllocation(bill, amountPaid) {
+function buildBillAllocation(bill, amountPaid, tdsAmount = 0) {
   if (!bill) return [];
   const amount = Math.max(0, parseNumber(amountPaid));
+  const tds = Math.max(0, parseNumber(tdsAmount));
+  const cashPayable = Math.max(0, parseNumber(bill.balanceDue) - Math.min(tds, parseNumber(bill.balanceDue)));
   return [
     {
       billId: bill.id,
@@ -84,7 +86,7 @@ function buildBillAllocation(bill, amountPaid) {
       billDate: bill.billDate,
       billAmount: bill.billAmount,
       balanceDue: bill.balanceDue,
-      applyAmount: Math.min(amount, bill.balanceDue)
+      applyAmount: Math.min(amount, cashPayable)
     }
   ];
 }
@@ -210,7 +212,9 @@ export default function PaymentOutPremium() {
       supplierId: form.supplierId,
       supplierName: form.supplierName,
       billAmount: savedBill.billAmount,
-      balanceDue: savedBill.balanceDue
+      balanceDue: savedBill.balanceDue,
+      taxableAmount: savedBill.taxableAmount || 0,
+      taxAmount: savedBill.taxAmount || 0
     };
   }, [form.allocations, form.selectedBillId, form.supplierId, form.supplierName, supplierBills]);
   const supplierOutstandingBefore = useMemo(
@@ -220,6 +224,9 @@ export default function PaymentOutPremium() {
 
   const amountPaid = Math.max(0, parseNumber(form.amountPaid));
   const tdsAmount = Math.max(0, parseNumber(form.tdsAmount));
+  const linkedCashPayable = selectedBill
+    ? Math.max(0, parseNumber(selectedBill.balanceDue) - Math.min(tdsAmount, parseNumber(selectedBill.balanceDue)))
+    : 0;
   const amountApplied = form.allocations.reduce((sum, line) => sum + parseNumber(line.applyAmount), 0);
   const unappliedAmount = Math.max(0, amountPaid - amountApplied);
   const totalSettled = amountPaid + tdsAmount;
@@ -415,7 +422,7 @@ export default function PaymentOutPremium() {
               String(entry.id) === String(next.selectedBillId) &&
               String(entry.supplierId) === String(next.supplierId)
           ) || null;
-        next.allocations = buildBillAllocation(linkedBill, value);
+        next.allocations = buildBillAllocation(linkedBill, value, next.tdsAmount);
       }
       return next;
     });
@@ -432,13 +439,13 @@ export default function PaymentOutPremium() {
               String(entry.id) === String(next.selectedBillId) &&
               String(entry.supplierId) === String(next.supplierId)
           ) || null;
-        next.allocations = buildBillAllocation(linkedBill, value);
         if (!next.isManual) {
           next.tdsAmount = calculatedTdsInputValue(
             autoTdsBaseAmount(linkedBill, next.allocationMode, value),
             next.tdsRate
           );
         }
+        next.allocations = buildBillAllocation(linkedBill, value, next.tdsAmount);
         return next;
       }
       if (!next.isManual) {
@@ -453,13 +460,25 @@ export default function PaymentOutPremium() {
   }
 
   function handleTdsAmountChange(value) {
-    setForm((prev) => ({
-      ...prev,
-      tdsAmount: value,
-      tdsCategory: "custom",
-      tdsRate: "0",
-      isManual: true
-    }));
+    setForm((prev) => {
+      const next = {
+        ...prev,
+        tdsAmount: value,
+        tdsCategory: "custom",
+        tdsRate: "0",
+        isManual: true
+      };
+      if (next.allocationMode === "linked" && next.selectedBillId) {
+        const linkedBill =
+          bills.find(
+            (entry) =>
+              String(entry.id) === String(next.selectedBillId) &&
+              String(entry.supplierId) === String(next.supplierId)
+          ) || null;
+        next.allocations = buildBillAllocation(linkedBill, next.amountPaid, value);
+      }
+      return next;
+    });
     setDirty(true);
   }
 
@@ -481,21 +500,35 @@ export default function PaymentOutPremium() {
               autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
               nextRate
             ),
-            isManual: false
+            isManual: false,
+            allocations:
+              prev.allocationMode === "linked"
+                ? buildBillAllocation(selectedBill, prev.amountPaid, calculatedTdsInputValue(
+                    autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
+                    nextRate
+                  ))
+                : prev.allocations
           }
     );
     setDirty(true);
   }
 
   function applyCalculatedTds() {
-    setForm((prev) => ({
-      ...prev,
-      tdsAmount: calculatedTdsInputValue(
+    setForm((prev) => {
+      const nextTdsAmount = calculatedTdsInputValue(
         autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
         prev.tdsRate
-      ),
-      isManual: false
-    }));
+      );
+      return {
+        ...prev,
+        tdsAmount: nextTdsAmount,
+        isManual: false,
+        allocations:
+          prev.allocationMode === "linked"
+            ? buildBillAllocation(selectedBill, prev.amountPaid, nextTdsAmount)
+            : prev.allocations
+      };
+    });
     setDirty(true);
   }
 
@@ -526,7 +559,7 @@ export default function PaymentOutPremium() {
       const next = {
         ...prev,
         allocationMode: "linked",
-        allocations: buildBillAllocation(linkedBill, prev.amountPaid)
+        allocations: buildBillAllocation(linkedBill, prev.amountPaid, prev.tdsAmount)
       };
       if (!next.isManual) {
         next.tdsAmount = calculatedTdsInputValue(
@@ -546,7 +579,7 @@ export default function PaymentOutPremium() {
         ...prev,
         allocationMode: "linked",
         selectedBillId: linkedBill?.id || "",
-        allocations: buildBillAllocation(linkedBill, prev.amountPaid)
+        allocations: buildBillAllocation(linkedBill, prev.amountPaid, prev.tdsAmount)
       };
       if (!next.isManual) {
         next.tdsAmount = calculatedTdsInputValue(
@@ -1166,6 +1199,12 @@ export default function PaymentOutPremium() {
                       <p className="font-semibold">Invoice - {selectedBill.billNo}</p>
                       <p className="mt-1">
                         Date: {selectedBill.billDate || "-"} | Pending: {formatMoney(selectedBill.balanceDue, effectiveCurrency)}
+                      </p>
+                      <p className="mt-1">
+                        Taxable: {formatMoney(selectedBill.taxableAmount, effectiveCurrency)} | Tax: {formatMoney(selectedBill.taxAmount, effectiveCurrency)}
+                      </p>
+                      <p className="mt-1">
+                        TDS Deducted: {formatMoney(tdsAmount, effectiveCurrency)} | Net Cash Payable: {formatMoney(linkedCashPayable, effectiveCurrency)}
                       </p>
                       <p className="mt-1">
                         Cash Applied: {formatMoney(amountApplied, effectiveCurrency)} | TDS Settled: {formatMoney(tdsAmount, effectiveCurrency)}
