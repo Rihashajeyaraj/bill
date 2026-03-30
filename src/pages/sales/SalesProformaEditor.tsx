@@ -15,7 +15,11 @@ import {
   listStatesByCountry,
   resolveCountryIsoCode
 } from "../../lib/geoData";
-import { formatDecimalByPreference } from "../../lib/formatPreferences";
+import {
+  formatDecimalByPreference,
+  formatInputNumberByPreference,
+  normalizeFormattedNumberInput
+} from "../../lib/formatPreferences";
 import {
   convertSalesProforma,
   salesProformaComputeTotals,
@@ -1235,15 +1239,18 @@ export default function SalesProformaEditor() {
                         </td>
                         <td className="px-3 py-2 align-middle">
                           <input
-                            type="number"
-                            min={0}
-                            step="0.001"
+                            type="text"
                             className={`${lineItemInputRightClassName} ${
                               lineError?.qty ? "border-rose-300" : "border-slate-200"
                             }`}
-                            value={typeof line.qty === "number" ? (line.qty === 0 ? "" : line.qty) : (line.qty ?? "")}
+                            value={formatInputNumberByPreference(
+                              typeof line.qty === "number" ? (line.qty === 0 ? "" : line.qty) : (line.qty ?? "")
+                            )}
                             disabled={locked}
-                            onChange={(event) => updateLine(line.id, { qty: event.target.value })}
+                            onChange={(event) =>
+                              updateLine(line.id, { qty: normalizeFormattedNumberInput(event.target.value) })
+                            }
+                            inputMode="decimal"
                           />
                           {lineError?.qty ? (
                             <p className="mt-1 text-[11px] font-medium text-rose-600">{lineError.qty}</p>
@@ -1260,13 +1267,16 @@ export default function SalesProformaEditor() {
                         </td>
                         <td className="px-3 py-2 align-middle">
                           <input
-                            type="number"
-                            min={0}
-                            step="0.01"
+                            type="text"
                             className={lineItemInputRightClassName}
-                            value={typeof line.rate === "number" ? (line.rate === 0 ? "" : line.rate) : (line.rate ?? "")}
+                            value={formatInputNumberByPreference(
+                              typeof line.rate === "number" ? (line.rate === 0 ? "" : line.rate) : (line.rate ?? "")
+                            )}
                             disabled={locked}
-                            onChange={(event) => updateLine(line.id, { rate: event.target.value })}
+                            onChange={(event) =>
+                              updateLine(line.id, { rate: normalizeFormattedNumberInput(event.target.value) })
+                            }
+                            inputMode="decimal"
                           />
                         </td>
                         <td className="px-3 py-2 align-middle">
@@ -1291,14 +1301,14 @@ export default function SalesProformaEditor() {
                         </td>
                         <td className="px-3 py-2 align-middle">
                           <input
-                            type="number"
-                            min={0}
-                            step="0.01"
+                            type="text"
                             className={lineItemInputRightClassName}
                             value={
-                              typeof line.discountAmount === "number"
-                                ? (line.discountAmount === 0 ? "" : line.discountAmount)
-                                : (line.discountAmount ?? "")
+                              formatInputNumberByPreference(
+                                typeof line.discountAmount === "number"
+                                  ? (line.discountAmount === 0 ? "" : line.discountAmount)
+                                  : (line.discountAmount ?? "")
+                              )
                             }
                             disabled={locked}
                             onChange={(event) => {
@@ -1308,6 +1318,7 @@ export default function SalesProformaEditor() {
                               const discountPercent = baseAmount > 0 ? round2((discountAmount / baseAmount) * 100) : 0;
                               updateLine(line.id, { discountAmount, discountPercent });
                             }}
+                            inputMode="decimal"
                           />
                         </td>
                         <td className="px-3 py-2 align-middle">

@@ -38,10 +38,19 @@ import {
   normalizeBarcodeLookupValue,
   syncItemBarcodesFromRemote
 } from "../../services/itemBarcodes.service";
-import { formatDecimalByPreference } from "../../lib/formatPreferences";
+import {
+  formatDecimalByPreference,
+  formatInputNumberByPreference,
+  normalizeFormattedNumberInput,
+  parseFormattedNumber
+} from "../../lib/formatPreferences";
 
 function money(n) {
   return formatDecimalByPreference(Number(n || 0));
+}
+
+function displayNumericInput(value) {
+  return formatInputNumberByPreference(value);
 }
 
 function round2(value) {
@@ -1029,7 +1038,7 @@ export default function InvoiceCreate() {
 
   const paymentAmount = useMemo(() => {
     if (!markAsPaid) return 0;
-    const parsed = Number(paidAmount || 0);
+    const parsed = parseFormattedNumber(paidAmount || 0);
     return round2(Math.max(0, parsed));
   }, [markAsPaid, paidAmount]);
 
@@ -2615,14 +2624,15 @@ export default function InvoiceCreate() {
                                     </div>
 
                                     <input
-                                      value={r.qty}
+                                      type="text"
+                                      value={displayNumericInput(r.qty)}
                                       onChange={(e) => {
-                                        const raw = e.target.value;
+                                        const raw = normalizeFormattedNumberInput(e.target.value);
                                         if (raw === "") {
                                           updateLine(r.id, { qty: raw });
                                           return;
                                         }
-                                        const parsed = Number(raw);
+                                        const parsed = parseFormattedNumber(raw);
                                         if (!Number.isFinite(parsed) || parsed < 0) {
                                           updateLine(r.id, { qty: raw });
                                           return;
@@ -2659,15 +2669,21 @@ export default function InvoiceCreate() {
                                     />
 
                                     <input
-                                      value={r.rate}
-                                      onChange={(e) => updateLine(r.id, { rate: e.target.value })}
+                                      type="text"
+                                      value={displayNumericInput(r.rate)}
+                                      onChange={(e) =>
+                                        updateLine(r.id, { rate: normalizeFormattedNumberInput(e.target.value) })
+                                      }
                                       className={invoiceLineInputRightClassName}
                                       inputMode="decimal"
                                     />
 
                                     <input
-                                      value={r.discount}
-                                      onChange={(e) => updateLine(r.id, { discount: e.target.value })}
+                                      type="text"
+                                      value={displayNumericInput(r.discount)}
+                                      onChange={(e) =>
+                                        updateLine(r.id, { discount: normalizeFormattedNumberInput(e.target.value) })
+                                      }
                                       className={invoiceLineInputRightClassName}
                                       inputMode="decimal"
                                     />
@@ -2821,12 +2837,11 @@ export default function InvoiceCreate() {
                   <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
                   <FormField label="Amount Received" required error={formErrors.paidAmount}>
                     <input
-                      type="number"
-                      min="0"
-                      value={paidAmount}
+                      type="text"
+                      value={displayNumericInput(paidAmount)}
                       onChange={(e) => {
                         clearFormError("paidAmount");
-                        setPaidAmount(e.target.value);
+                        setPaidAmount(normalizeFormattedNumberInput(e.target.value));
                       }}
                       placeholder="Enter received amount"
                       inputMode="decimal"

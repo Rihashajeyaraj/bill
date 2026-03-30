@@ -1,6 +1,6 @@
 import React from "react";
 import clsx from "clsx";
-import { formatDecimalByPreference } from "../lib/formatPreferences";
+import { formatDecimalByPreference, formatNumberByPreference } from "../lib/formatPreferences";
 
 const VARIANTS = {
   india_triplicate: {
@@ -173,6 +173,10 @@ const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", 
 
 function money(n) {
   return formatDecimalByPreference(Number(n || 0));
+}
+
+function qty(n) {
+  return formatNumberByPreference(Number(n || 0), { maximumFractionDigits: 3 });
 }
 
 function chunkToWords(num) {
@@ -392,7 +396,7 @@ export default function CreditNotePreview({ templateId, styleConfig, noteData })
             <div key={line.id} className="grid grid-cols-12 gap-2 text-slate-700">
               <span className={clsx("col-span-3", variant.value)}>{line.name}</span>
               <span className={clsx("col-span-2", variant.value)}>{line.hsn || "-"}</span>
-              <span className={clsx("col-span-1 text-right", variant.value)}>{line.qty}</span>
+              <span className={clsx("col-span-1 text-right", variant.value)}>{qty(line.qty)}</span>
               <span className={clsx("col-span-2 text-right", variant.value)}>{money(line.rate)}</span>
               <span className={clsx("col-span-2 text-right", variant.value)}>{money(line.taxableValue)}</span>
               <span className={clsx("col-span-1 text-right", variant.value)}>{money(line.taxAmount)}</span>

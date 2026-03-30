@@ -1,7 +1,7 @@
 import { COUNTRY_CONFIG, normalizePaymentMode, type CountryCode } from "./countryConfig";
 import type { PaymentInRecord } from "./store";
 import type { PaymentInFormState } from "./types";
-import { formatCurrencyByPreference } from "../../lib/formatPreferences";
+import { formatCurrencyByPreference, parseFormattedNumber } from "../../lib/formatPreferences";
 
 export const TDS_CATEGORY_OPTIONS = [
   { value: "contractor", label: "Contractor", rate: 1 },
@@ -13,7 +13,7 @@ export const TDS_CATEGORY_OPTIONS = [
 ];
 
 export function parseNumber(value: string | number | null | undefined) {
-  const n = Number(value || 0);
+  const n = parseFormattedNumber(value);
   return Number.isFinite(n) ? n : 0;
 }
 

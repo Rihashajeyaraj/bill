@@ -1,4 +1,4 @@
-import { formatCurrencyByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
+import { formatCurrencyByPreference, formatNumberByPreference, parseFormattedNumber } from "../../lib/formatPreferences";
 
 export const TDS_CATEGORY_OPTIONS = [
   { value: "contractor", label: "Contractor", rate: 1 },
@@ -10,7 +10,7 @@ export const TDS_CATEGORY_OPTIONS = [
 ];
 
 export function parseNumber(value) {
-  const n = Number(value ?? 0);
+  const n = parseFormattedNumber(value);
   return Number.isFinite(n) ? n : 0;
 }
 

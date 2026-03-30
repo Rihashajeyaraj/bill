@@ -45,6 +45,7 @@ import {
   parseNumber,
   TDS_CATEGORY_OPTIONS
 } from "../../modules/paymentOut/utils";
+import { formatInputNumberByPreference, normalizeFormattedNumberInput } from "../../lib/formatPreferences";
 
 const PAYMENT_MODES = ["Cash", "Net Banking", "Cheque", "Card", "UPI"];
 const STATUSES = ["Draft", "Paid", "Applied"];
@@ -1075,10 +1076,9 @@ export default function PaymentOutPremium() {
                     <label className="block">
                       <span className="text-xs font-semibold text-slate-600">Cash Paid</span>
                       <input
-                        type="number"
-                        min={0}
-                        value={form.amountPaid}
-                        onChange={(event) => handleAmountPaidChange(event.target.value)}
+                        type="text"
+                        value={formatInputNumberByPreference(form.amountPaid)}
+                        onChange={(event) => handleAmountPaidChange(normalizeFormattedNumberInput(event.target.value))}
                         inputMode="decimal"
                         className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
                         disabled={readOnly || !form.supplierId}

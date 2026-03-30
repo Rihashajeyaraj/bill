@@ -58,6 +58,51 @@ export function formatNumberByPreference(value, options = {}) {
   }
 }
 
+export function parseFormattedNumber(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  const text = String(value ?? "").trim();
+  if (!text) return 0;
+  const normalized = text.replace(/,/g, "").replace(/\s+/g, "");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function normalizeFormattedNumberInput(value, { allowNegative = false } = {}) {
+  const source = String(value ?? "");
+  let normalized = source.replace(/,/g, "").replace(/[^\d.-]/g, "");
+  const isNegative = allowNegative && normalized.startsWith("-");
+  normalized = normalized.replace(/-/g, "");
+  const [whole = "", ...decimalParts] = normalized.split(".");
+  const decimal = decimalParts.join("");
+  return `${isNegative ? "-" : ""}${whole}${source.includes(".") ? `.${decimal}` : ""}`;
+}
+
+export function formatInputNumberByPreference(value, options = {}) {
+  const text = String(value ?? "");
+  if (!text.trim()) return "";
+
+  const normalized = normalizeFormattedNumberInput(text, {
+    allowNegative: options.allowNegative === true
+  });
+  if (!normalized || normalized === "-" || normalized === "." || normalized === "-.") {
+    return normalized;
+  }
+
+  const hasTrailingDot = normalized.endsWith(".");
+  const isNegative = normalized.startsWith("-");
+  const unsigned = isNegative ? normalized.slice(1) : normalized;
+  const [wholePart = "0", decimalPart = ""] = unsigned.split(".");
+  const formattedWhole = formatNumberByPreference(`${isNegative ? "-" : ""}${wholePart || "0"}`, {
+    maximumFractionDigits: 0
+  });
+
+  if (hasTrailingDot) return `${formattedWhole}.`;
+  if (unsigned.includes(".")) return `${formattedWhole}.${decimalPart}`;
+  return formattedWhole;
+}
+
 export function formatDecimalByPreference(value, options = {}) {
   return formatNumberByPreference(value, {
     minimumFractionDigits: 2,

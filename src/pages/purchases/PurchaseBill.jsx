@@ -32,6 +32,13 @@ import {
   listStatesByCountry,
   resolveCountryIsoCode
 } from "../../lib/geoData";
+import {
+  formatDecimalByPreference,
+  formatInputNumberByPreference,
+  formatNumberByPreference,
+  normalizeFormattedNumberInput,
+  parseFormattedNumber
+} from "../../lib/formatPreferences";
 
 const UNIT_OPTIONS = ["pcs", "kg", "box", "pack", "ltr", "hours", "days", "months", "service"];
 
@@ -110,27 +117,21 @@ function queryLooksPhoneLike(value) {
   return /^[\d\s()+-]+$/.test(text);
 }
 
-function formatIndianNumber(value, options = {}) {
-  const amount = Number(value ?? 0);
-  const safeAmount = Number.isFinite(amount) ? amount : 0;
-  try {
-    return new Intl.NumberFormat("en-IN", options).format(safeAmount);
-  } catch {
-    return safeAmount.toLocaleString("en-IN", options);
-  }
-}
-
 function money(n) {
-  return formatIndianNumber(n, {
+  return formatDecimalByPreference(n, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
 }
 
 function wholeNumber(n) {
-  return formatIndianNumber(n, {
+  return formatNumberByPreference(n, {
     maximumFractionDigits: 0
   });
+}
+
+function displayNumericInput(value) {
+  return formatInputNumberByPreference(value);
 }
 
 function round2(value) {
@@ -263,7 +264,7 @@ export default function PurchaseBill() {
   const [paymentNotes, setPaymentNotes] = useState("");
   const paymentAmount = useMemo(() => {
     if (!markAsPaid) return 0;
-    const parsedAmount = Number(paidAmount || 0);
+    const parsedAmount = parseFormattedNumber(paidAmount || 0);
     return round2(Math.max(0, parsedAmount));
   }, [paidAmount, markAsPaid]);
   const companyCountry = String(country || company?.country || company?.address?.country || "").trim();
@@ -1995,11 +1996,11 @@ export default function PurchaseBill() {
                   </td>
                   <td className="px-3 py-3">
                     <input
-                      type="number"
-                      min="0"
-                      value={line.qty}
+                      type="text"
+                      value={displayNumericInput(line.qty)}
                       onChange={(e) => {
-                        const enteredQty = Number(e.target.value);
+                        const rawValue = normalizeFormattedNumberInput(e.target.value);
+                        const enteredQty = parseFormattedNumber(rawValue);
                         if (line.itemId) {
                           const matchedItem = purchasableItems.find(
                             (item) => String(item.id) === String(line.itemId)
@@ -2014,9 +2015,10 @@ export default function PurchaseBill() {
                             return;
                           }
                         }
-                        updateLine(line.id, { qty: e.target.value });
+                        updateLine(line.id, { qty: rawValue });
                       }}
                       className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
+                      inputMode="decimal"
                     />
                   </td>
                   <td className="px-3 py-3">
@@ -2031,12 +2033,13 @@ export default function PurchaseBill() {
                   </td>
                   <td className="px-3 py-3">
                     <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={line.rate}
-                      onChange={(e) => updateLine(line.id, { rate: e.target.value })}
+                      type="text"
+                      value={displayNumericInput(line.rate)}
+                      onChange={(e) =>
+                        updateLine(line.id, { rate: normalizeFormattedNumberInput(e.target.value) })
+                      }
                       className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
+                      inputMode="decimal"
                     />
                   </td>
                   <td className="px-3 py-3">
@@ -2181,12 +2184,11 @@ export default function PurchaseBill() {
               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
                 <FormField label="Amount Paid" required error={formErrors.paidAmount}>
                   <input
-                    type="number"
-                    min="0"
-                    value={paidAmount}
+                    type="text"
+                    value={displayNumericInput(paidAmount)}
                     onChange={(e) => {
                       clearFormError("paidAmount");
-                      setPaidAmount(e.target.value);
+                      setPaidAmount(normalizeFormattedNumberInput(e.target.value));
                     }}
                     placeholder="Enter paid amount"
                     inputMode="decimal"

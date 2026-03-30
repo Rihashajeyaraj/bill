@@ -1,6 +1,6 @@
 import React from "react";
 import clsx from "clsx";
-import { formatDecimalByPreference } from "../lib/formatPreferences";
+import { formatDecimalByPreference, formatNumberByPreference } from "../lib/formatPreferences";
 
 const VARIANTS = {
   india_triplicate: {
@@ -149,6 +149,10 @@ function money(n, currencySymbol) {
   const formatted = formatDecimalByPreference(Number(n || 0));
   if (!currencySymbol) return formatted;
   return `${currencySymbol}${formatted}`;
+}
+
+function qty(n) {
+  return formatNumberByPreference(Number(n || 0), { maximumFractionDigits: 3 });
 }
 
 function formatDayMonthYear(value) {
@@ -399,7 +403,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
               <div key={line.id} className="grid grid-cols-12 gap-2 text-slate-700">
                 <span className={clsx("col-span-4", variant.value)}>{line.name}</span>
                 <span className={clsx("col-span-2", variant.value)}>{line.hsn}</span>
-                <span className={clsx("col-span-1 text-right", variant.value)}>{line.qty}</span>
+                <span className={clsx("col-span-1 text-right", variant.value)}>{qty(line.qty)}</span>
                 <span className={clsx("col-span-1 text-right", variant.value)}>{money(line.rate, currencySymbol)}</span>
                 <span className={clsx("col-span-2 text-right", variant.value)}>
                   {money(line.taxableValue, currencySymbol)}

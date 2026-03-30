@@ -47,6 +47,7 @@ import { deletePaymentInRemote, syncPaymentInRemote } from "../../services/payme
 import { salesProformasSyncFromRemote } from "../../services/proformas.service";
 import { syncTdsComplianceReminders } from "../../services/tds.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
+import { formatInputNumberByPreference, normalizeFormattedNumberInput } from "../../lib/formatPreferences";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import PaymentModePicker from "../../modules/paymentIn/PaymentModePicker";
@@ -112,7 +113,7 @@ function customerAddressSummary(customer: any) {
 function numberInputValue(value: unknown) {
   const numeric = parseNumber(value as any);
   if (!Number.isFinite(numeric) || numeric === 0) return "";
-  return String(value ?? "");
+  return formatInputNumberByPreference(value);
 }
 
 function calculatedTdsInputValue(amountReceived: unknown, tdsRate: unknown) {
@@ -1090,12 +1091,11 @@ export default function PaymentInPremium() {
                         <label className="block">
                           <span className="text-xs font-semibold text-slate-600">Cash Received</span>
                           <input
-                            type="number"
-                            min={0}
+                            type="text"
                             value={numberInputValue(form.amountReceived)}
                             placeholder="0"
                             disabled={readOnly}
-                            onChange={(event) => handleAmountReceivedChange(event.target.value)}
+                            onChange={(event) => handleAmountReceivedChange(normalizeFormattedNumberInput(event.target.value))}
                             inputMode="decimal"
                             className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
                           />
