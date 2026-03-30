@@ -253,6 +253,41 @@ export function summarizeBillTdsByBill(country) {
     }, {});
 }
 
+export function listSupplierTdsHistory(country, supplierId) {
+  const normalizedSupplierId = String(supplierId || "").trim();
+  if (!normalizedSupplierId) return [];
+
+  return listPaymentOut(country)
+    .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
+    .filter((entry) => String(entry?.supplierId || "").trim() === normalizedSupplierId)
+    .flatMap((entry) =>
+      ensureArray(entry?.allocations)
+        .map((line, index) => {
+          const tdsAmount = paymentOutAllocationTdsShare(entry, line);
+          if (tdsAmount <= 0) return null;
+          return {
+            id: `supplier_tds_${entry?.id || entry?.paymentNo || "payment"}_${line?.billId || index}`,
+            date: entry?.paymentDate || "",
+            paymentNo: entry?.paymentNo || "",
+            supplierId: normalizedSupplierId,
+            supplierName: entry?.supplierName || "Supplier",
+            billId: line?.billId || "",
+            billNo: line?.billNo || "",
+            tdsRate: Math.max(0, parseNumber(entry?.tdsRate)),
+            tdsAmount,
+            finalPaidAmount: Math.max(0, parseNumber(line?.applyAmount))
+          };
+        })
+        .filter(Boolean)
+    )
+    .sort((left, right) => {
+      const leftDate = String(left?.date || "");
+      const rightDate = String(right?.date || "");
+      if (leftDate !== rightDate) return rightDate.localeCompare(leftDate);
+      return String(right?.paymentNo || "").localeCompare(String(left?.paymentNo || ""));
+    });
+}
+
 function computeTotals(payload) {
   const amountPaid = Math.max(0, parseNumber(payload.amountPaid));
   const tdsAmount = Math.max(0, parseNumber(payload.tdsAmount));

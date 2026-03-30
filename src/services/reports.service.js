@@ -1569,7 +1569,9 @@ export function buildTdsReport(dataset, filters = {}) {
           partyId: String(row?.supplierId || ""),
           partyName: resolvePartyName(row, PARTY_TYPES.supplier, indexes.partiesById),
           invoiceReference: "-",
+          tdsRate: Math.max(0, parseNumber(row?.tdsRate)),
           tdsAmount: paymentOutTdsAmount(row),
+          finalPaidAmount: Math.max(0, parseNumber(row?.totals?.amountPaid ?? row?.amountPaid)),
           category: row?.tdsCategory || "Other",
           status: normalizeStatusLabel(row?.status, "Paid")
         });
@@ -1585,7 +1587,9 @@ export function buildTdsReport(dataset, filters = {}) {
           partyId: String(row?.supplierId || ""),
           partyName: resolvePartyName(row, PARTY_TYPES.supplier, indexes.partiesById),
           invoiceReference: String(allocation?.billNo || allocation?.billId || "-").trim() || "-",
+          tdsRate: Math.max(0, parseNumber(row?.tdsRate)),
           tdsAmount: paymentOutAllocationTdsShare(row, allocation),
+          finalPaidAmount: Math.max(0, parseNumber(allocation?.applyAmount)),
           category: row?.tdsCategory || "Other",
           status: normalizeStatusLabel(row?.status, "Paid")
         });

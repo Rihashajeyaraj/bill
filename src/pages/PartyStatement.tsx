@@ -9,6 +9,7 @@ import { buildPartyStatement, computePartyFinancials, getParty } from "../module
 import { formatMoney, outstandingMeta } from "../modules/parties/utils";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, type CountryCode } from "../modules/paymentIn/countryConfig";
 import { listCustomerAdvanceWalletHistory, paymentInsightsByCustomer } from "../modules/paymentIn/store";
+import { listSupplierTdsHistory } from "../modules/paymentOut/store";
 import { useOrganization } from "../context/OrganizationContext";
 import { useFinancialYears } from "../context/FinancialYearContext";
 
@@ -66,6 +67,14 @@ export default function PartyStatement() {
   const customerAdvanceHistory = useMemo(
     () => (party?.type === "Customer" ? listCustomerAdvanceWalletHistory(paymentCountry, party.id) : []),
     [party, paymentCountry]
+  );
+  const supplierTdsHistory = useMemo(
+    () => (party?.type === "Supplier" ? listSupplierTdsHistory(paymentCountry, party.id) : []),
+    [party, paymentCountry]
+  );
+  const supplierTdsTotal = useMemo(
+    () => supplierTdsHistory.reduce((sum, entry) => sum + Number(entry?.tdsAmount || 0), 0),
+    [supplierTdsHistory]
   );
 
   if (!party) {
@@ -186,6 +195,13 @@ export default function PartyStatement() {
                 Available Advance Balance:{" "}
                 <span className="font-semibold text-amber-700">
                   {formatMoney(customerAdvanceInsights.advanceWallet || 0, currency)}
+                </span>
+              </p>
+            ) : party.type === "Supplier" ? (
+              <p>
+                Total TDS Deducted:{" "}
+                <span className="font-semibold text-sky-700">
+                  {formatMoney(supplierTdsTotal || 0, currency)}
                 </span>
               </p>
             ) : null}
@@ -339,6 +355,46 @@ export default function PartyStatement() {
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-900">
                       {formatMoney(entry.remainingBalance, currency)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
+      {party.type === "Supplier" && supplierTdsHistory.length ? (
+        <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold text-slate-900">Supplier TDS History</h2>
+          </div>
+          <div className="overflow-auto">
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-4 py-3 font-semibold text-slate-700">Date</th>
+                  <th className="px-4 py-3 font-semibold text-slate-700">Bill No</th>
+                  <th className="px-4 py-3 font-semibold text-slate-700">Payment No</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-700">TDS %</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-700">TDS Amount</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-700">Final Paid</th>
+                </tr>
+              </thead>
+              <tbody>
+                {supplierTdsHistory.map((entry) => (
+                  <tr key={entry.id} className="border-t border-slate-100">
+                    <td className="px-4 py-3 text-slate-700">{entry.date || "-"}</td>
+                    <td className="px-4 py-3 text-slate-700">{entry.billNo || "-"}</td>
+                    <td className="px-4 py-3 text-slate-700">{entry.paymentNo || "-"}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                      {Number(entry.tdsRate || 0) > 0 ? `${Number(entry.tdsRate || 0).toFixed(2)}%` : "-"}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-sky-700">
+                      {formatMoney(entry.tdsAmount || 0, currency)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-emerald-700">
+                      {formatMoney(entry.finalPaidAmount || 0, currency)}
                     </td>
                   </tr>
                 ))}

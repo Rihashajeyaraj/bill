@@ -207,6 +207,7 @@ function formatCell(row, column, currency) {
   if (column.format === "date") return formatDateByPreference(value, "-");
   if (column.format === "money") return formatMoney(value, currency);
   if (column.format === "number") return value ?? 0;
+  if (column.format === "percent") return formatPercent(value);
   return value || "-";
 }
 
@@ -880,7 +881,7 @@ function GstBreakdownPanel({ totals, currency }) {
 function getDerivedPartyType(activeReport, partyType) {
   if (activeReport === "sale-report") return PARTY_TYPES.customer;
   if (activeReport === "gst-report") return PARTY_TYPES.customer;
-  if (activeReport === "tds-report") return partyType || PARTY_TYPES.customer;
+  if (activeReport === "tds-report") return partyType || PARTY_TYPES.supplier;
   if (activeReport === "purchase-report") return PARTY_TYPES.supplier;
   return partyType;
 }
@@ -1152,23 +1153,20 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
       const pageInfo = paginateIfNeeded(data.rows);
       return {
         title: "TDS Report",
-        subtitle: "TDS deducted through Payment In and Payment Out entries for the selected period.",
+        subtitle: "Supplier payment TDS deducted through Payment Out entries for the selected period.",
         filename: "tds-report",
         metrics: [
           { label: "Total TDS", value: formatMoney(data.totals.totalTds, currency), tone: data.totals.totalTds > 0 ? "positive" : "default" },
-          { label: "Customers", value: data.totals.customers },
           { label: "Suppliers", value: data.totals.suppliers },
           { label: "Entries", value: data.rows.length }
         ],
         columns: [
           { key: "date", label: "Date", format: "date" },
-          { key: "source", label: "Source" },
-          { key: "partyType", label: "Party Type" },
-          { key: "partyName", label: "Party" },
-          { key: "invoiceReference", label: "Invoice / Bill" },
-          { key: "category", label: "Category" },
-          { key: "tdsAmount", label: "TDS Deducted", align: "right", format: "money", emphasis: true },
-          { key: "status", label: "Status", align: "right" }
+          { key: "invoiceReference", label: "Bill No" },
+          { key: "partyName", label: "Supplier" },
+          { key: "tdsRate", label: "TDS %", align: "right", format: "percent" },
+          { key: "tdsAmount", label: "TDS Amount", align: "right", format: "money", emphasis: true },
+          { key: "finalPaidAmount", label: "Final Paid", align: "right", format: "money" }
         ],
         tableTitle: "TDS Entries",
         rows: pageInfo.rows,

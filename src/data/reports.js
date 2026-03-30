@@ -66,7 +66,7 @@ export const reportSections = [
       {
         id: "tds-report",
         label: "TDS Report",
-        description: "Customer and supplier TDS deductions captured from Payment In and Payment Out entries."
+        description: "Supplier-wise TDS deductions captured from Payment Out entries for audit and tax filing."
       }
     ]
   }
