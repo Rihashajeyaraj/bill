@@ -24,7 +24,12 @@ import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus, listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../modules/parties/store";
 import { computeItemStock, listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
-import { outstandingByCustomer, savePaymentIn } from "../../modules/paymentIn/store";
+import {
+  applyAdvanceWalletToCustomerInvoice,
+  outstandingByCustomer,
+  paymentInsightsByCustomer,
+  savePaymentIn
+} from "../../modules/paymentIn/store";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE } from "../../modules/paymentIn/countryConfig";
 import { getInvoiceTemplateConfig } from "../../lib/templateStore";
 import {
@@ -1042,14 +1047,31 @@ export default function InvoiceCreate() {
     return round2(Math.max(0, parsed));
   }, [markAsPaid, paidAmount]);
 
+  const customerPaymentInsights = useMemo(
+    () => paymentInsightsByCustomer(resolvePaymentCountryCode(customerCountry, party?.countryCode || ""), partyId),
+    [customerCountry, party?.countryCode, partyId]
+  );
+  const customerAdvanceWallet = round2(Number(customerPaymentInsights?.advanceWallet || 0));
+  const advanceAppliedFromWallet = useMemo(
+    () => round2(Math.min(customerAdvanceWallet, Number(computed.grandTotal || 0))),
+    [customerAdvanceWallet, computed.grandTotal]
+  );
+  const balanceAfterExistingAdvance = useMemo(
+    () => round2(Math.max(0, Number(computed.grandTotal || 0) - advanceAppliedFromWallet)),
+    [computed.grandTotal, advanceAppliedFromWallet]
+  );
+
   const pendingAmount = useMemo(
-    () => round2(Math.max(0, Number(computed.grandTotal || 0) - Number(paymentAmount || 0))),
-    [computed.grandTotal, paymentAmount]
+    () => round2(Math.max(0, balanceAfterExistingAdvance - Number(paymentAmount || 0))),
+    [balanceAfterExistingAdvance, paymentAmount]
   );
 
   const advanceAmount = useMemo(
-    () => round2(Math.max(0, Number(paymentAmount || 0) - Number(computed.grandTotal || 0))),
-    [paymentAmount, computed.grandTotal]
+    () => round2(Math.max(0, Number(paymentAmount || 0) - balanceAfterExistingAdvance)),
+    [paymentAmount, balanceAfterExistingAdvance]
+  );
+  const projectedAdvanceWallet = round2(
+    Math.max(0, customerAdvanceWallet - advanceAppliedFromWallet) + advanceAmount
   );
 
   const creditLimitEnabled = !!creditStatus.party?.creditLimitEnabled;
@@ -1835,13 +1857,27 @@ export default function InvoiceCreate() {
     try {
       const savedInvoiceId = await invoicesCreate(payload);
       setLastSavedInvoiceId(savedInvoiceId || "");
+      if (savedInvoiceId && partyId && advanceAppliedFromWallet > 0) {
+        applyAdvanceWalletToCustomerInvoice({
+          country: paymentCountryCode,
+          customerId: partyId,
+          invoiceId: savedInvoiceId,
+          invoiceNo: normalizedInvoiceNo,
+          invoiceDate,
+          invoiceAmount: Number(effectiveComputed.grandTotal || 0),
+          actor: authGetUser()?.name || authGetUser()?.email || "System User"
+        });
+      }
       let paymentSaved = false;
       let paymentSavedAsUnapplied = false;
 
       if (markAsPaid && paymentAmount > 0 && savedInvoiceId) {
         try {
           const outstandingBefore = outstandingByCustomer(paymentCountryCode, partyId);
-          const applyAmount = Math.min(paymentAmount, Number(effectiveComputed.grandTotal || 0));
+          const applyAmount = Math.min(
+            paymentAmount,
+            Math.max(0, Number(effectiveComputed.grandTotal || 0) - advanceAppliedFromWallet)
+          );
           const actor = authGetUser()?.name || authGetUser()?.email || "System User";
           const basePaymentPayload = {
             country: paymentCountryCode,
@@ -3001,6 +3037,18 @@ export default function InvoiceCreate() {
                 <span className="font-semibold text-slate-900">Grand Total</span>
                 <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span>
               </div>
+              {customerAdvanceWallet > 0 ? (
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <span className="text-slate-600">Available Advance Balance</span>
+                  <span className="font-semibold text-amber-700">{money(customerAdvanceWallet)}</span>
+                </div>
+              ) : null}
+              {advanceAppliedFromWallet > 0 ? (
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <span className="text-slate-600">Advance Used</span>
+                  <span className="font-semibold text-emerald-700">{money(advanceAppliedFromWallet)}</span>
+                </div>
+              ) : null}
               <div className="mt-2 flex items-center justify-between text-sm">
                 <span className="text-slate-600">Paid Now</span>
                 <span className="font-semibold text-emerald-700">{money(paymentAmount)}</span>
@@ -3011,8 +3059,14 @@ export default function InvoiceCreate() {
               </div>
               {advanceAmount > 0 ? (
                 <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Advance</span>
+                  <span className="text-slate-600">Advance Added</span>
                   <span className="font-semibold text-emerald-700">{money(advanceAmount)}</span>
+                </div>
+              ) : null}
+              {projectedAdvanceWallet > 0 ? (
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <span className="text-slate-600">Projected Advance Balance</span>
+                  <span className="font-semibold text-amber-700">{money(projectedAdvanceWallet)}</span>
                 </div>
               ) : null}
 

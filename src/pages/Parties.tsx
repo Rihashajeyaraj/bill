@@ -15,12 +15,22 @@ import {
   upsertPartyRemote
 } from "../modules/parties/store";
 import { formatMoney, normalizeText, outstandingMeta } from "../modules/parties/utils";
+import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, type CountryCode } from "../modules/paymentIn/countryConfig";
+import { paymentInsightsByCustomer } from "../modules/paymentIn/store";
 import { authGetUser } from "../services/auth.service";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { validateContactTax } from "../services/customerTax";
 
 type SummaryFilter = "all" | "balance" | "risk";
+
+function resolvePaymentCountryCode(value: unknown): CountryCode {
+  const raw = String(value || "").trim();
+  if (raw === "LK") return "SL";
+  if (raw === "GB") return "UK";
+  if (raw && raw in COUNTRY_CONFIG) return raw as CountryCode;
+  return COUNTRY_NAME_TO_CODE[raw] || "IN";
+}
 
 export default function Parties() {
   const nav = useNavigate();
@@ -70,6 +80,19 @@ export default function Parties() {
       ({ financials }) => financials.amountExceeded || financials.maxOverdueDays > 0
     );
   }, [rows, summaryFilter]);
+
+  const customerAdvanceById = useMemo(() => {
+    const balances = new Map<string, number>();
+    parties
+      .filter((party) => party.type === "Customer")
+      .forEach((party) => {
+        balances.set(
+          party.id,
+          paymentInsightsByCustomer(resolvePaymentCountryCode(party.country), party.id).advanceWallet
+        );
+      });
+    return balances;
+  }, [parties]);
 
   const summary = useMemo(() => {
     const scoped = parties.filter((party) => party.type === tab);
@@ -325,6 +348,11 @@ export default function Parties() {
                           <p className={`text-base font-semibold ${meta.color}`}>
                             {formatMoney(meta.absolute, currency)}
                           </p>
+                          {party.type === "Customer" && (customerAdvanceById.get(party.id) || 0) > 0 ? (
+                            <p className="text-xs font-semibold text-amber-700">
+                              Advance: {formatMoney(customerAdvanceById.get(party.id) || 0, currency)}
+                            </p>
+                          ) : null}
                           <span
                             className={`inline-flex w-fit rounded-full border px-2 py-0.5 text-[11px] font-semibold ${meta.badge}`}
                           >

@@ -1,6 +1,11 @@
 import { listParties, syncPartiesFromRemote } from "../modules/parties/store";
 import { openingBalanceSigned, parseNumber, toIsoDate } from "../modules/parties/utils";
-import { listPaymentIn } from "../modules/paymentIn/store";
+import {
+  listCustomerAdvanceWalletHistory,
+  listPaymentIn,
+  paymentInsightsByCustomer
+} from "../modules/paymentIn/store";
+import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE } from "../modules/paymentIn/countryConfig";
 import { listCreditNotes as listPremiumCreditNotes } from "../modules/creditNote/store";
 import { listPaymentOut } from "../modules/paymentOut/store";
 import { listDebitNotes } from "../modules/debitNote/store";
@@ -46,6 +51,14 @@ function normalizeParty(party) {
     email: String(party?.email || "").trim(),
     address: String(party?.address || "").trim()
   };
+}
+
+function resolvePaymentCountryCode(value) {
+  const raw = String(value || "").trim();
+  if (raw === "LK") return "SL";
+  if (raw === "GB") return "UK";
+  if (raw && raw in COUNTRY_CONFIG) return raw;
+  return COUNTRY_NAME_TO_CODE[raw] || "IN";
 }
 
 function matchesPartyType(party, partyType) {
@@ -631,6 +644,14 @@ export async function fetchPartyWiseStatementReport({
     transactions: statement.transactions,
     closing_balance: statement.closing_balance,
     totals: statement.totals,
+    advance_wallet:
+      normalizedType === PARTY_TYPES.customer && party
+        ? paymentInsightsByCustomer(resolvePaymentCountryCode(party.country), party.id).advanceWallet
+        : 0,
+    wallet_history:
+      normalizedType === PARTY_TYPES.customer && party
+        ? listCustomerAdvanceWalletHistory(resolvePaymentCountryCode(party.country), party.id)
+        : [],
     aging_summary: agingSummary
   };
 }

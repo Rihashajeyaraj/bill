@@ -7,6 +7,8 @@ import Badge from "../components/Badge";
 import DateInput from "../components/DateInput";
 import { buildPartyStatement, computePartyFinancials, getParty } from "../modules/parties/store";
 import { formatMoney, outstandingMeta } from "../modules/parties/utils";
+import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, type CountryCode } from "../modules/paymentIn/countryConfig";
+import { listCustomerAdvanceWalletHistory, paymentInsightsByCustomer } from "../modules/paymentIn/store";
 import { useOrganization } from "../context/OrganizationContext";
 import { useFinancialYears } from "../context/FinancialYearContext";
 
@@ -36,6 +38,13 @@ export default function PartyStatement() {
   }, [selectedYear?.id, selectedYear?.startDate, selectedYear?.endDate]);
 
   const financials = useMemo(() => (party ? computePartyFinancials(party) : null), [party]);
+  const paymentCountry = useMemo<CountryCode>(() => {
+    const raw = String(party?.country || "").trim();
+    if (raw === "LK") return "SL";
+    if (raw === "GB") return "UK";
+    if (raw && raw in COUNTRY_CONFIG) return raw as CountryCode;
+    return COUNTRY_NAME_TO_CODE[raw] || "IN";
+  }, [party?.country]);
   const statement = useMemo(
     () =>
       party
@@ -46,6 +55,17 @@ export default function PartyStatement() {
           })
         : { entries: [], openingBalance: 0, closingBalance: 0 },
     [party, fromDate, toDate, typeFilter]
+  );
+  const customerAdvanceInsights = useMemo(
+    () =>
+      party?.type === "Customer"
+        ? paymentInsightsByCustomer(paymentCountry, party.id)
+        : { advanceWallet: 0 },
+    [party, paymentCountry]
+  );
+  const customerAdvanceHistory = useMemo(
+    () => (party?.type === "Customer" ? listCustomerAdvanceWalletHistory(paymentCountry, party.id) : []),
+    [party, paymentCountry]
   );
 
   if (!party) {
@@ -161,6 +181,14 @@ export default function PartyStatement() {
             ) : (
               <p>Credit limit not enabled</p>
             )}
+            {party.type === "Customer" ? (
+              <p>
+                Available Advance Balance:{" "}
+                <span className="font-semibold text-amber-700">
+                  {formatMoney(customerAdvanceInsights.advanceWallet || 0, currency)}
+                </span>
+              </p>
+            ) : null}
           </div>
           {party.notes ? (
             <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
@@ -279,6 +307,46 @@ export default function PartyStatement() {
           </table>
         </div>
       </div>
+
+      {party.type === "Customer" && customerAdvanceHistory.length ? (
+        <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-semibold text-slate-900">Advance Wallet History</h2>
+          </div>
+          <div className="overflow-auto">
+            <table className="w-full min-w-[820px] text-left text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-4 py-3 font-semibold text-slate-700">Date</th>
+                  <th className="px-4 py-3 font-semibold text-slate-700">Receipt</th>
+                  <th className="px-4 py-3 font-semibold text-slate-700">Invoice</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-700">Advance Added</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-700">Advance Used</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-700">Remaining Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {customerAdvanceHistory.map((entry) => (
+                  <tr key={entry.id} className="border-t border-slate-100">
+                    <td className="px-4 py-3 text-slate-700">{entry.date || "-"}</td>
+                    <td className="px-4 py-3 text-slate-700">{entry.receiptNo || "-"}</td>
+                    <td className="px-4 py-3 text-slate-700">{entry.invoiceNo || "-"}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-emerald-700">
+                      {entry.amountAdded ? formatMoney(entry.amountAdded, currency) : "-"}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-sky-700">
+                      {entry.amountUsed ? formatMoney(entry.amountUsed, currency) : "-"}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                      {formatMoney(entry.remainingBalance, currency)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       {openingDetailsOpen ? (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/40 px-4 py-6">

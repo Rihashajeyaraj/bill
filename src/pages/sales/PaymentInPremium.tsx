@@ -14,6 +14,7 @@ import {
 } from "../../modules/paymentIn/countryConfig";
 import {
   getSelectedPaymentCountry,
+  listCustomerAdvanceWalletHistory,
   listPaymentIn,
   mapCustomersByCountry,
   mapOpenInvoicesByCountry,
@@ -199,6 +200,10 @@ export default function PaymentInPremium() {
 
   const customerOutstandingBefore = useMemo(() => (form?.customerId ? outstandingByCustomer(country, form.customerId) : 0), [country, form?.customerId, refreshKey]);
   const customerInsights = useMemo(() => (form?.customerId ? paymentInsightsByCustomer(country, form.customerId) : { lastPaymentDate: "", advanceWallet: 0, totalReceived: 0, paymentCount: 0 }), [country, form?.customerId, refreshKey]);
+  const customerAdvanceHistory = useMemo(
+    () => (form?.customerId ? listCustomerAdvanceWalletHistory(country, form.customerId) : []),
+    [country, form?.customerId, refreshKey]
+  );
   const totals = useMemo(
     () =>
       form
@@ -1076,8 +1081,47 @@ export default function PaymentInPremium() {
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                         <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Outstanding</p><p className="font-semibold text-slate-900">{formatMoney(customerOutstandingBefore, country)}</p></div>
                         <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Last Payment</p><p className="font-semibold text-slate-900">{customerInsights.lastPaymentDate || "-"}</p></div>
-                        <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Advance Wallet</p><p className="font-semibold text-amber-700">{formatMoney(customerInsights.advanceWallet, country)}</p></div>
+                        <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Available Advance Balance</p><p className="font-semibold text-amber-700">{formatMoney(customerInsights.advanceWallet, country)}</p></div>
                       </div>
+                      {customerAdvanceHistory.length ? (
+                        <div className="rounded-2xl border border-slate-200 bg-white">
+                          <div className="border-b border-slate-100 px-3 py-2">
+                            <p className="text-xs font-semibold text-slate-700">Advance Wallet History</p>
+                          </div>
+                          <div className="max-h-52 overflow-auto">
+                            <table className="w-full min-w-[720px] text-left text-xs">
+                              <thead className="bg-slate-50 text-slate-500">
+                                <tr>
+                                  <th className="px-3 py-2 font-semibold">Date</th>
+                                  <th className="px-3 py-2 font-semibold">Receipt</th>
+                                  <th className="px-3 py-2 font-semibold">Invoice</th>
+                                  <th className="px-3 py-2 text-right font-semibold">Advance Added</th>
+                                  <th className="px-3 py-2 text-right font-semibold">Advance Used</th>
+                                  <th className="px-3 py-2 text-right font-semibold">Remaining Balance</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {customerAdvanceHistory.slice(0, 12).map((entry) => (
+                                  <tr key={entry.id} className="border-t border-slate-100">
+                                    <td className="px-3 py-2 text-slate-700">{entry.date || "-"}</td>
+                                    <td className="px-3 py-2 text-slate-700">{entry.receiptNo || "-"}</td>
+                                    <td className="px-3 py-2 text-slate-700">{entry.invoiceNo || "-"}</td>
+                                    <td className="px-3 py-2 text-right font-semibold text-emerald-700">
+                                      {entry.amountAdded > 0 ? formatMoney(entry.amountAdded, country) : "-"}
+                                    </td>
+                                    <td className="px-3 py-2 text-right font-semibold text-sky-700">
+                                      {entry.amountUsed > 0 ? formatMoney(entry.amountUsed, country) : "-"}
+                                    </td>
+                                    <td className="px-3 py-2 text-right font-semibold text-slate-900">
+                                      {formatMoney(entry.remainingBalance, country)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   </FlowCard>
                 </div>

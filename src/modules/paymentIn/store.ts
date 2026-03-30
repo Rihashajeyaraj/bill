@@ -46,6 +46,10 @@ export interface PaymentAllocationDraft {
   balanceDue: number;
   applyAmount: number;
   documentType?: "invoice" | "proforma";
+  appliedFromAdvance?: boolean;
+  appliedAt?: string;
+  sourceReceiptNo?: string;
+  sourcePaymentId?: string;
 }
 
 export interface PaymentInTotals {
@@ -90,6 +94,20 @@ export interface PaymentInRecord {
     modifiedAt: string;
   };
   history: Array<{ status: PaymentStatus; at: string; by: string; note: string }>;
+}
+
+export interface CustomerAdvanceWalletHistoryEntry {
+  id: string;
+  customerId: string;
+  customerName: string;
+  date: string;
+  receiptNo: string;
+  invoiceId?: string;
+  invoiceNo?: string;
+  amountAdded: number;
+  amountUsed: number;
+  remainingBalance: number;
+  entryType: "added" | "used";
 }
 
 export interface PaymentLedgerEntry {
@@ -677,6 +695,197 @@ export function paymentInsightsByCustomer(country: CountryCode, customerId: stri
       .reduce((sum, entry) => sum + entry.totals.amountReceived, 0),
     paymentCount: records.length
   };
+}
+
+function round2(value: unknown) {
+  return Math.round((toNumber(value) + Number.EPSILON) * 100) / 100;
+}
+
+export function listCustomerAdvanceWalletHistory(country: CountryCode, customerId: string) {
+  const safeCustomerId = String(customerId || "").trim();
+  if (!safeCustomerId) return [] as CustomerAdvanceWalletHistoryEntry[];
+
+  const events: CustomerAdvanceWalletHistoryEntry[] = [];
+
+  listPaymentIn(country)
+    .filter((entry) => entry.status !== "Draft")
+    .filter((entry) => String(entry?.customerId || "") === safeCustomerId)
+    .forEach((entry) => {
+      const allocations = Array.isArray(entry?.allocations) ? entry.allocations : [];
+      const advanceUsageLines = allocations.filter(
+        (line) => line?.appliedFromAdvance === true && Math.max(0, toNumber(line?.applyAmount)) > 0
+      );
+      const advanceUsed = round2(
+        advanceUsageLines.reduce((sum, line) => sum + Math.max(0, toNumber(line?.applyAmount)), 0)
+      );
+      const advanceAdded = round2(Math.max(0, toNumber(entry?.totals?.unappliedAmount)) + advanceUsed);
+
+      if (advanceAdded > 0) {
+        events.push({
+          id: `adv_add_${entry.id}`,
+          customerId: safeCustomerId,
+          customerName: entry.customerName || "Customer",
+          date: entry.paymentDate || "",
+          receiptNo: entry.receiptNo || entry.id,
+          amountAdded: advanceAdded,
+          amountUsed: 0,
+          remainingBalance: 0,
+          entryType: "added"
+        });
+      }
+
+      advanceUsageLines.forEach((line, index) => {
+        events.push({
+          id: `adv_use_${entry.id}_${line.invoiceId || index}`,
+          customerId: safeCustomerId,
+          customerName: entry.customerName || "Customer",
+          date: line?.appliedAt || line?.invoiceDate || entry.paymentDate || "",
+          receiptNo: entry.receiptNo || entry.id,
+          invoiceId: line?.invoiceId || "",
+          invoiceNo: line?.invoiceNo || "",
+          amountAdded: 0,
+          amountUsed: round2(line?.applyAmount),
+          remainingBalance: 0,
+          entryType: "used"
+        });
+      });
+    });
+
+  const sorted = events.sort((left, right) => {
+    const leftDate = String(left?.date || "");
+    const rightDate = String(right?.date || "");
+    if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+    if (left.entryType !== right.entryType) return left.entryType === "added" ? -1 : 1;
+    return String(left.id || "").localeCompare(String(right.id || ""));
+  });
+
+  let runningBalance = 0;
+  return sorted
+    .map((event) => {
+      runningBalance = round2(runningBalance + event.amountAdded - event.amountUsed);
+      return {
+        ...event,
+        remainingBalance: runningBalance
+      };
+    })
+    .sort((left, right) => {
+      const leftDate = String(left?.date || "");
+      const rightDate = String(right?.date || "");
+      if (leftDate !== rightDate) return rightDate.localeCompare(leftDate);
+      return String(right.id || "").localeCompare(String(left.id || ""));
+    });
+}
+
+export function applyAdvanceWalletToCustomerInvoice({
+  country,
+  customerId,
+  invoiceId,
+  invoiceNo,
+  invoiceDate,
+  invoiceAmount,
+  actor
+}: {
+  country: CountryCode;
+  customerId: string;
+  invoiceId: string;
+  invoiceNo: string;
+  invoiceDate: string;
+  invoiceAmount: number;
+  actor: string;
+}) {
+  const normalizedCustomerId = String(customerId || "").trim();
+  const normalizedInvoiceId = String(invoiceId || "").trim();
+  const normalizedInvoiceNo = String(invoiceNo || normalizedInvoiceId).trim();
+  const safeInvoiceAmount = Math.max(0, toNumber(invoiceAmount));
+
+  if (!normalizedCustomerId || !normalizedInvoiceId || safeInvoiceAmount <= 0) {
+    return [] as PaymentInRecord[];
+  }
+
+  const existingAppliedAmount = listPaymentIn(country)
+    .filter((entry) => String(entry?.status || "") !== "Draft")
+    .reduce(
+      (sum, entry) =>
+        sum +
+        ensureArray(entry?.allocations)
+          .filter((line) => String(line?.invoiceId || "") === normalizedInvoiceId)
+          .reduce((lineSum, line) => lineSum + Math.max(0, toNumber(line?.applyAmount)), 0),
+      0
+    );
+
+  let remainingBalance = Math.max(0, safeInvoiceAmount - existingAppliedAmount);
+  if (remainingBalance <= 0) return [] as PaymentInRecord[];
+
+  const records = listPaymentIn(country)
+    .filter((entry) => String(entry?.customerId || "") === normalizedCustomerId)
+    .filter((entry) => String(entry?.status || "") !== "Draft")
+    .filter((entry) => Math.max(0, toNumber(entry?.totals?.unappliedAmount)) > 0)
+    .sort((left, right) => {
+      const leftDate = String(left?.paymentDate || "");
+      const rightDate = String(right?.paymentDate || "");
+      if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+      return String(left?.receiptNo || "").localeCompare(String(right?.receiptNo || ""));
+    });
+
+  const updatedRecords: PaymentInRecord[] = [];
+
+  records.forEach((record) => {
+    if (remainingBalance <= 0) return;
+
+    const availableAdvance = Math.max(0, toNumber(record?.totals?.unappliedAmount));
+    if (availableAdvance <= 0) return;
+
+    const applyAmount = Math.min(availableAdvance, remainingBalance);
+    const nextAllocations = [
+      ...ensureArray(record?.allocations),
+      {
+        invoiceId: normalizedInvoiceId,
+        invoiceNo: normalizedInvoiceNo,
+        invoiceDate: invoiceDate || "",
+        invoiceAmount: safeInvoiceAmount,
+        balanceDue: remainingBalance,
+        applyAmount,
+        documentType: "invoice" as const,
+        appliedFromAdvance: true,
+        appliedAt: invoiceDate || "",
+        sourceReceiptNo: record?.receiptNo || "",
+        sourcePaymentId: record?.id || ""
+      }
+    ];
+
+    const updated = savePaymentIn({
+      id: record.id,
+      country: record.country || country,
+      paymentDate: record.paymentDate,
+      customerId: record.customerId,
+      customerName: record.customerName,
+      paymentMode: record.paymentMode,
+      referenceNo: record.referenceNo || "",
+      chequeNo: record.chequeNo || "",
+      bankName: record.bankName || "",
+      bankAccount: record.bankAccount || "",
+      transactionId: record.transactionId || "",
+      paymentReference: record.paymentReference || "",
+      registrationNumber: record.registrationNumber || "",
+      internalNotes: record.internalNotes || "",
+      customerNotes: record.customerNotes || "",
+      attachment: record.attachment || null,
+      desiredStatus: "Applied",
+      amountReceived: record?.totals?.amountReceived ?? 0,
+      tdsAmount: record?.totals?.tdsAmount ?? 0,
+      tdsCategory: record?.tdsCategory || "",
+      tdsRate: record?.tdsRate ?? 0,
+      isManual: !!record?.isManual,
+      allocations: nextAllocations,
+      customerOutstandingBefore: record?.totals?.customerOutstandingBefore ?? safeInvoiceAmount,
+      actor: actor || "System User"
+    });
+
+    updatedRecords.push(updated);
+    remainingBalance = Math.max(0, remainingBalance - applyAmount);
+  });
+
+  return updatedRecords;
 }
 
 export function savePaymentIn(payload: SavePaymentInPayload): PaymentInRecord {

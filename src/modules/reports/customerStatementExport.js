@@ -66,9 +66,21 @@ function agingRows(report, currency) {
   ]);
 }
 
+function walletRows(report, currency) {
+  return (Array.isArray(report?.wallet_history) ? report.wallet_history : []).map((row) => [
+    formatDateByPreference(row?.date, "-"),
+    safeText(row?.receiptNo),
+    safeText(row?.invoiceNo || "-"),
+    row?.amountAdded ? money(row.amountAdded, currency) : "-",
+    row?.amountUsed ? money(row.amountUsed, currency) : "-",
+    money(row?.remainingBalance, currency)
+  ]);
+}
+
 export function exportPartyReportExcel(report, currency) {
   const statementHeaders = ["Date", "Transaction Type", "Reference Number", "Debit", "Credit", "Running Balance"];
   const agingHeaders = ["Party Name", "Total Outstanding", "Current", "0-30 Days", "31-60 Days", "61-90 Days", "90+ Days"];
+  const walletHeaders = ["Date", "Receipt", "Invoice", "Advance Added", "Advance Used", "Remaining Balance"];
   const statementHtmlRows = [
     `<tr>${statementHeaders.map((label) => `<th>${safeText(label)}</th>`).join("")}</tr>`,
     ...statementRows(report, currency).map((row) => `<tr>${row.map((cell) => `<td>${safeText(cell, "")}</td>`).join("")}</tr>`)
@@ -76,6 +88,10 @@ export function exportPartyReportExcel(report, currency) {
   const agingHtmlRows = [
     `<tr>${agingHeaders.map((label) => `<th>${safeText(label)}</th>`).join("")}</tr>`,
     ...agingRows(report, currency).map((row) => `<tr>${row.map((cell) => `<td>${safeText(cell, "")}</td>`).join("")}</tr>`)
+  ];
+  const walletHtmlRows = [
+    `<tr>${walletHeaders.map((label) => `<th>${safeText(label)}</th>`).join("")}</tr>`,
+    ...walletRows(report, currency).map((row) => `<tr>${row.map((cell) => `<td>${safeText(cell, "")}</td>`).join("")}</tr>`)
   ];
 
   const html = `
@@ -88,8 +104,11 @@ export function exportPartyReportExcel(report, currency) {
         <p>Statement Period: ${safeText(report?.period?.from_date || "All")} to ${safeText(report?.period?.to_date || report?.period?.as_of_date || "Today")}</p>
         <p>Opening Balance: ${safeText(money(report?.opening_balance, currency))}</p>
         <p>Closing Balance: ${safeText(money(report?.closing_balance, currency))}</p>
+        <p>Available Advance Balance: ${safeText(money(report?.advance_wallet, currency))}</p>
         <h3>Statement</h3>
         <table border="1">${statementHtmlRows.join("")}</table>
+        <h3 style="margin-top:20px;">Advance Wallet History</h3>
+        <table border="1">${walletHtmlRows.join("")}</table>
         <h3 style="margin-top:20px;">Aging Summary</h3>
         <table border="1">${agingHtmlRows.join("")}</table>
       </body>
@@ -108,6 +127,7 @@ export function exportPartyReportPdf(report, currency) {
   const pageHeight = doc.internal.pageSize.getHeight();
   const margins = { left: 12, right: 12, top: 14, bottom: 12 };
   const statementWidths = [24, 30, 42, 24, 24, 32];
+  const walletWidths = [24, 28, 34, 28, 28, 34];
   const agingWidths = [38, 28, 22, 22, 22, 22, 22];
   let y = margins.top;
 
@@ -167,6 +187,8 @@ export function exportPartyReportPdf(report, currency) {
     align: "right"
   });
   y += 8;
+  doc.text(`Available Advance Balance: ${money(report?.advance_wallet, currency)}`, margins.left, y);
+  y += 8;
 
   doc.setFontSize(10);
   doc.text("Statement", margins.left, y);
@@ -175,6 +197,17 @@ export function exportPartyReportPdf(report, currency) {
     ["Date", "Type", "Reference", "Debit", "Credit", "Balance"],
     statementRows(report, currency).map((row) => row.map((value) => safeText(value, ""))),
     statementWidths
+  );
+
+  y += 4;
+  ensureSpace(12);
+  doc.setFontSize(10);
+  doc.text("Advance Wallet History", margins.left, y);
+  y += 5;
+  drawTable(
+    ["Date", "Receipt", "Invoice", "Added", "Used", "Balance"],
+    walletRows(report, currency).map((row) => row.map((value) => safeText(value, ""))),
+    walletWidths
   );
 
   y += 4;
@@ -231,6 +264,7 @@ export function printPartyReport(report, currency) {
         <div class="summary">
           <p>Opening Balance: ${safeText(money(report?.opening_balance, currency))}</p>
           <p>Closing Balance: ${safeText(money(report?.closing_balance, currency))}</p>
+          <p>Available Advance Balance: ${safeText(money(report?.advance_wallet, currency))}</p>
         </div>
         <h2>Statement</h2>
         <table>
@@ -245,6 +279,27 @@ export function printPartyReport(report, currency) {
             </tr>
           </thead>
           <tbody>${statementHtml}</tbody>
+        </table>
+        <h2>Advance Wallet History</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Receipt</th>
+              <th>Invoice</th>
+              <th class="right">Advance Added</th>
+              <th class="right">Advance Used</th>
+              <th class="right">Remaining Balance</th>
+            </tr>
+          </thead>
+          <tbody>${walletRows(report, currency)
+            .map(
+              (row) =>
+                `<tr>${row
+                  .map((cell, index) => `<td style="padding:8px;border:1px solid #cbd5e1;text-align:${index >= 3 ? "right" : "left"}">${safeText(cell, "")}</td>`)
+                  .join("")}</tr>`
+            )
+            .join("")}</tbody>
         </table>
         <h2>Aging Summary</h2>
         <table>
