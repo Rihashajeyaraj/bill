@@ -164,12 +164,15 @@ async function resolveUniqueInvoiceNumber(requestedInvoiceNo, invoiceDate, organ
   const fallbackParts = parseInvoiceNumberParts(previewInvoiceNo || preferredInvoiceNo);
   const baseParts = requestedParts?.sequence > 0 ? requestedParts : fallbackParts;
 
-  if (
-    normalizedRequested &&
-    !hasInvoiceNumberConflict(normalizedRequested) &&
-    !(await invoiceNumberExistsRemotely(organizationId, normalizedRequested))
-  ) {
-    return normalizedRequested;
+  if (normalizedRequested) {
+    const localConflict = hasInvoiceNumberConflict(normalizedRequested);
+    const remoteConflict = await invoiceNumberExistsRemotely(organizationId, normalizedRequested);
+    if (!localConflict && !remoteConflict) {
+      return normalizedRequested;
+    }
+    if (normalizedRequested !== previewInvoiceNo) {
+      throw new Error("Invoice number already exists");
+    }
   }
 
   if (!baseParts) return preferredInvoiceNo;

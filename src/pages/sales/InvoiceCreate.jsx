@@ -12,7 +12,7 @@ import InvoicePreview from "../../components/InvoicePreview";
 import DateInput from "../../components/DateInput";
 
 import { useOrganization } from "../../context/OrganizationContext";
-import { invoicesCreate, invoicesSyncFromRemote } from "../../services/invoices.service";
+import { invoicesCreate, invoicesList, invoicesSyncFromRemote } from "../../services/invoices.service";
 import { calculateTaxes } from "../../services/tax";
 import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
 import { authGetRole, authGetUser } from "../../services/auth.service";
@@ -1711,12 +1711,21 @@ export default function InvoiceCreate() {
       return null;
     }
 
-    const normalizedInvoiceNo =
-      String(invoiceNo || "").trim() ||
-      String(companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }) || "").trim();
+    const suggestedInvoiceNo = String(
+      companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }) || ""
+    ).trim();
+    const normalizedInvoiceNo = String(invoiceNo || "").trim() || suggestedInvoiceNo;
+    const isManualInvoiceNo = !!String(invoiceNo || "").trim() && String(invoiceNo || "").trim() !== suggestedInvoiceNo;
     const nextErrors = {};
     if (!partyId) nextErrors.customer = "This field is required";
     if (!normalizedInvoiceNo) nextErrors.invoiceNo = "This field is required";
+    if (normalizedInvoiceNo && isManualInvoiceNo) {
+      const duplicateExists = invoicesList().some(
+        (entry) =>
+          String(entry?.invoiceNo || "").trim().toLowerCase() === normalizedInvoiceNo.toLowerCase()
+      );
+      if (duplicateExists) nextErrors.invoiceNo = "Invoice number already exists";
+    }
     if (!String(invoiceDate || "").trim()) nextErrors.invoiceDate = "This field is required";
     if (markAsPaid && paymentAmount <= 0) nextErrors.paidAmount = "This field is required";
     if (markAsPaid && !paymentDate) nextErrors.paymentDate = "This field is required";
@@ -2030,7 +2039,11 @@ export default function InvoiceCreate() {
       }
       return savedInvoiceId || "";
     } catch (error) {
-      alert(error?.message || "Failed to save invoice.");
+      if (String(error?.message || "").trim().toLowerCase() === "invoice number already exists") {
+        setFormErrors((prev) => ({ ...prev, invoiceNo: "Invoice number already exists" }));
+      } else {
+        alert(error?.message || "Failed to save invoice.");
+      }
       return null;
     }
   }
