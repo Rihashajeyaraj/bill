@@ -26,7 +26,6 @@ import {
   listStatesByCountry,
   resolveCountryIsoCode
 } from "../../lib/geoData";
-import { formatDecimalByPreference } from "../../lib/formatPreferences";
 
 const UNIT_OPTIONS = ["pcs", "kg", "box", "pack", "ltr", "hours", "days", "months", "service"];
 
@@ -105,8 +104,27 @@ function queryLooksPhoneLike(value) {
   return /^[\d\s()+-]+$/.test(text);
 }
 
+function formatIndianNumber(value, options = {}) {
+  const amount = Number(value ?? 0);
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
+  try {
+    return new Intl.NumberFormat("en-IN", options).format(safeAmount);
+  } catch {
+    return safeAmount.toLocaleString("en-IN", options);
+  }
+}
+
 function money(n) {
-  return formatDecimalByPreference(Number(n || 0));
+  return formatIndianNumber(n, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function wholeNumber(n) {
+  return formatIndianNumber(n, {
+    maximumFractionDigits: 0
+  });
 }
 
 function round2(value) {
@@ -1296,7 +1314,7 @@ export default function PurchaseBill() {
         const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
         toast.error(
           "Quantity exceeds item qty",
-          `"${matchedItem?.name || "Item"}" has qty ${itemQty}, but ${Number(qtyExceededLine.qty || 0)} was entered.`
+          `"${matchedItem?.name || "Item"}" has qty ${wholeNumber(itemQty)}, but ${wholeNumber(qtyExceededLine.qty || 0)} was entered.`
         );
         return;
       }
@@ -1496,14 +1514,16 @@ export default function PurchaseBill() {
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-700 md:max-w-sm">
               <p className="font-semibold text-slate-900">{invoiceScanMeta.fileName}</p>
               <p className="mt-1">Mode: {invoiceScanMeta.extractionMethod || "free-scan"}</p>
-              <p className="mt-1">Confidence: {invoiceScanMeta.confidence}%</p>
-              <p className="mt-1">Items: {invoiceScanMeta.itemCount || 0}</p>
+              <p className="mt-1">Confidence: {wholeNumber(invoiceScanMeta.confidence)}%</p>
+              <p className="mt-1">Items: {wholeNumber(invoiceScanMeta.itemCount || 0)}</p>
               <p className="mt-1">
                 Supplier: {invoiceScanMeta.matchedSupplierName || invoiceScanMeta.supplierName || "Not detected"}
               </p>
               <p className="mt-1">Invoice No: {invoiceScanMeta.invoiceNumber || "Not detected"}</p>
               <p className="mt-1">Invoice Date: {invoiceScanMeta.date || "Not detected"}</p>
-              <p className="mt-1">Final Total: {invoiceScanMeta.total || "Not detected"}</p>
+              <p className="mt-1">
+                Final Total: {invoiceScanMeta.total ? money(invoiceScanMeta.total) : "Not detected"}
+              </p>
               {!invoiceScanMeta.supplierResolved ? (
                 <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-2 py-2 text-amber-800">
                   Confirm or create the supplier before you save this bill.
@@ -1916,7 +1936,7 @@ export default function PurchaseBill() {
                           if (matchedItem && itemQty > 0 && enteredQty > itemQty) {
                             toast.warning(
                               "Quantity exceeds item qty",
-                              `Cannot enter ${enteredQty}. Maximum allowed is ${itemQty}.`
+                              `Cannot enter ${wholeNumber(enteredQty)}. Maximum allowed is ${wholeNumber(itemQty)}.`
                             );
                             updateLine(line.id, { qty: itemQty });
                             return;
@@ -2015,7 +2035,9 @@ export default function PurchaseBill() {
                   {activeLineSearchResults.length ? (
                     activeLineSearchResults.map((item) => {
                       const stockInfo = stockByItemId.get(item.id);
-                      const remainingText = stockInfo ? `Remaining: ${stockInfo.available}` : "Service / Not tracked";
+                      const remainingText = stockInfo
+                        ? `Remaining: ${wholeNumber(stockInfo.available)}`
+                        : "Service / Not tracked";
                       const remainingClass = stockInfo
                         ? Number(stockInfo.available || 0) <= 0
                           ? "text-rose-600"
