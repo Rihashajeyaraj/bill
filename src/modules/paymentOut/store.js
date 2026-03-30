@@ -546,6 +546,85 @@ export function paymentInsightsBySupplier(country, supplierId) {
   };
 }
 
+function round2(value) {
+  return Math.round((parseNumber(value) + Number.EPSILON) * 100) / 100;
+}
+
+export function listSupplierAdvanceWalletHistory(country, supplierId) {
+  const normalizedSupplierId = String(supplierId || "").trim();
+  if (!normalizedSupplierId) return [];
+
+  const events = [];
+
+  listPaymentOut(country)
+    .filter((entry) => String(entry?.status || "") !== "Draft")
+    .filter((entry) => String(entry?.supplierId || "") === normalizedSupplierId)
+    .forEach((entry) => {
+      const allocations = ensureArray(entry?.allocations);
+      const advanceUsageLines = allocations.filter(
+        (line) => line?.appliedFromAdvance === true && Math.max(0, parseNumber(line?.applyAmount)) > 0
+      );
+      const advanceUsed = round2(
+        advanceUsageLines.reduce((sum, line) => sum + Math.max(0, parseNumber(line?.applyAmount)), 0)
+      );
+      const advanceAdded = round2(Math.max(0, parseNumber(entry?.totals?.unappliedAmount)) + advanceUsed);
+
+      if (advanceAdded > 0) {
+        events.push({
+          id: `adv_add_${entry.id}`,
+          supplierId: normalizedSupplierId,
+          supplierName: entry.supplierName || "Supplier",
+          date: entry.paymentDate || "",
+          paymentNo: entry.paymentNo || entry.id,
+          amountAdded: advanceAdded,
+          amountUsed: 0,
+          remainingBalance: 0,
+          entryType: "added"
+        });
+      }
+
+      advanceUsageLines.forEach((line, index) => {
+        events.push({
+          id: `adv_use_${entry.id}_${line.billId || index}`,
+          supplierId: normalizedSupplierId,
+          supplierName: entry.supplierName || "Supplier",
+          date: line?.appliedAt || line?.billDate || entry.paymentDate || "",
+          paymentNo: entry.paymentNo || entry.id,
+          billId: line?.billId || "",
+          billNo: line?.billNo || "",
+          amountAdded: 0,
+          amountUsed: round2(line?.applyAmount),
+          remainingBalance: 0,
+          entryType: "used"
+        });
+      });
+    });
+
+  const sorted = events.sort((left, right) => {
+    const leftDate = String(left?.date || "");
+    const rightDate = String(right?.date || "");
+    if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+    if (left.entryType !== right.entryType) return left.entryType === "added" ? -1 : 1;
+    return String(left.id || "").localeCompare(String(right.id || ""));
+  });
+
+  let runningBalance = 0;
+  return sorted
+    .map((event) => {
+      runningBalance = round2(runningBalance + event.amountAdded - event.amountUsed);
+      return {
+        ...event,
+        remainingBalance: runningBalance
+      };
+    })
+    .sort((left, right) => {
+      const leftDate = String(left?.date || "");
+      const rightDate = String(right?.date || "");
+      if (leftDate !== rightDate) return rightDate.localeCompare(leftDate);
+      return String(right.id || "").localeCompare(String(left.id || ""));
+    });
+}
+
 export function savePaymentOut(payload) {
   assertPaymentOutWritePermission({ isEdit: !!payload?.id });
   const list = getAllPayments();
@@ -689,7 +768,11 @@ export function applyAdvanceWalletToSupplierBill({
         billDate: billDate || "",
         billAmount: safeBillAmount,
         balanceDue: remainingBalance,
-        applyAmount
+        applyAmount,
+        appliedFromAdvance: true,
+        appliedAt: billDate || "",
+        sourcePaymentNo: record?.paymentNo || "",
+        sourcePaymentId: record?.id || ""
       }
     ];
 

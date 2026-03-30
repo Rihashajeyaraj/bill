@@ -27,10 +27,12 @@ import { LS_KEYS, lsGetOrganizationScoped } from "../../services/storage";
 import {
   buildPaymentOutPayload,
   defaultPaymentForm,
+  listSupplierAdvanceWalletHistory,
   listPaymentOut,
   mapOpenBillsByCountry,
   mapSuppliersByCountry,
   outstandingBySupplier,
+  paymentInsightsBySupplier,
   removePaymentOut,
   savePaymentOut,
   summarizePaymentOut
@@ -277,21 +279,19 @@ export default function PaymentOutPremium() {
       .slice(0, 8);
   }, [suppliers, supplierLookupQuery]);
 
-  const supplierLastPayment = useMemo(() => {
-    if (!form.supplierId) return "";
-    return (
-      payments
-        .filter((entry) => entry.supplierId === form.supplierId)
-        .sort((a, b) => (a.paymentDate < b.paymentDate ? 1 : -1))[0]?.paymentDate || ""
-    );
-  }, [payments, form.supplierId]);
-
-  const supplierAdvanceWallet = useMemo(() => {
-    if (!form.supplierId) return 0;
-    return payments
-      .filter((entry) => entry.supplierId === form.supplierId && entry.status !== "Draft")
-      .reduce((sum, entry) => sum + Math.max(0, parseNumber(entry?.totals?.unappliedAmount)), 0);
-  }, [payments, form.supplierId]);
+  const supplierInsights = useMemo(
+    () =>
+      form.supplierId
+        ? paymentInsightsBySupplier(country, form.supplierId)
+        : { lastPaymentDate: "", advanceWallet: 0, totalPaid: 0, paymentCount: 0 },
+    [country, form.supplierId, payments]
+  );
+  const supplierLastPayment = supplierInsights.lastPaymentDate || "";
+  const supplierAdvanceWallet = Math.max(0, parseNumber(supplierInsights.advanceWallet));
+  const supplierAdvanceHistory = useMemo(
+    () => (form.supplierId ? listSupplierAdvanceWalletHistory(country, form.supplierId).slice(0, 12) : []),
+    [country, form.supplierId, payments]
+  );
   const autoCalculatedTdsAmount = useMemo(
     () => calculateTdsAmount(autoTdsBaseAmount(selectedBill, form.allocationMode, form.amountPaid), form.tdsRate),
     [selectedBill, form.allocationMode, form.amountPaid, form.tdsRate]
@@ -1064,10 +1064,49 @@ export default function PaymentOutPremium() {
                       <p className="font-semibold text-slate-900">{supplierLastPayment || "-"}</p>
                     </div>
                     <div className="rounded-xl bg-slate-50 p-3 text-xs">
-                      <p className="text-slate-500">Advance Wallet</p>
+                      <p className="text-slate-500">Available Advance Balance</p>
                       <p className="font-semibold text-emerald-700">{formatMoney(supplierAdvanceWallet, effectiveCurrency)}</p>
                     </div>
                   </div>
+                  {supplierAdvanceHistory.length ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white">
+                      <div className="border-b border-slate-100 px-3 py-2">
+                        <p className="text-xs font-semibold text-slate-700">Advance Wallet History</p>
+                      </div>
+                      <div className="max-h-52 overflow-auto">
+                        <table className="w-full min-w-[720px] text-left text-xs">
+                          <thead className="bg-slate-50 text-slate-500">
+                            <tr>
+                              <th className="px-3 py-2 font-semibold">Date</th>
+                              <th className="px-3 py-2 font-semibold">Payment</th>
+                              <th className="px-3 py-2 font-semibold">Bill</th>
+                              <th className="px-3 py-2 text-right font-semibold">Advance Added</th>
+                              <th className="px-3 py-2 text-right font-semibold">Advance Used</th>
+                              <th className="px-3 py-2 text-right font-semibold">Remaining Balance</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {supplierAdvanceHistory.map((entry) => (
+                              <tr key={entry.id} className="border-t border-slate-100">
+                                <td className="px-3 py-2 text-slate-700">{entry.date || "-"}</td>
+                                <td className="px-3 py-2 text-slate-700">{entry.paymentNo || "-"}</td>
+                                <td className="px-3 py-2 text-slate-700">{entry.billNo || "-"}</td>
+                                <td className="px-3 py-2 text-right font-semibold text-emerald-700">
+                                  {entry.amountAdded > 0 ? formatMoney(entry.amountAdded, effectiveCurrency) : "-"}
+                                </td>
+                                <td className="px-3 py-2 text-right font-semibold text-sky-700">
+                                  {entry.amountUsed > 0 ? formatMoney(entry.amountUsed, effectiveCurrency) : "-"}
+                                </td>
+                                <td className="px-3 py-2 text-right font-semibold text-slate-900">
+                                  {formatMoney(entry.remainingBalance, effectiveCurrency)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </FlowCard>
             </div>

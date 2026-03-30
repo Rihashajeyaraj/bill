@@ -26,6 +26,7 @@ import { getPartyCreditStatus, listParties, syncPartiesFromRemote, upsertPartyRe
 import { computeItemStock, listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
 import {
   applyAdvanceWalletToCustomerInvoice,
+  listCustomerAdvanceWalletHistory,
   outstandingByCustomer,
   paymentInsightsByCustomer,
   savePaymentIn
@@ -1052,6 +1053,10 @@ export default function InvoiceCreate() {
   const customerPaymentInsights = useMemo(
     () => paymentInsightsByCustomer(resolvePaymentCountryCode(customerCountry, party?.countryCode || ""), partyId),
     [customerCountry, party?.countryCode, partyId]
+  );
+  const customerAdvanceHistory = useMemo(
+    () => (partyId ? listCustomerAdvanceWalletHistory(paymentCountryCode, partyId).slice(0, 8) : []),
+    [partyId, paymentCountryCode]
   );
   const customerAdvanceWallet = round2(Number(customerPaymentInsights?.advanceWallet || 0));
   const maxAdvanceUsable = useMemo(
@@ -3157,10 +3162,48 @@ export default function InvoiceCreate() {
                   <span className="font-semibold text-emerald-700">{money(advanceAmount)}</span>
                 </div>
               ) : null}
-              {projectedAdvanceWallet > 0 ? (
+              {projectedAdvanceWallet > 0 || customerAdvanceWallet > 0 || advanceAppliedFromWallet > 0 ? (
                 <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Projected Advance Balance</span>
+                  <span className="text-slate-600">Remaining Advance</span>
                   <span className="font-semibold text-amber-700">{money(projectedAdvanceWallet)}</span>
+                </div>
+              ) : null}
+
+              {customerAdvanceHistory.length ? (
+                <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                  <div className="border-b border-slate-200 px-3 py-2">
+                    <p className="text-xs font-semibold text-slate-700">Advance Payment History</p>
+                  </div>
+                  <div className="max-h-56 overflow-auto">
+                    <table className="w-full min-w-[620px] text-left text-xs">
+                      <thead className="bg-white text-slate-500">
+                        <tr>
+                          <th className="px-3 py-2 font-semibold">Date</th>
+                          <th className="px-3 py-2 font-semibold">Invoice</th>
+                          <th className="px-3 py-2 text-right font-semibold">Amount Added</th>
+                          <th className="px-3 py-2 text-right font-semibold">Amount Used</th>
+                          <th className="px-3 py-2 text-right font-semibold">Remaining Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {customerAdvanceHistory.map((entry) => (
+                          <tr key={entry.id} className="border-t border-slate-200">
+                            <td className="px-3 py-2 text-slate-700">{entry.date || "-"}</td>
+                            <td className="px-3 py-2 text-slate-700">{entry.invoiceNo || "-"}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-emerald-700">
+                              {entry.amountAdded > 0 ? money(entry.amountAdded) : "-"}
+                            </td>
+                            <td className="px-3 py-2 text-right font-semibold text-sky-700">
+                              {entry.amountUsed > 0 ? money(entry.amountUsed) : "-"}
+                            </td>
+                            <td className="px-3 py-2 text-right font-semibold text-slate-900">
+                              {money(entry.remainingBalance)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               ) : null}
 
