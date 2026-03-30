@@ -214,6 +214,45 @@ export function listBillTdsHistory(country, billId) {
     });
 }
 
+export function summarizeBillTdsByBill(country) {
+  return listPaymentOut(country)
+    .filter((entry) => String(entry?.status || "").toLowerCase() !== "draft")
+    .reduce((map, entry) => {
+      const allocations = ensureArray(entry?.allocations);
+      allocations.forEach((line) => {
+        const billId = String(line?.billId || "").trim();
+        if (!billId) return;
+        const tdsAmount = paymentOutAllocationTdsShare(entry, line);
+        if (tdsAmount <= 0) return;
+
+        const existing = map[billId] || {
+          billId,
+          billNo: line?.billNo || "",
+          supplierId: entry?.supplierId || "",
+          supplierName: entry?.supplierName || "",
+          lastTdsDate: "",
+          totalTdsAmount: 0,
+          entriesCount: 0
+        };
+        const paymentDate = String(entry?.paymentDate || "").trim();
+
+        map[billId] = {
+          ...existing,
+          billNo: existing.billNo || line?.billNo || "",
+          supplierId: existing.supplierId || entry?.supplierId || "",
+          supplierName: existing.supplierName || entry?.supplierName || "",
+          lastTdsDate:
+            paymentDate && (!existing.lastTdsDate || paymentDate > existing.lastTdsDate)
+              ? paymentDate
+              : existing.lastTdsDate,
+          totalTdsAmount: Math.max(0, parseNumber(existing.totalTdsAmount)) + tdsAmount,
+          entriesCount: Math.max(0, parseNumber(existing.entriesCount)) + 1
+        };
+      });
+      return map;
+    }, {});
+}
+
 function computeTotals(payload) {
   const amountPaid = Math.max(0, parseNumber(payload.amountPaid));
   const tdsAmount = Math.max(0, parseNumber(payload.tdsAmount));

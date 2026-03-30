@@ -7,7 +7,7 @@ import Modal from "../../components/Modal";
 import { useFinancialYears } from "../../context/FinancialYearContext";
 import { useToast } from "../../context/ToastContext";
 import { purchasesList, purchasesSyncFromRemote } from "../../services/purchases.service";
-import { listBillTdsHistory } from "../../modules/paymentOut/store";
+import { listBillTdsHistory, summarizeBillTdsByBill } from "../../modules/paymentOut/store";
 import {
   createItemBarcodesForPurchase,
   getBarcodeImageUrl,
@@ -66,6 +66,7 @@ export default function PurchaseHistory() {
   const [barcodeModalRows, setBarcodeModalRows] = useState([]);
   const [barcodeLoading, setBarcodeLoading] = useState(false);
   const [barcodeActionBillId, setBarcodeActionBillId] = useState("");
+  const tdsSummaryByBill = useMemo(() => summarizeBillTdsByBill(""), [bills]);
   const selectedBillTdsRows = useMemo(
     () => (selectedBill?.id ? listBillTdsHistory(selectedBill?.country, selectedBill.id) : []),
     [selectedBill]
@@ -294,6 +295,7 @@ export default function PurchaseHistory() {
                 <th className="px-3 py-3 font-semibold">Phone</th>
                 <th className="px-3 py-3 font-semibold text-right">Qty</th>
                 <th className="px-3 py-3 font-semibold text-right">Amount</th>
+                <th className="px-3 py-3 font-semibold">TDS</th>
                 <th className="px-3 py-3 font-semibold">Payment</th>
                 <th className="px-3 py-3 font-semibold">Barcodes</th>
                 <th className="px-3 py-3 font-semibold">Actions</th>
@@ -302,13 +304,13 @@ export default function PurchaseHistory() {
             <tbody>
               {loading ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={9}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
                     Loading purchase history...
                   </td>
                 </tr>
               ) : bills.length === 0 ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={9}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
                     No purchase bills yet.
                   </td>
                 </tr>
@@ -316,6 +318,7 @@ export default function PurchaseHistory() {
                 bills.map((bill) => {
                   const rowBarcodes = barcodesByPurchaseId[String(bill?.id || "").trim()] || [];
                   const hasBarcodes = rowBarcodes.length > 0;
+                  const billTdsSummary = tdsSummaryByBill[String(bill?.id || "").trim()] || null;
                   return (
                   <tr
                     key={bill.id}
@@ -338,6 +341,16 @@ export default function PurchaseHistory() {
                     <td className="px-3 py-3 text-right text-slate-700">{money(bill?.totals?.totalQty)}</td>
                     <td className="px-3 py-3 text-right font-semibold text-slate-900">
                       {money(bill?.totals?.grandTotal)}
+                    </td>
+                    <td className="px-3 py-3">
+                      {billTdsSummary ? (
+                        <div className="space-y-1">
+                          <p className="font-semibold text-sky-700">{money(billTdsSummary.totalTdsAmount)}</p>
+                          <p className="text-xs text-slate-500">Last: {formatDate(billTdsSummary.lastTdsDate)}</p>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400">No TDS</span>
+                      )}
                     </td>
                     <td className="px-3 py-3 text-slate-600">{bill.paymentType || "-"}</td>
                     <td className="px-3 py-3">
@@ -477,6 +490,30 @@ export default function PurchaseHistory() {
       >
         {selectedBill ? (
           <div className="space-y-4 text-sm">
+            {(() => {
+              const billTdsSummary = tdsSummaryByBill[String(selectedBill?.id || "").trim()] || null;
+              return billTdsSummary ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                  <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
+                    <p className="text-xs text-sky-700">Total TDS</p>
+                    <p className="font-semibold text-sky-900">{money(billTdsSummary.totalTdsAmount)}</p>
+                  </div>
+                  <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
+                    <p className="text-xs text-sky-700">Last TDS Date</p>
+                    <p className="font-semibold text-sky-900">{formatDate(billTdsSummary.lastTdsDate)}</p>
+                  </div>
+                  <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
+                    <p className="text-xs text-sky-700">Supplier</p>
+                    <p className="font-semibold text-sky-900">{billTdsSummary.supplierName || selectedBill.partyName || "-"}</p>
+                  </div>
+                  <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
+                    <p className="text-xs text-sky-700">TDS Entries</p>
+                    <p className="font-semibold text-sky-900">{billTdsSummary.entriesCount}</p>
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                 <p className="text-xs text-slate-500">Bill No</p>
