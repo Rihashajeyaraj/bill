@@ -215,7 +215,10 @@ export default function PaymentOutPremium() {
   const selectedBill = useMemo(() => {
     const liveBill = supplierBills.find((entry) => String(entry.id) === String(form.selectedBillId));
     if (liveBill) return liveBill;
-    const savedBill = form?.allocations?.[0];
+    const savedBill =
+      activePayment?.id && String(activePayment?.supplierId || "") === String(form.supplierId || "")
+        ? form?.allocations?.[0]
+        : null;
     if (!savedBill) return null;
     return {
       id: savedBill.billId,
@@ -228,7 +231,7 @@ export default function PaymentOutPremium() {
       taxableAmount: savedBill.taxableAmount || 0,
       taxAmount: savedBill.taxAmount || 0
     };
-  }, [form.allocations, form.selectedBillId, form.supplierId, form.supplierName, supplierBills]);
+  }, [activePayment?.id, activePayment?.supplierId, form.allocations, form.selectedBillId, form.supplierId, form.supplierName, supplierBills]);
   const supplierOutstandingBefore = useMemo(
     () => (form.supplierId ? outstandingBySupplier(country, form.supplierId) : 0),
     [country, form.supplierId, refreshKey]
@@ -346,6 +349,24 @@ export default function PaymentOutPremium() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
+
+  useEffect(() => {
+    if (form.allocationMode !== "linked" || !form.selectedBillId) return;
+    const billMatchesSupplier = supplierBills.some(
+      (entry) => String(entry.id) === String(form.selectedBillId) && String(entry.supplierId) === String(form.supplierId)
+    );
+    const canKeepSavedBill =
+      !!activePayment?.id &&
+      String(activePayment?.supplierId || "") === String(form.supplierId || "") &&
+      String(form?.allocations?.[0]?.billId || "") === String(form.selectedBillId || "");
+    if (billMatchesSupplier || canKeepSavedBill) return;
+    setForm((prev) => ({
+      ...prev,
+      selectedBillId: "",
+      allocations: [],
+      allocationMode: "normal"
+    }));
+  }, [activePayment?.id, activePayment?.supplierId, form.allocationMode, form.allocations, form.selectedBillId, form.supplierId, supplierBills]);
 
   useEffect(() => {
     if (!prefillBillId) return;
@@ -680,6 +701,17 @@ export default function PaymentOutPremium() {
     }
     if (form.allocationMode === "linked" && !form.selectedBillId) {
       window.alert("Select a purchase invoice before saving.");
+      return;
+    }
+    if (
+      form.allocationMode === "linked" &&
+      !supplierBills.some(
+        (entry) =>
+          String(entry.id) === String(form.selectedBillId) &&
+          String(entry.supplierId) === String(form.supplierId)
+      )
+    ) {
+      window.alert("Selected bill does not belong to the chosen supplier.");
       return;
     }
     if (Math.max(0, parseNumber(form.amountPaid)) <= 0) {
