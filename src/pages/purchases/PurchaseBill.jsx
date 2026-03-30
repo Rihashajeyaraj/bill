@@ -18,7 +18,7 @@ import { useOrganization } from "../../context/OrganizationContext";
 import { calculateTaxes } from "../../services/tax";
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { syncPaymentOutRemote } from "../../services/payments.service";
-import { outstandingBySupplier, savePaymentOut } from "../../modules/paymentOut/store";
+import { outstandingBySupplier, paymentInsightsBySupplier, savePaymentOut } from "../../modules/paymentOut/store";
 import { canCreateEntries } from "../../services/roles";
 import { companyPeekDocumentNumber } from "../../services/company.service";
 import {
@@ -1095,6 +1095,12 @@ export default function PurchaseBill() {
     () => round2(Math.max(0, Number(paymentAmount || 0) - Number(computed.finalTotal || 0))),
     [paymentAmount, computed.finalTotal]
   );
+  const supplierPaymentInsights = useMemo(
+    () => paymentInsightsBySupplier(country, partyId),
+    [country, partyId]
+  );
+  const supplierAdvanceWallet = round2(Number(supplierPaymentInsights?.advanceWallet || 0));
+  const projectedAdvanceWallet = round2(supplierAdvanceWallet + advanceAmount);
 
   async function resolveLinesWithItems(detailedLines) {
     const nextLines = [];
@@ -2382,10 +2388,22 @@ export default function PurchaseBill() {
                   <span className="text-slate-600">Balance Due</span>
                   <span className="font-semibold text-rose-700">{money(pendingAmount)}</span>
                 </div>
+                {supplierAdvanceWallet > 0 ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">Existing Advance Wallet</span>
+                    <span className="font-semibold text-emerald-700">{money(supplierAdvanceWallet)}</span>
+                  </div>
+                ) : null}
                 {advanceAmount > 0 ? (
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-600">Advance</span>
+                    <span className="text-slate-600">Advance From This Bill</span>
                     <span className="font-semibold text-emerald-700">{money(advanceAmount)}</span>
+                  </div>
+                ) : null}
+                {projectedAdvanceWallet > 0 ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">Advance Wallet After Save</span>
+                    <span className="font-semibold text-emerald-700">{money(projectedAdvanceWallet)}</span>
                   </div>
                 ) : null}
               </div>

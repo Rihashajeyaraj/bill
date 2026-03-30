@@ -364,11 +364,19 @@ export function mapSuppliersByCountry(country) {
   return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function mapOpenBillsByCountry(country) {
+function rawAdvanceWalletBySupplier(country, supplierId) {
+  if (!supplierId) return 0;
+  return listPaymentOut(country)
+    .filter((entry) => String(entry?.supplierId || "") === String(supplierId))
+    .filter((entry) => String(entry?.status || "") !== "Draft")
+    .reduce((sum, entry) => sum + parseNumber(entry?.totals?.unappliedAmount), 0);
+}
+
+function mapOpenBillsByCountryInternal(country, { applyAdvance = true } = {}) {
   const target = normalizeCountry(country);
   const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
 
-  return purchases
+  const baseBills = purchases
     .map((bill) => {
       const mapped = normalizeCountry(bill?.country);
       if (mapped && target && mapped !== target) return null;
@@ -421,6 +429,48 @@ export function mapOpenBillsByCountry(country) {
     })
     .filter(Boolean)
     .sort((a, b) => (a.billDate < b.billDate ? 1 : -1));
+
+  if (!applyAdvance) {
+    return baseBills;
+  }
+
+  const billsBySupplier = new Map();
+  baseBills.forEach((bill) => {
+    const supplierId = String(bill?.supplierId || "").trim();
+    if (!supplierId) return;
+    const list = billsBySupplier.get(supplierId) || [];
+    list.push({ ...bill });
+    billsBySupplier.set(supplierId, list);
+  });
+
+  const adjustedBills = [];
+  billsBySupplier.forEach((bills, supplierId) => {
+    let remainingAdvance = Math.max(0, rawAdvanceWalletBySupplier(country, supplierId));
+    const sortedBills = [...bills].sort((left, right) => {
+      const leftDate = String(left?.billDate || "");
+      const rightDate = String(right?.billDate || "");
+      if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+      return String(left?.billNo || "").localeCompare(String(right?.billNo || ""));
+    });
+
+    sortedBills.forEach((bill) => {
+      const baseBalance = Math.max(0, parseNumber(bill?.balanceDue));
+      const adjustedBalance = Math.max(0, baseBalance - remainingAdvance);
+      const consumedAdvance = Math.min(baseBalance, remainingAdvance);
+      remainingAdvance = Math.max(0, remainingAdvance - consumedAdvance);
+      if (adjustedBalance <= 0) return;
+      adjustedBills.push({
+        ...bill,
+        balanceDue: adjustedBalance
+      });
+    });
+  });
+
+  return adjustedBills.sort((a, b) => (a.billDate < b.billDate ? 1 : -1));
+}
+
+export function mapOpenBillsByCountry(country) {
+  return mapOpenBillsByCountryInternal(country, { applyAdvance: true });
 }
 
 export function outstandingBySupplier(country, supplierId) {
@@ -428,6 +478,33 @@ export function outstandingBySupplier(country, supplierId) {
   return mapOpenBillsByCountry(country)
     .filter((bill) => String(bill.supplierId) === String(supplierId))
     .reduce((sum, bill) => sum + parseNumber(bill.balanceDue), 0);
+}
+
+export function paymentInsightsBySupplier(country, supplierId) {
+  if (!supplierId) {
+    return {
+      lastPaymentDate: "",
+      advanceWallet: 0,
+      totalPaid: 0,
+      paymentCount: 0
+    };
+  }
+
+  const records = listPaymentOut(country).filter((entry) => String(entry?.supplierId || "") === String(supplierId));
+  const sorted = [...records].sort((a, b) => (a.paymentDate < b.paymentDate ? 1 : -1));
+  const rawAdvanceWallet = rawAdvanceWalletBySupplier(country, supplierId);
+  const rawOutstandingBeforeAdvance = mapOpenBillsByCountryInternal(country, { applyAdvance: false })
+    .filter((bill) => String(bill.supplierId || "") === String(supplierId))
+    .reduce((sum, bill) => sum + parseNumber(bill.balanceDue), 0);
+
+  return {
+    lastPaymentDate: sorted[0]?.paymentDate || "",
+    advanceWallet: Math.max(0, rawAdvanceWallet - rawOutstandingBeforeAdvance),
+    totalPaid: records
+      .filter((entry) => String(entry?.status || "") !== "Draft")
+      .reduce((sum, entry) => sum + parseNumber(entry?.totals?.amountPaid), 0),
+    paymentCount: records.length
+  };
 }
 
 export function savePaymentOut(payload) {
