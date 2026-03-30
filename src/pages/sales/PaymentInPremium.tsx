@@ -144,11 +144,14 @@ function autoTdsBaseAmount(
   allocationMode: "linked" | "normal",
   fallbackAmount: unknown
 ) {
+  const paymentAmount = Math.max(0, parseNumber(fallbackAmount as any));
   if (allocationMode === "linked") {
     const taxableAmount = Math.max(0, parseNumber(document?.taxableAmount as any));
-    if (taxableAmount > 0) return taxableAmount;
+    if (taxableAmount > 0) {
+      return paymentAmount > 0 ? Math.min(taxableAmount, paymentAmount) : taxableAmount;
+    }
   }
-  return Math.max(0, parseNumber(fallbackAmount as any));
+  return paymentAmount;
 }
 
 export default function PaymentInPremium() {

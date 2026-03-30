@@ -378,6 +378,9 @@ function ensureTransition(previous: PaymentStatus, next: PaymentStatus) {
 function computeTotals(payload: SavePaymentInPayload) {
   const amountReceived = Math.max(0, toNumber(payload.amountReceived));
   const tdsAmount = Math.max(0, toNumber(payload.tdsAmount));
+  if (amountReceived <= 0) {
+    throw new Error("Amount received must be greater than zero.");
+  }
   const allocations = payload.allocations.map((line) => ({
     ...line,
     invoiceAmount: Math.max(0, toNumber(line.invoiceAmount)),
