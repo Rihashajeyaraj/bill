@@ -5,6 +5,7 @@ import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
 import { triggerLowStockNotifications } from "../modules/items/store";
 import { createItemBarcodesForPurchase } from "./itemBarcodes.service";
+import { companyPeekDocumentNumber, companySyncDocumentCounter } from "./company.service";
 import {
   annotateWithFinancialYear,
   financialYearsEnsureForDate,
@@ -374,6 +375,11 @@ export async function purchasesCreate(bill) {
   assertPurchaseWritePermission();
   const now = new Date().toISOString();
   const billDate = bill?.billDate || now.slice(0, 10);
+  const requestedBillNumber = String(bill?.billNumber || "").trim();
+  const effectiveBillNumber =
+    requestedBillNumber ||
+    String(companyPeekDocumentNumber("purchase", { dateValue: billDate }) || "").trim() ||
+    `BILL-${Date.now()}`;
   const actor = authGetUser();
   const actorUserId = actor?.id || null;
   const actorName = String(actor?.name || actor?.email || "").trim();
@@ -390,7 +396,7 @@ export async function purchasesCreate(bill) {
       const supplierId = looksLikeUuid(bill?.partyId) ? bill.partyId : null;
       const postingPayload = {
         organization_id: organizationId,
-        bill_no: bill?.billNumber || `BILL-${Date.now()}`,
+        bill_no: effectiveBillNumber,
         bill_date: billDate,
         due_date: bill?.dueDate || billDate,
         supplier_id: supplierId,
@@ -438,7 +444,7 @@ export async function purchasesCreate(bill) {
           .insert({
             organization_id: organizationId,
             financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
-            bill_no: bill?.billNumber || `BILL-${Date.now()}`,
+            bill_no: effectiveBillNumber,
             bill_date: billDate,
             due_date: bill?.dueDate || billDate,
             supplier_id: supplierId,
@@ -473,7 +479,7 @@ export async function purchasesCreate(bill) {
             .from("purchase_bills")
             .insert({
               organization_id: organizationId,
-              bill_no: bill?.billNumber || `BILL-${Date.now()}`,
+              bill_no: effectiveBillNumber,
               bill_date: bill?.billDate || now.slice(0, 10),
               due_date: bill?.dueDate || bill?.billDate || now.slice(0, 10),
               supplier_id: supplierId,
@@ -551,6 +557,7 @@ export async function purchasesCreate(bill) {
   const next = annotateWithFinancialYear({
     ...bill,
     id,
+    billNumber: effectiveBillNumber,
     country: bill?.country || "",
     partyAddress: bill?.partyAddress || "",
     created_at: now,
@@ -597,6 +604,7 @@ export async function purchasesCreate(bill) {
   }, bill?.billDate || now.slice(0, 10));
 
   setAll([next, ...getAll()]);
+  companySyncDocumentCounter("purchase", effectiveBillNumber, { dateValue: billDate });
   applyPurchaseStockDelta(next.lines);
   try {
     await createItemBarcodesForPurchase({
