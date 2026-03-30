@@ -16,6 +16,7 @@ import EmptyState from "../../components/EmptyState";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import PaymentModePicker from "../../modules/paymentIn/PaymentModePicker";
+import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE } from "../../modules/paymentIn/countryConfig";
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
@@ -112,6 +113,18 @@ function paymentModeLabel(value) {
   return normalizePaymentMode(value);
 }
 
+function resolveFixedCountry(organizationCountry, organizationCountryCode) {
+  const rawCode = String(organizationCountryCode || "").trim().toUpperCase();
+  if (rawCode === "LK") return "SL";
+  if (rawCode === "GB") return "UK";
+  if (rawCode && rawCode in COUNTRY_CONFIG) return rawCode;
+
+  const raw = String(organizationCountry || "").trim();
+  if (raw && raw in COUNTRY_CONFIG) return raw;
+  if (raw && COUNTRY_NAME_TO_CODE[raw]) return COUNTRY_NAME_TO_CODE[raw];
+  return "IN";
+}
+
 function paymentOutFormFromRecord(record) {
   const storedAmountPaid = record?.amountPaid ?? record?.totals?.amountPaid ?? 0;
   const storedTdsAmount = record?.tdsAmount ?? record?.totals?.tdsAmount ?? 0;
@@ -151,10 +164,14 @@ export default function PaymentOutPremium() {
   const canEditPayment = canEditEntries(role);
   const canDeletePayment = canDeleteEntries(role);
   const actorName = user?.name || user?.email || "System User";
+  const fixedCountry = useMemo(() => resolveFixedCountry(country, countryCode), [country, countryCode]);
+  const countryConfig = COUNTRY_CONFIG[fixedCountry] || COUNTRY_CONFIG.IN;
+  const countryLabel = countryConfig.name;
+  const effectiveCurrency = currency && String(currency).trim().length === 3 ? currency : countryConfig.currency;
 
   const [panelMode, setPanelMode] = useState("feed");
   const [activeStep, setActiveStep] = useState(0);
-  const [form, setForm] = useState(defaultPaymentForm(country, currency));
+  const [form, setForm] = useState(defaultPaymentForm(country, effectiveCurrency));
   const [activePayment, setActivePayment] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [dirty, setDirty] = useState(false);
@@ -332,7 +349,7 @@ export default function PaymentOutPremium() {
     if (!bill) return;
 
     setForm(() => ({
-      ...defaultPaymentForm(country, currency),
+      ...defaultPaymentForm(country, effectiveCurrency),
       supplierId: bill.supplierId,
       supplierName: bill.supplierName,
       allocationMode: "linked",
@@ -353,7 +370,7 @@ export default function PaymentOutPremium() {
       window.alert("You do not have permission to create payment out entries.");
       return;
     }
-    setForm(defaultPaymentForm(country, currency));
+    setForm(defaultPaymentForm(country, effectiveCurrency));
     setActivePayment(null);
     setPanelMode("flow");
     setActiveStep(0);
@@ -381,7 +398,7 @@ export default function PaymentOutPremium() {
     if (dirty && !window.confirm("Discard unsaved changes?")) return;
     setPanelMode("feed");
     setActiveStep(0);
-    setForm(defaultPaymentForm(country, currency));
+    setForm(defaultPaymentForm(country, effectiveCurrency));
     setActivePayment(null);
     setDirty(false);
     setSupplierLookupQuery("");
@@ -657,7 +674,7 @@ export default function PaymentOutPremium() {
       if (activePayment?.id === record.id) {
         setPanelMode("feed");
         setActiveStep(0);
-        setForm(defaultPaymentForm(country, currency));
+        setForm(defaultPaymentForm(country, effectiveCurrency));
         setActivePayment(null);
         setDirty(false);
       }
@@ -683,7 +700,7 @@ export default function PaymentOutPremium() {
             <p className="text-xs text-slate-500">Pay money to suppliers</p>
           </div>
           <div className="mx-auto w-full max-w-xs rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm font-semibold text-slate-700 sm:mx-0 sm:flex-1 sm:max-w-sm">
-            {country} | {currencySymbol || currency || "N/A"}
+            {countryLabel} | {effectiveCurrency}
           </div>
           <button
             type="button"
@@ -703,13 +720,13 @@ export default function PaymentOutPremium() {
               <p className="text-2xl font-bold text-slate-900">{summary.count}</p>
             </FlowCard>
             <FlowCard title="Cash Paid" subtitle="Actual outgoing payment">
-              <p className="text-2xl font-bold text-slate-900">{formatMoney(summary.totalPaid, currency)}</p>
+              <p className="text-2xl font-bold text-slate-900">{formatMoney(summary.totalPaid, effectiveCurrency)}</p>
             </FlowCard>
             <FlowCard title="Total TDS" subtitle="Deducted on supplier payments">
-              <p className="text-2xl font-bold text-sky-700">{formatMoney(summary.totalTds, currency)}</p>
+              <p className="text-2xl font-bold text-sky-700">{formatMoney(summary.totalTds, effectiveCurrency)}</p>
             </FlowCard>
             <FlowCard title="Cash Advance Balance" subtitle="Cash kept on supplier account">
-              <p className="text-2xl font-bold text-emerald-700">{formatMoney(summary.totalUnapplied, currency)}</p>
+              <p className="text-2xl font-bold text-emerald-700">{formatMoney(summary.totalUnapplied, effectiveCurrency)}</p>
             </FlowCard>
           </div>
 
@@ -739,7 +756,7 @@ export default function PaymentOutPremium() {
                   className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 >
                   <option value="">All Modes</option>
-                  {PAYMENT_MODES.map((mode) => (
+                  {countryConfig.paymentModes.map((mode) => (
                     <option key={mode} value={mode}>
                       {mode}
                     </option>
@@ -771,7 +788,7 @@ export default function PaymentOutPremium() {
             <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => exportPaymentOutSummaryPdf(filteredPayments, country, currency)}
+                  onClick={() => exportPaymentOutSummaryPdf(filteredPayments, country, effectiveCurrency)}
                   disabled={!filteredPayments.length}
                   className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -780,7 +797,7 @@ export default function PaymentOutPremium() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => exportPaymentOutCsv(filteredPayments, currency, country)}
+                  onClick={() => exportPaymentOutCsv(filteredPayments, effectiveCurrency, countryLabel)}
                   disabled={!filteredPayments.length}
                   className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -821,16 +838,16 @@ export default function PaymentOutPremium() {
                           <td className="px-3 py-3 text-slate-700">{paymentModeLabel(entry.paymentMode)}</td>
                           <td className="px-3 py-3 text-slate-700">{entry.referenceNo || "-"}</td>
                           <td className="px-3 py-3 text-right text-slate-700">
-                            {formatMoney(entry.totals?.amountPaid, currency)}
+                            {formatMoney(entry.totals?.amountPaid, effectiveCurrency)}
                           </td>
                           <td className="px-3 py-3 text-right text-slate-700">
-                            {formatMoney(entryTds, currency)}
+                            {formatMoney(entryTds, effectiveCurrency)}
                           </td>
                           <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                            {formatMoney(entryTotalSettled, currency)}
+                            {formatMoney(entryTotalSettled, effectiveCurrency)}
                           </td>
                           <td className={`px-3 py-3 text-right font-semibold ${advance ? "text-emerald-700" : "text-slate-700"}`}>
-                            {advance ? formatMoney(advance, currency) : "-"}
+                            {advance ? formatMoney(advance, effectiveCurrency) : "-"}
                           </td>
                           <td className="px-3 py-3">
                             <Badge tone={statusBadge(entry.status)}>{entry.status}</Badge>
@@ -902,12 +919,12 @@ export default function PaymentOutPremium() {
               <FlowCard title="Country Context" subtitle="Auto updates currency and payment numbering">
                 <div className="space-y-3">
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
-                    {country}
+                    {countryLabel}
                   </div>
                   <p className="text-sm text-slate-700">
-                    Currency: <span className="font-semibold">{currencySymbol || currency || "-"}</span>
+                    Currency: <span className="font-semibold">{effectiveCurrency}</span>
                   </p>
-                  <p className="text-xs text-slate-500">Payment Out is locked to {country}.</p>
+                  <p className="text-xs text-slate-500">Payment Out is locked to {countryLabel}.</p>
                   <p className="text-sm text-slate-700">
                     Payment Number: <span className="font-semibold">{form.paymentNo || "Auto-generated on save"}</span>
                   </p>
@@ -1001,7 +1018,7 @@ export default function PaymentOutPremium() {
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <div className="rounded-xl bg-slate-50 p-3 text-xs">
                       <p className="text-slate-500">Outstanding</p>
-                      <p className="font-semibold text-slate-900">{formatMoney(supplierOutstandingBefore, currency)}</p>
+                      <p className="font-semibold text-slate-900">{formatMoney(supplierOutstandingBefore, effectiveCurrency)}</p>
                     </div>
                     <div className="rounded-xl bg-slate-50 p-3 text-xs">
                       <p className="text-slate-500">Last Payment</p>
@@ -1009,7 +1026,7 @@ export default function PaymentOutPremium() {
                     </div>
                     <div className="rounded-xl bg-slate-50 p-3 text-xs">
                       <p className="text-slate-500">Advance Wallet</p>
-                      <p className="font-semibold text-emerald-700">{formatMoney(supplierAdvanceWallet, currency)}</p>
+                      <p className="font-semibold text-emerald-700">{formatMoney(supplierAdvanceWallet, effectiveCurrency)}</p>
                     </div>
                   </div>
                 </div>
@@ -1067,8 +1084,8 @@ export default function PaymentOutPremium() {
                       <div className="sm:text-right">
                         <p className="text-xs font-semibold text-slate-600">
                           {form.isManual
-                            ? `Manual TDS: ${formatMoney(parseNumber(form.tdsAmount), currency)}`
-                            : `Auto TDS (${parseNumber(form.tdsRate).toFixed(2)}%): ${formatMoney(autoCalculatedTdsAmount, currency)}`}
+                            ? `Manual TDS: ${formatMoney(parseNumber(form.tdsAmount), effectiveCurrency)}`
+                            : `Auto TDS (${parseNumber(form.tdsRate).toFixed(2)}%): ${formatMoney(autoCalculatedTdsAmount, effectiveCurrency)}`}
                         </p>
                         <p className="mt-1 text-[11px] text-slate-500">
                           {form.isManual
@@ -1134,7 +1151,7 @@ export default function PaymentOutPremium() {
                         </option>
                         {supplierBills.map((bill) => (
                           <option key={bill.id} value={bill.id}>
-                            {`Invoice - ${bill.billNo} | ${bill.billDate || "-"} | Pending: ${formatMoney(bill.balanceDue, currency)}`}
+                            {`Invoice - ${bill.billNo} | ${bill.billDate || "-"} | Pending: ${formatMoney(bill.balanceDue, effectiveCurrency)}`}
                           </option>
                         ))}
                       </select>
@@ -1148,12 +1165,12 @@ export default function PaymentOutPremium() {
                     <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
                       <p className="font-semibold">Invoice - {selectedBill.billNo}</p>
                       <p className="mt-1">
-                        Date: {selectedBill.billDate || "-"} | Pending: {formatMoney(selectedBill.balanceDue, currency)}
+                        Date: {selectedBill.billDate || "-"} | Pending: {formatMoney(selectedBill.balanceDue, effectiveCurrency)}
                       </p>
                       <p className="mt-1">
-                        Cash Applied: {formatMoney(amountApplied, currency)} | TDS Settled: {formatMoney(tdsAmount, currency)}
+                        Cash Applied: {formatMoney(amountApplied, effectiveCurrency)} | TDS Settled: {formatMoney(tdsAmount, effectiveCurrency)}
                       </p>
-                      <p className="mt-1">Total Settled: {formatMoney(totalSettled, currency)}</p>
+                      <p className="mt-1">Total Settled: {formatMoney(totalSettled, effectiveCurrency)}</p>
                     </div>
                   ) : null}
                   <label className="block">
@@ -1219,7 +1236,7 @@ export default function PaymentOutPremium() {
                 <div className="space-y-3">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                     <p className="text-sm font-semibold text-slate-900">Cash Advance Balance</p>
-                    <p className="mt-2 text-2xl font-bold text-emerald-700">{formatMoney(unappliedAmount, currency)}</p>
+                    <p className="mt-2 text-2xl font-bold text-emerald-700">{formatMoney(unappliedAmount, effectiveCurrency)}</p>
                     <p className="mt-2 text-xs text-slate-500">
                       {form.allocationMode === "linked"
                         ? "Any cash amount above the selected invoice pending amount stays on the supplier account as advance. TDS is treated as settlement, not cash advance."
@@ -1228,9 +1245,9 @@ export default function PaymentOutPremium() {
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
                     <p className="text-sm font-semibold text-slate-900">Total Settlement</p>
-                    <p className="mt-2 text-2xl font-bold text-slate-900">{formatMoney(totalSettled, currency)}</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900">{formatMoney(totalSettled, effectiveCurrency)}</p>
                     <p className="mt-2 text-xs text-slate-500">
-                      Cash paid {formatMoney(amountPaid, currency)} + TDS {formatMoney(tdsAmount, currency)}
+                      Cash paid {formatMoney(amountPaid, effectiveCurrency)} + TDS {formatMoney(tdsAmount, effectiveCurrency)}
                     </p>
                   </div>
                   {!form.supplierId ? (
@@ -1251,25 +1268,25 @@ export default function PaymentOutPremium() {
                     <p className="text-xs text-slate-500">Supplier</p>
                     <p className="font-semibold text-slate-900">{selectedSupplier?.name || form.supplierName || "-"}</p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {country} | {currencySymbol || currency || "-"}
+                      {countryLabel} | {effectiveCurrency}
                     </p>
                   </div>
                   <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                     <div className="rounded-xl border border-slate-200 p-3">
                       <p className="text-slate-500">Cash Paid</p>
-                      <p className="text-base font-semibold text-slate-900">{formatMoney(amountPaid, currency)}</p>
+                      <p className="text-base font-semibold text-slate-900">{formatMoney(amountPaid, effectiveCurrency)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-3">
                       <p className="text-slate-500">TDS Amount</p>
-                      <p className="text-base font-semibold text-sky-700">{formatMoney(tdsAmount, currency)}</p>
+                      <p className="text-base font-semibold text-sky-700">{formatMoney(tdsAmount, effectiveCurrency)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-3">
                       <p className="text-slate-500">Total Settled</p>
-                      <p className="text-base font-semibold text-emerald-700">{formatMoney(totalSettled, currency)}</p>
+                      <p className="text-base font-semibold text-emerald-700">{formatMoney(totalSettled, effectiveCurrency)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-3">
                       <p className="text-slate-500">Cash Advance</p>
-                      <p className="text-base font-semibold text-amber-700">{formatMoney(unappliedAmount, currency)}</p>
+                      <p className="text-base font-semibold text-amber-700">{formatMoney(unappliedAmount, effectiveCurrency)}</p>
                       <p className="mt-1 text-[11px] text-slate-500">
                         Extra paid amount stays on the supplier account.
                       </p>
@@ -1287,7 +1304,7 @@ export default function PaymentOutPremium() {
                       </p>
                       <p className="mt-1 text-[11px] text-slate-500">
                         {selectedBill
-                          ? `Pending ${formatMoney(selectedBill.balanceDue, currency)} | Settled ${formatMoney(totalSettled, currency)}`
+                          ? `Pending ${formatMoney(selectedBill.balanceDue, effectiveCurrency)} | Settled ${formatMoney(totalSettled, effectiveCurrency)}`
                           : "Saved without linking to any purchase invoice."}
                       </p>
                     </div>
@@ -1302,7 +1319,7 @@ export default function PaymentOutPremium() {
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
                     <p className="text-slate-500">Supplier Outstanding After Payment</p>
                     <p className={`text-base font-semibold ${outstandingAfter <= 0 ? "text-emerald-700" : "text-rose-600"}`}>
-                      {formatMoney(outstandingAfter, currency)}
+                      {formatMoney(outstandingAfter, effectiveCurrency)}
                     </p>
                     <p className="mt-1 text-slate-500">
                       {selectedBill
@@ -1316,9 +1333,9 @@ export default function PaymentOutPremium() {
               <FlowCard title="Receipt Snapshot" subtitle="Country wording + legal labels">
                 <div className="space-y-3">
                   <p className="text-xs text-slate-500">Payment Out Snapshot</p>
-                  <p className="text-3xl font-bold tracking-tight text-slate-900">{formatMoney(totalSettled, currency)}</p>
+                  <p className="text-3xl font-bold tracking-tight text-slate-900">{formatMoney(totalSettled, effectiveCurrency)}</p>
                   <p className="text-xs text-slate-500">
-                    Cash paid {formatMoney(amountPaid, currency)} + TDS {formatMoney(tdsAmount, currency)}
+                    Cash paid {formatMoney(amountPaid, effectiveCurrency)} + TDS {formatMoney(tdsAmount, effectiveCurrency)}
                   </p>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
                     <p>Payment out flow records supplier settlements and keeps any balance as advance.</p>
