@@ -264,6 +264,8 @@ export default function InvoiceCreate() {
   const [bankName, setBankName] = useState("");
   const [bankAccount, setBankAccount] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
+  const [advanceApplyMode, setAdvanceApplyMode] = useState("auto");
+  const [manualAdvanceAmount, setManualAdvanceAmount] = useState("");
 
   const companyCountry = String(country || company?.country || company?.address?.country || "").trim();
   const customerCountry = String(party?.country || "").trim();
@@ -1052,9 +1054,17 @@ export default function InvoiceCreate() {
     [customerCountry, party?.countryCode, partyId]
   );
   const customerAdvanceWallet = round2(Number(customerPaymentInsights?.advanceWallet || 0));
-  const advanceAppliedFromWallet = useMemo(
+  const maxAdvanceUsable = useMemo(
     () => round2(Math.min(customerAdvanceWallet, Number(computed.grandTotal || 0))),
     [customerAdvanceWallet, computed.grandTotal]
+  );
+  const manualAdvanceApplied = useMemo(() => {
+    const parsed = parseFormattedNumber(manualAdvanceAmount || 0);
+    return round2(Math.max(0, Math.min(maxAdvanceUsable, parsed)));
+  }, [manualAdvanceAmount, maxAdvanceUsable]);
+  const advanceAppliedFromWallet = useMemo(
+    () => (advanceApplyMode === "manual" ? manualAdvanceApplied : maxAdvanceUsable),
+    [advanceApplyMode, manualAdvanceApplied, maxAdvanceUsable]
   );
   const balanceAfterExistingAdvance = useMemo(
     () => round2(Math.max(0, Number(computed.grandTotal || 0) - advanceAppliedFromWallet)),
@@ -1073,6 +1083,25 @@ export default function InvoiceCreate() {
   const projectedAdvanceWallet = round2(
     Math.max(0, customerAdvanceWallet - advanceAppliedFromWallet) + advanceAmount
   );
+
+  useEffect(() => {
+    setAdvanceApplyMode("auto");
+    setManualAdvanceAmount("");
+  }, [partyId]);
+
+  useEffect(() => {
+    if (!customerAdvanceWallet) {
+      setAdvanceApplyMode("auto");
+      setManualAdvanceAmount("");
+    }
+  }, [customerAdvanceWallet]);
+
+  useEffect(() => {
+    if (advanceApplyMode !== "manual") return;
+    if (!manualAdvanceAmount) return;
+    if (manualAdvanceApplied === parseFormattedNumber(manualAdvanceAmount || 0)) return;
+    setManualAdvanceAmount(manualAdvanceApplied ? String(manualAdvanceApplied) : "");
+  }, [advanceApplyMode, manualAdvanceAmount, manualAdvanceApplied]);
 
   const creditLimitEnabled = !!creditStatus.party?.creditLimitEnabled;
   const creditLimitType = creditStatus.creditLimitType || "Amount";
@@ -1865,6 +1894,7 @@ export default function InvoiceCreate() {
           invoiceNo: normalizedInvoiceNo,
           invoiceDate,
           invoiceAmount: Number(effectiveComputed.grandTotal || 0),
+          maxApplyAmount: advanceAppliedFromWallet,
           actor: authGetUser()?.name || authGetUser()?.email || "System User"
         });
       }
@@ -2869,6 +2899,62 @@ export default function InvoiceCreate() {
                   </button>
                 </div>
 
+                {customerAdvanceWallet > 0 ? (
+                  <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">Customer Advance Balance</p>
+                        <p className="mt-1 text-xs text-slate-600">
+                          Available Advance Balance: {money(customerAdvanceWallet)}
+                        </p>
+                      </div>
+                      <div className="inline-flex rounded-xl border border-amber-200 bg-white p-1">
+                        <button
+                          type="button"
+                          onClick={() => setAdvanceApplyMode("auto")}
+                          className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                            advanceApplyMode === "auto" ? "bg-amber-500 text-white" : "text-slate-700 hover:bg-amber-50"
+                          }`}
+                        >
+                          Auto Adjust
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdvanceApplyMode("manual")}
+                          className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                            advanceApplyMode === "manual" ? "bg-amber-500 text-white" : "text-slate-700 hover:bg-amber-50"
+                          }`}
+                        >
+                          Manual Apply
+                        </button>
+                      </div>
+                    </div>
+                    {advanceApplyMode === "manual" ? (
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <FormField label="Advance To Apply">
+                          <input
+                            type="text"
+                            value={displayNumericInput(manualAdvanceAmount)}
+                            onChange={(e) => setManualAdvanceAmount(normalizeFormattedNumberInput(e.target.value))}
+                            placeholder="Enter advance amount"
+                            inputMode="decimal"
+                            className="numeric-input-uniform w-full rounded-2xl border border-amber-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
+                            style={{ "--tw-ring-color": "#fcd34d" }}
+                          />
+                        </FormField>
+                        <div className="rounded-2xl border border-amber-200 bg-white px-3 py-2.5 text-xs text-slate-600">
+                          <p>Maximum usable now: <span className="font-semibold text-slate-900">{money(maxAdvanceUsable)}</span></p>
+                          <p className="mt-1">Example: if advance is {money(808)} and invoice is {money(5000)}, remaining payable becomes {money(5000 - 808)}.</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="mt-3 text-xs text-slate-600">
+                        Advance will be adjusted automatically against this invoice up to {money(maxAdvanceUsable)}.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+
                 {markAsPaid ? (
                   <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
                   <FormField label="Amount Received" required error={formErrors.paidAmount}>
@@ -3041,6 +3127,14 @@ export default function InvoiceCreate() {
                 <div className="mt-2 flex items-center justify-between text-sm">
                   <span className="text-slate-600">Available Advance Balance</span>
                   <span className="font-semibold text-amber-700">{money(customerAdvanceWallet)}</span>
+                </div>
+              ) : null}
+              {customerAdvanceWallet > 0 ? (
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <span className="text-slate-600">Advance Mode</span>
+                  <span className="font-semibold text-slate-900">
+                    {advanceApplyMode === "manual" ? "Manual Apply" : "Auto Adjust"}
+                  </span>
                 </div>
               ) : null}
               {advanceAppliedFromWallet > 0 ? (

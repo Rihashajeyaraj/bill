@@ -783,6 +783,7 @@ export function applyAdvanceWalletToCustomerInvoice({
   invoiceNo,
   invoiceDate,
   invoiceAmount,
+  maxApplyAmount,
   actor
 }: {
   country: CountryCode;
@@ -791,14 +792,16 @@ export function applyAdvanceWalletToCustomerInvoice({
   invoiceNo: string;
   invoiceDate: string;
   invoiceAmount: number;
+  maxApplyAmount?: number;
   actor: string;
 }) {
   const normalizedCustomerId = String(customerId || "").trim();
   const normalizedInvoiceId = String(invoiceId || "").trim();
   const normalizedInvoiceNo = String(invoiceNo || normalizedInvoiceId).trim();
   const safeInvoiceAmount = Math.max(0, toNumber(invoiceAmount));
+  const safeMaxApplyAmount = Math.max(0, toNumber(maxApplyAmount || safeInvoiceAmount));
 
-  if (!normalizedCustomerId || !normalizedInvoiceId || safeInvoiceAmount <= 0) {
+  if (!normalizedCustomerId || !normalizedInvoiceId || safeInvoiceAmount <= 0 || safeMaxApplyAmount <= 0) {
     return [] as PaymentInRecord[];
   }
 
@@ -813,7 +816,7 @@ export function applyAdvanceWalletToCustomerInvoice({
       0
     );
 
-  let remainingBalance = Math.max(0, safeInvoiceAmount - existingAppliedAmount);
+  let remainingBalance = Math.max(0, Math.min(safeInvoiceAmount - existingAppliedAmount, safeMaxApplyAmount));
   if (remainingBalance <= 0) return [] as PaymentInRecord[];
 
   const records = listPaymentIn(country)
