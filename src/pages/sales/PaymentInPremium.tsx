@@ -213,7 +213,11 @@ export default function PaymentInPremium() {
   );
   const selectedCustomer = useMemo(() => customers.find((entry) => entry.id === form?.customerId) || null, [customers, form?.customerId]);
   const customerDocuments = useMemo(
-    () => openInvoices.filter((entry) => entry.customerId === form?.customerId),
+    () =>
+      openInvoices.filter(
+        (entry) =>
+          entry.customerId === form?.customerId && Math.max(0, Number(entry?.balanceDue || 0)) > 0
+      ),
     [openInvoices, form?.customerId]
   );
   const selectedCustomerDocument = useMemo(() => {

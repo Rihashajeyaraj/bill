@@ -198,7 +198,12 @@ export default function PaymentOutPremium() {
     [suppliers, form.supplierId]
   );
   const supplierBills = useMemo(
-    () => bills.filter((entry) => String(entry.supplierId) === String(form.supplierId)),
+    () =>
+      bills.filter(
+        (entry) =>
+          String(entry.supplierId) === String(form.supplierId) &&
+          Math.max(0, parseNumber(entry?.balanceDue)) > 0
+      ),
     [bills, form.supplierId]
   );
   const selectedBill = useMemo(() => {
