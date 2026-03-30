@@ -32,6 +32,120 @@ function normalizeSupabaseError(error, fallback) {
   return error?.message || fallback;
 }
 
+function isUniqueConstraintError(error) {
+  const code = String(error?.code || "").trim();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "23505" ||
+    message.includes("duplicate key") ||
+    message.includes("unique constraint") ||
+    message.includes("already exists")
+  );
+}
+
+function parseBillNumberParts(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(.*?)(\d+)$/);
+  if (!match) return null;
+  return {
+    raw: text,
+    base: match[1],
+    sequence: parseNumber(match[2]),
+    width: match[2].length
+  };
+}
+
+function hasPurchaseNumberConflict(billNumber, excludeId = "") {
+  const normalized = String(billNumber || "").trim().toLowerCase();
+  const ignoredId = String(excludeId || "").trim();
+  if (!normalized) return false;
+  return getAll().some((entry) => {
+    if (ignoredId && String(entry?.id || "").trim() === ignoredId) return false;
+    return String(entry?.billNumber || "").trim().toLowerCase() === normalized;
+  });
+}
+
+async function fetchLatestRemotePurchaseNumber(organizationId, basePrefix) {
+  if (!isSupabaseConfigured || !supabase || !organizationId || !basePrefix) return "";
+  const { data, error } = await supabase
+    .from("purchase_bills")
+    .select("bill_no")
+    .eq("organization_id", organizationId)
+    .like("bill_no", `${basePrefix}%`)
+    .order("bill_no", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    if (isMissingColumnError(error)) return "";
+    throw new Error(normalizeSupabaseError(error, "Failed to load latest purchase number"));
+  }
+
+  return String((Array.isArray(data) ? data[0] : null)?.bill_no || "").trim();
+}
+
+async function purchaseNumberExistsRemotely(organizationId, billNumber) {
+  if (!isSupabaseConfigured || !supabase || !organizationId || !billNumber) return false;
+  const { data, error } = await supabase
+    .from("purchase_bills")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("bill_no", billNumber)
+    .limit(1);
+
+  if (error) {
+    if (isMissingColumnError(error)) return false;
+    throw new Error(normalizeSupabaseError(error, "Failed to validate purchase number"));
+  }
+
+  return Array.isArray(data) && data.length > 0;
+}
+
+async function resolveUniquePurchaseNumber(requestedBillNumber, billDate, organizationId) {
+  const normalizedRequested = String(requestedBillNumber || "").trim();
+  const previewBillNumber = String(
+    companyPeekDocumentNumber("purchase", { dateValue: billDate }) || ""
+  ).trim();
+  const preferredBillNumber = normalizedRequested || previewBillNumber || `BILL-${Date.now()}`;
+  const requestedParts = parseBillNumberParts(preferredBillNumber);
+  const fallbackParts = parseBillNumberParts(previewBillNumber || preferredBillNumber);
+  const baseParts = requestedParts?.sequence > 0 ? requestedParts : fallbackParts;
+
+  if (
+    normalizedRequested &&
+    !hasPurchaseNumberConflict(normalizedRequested) &&
+    !(await purchaseNumberExistsRemotely(organizationId, normalizedRequested))
+  ) {
+    return normalizedRequested;
+  }
+
+  if (!baseParts) return preferredBillNumber;
+
+  const localMax = getAll().reduce((maxValue, entry) => {
+    const parts = parseBillNumberParts(entry?.billNumber || "");
+    if (!parts || parts.base !== baseParts.base) return maxValue;
+    return Math.max(maxValue, parts.sequence);
+  }, 0);
+  const remoteParts = parseBillNumberParts(
+    await fetchLatestRemotePurchaseNumber(organizationId, baseParts.base)
+  );
+  const remoteMax = remoteParts?.base === baseParts.base ? remoteParts.sequence : 0;
+  const seedSequence = baseParts.sequence > 0 ? baseParts.sequence - 1 : 0;
+
+  for (let offset = 1; offset <= 5; offset += 1) {
+    const candidate = `${baseParts.base}${String(
+      Math.max(localMax, remoteMax, seedSequence) + offset
+    ).padStart(Math.max(baseParts.width, 4), "0")}`;
+    if (hasPurchaseNumberConflict(candidate)) continue;
+    if (await purchaseNumberExistsRemotely(organizationId, candidate)) continue;
+    return candidate;
+  }
+
+  return `${baseParts.base}${String(Math.max(localMax, remoteMax, seedSequence) + 6).padStart(
+    Math.max(baseParts.width, 4),
+    "0"
+  )}`;
+}
+
 function isMissingRpcError(error) {
   const code = String(error?.code || "").toUpperCase();
   const message = String(error?.message || "").toLowerCase();
@@ -376,23 +490,26 @@ export async function purchasesCreate(bill) {
   const now = new Date().toISOString();
   const billDate = bill?.billDate || now.slice(0, 10);
   const requestedBillNumber = String(bill?.billNumber || "").trim();
-  const effectiveBillNumber =
-    requestedBillNumber ||
-    String(companyPeekDocumentNumber("purchase", { dateValue: billDate }) || "").trim() ||
-    `BILL-${Date.now()}`;
   const actor = authGetUser();
   const actorUserId = actor?.id || null;
   const actorName = String(actor?.name || actor?.email || "").trim();
   let id = uid("pur_");
+  let effectiveBillNumber = "";
+  let saveError = null;
   const lines = Array.isArray(bill?.lines) ? bill.lines : [];
   const totals = bill?.totals || {};
   const matchedFinancialYear =
     (await financialYearsEnsureForDate(billDate).catch(() => null)) ||
     financialYearsResolveForDate(billDate);
 
-  if (isSupabaseConfigured && supabase) {
-    const organizationId = authGetOrganizationId();
-    if (organizationId) {
+  const organizationId = isSupabaseConfigured && supabase ? authGetOrganizationId() : "";
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    effectiveBillNumber = await resolveUniquePurchaseNumber(requestedBillNumber, billDate, organizationId);
+    if (!effectiveBillNumber || hasPurchaseNumberConflict(effectiveBillNumber)) {
+      continue;
+    }
+
+    if (isSupabaseConfigured && supabase && organizationId) {
       const supplierId = looksLikeUuid(bill?.partyId) ? bill.partyId : null;
       const postingPayload = {
         organization_id: organizationId,
@@ -435,6 +552,10 @@ export async function purchasesCreate(bill) {
       if (!postError && postedBill?.bill_id) {
         id = postedBill.bill_id;
       } else {
+        if (postError && isUniqueConstraintError(postError)) {
+          saveError = postError;
+          continue;
+        }
         if (postError && !isMissingRpcError(postError)) {
           throw new Error(normalizeSupabaseError(postError, "Failed to post purchase bill"));
         }
@@ -513,6 +634,10 @@ export async function purchasesCreate(bill) {
         const { data: billRow, error: billError } = billInsert;
 
         if (billError) {
+          if (isUniqueConstraintError(billError)) {
+            saveError = billError;
+            continue;
+          }
           throw new Error(normalizeSupabaseError(billError, "Failed to create purchase bill"));
         }
 
@@ -552,6 +677,15 @@ export async function purchasesCreate(bill) {
         }
       }
     }
+    saveError = null;
+    break;
+  }
+
+  if (saveError) {
+    throw new Error("Failed to generate a unique purchase bill number. Please retry.");
+  }
+  if (!effectiveBillNumber || hasPurchaseNumberConflict(effectiveBillNumber)) {
+    throw new Error("Failed to allocate a unique purchase bill number.");
   }
 
   const next = annotateWithFinancialYear({

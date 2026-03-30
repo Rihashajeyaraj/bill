@@ -1946,6 +1946,7 @@ export default function InvoiceCreate() {
         } else {
           alert(paymentSaved ? "Invoice and Payment In saved successfully." : "Invoice saved successfully.");
         }
+        navigate("/app/sales/invoice/history");
       }
       return savedInvoiceId || "";
     } catch (error) {

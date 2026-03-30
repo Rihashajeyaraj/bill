@@ -1503,6 +1503,7 @@ export default function PurchaseBill() {
       setBankName("");
       setPaymentNotes("");
       setFormErrors({});
+      navigate("/app/purchase/history");
     } catch (error) {
       toast.error("Failed to save purchase bill", error?.message || "Could not save bill.");
     } finally {

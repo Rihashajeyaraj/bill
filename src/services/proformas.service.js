@@ -8,6 +8,7 @@ import {
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { invoicesCreate, invoicesList, invoicesSyncFromRemote } from "./invoices.service";
+import { syncItemsFromRemote } from "../modules/items/store";
 import { listPaymentIn, savePaymentIn } from "../modules/paymentIn/store";
 import { syncPaymentInRemote } from "./payments.service";
 
@@ -1136,6 +1137,7 @@ export async function convertSalesProforma(proformaId) {
   if (!isSupabaseConfigured || !supabase) {
     return convertSalesProformaLocally(proformaId);
   }
+  await syncItemsFromRemote();
   const { data, error } = await supabase.rpc("convert_sales_proforma_to_invoice", {
     p_proforma_id: proformaId
   });

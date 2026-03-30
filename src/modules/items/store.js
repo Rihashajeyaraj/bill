@@ -7,6 +7,7 @@ import {
 import { authGetOrganizationId, authGetRole, authGetUser } from "../../services/auth.service";
 import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
+import { ensureRemoteOpeningStockLedgerForItems } from "../../services/inventory.service";
 import { syncLowStockNotifications } from "../../services/stockNotifications.service";
 import { buildTaxLabel, normalizeItemType, normalizeText, parseNumber } from "./utils";
 import { resolveLowStockAlertValue, resolveUpsertStockValues } from "./stockPersistence";
@@ -582,7 +583,11 @@ export async function syncItemsFromRemote() {
   const organizationId = authGetOrganizationId();
   if (!organizationId) return listItems();
 
-  const rows = await fetchRemoteItems(organizationId);
+  let rows = await fetchRemoteItems(organizationId);
+  const seededCount = await ensureRemoteOpeningStockLedgerForItems(rows);
+  if (seededCount > 0) {
+    rows = await fetchRemoteItems(organizationId);
+  }
   const mapped = ensureArray(rows).map((row) => mapRemoteItem(row));
   persistItemCache(mapped, { required: false, context: "syncItemsFromRemote" });
   return mapped.sort((a, b) => a.name.localeCompare(b.name));
@@ -700,6 +705,8 @@ export async function upsertItemRemote(draft, country) {
     }
     remoteRow = attempt.data;
   }
+
+  await ensureRemoteOpeningStockLedgerForItems([remoteRow]);
 
   const saved = mapRemoteItem(remoteRow);
   const nextList = listRawItems().filter((item) => item.id !== incoming.id && item.id !== saved.id);
@@ -1189,55 +1196,16 @@ export function computeItemUsage(item) {
 export function computeItemStock(item) {
   if (!item.trackInventory) return { available: 0, availableRaw: 0, lowStock: false };
 
-  let availableRaw = parseNumber(
-    item?.openingStock ??
+  const availableRaw = parseNumber(
+    item?.currentStock ??
+      item?.stockQty ??
+      item?.metadata?.currentStock ??
+      item?.quantity ??
+      item?.openingStock ??
       item?.metadata?.openingStock ??
       item?.metadata?.openingQty ??
-      item?.quantity ??
       0
   );
-  const invoices = ensureArray(lsGetOrganizationScoped(LS_KEYS.invoices, [])).filter(
-    includeInventoryRecord
-  );
-  const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, [])).filter(
-    includeInventoryRecord
-  );
-  const creditLegacy = ensureArray(lsGetOrganizationScoped(LS_KEYS.creditNotes, []));
-  const creditPremium = ensureArray(lsGetOrganizationScoped(CREDIT_NOTES_PREMIUM_KEY, []));
-  const debitPremium = ensureArray(lsGetOrganizationScoped(DEBIT_NOTES_PREMIUM_KEY, []));
-
-  collectFromLines(purchases, item, (line) => {
-    availableRaw += parseNumber(line.qty ?? line.quantity ?? line.qtyOrdered);
-  });
-
-  collectFromLines(invoices, item, (line) => {
-    availableRaw -= parseNumber(line.qty ?? line.quantity ?? line.qtyOrdered);
-  });
-
-  creditLegacy
-    .filter((record) => record?.returnToStock)
-    .forEach((record) => {
-      collectFromLines([record], item, (line) => {
-        availableRaw += parseNumber(line.qty ?? line.quantity ?? line.qtyOrdered);
-      });
-    });
-
-  creditPremium
-    .filter((record) => record?.returnToStock || record?.status === "Applied")
-    .forEach((record) => {
-      collectFromLines([record], item, (line) => {
-        availableRaw += parseNumber(line.quantity ?? line.qty ?? line.qtyOrdered);
-      });
-    });
-
-  debitPremium
-    .filter((record) => record?.status === "Applied")
-    .forEach((record) => {
-      collectFromLines([record], item, (line) => {
-        availableRaw -= parseNumber(line.quantity ?? line.qty ?? line.qtyOrdered);
-      });
-    });
-
   const available = Math.max(0, parseNumber(availableRaw));
   const lowStockAlert = Math.max(0, parseNumber(item.lowStockAlert));
   const lowStock = available <= lowStockAlert;
