@@ -41,6 +41,7 @@ import { exportPaymentOutCsv, exportPaymentOutPdf, exportPaymentOutSummaryPdf } 
 import {
   calculateTdsAmount,
   formatMoney,
+  getTdsCategoryForRate,
   getTdsRateForCategory,
   isCustomTdsCategory,
   normalizeText,
@@ -95,7 +96,8 @@ function buildBillAllocation(bill, amountPaid, tdsAmount = 0) {
 }
 
 function calculatedTdsInputValue(amountPaid, tdsRate) {
-  return String(calculateTdsAmount(amountPaid, tdsRate));
+  const calculated = calculateTdsAmount(amountPaid, tdsRate);
+  return calculated > 0 ? String(calculated) : "";
 }
 
 function calculateFinalPayable(grossTotal, tdsAmount) {
@@ -149,9 +151,9 @@ function paymentOutFormFromRecord(record) {
     paymentMode: normalizePaymentMode(record?.paymentMode),
     amountPaid: storedAmountPaid,
     tdsAmount: String(storedTdsAmount),
-    tdsCategory: inferredManual ? "custom" : storedCategory,
-    tdsRate: String(inferredManual ? 0 : storedTdsRate),
-    isManual: inferredManual,
+    tdsCategory: getTdsCategoryForRate(storedTdsRate),
+    tdsRate: String(storedTdsRate),
+    isManual: false,
     desiredStatus: record?.status || "Draft",
     allocationMode: record?.allocations?.length ? "linked" : "normal",
     selectedBillId: record?.allocations?.[0]?.billId || "",
@@ -514,9 +516,9 @@ export default function PaymentOutPremium() {
       const next = {
         ...prev,
         tdsAmount: value,
-        tdsCategory: "custom",
+        tdsCategory: "none",
         tdsRate: "0",
-        isManual: true
+        isManual: false
       };
       if (next.allocationMode === "linked" && next.selectedBillId) {
         const linkedBill =
@@ -535,30 +537,27 @@ export default function PaymentOutPremium() {
   function handleTdsCategoryChange(category) {
     const nextRate = getTdsRateForCategory(category);
     setForm((prev) =>
-      isCustomTdsCategory(category)
-        ? {
-            ...prev,
-            tdsCategory: category,
-            tdsRate: String(nextRate),
-            isManual: true
-          }
-        : {
-            ...prev,
-            tdsCategory: category,
-            tdsRate: String(nextRate),
-            tdsAmount: calculatedTdsInputValue(
-              autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
-              nextRate
-            ),
-            isManual: false,
-            allocations:
-              prev.allocationMode === "linked"
-                ? buildBillAllocation(selectedBill, prev.amountPaid, calculatedTdsInputValue(
-                    autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
-                    nextRate
-                  ))
-                : prev.allocations
-          }
+      ({
+        ...prev,
+        tdsCategory: category,
+        tdsRate: String(nextRate),
+        tdsAmount: calculatedTdsInputValue(
+          autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
+          nextRate
+        ),
+        isManual: false,
+        allocations:
+          prev.allocationMode === "linked"
+            ? buildBillAllocation(
+                selectedBill,
+                prev.amountPaid,
+                calculatedTdsInputValue(
+                  autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
+                  nextRate
+                )
+              )
+            : prev.allocations
+      })
     );
     setDirty(true);
   }
@@ -697,6 +696,10 @@ export default function PaymentOutPremium() {
     }
     if (!form.supplierId) {
       window.alert("Select a supplier before saving.");
+      return;
+    }
+    if (!String(form.paymentDate || "").trim()) {
+      window.alert("Payment date is required before saving.");
       return;
     }
     if (form.allocationMode === "linked" && !form.selectedBillId) {

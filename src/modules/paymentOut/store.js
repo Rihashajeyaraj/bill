@@ -907,7 +907,7 @@ export function buildPaymentOutPayload(form, supplierOutstandingBefore, actor) {
 }
 
 export function defaultPaymentForm(country, currency) {
-  const defaultTdsCategory = "contractor";
+  const defaultTdsCategory = "none";
   return {
     id: "",
     country,
@@ -928,7 +928,7 @@ export function defaultPaymentForm(country, currency) {
     amountPaid: 0,
     tdsAmount: 0,
     tdsCategory: defaultTdsCategory,
-    tdsRate: "1",
+    tdsRate: "0",
     isManual: false,
     allocations: [],
     desiredStatus: "Draft"

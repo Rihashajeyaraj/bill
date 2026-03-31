@@ -56,6 +56,31 @@ function isMissingColumnError(error) {
   return String(error?.code || "").toUpperCase() === "42703";
 }
 
+function isUniqueConstraintError(error) {
+  const code = String(error?.code || "").trim();
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "23505" ||
+    message.includes("duplicate key") ||
+    message.includes("unique constraint") ||
+    message.includes("already exists")
+  );
+}
+
+function normalizePaymentDateOrNull(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+}
+
+function buildRemotePaymentNo(base, suffix = "") {
+  const trimmedBase = String(base || "").trim() || `PAY-${Date.now()}`;
+  const trimmedSuffix = String(suffix || "").trim();
+  return trimmedSuffix ? `${trimmedBase}-${trimmedSuffix}` : trimmedBase;
+}
+
 function referenceFromEntry(entry) {
   return String(entry?.referenceNo || entry?.reference_no || "");
 }
@@ -203,7 +228,7 @@ export function paymentsCreate(payment) {
           organization_id: organizationId,
           financial_year_id: looksLikeUuid(persistedFinancialYear?.id) ? persistedFinancialYear.id : null,
           payment_no: payment?.paymentNo || `PAY-${Date.now()}`,
-          payment_date: paymentDate,
+          payment_date: normalizePaymentDateOrNull(paymentDate),
           direction: String(payment?.direction || "IN").toUpperCase() === "OUT" ? "out" : "in",
           party_id: looksLikeUuid(payment?.partyId) ? payment.partyId : null,
           invoice_id: looksLikeUuid(payment?.invoiceId) ? payment.invoiceId : null,
@@ -284,8 +309,8 @@ export async function syncPaymentInRemote(record) {
       }
 
       rows.push({
-        payment_no: record?.receiptNo || `RCPT-${Date.now()}`,
-        payment_date: paymentDate,
+        payment_no: buildRemotePaymentNo(record?.receiptNo || `RCPT-${Date.now()}`, "ENTRY"),
+        payment_date: normalizePaymentDateOrNull(paymentDate),
         direction: "in",
         party_id: partyId,
         invoice_id: shouldApply && !isProforma ? invoiceId || primaryAllocation?.invoiceId || null : null,
@@ -325,7 +350,7 @@ export async function syncPaymentInRemote(record) {
         const remoteRow = {
           organization_id: organizationId,
           payment_no: baseRow?.payment_no || `RCPT-${Date.now()}`,
-          payment_date: baseRow?.payment_date || "",
+          payment_date: normalizePaymentDateOrNull(baseRow?.payment_date),
           direction: "in",
           party_id: looksLikeUuid(baseRow?.party_id) ? baseRow.party_id : null,
           invoice_id: looksLikeUuid(baseRow?.invoice_id) ? baseRow.invoice_id : null,
@@ -374,7 +399,27 @@ export async function syncPaymentInRemote(record) {
             });
           }
           if (insertResult.error) {
-            throw insertResult.error;
+            if (isUniqueConstraintError(insertResult.error)) {
+              const { data: duplicateRow, error: duplicateFetchError } = await supabase
+                .from("payments")
+                .select("id")
+                .eq("organization_id", organizationId)
+                .eq("payment_no", remoteRow.payment_no)
+                .maybeSingle();
+              if (duplicateFetchError) throw duplicateFetchError;
+              if (duplicateRow?.id) {
+                const { error: duplicateUpdateError } = await supabase
+                  .from("payments")
+                  .update(remoteRow)
+                  .eq("organization_id", organizationId)
+                  .eq("id", duplicateRow.id);
+                if (duplicateUpdateError) throw duplicateUpdateError;
+              } else {
+                throw insertResult.error;
+              }
+            } else {
+              throw insertResult.error;
+            }
           }
         }
 
@@ -457,8 +502,8 @@ export async function syncPaymentOutRemote(record) {
         billId = await findBillIdByNumber(organizationId, line.billNo);
       }
       rows.push({
-        payment_no: record?.paymentNo || `PAY-${Date.now()}`,
-        payment_date: paymentDate,
+        payment_no: buildRemotePaymentNo(record?.paymentNo || `PAY-${Date.now()}`, `${index + 1}`),
+        payment_date: normalizePaymentDateOrNull(paymentDate),
         direction: "out",
         party_id: partyId,
         bill_id: billId || line?.billId || null,
@@ -482,8 +527,8 @@ export async function syncPaymentOutRemote(record) {
     const unappliedAmount = Math.max(0, parseNumber(record?.totals?.unappliedAmount));
     if (unappliedAmount > 0) {
       rows.push({
-        payment_no: record?.paymentNo || `PAY-${Date.now()}`,
-        payment_date: paymentDate,
+        payment_no: buildRemotePaymentNo(record?.paymentNo || `PAY-${Date.now()}`, "UNAPPLIED"),
+        payment_date: normalizePaymentDateOrNull(paymentDate),
         direction: "out",
         party_id: partyId,
         bill_id: null,
@@ -507,8 +552,8 @@ export async function syncPaymentOutRemote(record) {
     const amountPaid = Math.max(0, parseNumber(record?.totals?.amountPaid ?? record?.amountPaid));
     if (amountPaid > 0) {
       rows.push({
-        payment_no: record?.paymentNo || `PAY-${Date.now()}`,
-        payment_date: paymentDate,
+        payment_no: buildRemotePaymentNo(record?.paymentNo || `PAY-${Date.now()}`, "PAID"),
+        payment_date: normalizePaymentDateOrNull(paymentDate),
         direction: "out",
         party_id: partyId,
         bill_id: null,

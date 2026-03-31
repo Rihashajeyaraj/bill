@@ -26,7 +26,12 @@ export function calculateTdsAmount(amountPaid, tdsRate) {
 }
 
 export function isCustomTdsCategory(category) {
-  return false;
+  return String(category || "").trim().toLowerCase() === "custom";
+}
+
+export function getTdsCategoryForRate(rate) {
+  const numericRate = Math.max(0, parseNumber(rate));
+  return TDS_CATEGORY_OPTIONS.find((entry) => entry.rate === numericRate)?.value || "none";
 }
 
 export function formatMoney(value, currency) {
