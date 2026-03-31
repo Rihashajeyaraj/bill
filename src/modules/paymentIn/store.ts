@@ -630,7 +630,7 @@ function mapOpenInvoicesByCountryInternal(
 }
 
 export function mapOpenInvoicesByCountry(country: CountryCode): CustomerOpenInvoice[] {
-  return mapOpenInvoicesByCountryInternal(country, { applyAdvance: true });
+  return mapOpenInvoicesByCountryInternal(country, { applyAdvance: false });
 }
 
 export function mapCustomersByCountry(country: CountryCode): CustomerOption[] {
@@ -683,13 +683,10 @@ export function paymentInsightsByCustomer(country: CountryCode, customerId: stri
   const records = listPaymentIn(country).filter((entry) => entry.customerId === customerId);
   const sorted = [...records].sort((a, b) => (a.paymentDate < b.paymentDate ? 1 : -1));
   const rawAdvanceWallet = rawAdvanceWalletByCustomer(country, customerId);
-  const rawOutstandingBeforeAdvance = mapOpenInvoicesByCountryInternal(country, { applyAdvance: false })
-    .filter((invoice) => invoice.customerId === customerId)
-    .reduce((sum, invoice) => sum + invoice.balanceDue, 0);
 
   return {
     lastPaymentDate: sorted[0]?.paymentDate || "",
-    advanceWallet: Math.max(0, rawAdvanceWallet - rawOutstandingBeforeAdvance),
+    advanceWallet: Math.max(0, rawAdvanceWallet),
     totalReceived: records
       .filter((entry) => entry.status !== "Draft")
       .reduce((sum, entry) => sum + entry.totals.amountReceived, 0),

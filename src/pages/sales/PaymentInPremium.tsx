@@ -13,6 +13,7 @@ import {
   type PaymentStatus
 } from "../../modules/paymentIn/countryConfig";
 import {
+  applyAdvanceWalletToCustomerInvoice,
   getSelectedPaymentCountry,
   listCustomerAdvanceWalletHistory,
   listPaymentIn,
@@ -141,6 +142,14 @@ function buildAllocation(document: CustomerOpenInvoice | null, amountReceived: u
   ];
 }
 
+function withAdjustedDocumentBalance(document: CustomerOpenInvoice | null, advanceUsed = 0) {
+  if (!document) return null;
+  return {
+    ...document,
+    balanceDue: Math.max(0, Number(document.balanceDue || 0) - Math.max(0, Number(advanceUsed || 0)))
+  };
+}
+
 function calculatedTdsInputValue(amountReceived: unknown, tdsRate: unknown) {
   return String(calculateTdsAmount(amountReceived, tdsRate));
 }
@@ -188,6 +197,7 @@ export default function PaymentInPremium() {
   const [toDate, setToDate] = useState("");
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerSearchError, setCustomerSearchError] = useState("");
+  const [useAdvanceWallet, setUseAdvanceWallet] = useState(false);
   useGlobalLoadingBridge(loading, "payment-in");
 
   const payments = useMemo(() => listPaymentIn(country), [country, refreshKey]);
@@ -246,6 +256,7 @@ export default function PaymentInPremium() {
     [form, customerOutstandingBefore]
   );
   const selectedCustomer = useMemo(() => customers.find((entry) => entry.id === form?.customerId) || null, [customers, form?.customerId]);
+  const availableAdvanceBalance = useMemo(() => Math.max(0, Number(customerInsights.advanceWallet || 0)), [customerInsights.advanceWallet]);
   const customerDocuments = useMemo(
     () =>
       openInvoices.filter(
@@ -272,6 +283,23 @@ export default function PaymentInPremium() {
       documentType: savedDocument.documentType || "invoice"
     } satisfies CustomerOpenInvoice;
   }, [country, customerDocuments, form?.allocations, form?.customerId, form?.customerInput, form?.selectedDocumentId]);
+  const advanceWalletUsable = useMemo(() => {
+    if (!useAdvanceWallet) return 0;
+    if (!selectedCustomerDocument || selectedCustomerDocument.documentType !== "invoice") return 0;
+    return Math.max(0, Math.min(availableAdvanceBalance, Number(selectedCustomerDocument.balanceDue || 0)));
+  }, [availableAdvanceBalance, selectedCustomerDocument, useAdvanceWallet]);
+  const documentBalanceAfterAdvance = useMemo(() => {
+    if (!selectedCustomerDocument) return 0;
+    return Math.max(0, Number(selectedCustomerDocument.balanceDue || 0) - advanceWalletUsable);
+  }, [advanceWalletUsable, selectedCustomerDocument]);
+  const remainingWalletBalance = useMemo(
+    () => Math.max(0, availableAdvanceBalance - advanceWalletUsable),
+    [availableAdvanceBalance, advanceWalletUsable]
+  );
+  const remainingPayableAfterPayment = useMemo(
+    () => Math.max(0, documentBalanceAfterAdvance - totals.totalSettled),
+    [documentBalanceAfterAdvance, totals.totalSettled]
+  );
   const filteredPayments = useMemo(() => payments.filter((entry) => {
     const haystack = `${entry.customerName} ${entry.receiptNo} ${entry.referenceNo || ""} ${entry.transactionId || ""}`.toLowerCase();
     const q = search.trim().toLowerCase();
@@ -412,6 +440,25 @@ export default function PaymentInPremium() {
     setSearchParams(next, { replace: true });
   }, [prefillInvoiceId, openInvoices, country, company, searchParams, setSearchParams]);
 
+  useEffect(() => {
+    if (!form || form.allocationMode !== "linked" || !form.selectedDocumentId) return;
+    setForm((prev) => {
+      if (!prev || prev.allocationMode !== "linked" || !prev.selectedDocumentId) return prev;
+      const linkedDocument =
+        customerDocuments.find((entry) => entry.id === prev.selectedDocumentId) || null;
+      return {
+        ...prev,
+        allocations: buildAllocation(
+          withAdjustedDocumentBalance(
+            linkedDocument,
+            useAdvanceWallet && linkedDocument?.documentType === "invoice" ? advanceWalletUsable : 0
+          ),
+          prev.amountReceived
+        )
+      };
+    });
+  }, [advanceWalletUsable, customerDocuments, form?.allocationMode, form?.amountReceived, form?.selectedDocumentId, useAdvanceWallet]);
+
   function clearMessages() {
     setErrorMessage("");
     setSuccessMessage("");
@@ -440,6 +487,7 @@ export default function PaymentInPremium() {
     setFlowMode("create");
     setActiveStep(0);
     setDirty(false);
+    setUseAdvanceWallet(false);
     setCustomerLookupQuery("");
     setCustomerSearchError("");
     clearMessages();
@@ -459,6 +507,7 @@ export default function PaymentInPremium() {
     setFlowMode(mode);
     setActiveStep(mode === "view" ? 2 : 0);
     setDirty(false);
+    setUseAdvanceWallet(false);
     clearMessages();
   }
 
@@ -470,6 +519,7 @@ export default function PaymentInPremium() {
     setForm(null);
     setActivePayment(null);
     setDirty(false);
+    setUseAdvanceWallet(false);
     setCustomerLookupQuery("");
     setCustomerSearchError("");
     clearMessages();
@@ -484,7 +534,20 @@ export default function PaymentInPremium() {
           openInvoices.find(
             (entry) => entry.id === next.selectedDocumentId && entry.customerId === next.customerId
           ) || null;
-        next.allocations = buildAllocation(linkedDocument, value);
+        const effectiveBalance = Math.max(0, Number(linkedDocument?.balanceDue || 0) - (useAdvanceWallet && linkedDocument?.documentType === "invoice" ? advanceWalletUsable : 0));
+        next.allocations = linkedDocument
+          ? [
+              {
+                invoiceId: linkedDocument.id,
+                invoiceNo: linkedDocument.invoiceNo,
+                invoiceDate: linkedDocument.invoiceDate,
+                invoiceAmount: linkedDocument.invoiceAmount,
+                balanceDue: effectiveBalance,
+                applyAmount: Math.min(Math.max(0, parseNumber(value as any)), effectiveBalance),
+                documentType: linkedDocument.documentType
+              }
+            ]
+          : [];
       }
       return next;
     });
@@ -500,7 +563,13 @@ export default function PaymentInPremium() {
           openInvoices.find(
             (entry) => entry.id === next.selectedDocumentId && entry.customerId === next.customerId
           ) || null;
-        next.allocations = buildAllocation(linkedDocument, value);
+        next.allocations = buildAllocation(
+          withAdjustedDocumentBalance(
+            linkedDocument,
+            useAdvanceWallet && linkedDocument?.documentType === "invoice" ? advanceWalletUsable : 0
+          ),
+          value
+        );
         if (!next.isManual) {
           next.tdsAmount = calculatedTdsInputValue(
             autoTdsBaseAmount(linkedDocument, next.allocationMode, value),
@@ -591,7 +660,13 @@ export default function PaymentInPremium() {
       const next = {
         ...prev,
         allocationMode: "linked",
-        allocations: buildAllocation(linkedDocument, prev.amountReceived)
+        allocations: buildAllocation(
+          withAdjustedDocumentBalance(
+            linkedDocument,
+            useAdvanceWallet && linkedDocument?.documentType === "invoice" ? advanceWalletUsable : 0
+          ),
+          prev.amountReceived
+        )
       };
       if (!next.isManual) {
         next.tdsAmount = calculatedTdsInputValue(
@@ -607,6 +682,7 @@ export default function PaymentInPremium() {
 
   function handleDocumentSelection(documentId: string) {
     const linkedDocument = customerDocuments.find((entry) => entry.id === documentId) || null;
+    setUseAdvanceWallet(false);
     setForm((prev) =>
       prev
         ? (() => {
@@ -645,6 +721,7 @@ export default function PaymentInPremium() {
           }
         : prev
     );
+    setUseAdvanceWallet(false);
     setDirty(true);
   }
 
@@ -693,6 +770,7 @@ export default function PaymentInPremium() {
     setDirty(true);
     setCustomerLookupQuery("");
     setCustomerSearchError("");
+    setUseAdvanceWallet(false);
   }
 
   function validate(targetStatus: PaymentStatus) {
@@ -840,6 +918,25 @@ export default function PaymentInPremium() {
       setErrorMessage("Confirm the payment and select a valid invoice or proforma before applying it.");
       setSuccessMessage("");
       return;
+    }
+
+    if (
+      useAdvanceWallet &&
+      selectedCustomerDocument &&
+      selectedCustomerDocument.documentType === "invoice" &&
+      advanceWalletUsable > 0
+    ) {
+      applyAdvanceWalletToCustomerInvoice({
+        country,
+        customerId: form.customerId,
+        invoiceId: selectedCustomerDocument.id,
+        invoiceNo: selectedCustomerDocument.invoiceNo,
+        invoiceDate: selectedCustomerDocument.invoiceDate,
+        invoiceAmount: selectedCustomerDocument.invoiceAmount,
+        maxApplyAmount: advanceWalletUsable,
+        actor: actorName
+      });
+      setRefreshKey((prev) => prev + 1);
     }
 
     await persist(
@@ -1319,6 +1416,38 @@ export default function PaymentInPremium() {
                           </label>
                         </div>
                       </div>
+                      {selectedCustomerDocument?.documentType === "invoice" && availableAdvanceBalance > 0 ? (
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <p className="text-xs font-semibold text-slate-700">Customer Advance Wallet</p>
+                              <p className="mt-1 text-xs text-slate-600">
+                                Available Advance Balance: {formatMoney(availableAdvanceBalance, country)}
+                              </p>
+                            </div>
+                            <label className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800">
+                              <input
+                                type="checkbox"
+                                checked={useAdvanceWallet}
+                                onChange={(event) => setUseAdvanceWallet(event.target.checked)}
+                                disabled={readOnly}
+                                className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+                              />
+                              Use Available Advance Balance
+                            </label>
+                          </div>
+                          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-600">
+                              <p>Invoice Total: <span className="font-semibold text-slate-900">{formatMoney(selectedCustomerDocument.invoiceAmount, country)}</span></p>
+                              <p className="mt-1">Advance Used: <span className="font-semibold text-emerald-700">{formatMoney(advanceWalletUsable, country)}</span></p>
+                            </div>
+                            <div className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-600">
+                              <p>Remaining Payable Amount: <span className="font-semibold text-rose-700">{formatMoney(documentBalanceAfterAdvance, country)}</span></p>
+                              <p className="mt-1">Remaining Wallet Balance: <span className="font-semibold text-amber-700">{formatMoney(remainingWalletBalance, country)}</span></p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                         <p className="text-xs font-semibold text-slate-600">Is this payment for a specific invoice?</p>
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -1388,6 +1517,11 @@ export default function PaymentInPremium() {
                           <p className="mt-1">
                             Date: {selectedCustomerDocument.invoiceDate || "-"} | Pending: {formatMoney(selectedCustomerDocument.balanceDue, country)}
                           </p>
+                          {advanceWalletUsable > 0 ? (
+                            <p className="mt-1">
+                              Advance Used: {formatMoney(advanceWalletUsable, country)} | Remaining Payable: {formatMoney(documentBalanceAfterAdvance, country)}
+                            </p>
+                          ) : null}
                           <p className="mt-1">
                             Received Amount Applied: {formatMoney(totals.amountApplied, country)}
                           </p>
@@ -1501,8 +1635,24 @@ export default function PaymentInPremium() {
                           <p className="text-base font-semibold text-sky-700">{formatMoney(totals.tdsAmount, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">Available Advance</p>
+                          <p className="text-base font-semibold text-amber-700">{formatMoney(availableAdvanceBalance, country)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">Advance Used</p>
+                          <p className="text-base font-semibold text-emerald-700">{formatMoney(advanceWalletUsable, country)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Total Settled</p>
                           <p className="text-base font-semibold text-emerald-700">{formatMoney(totals.totalSettled, country)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">Remaining Wallet Balance</p>
+                          <p className="text-base font-semibold text-amber-700">{formatMoney(remainingWalletBalance, country)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">Final Payable Amount</p>
+                          <p className="text-base font-semibold text-rose-700">{formatMoney(remainingPayableAfterPayment, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Cash Advance</p>
