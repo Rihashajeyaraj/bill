@@ -19,6 +19,7 @@ import {
   mapCustomersByCountry,
   mapOpenInvoicesByCountry,
   outstandingByCustomer,
+  paymentInAllocationTdsShare,
   paymentInsightsByCustomer,
   removePaymentIn,
   savePaymentIn,
@@ -28,10 +29,13 @@ import {
   type PaymentInRecord
 } from "../../modules/paymentIn/store";
 import {
+  calculateTdsAmount,
   computeEditorTotals,
   defaultForm,
   formFromRecord,
   formatMoney,
+  TDS_CATEGORY_OPTIONS,
+  getTdsRateForCategory,
   parseNumber
 } from "../../modules/paymentIn/utils";
 import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf } from "../../modules/paymentIn/pdf";
@@ -116,6 +120,11 @@ function documentTypeLabel(documentType: "invoice" | "proforma") {
   return documentType === "proforma" ? "Proforma" : "Invoice";
 }
 
+function formatTdsPercent(value: unknown) {
+  const rate = Math.max(0, parseNumber(value as any));
+  return `${rate}%`;
+}
+
 function buildAllocation(document: CustomerOpenInvoice | null, amountReceived: unknown) {
   if (!document) return [];
   const amount = Math.max(0, parseNumber(amountReceived as any));
@@ -130,6 +139,18 @@ function buildAllocation(document: CustomerOpenInvoice | null, amountReceived: u
       documentType: document.documentType
     }
   ];
+}
+
+function calculatedTdsInputValue(amountReceived: unknown, tdsRate: unknown) {
+  return String(calculateTdsAmount(amountReceived, tdsRate));
+}
+
+function autoTdsBaseAmount(document: CustomerOpenInvoice | null, allocationMode: "linked" | "normal", fallbackAmount: unknown) {
+  if (allocationMode === "linked") {
+    const taxableAmount = Math.max(0, parseNumber(document?.taxableAmount as any));
+    if (taxableAmount > 0) return taxableAmount;
+  }
+  return Math.max(0, parseNumber(fallbackAmount as any));
 }
 
 export default function PaymentInPremium() {
@@ -180,6 +201,43 @@ export default function PaymentInPremium() {
     () => (form?.customerId ? listCustomerAdvanceWalletHistory(country, form.customerId) : []),
     [country, form?.customerId, refreshKey]
   );
+  const customerTdsHistory = useMemo(
+    () =>
+      payments
+        .filter((entry) => entry.customerId === form?.customerId)
+        .filter((entry) => Math.max(0, Number(entry?.totals?.tdsAmount || 0)) > 0)
+        .flatMap((entry) => {
+          const allocations = Array.isArray(entry?.allocations) ? entry.allocations : [];
+          if (!allocations.length) {
+            return [
+              {
+                id: `tds_${entry.id}`,
+                date: entry.paymentDate || "",
+                invoiceNo: "-",
+                customerName: entry.customerName || "-",
+                tdsRate: Number(entry?.tdsRate || 0),
+                tdsAmount: Math.max(0, Number(entry?.totals?.tdsAmount || 0))
+              }
+            ];
+          }
+          return allocations
+            .map((allocation, index) => ({
+              id: `tds_${entry.id}_${allocation.invoiceId || index}`,
+              date: entry.paymentDate || "",
+              invoiceNo: allocation.invoiceNo || "-",
+              customerName: entry.customerName || "-",
+              tdsRate: Number(entry?.tdsRate || 0),
+              tdsAmount: paymentInAllocationTdsShare(entry, allocation)
+            }))
+            .filter((row) => row.tdsAmount > 0);
+        })
+        .sort((left, right) => {
+          const byDate = String(right.date || "").localeCompare(String(left.date || ""));
+          if (byDate !== 0) return byDate;
+          return String(right.id || "").localeCompare(String(left.id || ""));
+        }),
+    [form?.customerId, payments]
+  );
   const totals = useMemo(
     () =>
       form
@@ -228,6 +286,42 @@ export default function PaymentInPremium() {
       matchTo
     );
   }), [payments, search, statusFilter, customerFilter, modeFilter, fromDate, toDate]);
+  const paymentTdsHistory = useMemo(
+    () =>
+      filteredPayments
+        .filter((entry) => Math.max(0, Number(entry?.totals?.tdsAmount || 0)) > 0)
+        .flatMap((entry) => {
+          const allocations = Array.isArray(entry?.allocations) ? entry.allocations : [];
+          if (!allocations.length) {
+            return [
+              {
+                id: `tds_feed_${entry.id}`,
+                date: entry.paymentDate || "",
+                invoiceNo: "-",
+                customerName: entry.customerName || "-",
+                tdsRate: Number(entry?.tdsRate || 0),
+                tdsAmount: Math.max(0, Number(entry?.totals?.tdsAmount || 0))
+              }
+            ];
+          }
+          return allocations
+            .map((allocation, index) => ({
+              id: `tds_feed_${entry.id}_${allocation.invoiceId || index}`,
+              date: entry.paymentDate || "",
+              invoiceNo: allocation.invoiceNo || "-",
+              customerName: entry.customerName || "-",
+              tdsRate: Number(entry?.tdsRate || 0),
+              tdsAmount: paymentInAllocationTdsShare(entry, allocation)
+            }))
+            .filter((row) => row.tdsAmount > 0);
+        })
+        .sort((left, right) => {
+          const byDate = String(right.date || "").localeCompare(String(left.date || ""));
+          if (byDate !== 0) return byDate;
+          return String(right.id || "").localeCompare(String(left.id || ""));
+        }),
+    [filteredPayments]
+  );
   const customerLookupResults = useMemo(() => {
     const query = String(customerLookupQuery || "").trim().toLowerCase();
     if (!query) return [];
@@ -434,9 +528,9 @@ export default function PaymentInPremium() {
         ? {
             ...prev,
             tdsAmount: value,
-            tdsCategory: "custom",
+            tdsCategory: "none",
             tdsRate: "0",
-            isManual: true
+            isManual: false
           }
         : prev
     );
@@ -448,23 +542,16 @@ export default function PaymentInPremium() {
     const nextRate = getTdsRateForCategory(category);
     setForm((prev) =>
       prev
-        ? isCustomTdsCategory(category)
-          ? {
-              ...prev,
-              tdsCategory: category,
-              tdsRate: String(nextRate),
-              isManual: true
-            }
-          : {
-              ...prev,
-              tdsCategory: category,
-              tdsRate: String(nextRate),
-              tdsAmount: calculatedTdsInputValue(
-                autoTdsBaseAmount(selectedCustomerDocument, prev.allocationMode, prev.amountReceived),
-                nextRate
-              ),
-              isManual: false
-            }
+        ? {
+            ...prev,
+            tdsCategory: category,
+            tdsRate: String(nextRate),
+            tdsAmount: calculatedTdsInputValue(
+              autoTdsBaseAmount(selectedCustomerDocument, prev.allocationMode, prev.amountReceived),
+              nextRate
+            ),
+            isManual: false
+          }
         : prev
     );
     clearFieldError("tdsAmount");
@@ -680,9 +767,9 @@ export default function PaymentInPremium() {
       attachment: form.attachment,
       desiredStatus: targetStatus,
       amountReceived: parseNumber(form.amountReceived),
-      tdsRate: 0,
-      tdsAmount: 0,
-      tdsCategory: "",
+      tdsRate: parseNumber(form.tdsRate),
+      tdsAmount: parseNumber(form.tdsAmount),
+      tdsCategory: form.tdsCategory,
       isManual: false,
       allocations: form.allocations,
       customerOutstandingBefore:
@@ -834,8 +921,8 @@ export default function PaymentInPremium() {
             <>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
                 <FlowCard title="Total Payments" subtitle="Count of receipts">{loading ? <PaymentInSkeleton /> : <p className="text-2xl font-bold text-slate-900">{summary?.count || 0}</p>}</FlowCard>
-                <FlowCard title="Cash Received" subtitle="Actual incoming payment"><p className="text-2xl font-bold text-slate-900">{formatMoney(summary?.totalReceived || 0, country)}</p></FlowCard>
-                <FlowCard title="Total Settled" subtitle="Customer payments recorded"><p className="text-2xl font-bold text-emerald-700">{formatMoney(summary?.totalReceived || 0, country)}</p></FlowCard>
+                <FlowCard title="Received Amount" subtitle="Actual incoming payment"><p className="text-2xl font-bold text-slate-900">{formatMoney(summary?.totalReceived || 0, country)}</p></FlowCard>
+                <FlowCard title="Total Settled" subtitle="Received amount plus TDS"><p className="text-2xl font-bold text-emerald-700">{formatMoney((summary?.totalReceived || 0) + (summary?.totalTds || 0), country)}</p></FlowCard>
                 <FlowCard title="Cash Advance Balance" subtitle="Cash kept on account"><p className="text-2xl font-bold text-amber-700">{formatMoney(summary?.totalUnallocated || 0, country)}</p></FlowCard>
               </div>
 
@@ -865,7 +952,8 @@ export default function PaymentInPremium() {
                         <th className="px-3 py-3 font-semibold">Date</th>
                         <th className="px-3 py-3 font-semibold">Customer</th>
                         <th className="px-3 py-3 font-semibold">Mode</th>
-                        <th className="px-3 py-3 font-semibold text-right">Cash Received</th>
+                        <th className="px-3 py-3 font-semibold text-right">Received Amount</th>
+                        <th className="px-3 py-3 font-semibold text-right">TDS Amount</th>
                         <th className="px-3 py-3 font-semibold text-right">Total Settled</th>
                         <th className="px-3 py-3 font-semibold text-right">Cash Advance</th>
                         <th className="px-3 py-3 font-semibold">Status</th>
@@ -875,7 +963,7 @@ export default function PaymentInPremium() {
                     <tbody>
                       {!filteredPayments.length ? (
                         <tr className="border-t border-slate-100">
-                          <td className="px-3 py-6 text-center text-slate-500" colSpan={9}>
+                          <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
                             No payments found. Create a new payment to get started.
                           </td>
                         </tr>
@@ -888,6 +976,9 @@ export default function PaymentInPremium() {
                             <td className="px-3 py-3 text-slate-600">{formatPaymentModeLabel(record.paymentMode)}</td>
                             <td className="px-3 py-3 text-right font-semibold text-slate-900">
                               {formatMoney(record?.totals?.amountReceived || 0, country)}
+                            </td>
+                            <td className="px-3 py-3 text-right font-semibold text-sky-700">
+                              {formatMoney(record?.totals?.tdsAmount || 0, country)}
                             </td>
                             <td className="px-3 py-3 text-right font-semibold text-slate-900">
                               {formatMoney(record?.totals?.totalSettled || 0, country)}
@@ -941,6 +1032,41 @@ export default function PaymentInPremium() {
                   </table>
                 </div>
               )}
+
+              <FlowCard title="Customer TDS History" subtitle="Invoice-wise TDS deducted from Payment In receipts">
+                <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+                  <table className="min-w-[760px] w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-slate-600">
+                      <tr>
+                        <th className="px-3 py-3 font-semibold">Date</th>
+                        <th className="px-3 py-3 font-semibold">Invoice No</th>
+                        <th className="px-3 py-3 font-semibold">Customer</th>
+                        <th className="px-3 py-3 font-semibold text-right">TDS %</th>
+                        <th className="px-3 py-3 font-semibold text-right">TDS Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {!paymentTdsHistory.length ? (
+                        <tr className="border-t border-slate-100">
+                          <td className="px-3 py-6 text-center text-slate-500" colSpan={5}>
+                            No customer-side TDS history found for the current filters.
+                          </td>
+                        </tr>
+                      ) : (
+                        paymentTdsHistory.map((entry) => (
+                          <tr key={entry.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                            <td className="px-3 py-3 text-slate-700">{entry.date || "-"}</td>
+                            <td className="px-3 py-3 text-slate-700">{entry.invoiceNo || "-"}</td>
+                            <td className="px-3 py-3 text-slate-700">{entry.customerName || "-"}</td>
+                            <td className="px-3 py-3 text-right font-semibold text-slate-900">{formatTdsPercent(entry.tdsRate)}</td>
+                            <td className="px-3 py-3 text-right font-semibold text-sky-700">{formatMoney(entry.tdsAmount, country)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </FlowCard>
             </>
           ) : null}
 
@@ -1084,6 +1210,35 @@ export default function PaymentInPremium() {
                           </div>
                         </div>
                       ) : null}
+                      {customerTdsHistory.length ? (
+                        <div className="rounded-2xl border border-slate-200 bg-white">
+                          <div className="border-b border-slate-100 px-3 py-2">
+                            <p className="text-xs font-semibold text-slate-700">Customer TDS History</p>
+                          </div>
+                          <div className="max-h-52 overflow-auto">
+                            <table className="w-full min-w-[640px] text-left text-xs">
+                              <thead className="bg-slate-50 text-slate-500">
+                                <tr>
+                                  <th className="px-3 py-2 font-semibold">Date</th>
+                                  <th className="px-3 py-2 font-semibold">Invoice</th>
+                                  <th className="px-3 py-2 font-semibold text-right">TDS %</th>
+                                  <th className="px-3 py-2 text-right font-semibold">TDS Amount</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {customerTdsHistory.slice(0, 12).map((entry) => (
+                                  <tr key={entry.id} className="border-t border-slate-100">
+                                    <td className="px-3 py-2 text-slate-700">{entry.date || "-"}</td>
+                                    <td className="px-3 py-2 text-slate-700">{entry.invoiceNo || "-"}</td>
+                                    <td className="px-3 py-2 text-right font-semibold text-slate-900">{formatTdsPercent(entry.tdsRate)}</td>
+                                    <td className="px-3 py-2 text-right font-semibold text-sky-700">{formatMoney(entry.tdsAmount, country)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   </FlowCard>
                 </div>
@@ -1095,7 +1250,7 @@ export default function PaymentInPremium() {
                     <div className="space-y-3">
                       <div className="grid grid-cols-1 gap-3">
                         <label className="block">
-                          <span className="text-xs font-semibold text-slate-600">Cash Received</span>
+                          <span className="text-xs font-semibold text-slate-600">Received Amount</span>
                           <input
                             type="text"
                             value={numberInputValue(form.amountReceived)}
@@ -1107,6 +1262,62 @@ export default function PaymentInPremium() {
                           />
                           {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
                         </label>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs font-semibold text-slate-600">Settlement Breakdown</p>
+                        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <label className="block">
+                            <span className="text-xs font-semibold text-slate-600">Invoice Amount</span>
+                            <input
+                              type="text"
+                              value={selectedCustomerDocument ? formatMoney(selectedCustomerDocument.invoiceAmount, country) : "-"}
+                              disabled
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-xs font-semibold text-slate-600">Received Amount</span>
+                            <input
+                              type="text"
+                              value={formatMoney(totals.amountReceived, country)}
+                              disabled
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-xs font-semibold text-slate-600">TDS Percentage</span>
+                            <select
+                              value={form.tdsCategory}
+                              disabled={readOnly}
+                              onChange={(event) => handleTdsCategoryChange(event.target.value)}
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                            >
+                              {TDS_CATEGORY_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className="text-xs font-semibold text-slate-600">TDS Amount</span>
+                            <input
+                              type="text"
+                              value={formatMoney(totals.tdsAmount, country)}
+                              disabled
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                            />
+                          </label>
+                          <label className="block sm:col-span-2">
+                            <span className="text-xs font-semibold text-slate-600">Total Settled Amount</span>
+                            <input
+                              type="text"
+                              value={formatMoney(totals.totalSettled, country)}
+                              disabled
+                              className="mt-1 w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700"
+                            />
+                          </label>
+                        </div>
                       </div>
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                         <p className="text-xs font-semibold text-slate-600">Is this payment for a specific invoice?</p>
@@ -1178,7 +1389,7 @@ export default function PaymentInPremium() {
                             Date: {selectedCustomerDocument.invoiceDate || "-"} | Pending: {formatMoney(selectedCustomerDocument.balanceDue, country)}
                           </p>
                           <p className="mt-1">
-                            Cash Applied: {formatMoney(totals.amountApplied, country)}
+                            Received Amount Applied: {formatMoney(totals.amountApplied, country)}
                           </p>
                           <p className="mt-1">
                             Total Settled: {formatMoney(totals.totalSettled, country)}
@@ -1274,8 +1485,20 @@ export default function PaymentInPremium() {
                       </div>
                       <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                         <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Cash Received</p>
+                          <p className="text-slate-500">Invoice Amount</p>
+                          <p className="text-base font-semibold text-slate-900">{selectedCustomerDocument ? formatMoney(selectedCustomerDocument.invoiceAmount, country) : "-"}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">Received Amount</p>
                           <p className="text-base font-semibold text-slate-900">{formatMoney(totals.amountReceived, country)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">TDS Percentage</p>
+                          <p className="text-base font-semibold text-slate-900">{formatTdsPercent(form.tdsRate)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-3">
+                          <p className="text-slate-500">TDS Amount</p>
+                          <p className="text-base font-semibold text-sky-700">{formatMoney(totals.tdsAmount, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Total Settled</p>
@@ -1323,7 +1546,7 @@ export default function PaymentInPremium() {
                       <p className="text-xs text-slate-500">{COUNTRY_CONFIG[country].receiptLabel}</p>
                   <p className="text-3xl font-bold tracking-tight text-slate-900">{formatMoney(totals.totalSettled, country)}</p>
                   <p className="text-xs text-slate-500">
-                    Cash received {formatMoney(totals.amountReceived, country)}
+                    Received {formatMoney(totals.amountReceived, country)} | TDS {formatMoney(totals.tdsAmount, country)}
                   </p>
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
                         <p>{COUNTRY_CONFIG[country].legalWording}</p>

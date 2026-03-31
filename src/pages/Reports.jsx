@@ -881,7 +881,7 @@ function GstBreakdownPanel({ totals, currency }) {
 function getDerivedPartyType(activeReport, partyType) {
   if (activeReport === "sale-report") return PARTY_TYPES.customer;
   if (activeReport === "gst-report") return PARTY_TYPES.customer;
-  if (activeReport === "tds-report") return partyType || PARTY_TYPES.supplier;
+  if (activeReport === "tds-report") return partyType || PARTY_TYPES.customer;
   if (activeReport === "purchase-report") return PARTY_TYPES.supplier;
   return partyType;
 }
@@ -1151,22 +1151,25 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
     }
     case "tds-report": {
       const pageInfo = paginateIfNeeded(data.rows);
+      const isCustomerView = data.partyType === PARTY_TYPES.customer;
       return {
         title: "TDS Report",
-        subtitle: "Supplier payment TDS deducted through Payment Out entries for the selected period.",
+        subtitle: isCustomerView
+          ? "Customer payment TDS deducted through Payment In entries for the selected period."
+          : "Supplier payment TDS deducted through Payment Out entries for the selected period.",
         filename: "tds-report",
         metrics: [
           { label: "Total TDS", value: formatMoney(data.totals.totalTds, currency), tone: data.totals.totalTds > 0 ? "positive" : "default" },
-          { label: "Suppliers", value: data.totals.suppliers },
+          { label: isCustomerView ? "Customers" : "Suppliers", value: isCustomerView ? data.totals.customers : data.totals.suppliers },
           { label: "Entries", value: data.rows.length }
         ],
         columns: [
           { key: "date", label: "Date", format: "date" },
-          { key: "invoiceReference", label: "Bill No" },
-          { key: "partyName", label: "Supplier" },
+          { key: "invoiceReference", label: isCustomerView ? "Invoice No" : "Bill No" },
+          { key: "partyName", label: isCustomerView ? "Customer" : "Supplier" },
           { key: "tdsRate", label: "TDS %", align: "right", format: "percent" },
           { key: "tdsAmount", label: "TDS Amount", align: "right", format: "money", emphasis: true },
-          { key: "finalPaidAmount", label: "Final Paid", align: "right", format: "money" }
+          { key: "finalPaidAmount", label: isCustomerView ? "Received Amount" : "Final Paid", align: "right", format: "money" }
         ],
         tableTitle: "TDS Entries",
         rows: pageInfo.rows,

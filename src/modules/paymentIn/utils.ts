@@ -4,12 +4,11 @@ import type { PaymentInFormState } from "./types";
 import { formatCurrencyByPreference, parseFormattedNumber } from "../../lib/formatPreferences";
 
 export const TDS_CATEGORY_OPTIONS = [
-  { value: "contractor", label: "Contractor", rate: 1 },
-  { value: "professional", label: "Professional", rate: 10 },
-  { value: "commission", label: "Commission", rate: 5 },
-  { value: "rent", label: "Rent", rate: 10 },
-  { value: "other", label: "Other", rate: 2 },
-  { value: "custom", label: "Custom (Manual)", rate: 0 }
+  { value: "none", label: "None", rate: 0 },
+  { value: "1", label: "1%", rate: 1 },
+  { value: "2", label: "2%", rate: 2 },
+  { value: "5", label: "5%", rate: 5 },
+  { value: "10", label: "10%", rate: 10 }
 ];
 
 export function parseNumber(value: string | number | null | undefined) {
@@ -18,13 +17,21 @@ export function parseNumber(value: string | number | null | undefined) {
 }
 
 export function getTdsRateForCategory(category: unknown) {
-  return (
-    TDS_CATEGORY_OPTIONS.find((entry) => entry.value === String(category || "").trim().toLowerCase())?.rate || 0
-  );
+  const normalized = String(category || "").trim().toLowerCase();
+  if (normalized === "contractor") return 1;
+  if (normalized === "other") return 2;
+  if (normalized === "commission") return 5;
+  if (normalized === "professional" || normalized === "rent") return 10;
+  return TDS_CATEGORY_OPTIONS.find((entry) => entry.value === normalized)?.rate || 0;
 }
 
 export function isCustomTdsCategory(category: unknown) {
   return String(category || "").trim().toLowerCase() === "custom";
+}
+
+export function getTdsCategoryForRate(rate: unknown) {
+  const numericRate = Math.max(0, parseNumber(rate as any));
+  return TDS_CATEGORY_OPTIONS.find((entry) => entry.rate === numericRate)?.value || "none";
 }
 
 export function calculateTdsAmount(amountReceived: unknown, tdsRate: unknown) {
@@ -108,15 +115,15 @@ export function defaultForm(country: CountryCode, company: any): PaymentInFormSt
 
 export function formFromRecord(note: PaymentInRecord): PaymentInFormState {
   const firstAllocation = note.allocations[0] || null;
-  const storedCategory = note.tdsCategory || TDS_CATEGORY_OPTIONS[0].value;
+  const storedCategory = note.tdsCategory || getTdsCategoryForRate(note.tdsRate);
   const storedTdsRate = Math.max(0, parseNumber(note.tdsRate ?? getTdsRateForCategory(storedCategory)));
   const storedTdsAmount = Math.max(0, parseNumber(note.totals.tdsAmount || 0));
   const inferredManual =
     typeof note.isManual === "boolean"
       ? note.isManual
       : Math.abs(storedTdsAmount - calculateTdsAmount(note.totals.amountReceived || 0, storedTdsRate)) > 0.009;
-  const tdsCategory = inferredManual ? "custom" : storedCategory;
-  const tdsRate = inferredManual ? 0 : storedTdsRate;
+  const tdsCategory = inferredManual ? getTdsCategoryForRate(storedTdsRate) : getTdsCategoryForRate(storedTdsRate);
+  const tdsRate = inferredManual ? storedTdsRate : storedTdsRate;
   return {
     id: note.id,
     country: note.country,

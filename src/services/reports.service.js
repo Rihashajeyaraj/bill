@@ -1549,6 +1549,54 @@ export function buildTdsReport(dataset, filters = {}) {
   const indexes = buildPartyIndexes(dataset);
   const rows = [];
 
+  (Array.isArray(dataset?.paymentIns) ? dataset.paymentIns : [])
+    .filter(() => partyType === PARTY_TYPES.customer)
+    .filter((row) => normalizeText(row?.status) !== "draft")
+    .filter((row) => paymentInTdsAmount(row) > 0)
+    .filter((row) => inDateRange(resolvePaymentDate(row), fromDate, toDate))
+    .filter((row) => matchesPartyId(row, partyId, PARTY_TYPES.customer))
+    .forEach((row) => {
+      const allocations = Array.isArray(row?.allocations) ? row.allocations : [];
+      const positiveTdsAllocations = allocations.filter(
+        (allocation) => paymentInAllocationTdsShare(row, allocation) > 0
+      );
+
+      if (!positiveTdsAllocations.length) {
+        rows.push({
+          id: `tds_in_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}`,
+          date: resolvePaymentDate(row),
+          source: "Payment In",
+          partyType: PARTY_TYPES.customer,
+          partyId: String(row?.customerId || ""),
+          partyName: resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById),
+          invoiceReference: "-",
+          tdsRate: Math.max(0, parseNumber(row?.tdsRate)),
+          tdsAmount: paymentInTdsAmount(row),
+          finalPaidAmount: Math.max(0, parseNumber(row?.totals?.amountReceived ?? row?.amountReceived)),
+          category: row?.tdsCategory || "None",
+          status: normalizeStatusLabel(row?.status, "Received")
+        });
+        return;
+      }
+
+      positiveTdsAllocations.forEach((allocation, index) => {
+        rows.push({
+          id: `tds_in_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}_${index}`,
+          date: resolvePaymentDate(row),
+          source: "Payment In",
+          partyType: PARTY_TYPES.customer,
+          partyId: String(row?.customerId || ""),
+          partyName: resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById),
+          invoiceReference: String(allocation?.invoiceNo || allocation?.invoiceId || "-").trim() || "-",
+          tdsRate: Math.max(0, parseNumber(row?.tdsRate)),
+          tdsAmount: paymentInAllocationTdsShare(row, allocation),
+          finalPaidAmount: Math.max(0, parseNumber(allocation?.applyAmount)),
+          category: row?.tdsCategory || "None",
+          status: normalizeStatusLabel(row?.status, "Received")
+        });
+      });
+    });
+
   (Array.isArray(dataset?.paymentOuts) ? dataset.paymentOuts : [])
     .filter(() => partyType === PARTY_TYPES.supplier)
     .filter((row) => normalizeText(row?.status) !== "draft")
@@ -1609,7 +1657,7 @@ export function buildTdsReport(dataset, filters = {}) {
     rows,
     totals: {
       totalTds: rows.reduce((sum, row) => sum + row.tdsAmount, 0),
-      customers: 0,
+      customers: new Set(rows.filter((row) => row.partyType === PARTY_TYPES.customer).map((row) => row.partyId || row.partyName)).size,
       suppliers: new Set(rows.filter((row) => row.partyType === PARTY_TYPES.supplier).map((row) => row.partyId || row.partyName)).size,
       documents: rows.filter((row) => row.invoiceReference !== "-").length
     }
