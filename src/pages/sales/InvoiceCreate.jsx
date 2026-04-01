@@ -266,12 +266,14 @@ export default function InvoiceCreate() {
 
   const [lines, setLines] = useState([]);
   const [loadedInvoiceId, setLoadedInvoiceId] = useState("");
+  const [loadedInvoiceRecord, setLoadedInvoiceRecord] = useState(null);
   const [loadingExistingInvoice, setLoadingExistingInvoice] = useState(false);
   const [lastSavedInvoiceId, setLastSavedInvoiceId] = useState("");
   const [printInvoiceData, setPrintInvoiceData] = useState(null);
   const [printQueued, setPrintQueued] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const printContainerRef = useRef(null);
+  const pendingPrintWindowRef = useRef(null);
   const previewAutoOpenedRef = useRef(false);
   const [markAsPaid, setMarkAsPaid] = useState(false);
   const [paymentMode, setPaymentMode] = useState("Cash");
@@ -398,6 +400,7 @@ export default function InvoiceCreate() {
   useEffect(() => {
     if (!activeInvoiceId) {
       setLoadedInvoiceId("");
+      setLoadedInvoiceRecord(null);
       setLoadingExistingInvoice(false);
       return;
     }
@@ -481,7 +484,14 @@ export default function InvoiceCreate() {
       for (let attempt = 0; attempt < 10; attempt += 1) {
         const markup = printContainerRef.current?.innerHTML || "";
         if (markup.trim()) {
-          printWindow = window.open("", "_blank");
+          printWindow = pendingPrintWindowRef.current;
+          if (printWindow && printWindow.closed) {
+            printWindow = null;
+          }
+          if (!printWindow) {
+            printWindow = window.open("", "_blank");
+          }
+          pendingPrintWindowRef.current = null;
           if (!printWindow) break;
 
           const copiedStyles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
@@ -548,6 +558,7 @@ export default function InvoiceCreate() {
       if (closeWatcher) {
         window.clearInterval(closeWatcher);
       }
+      pendingPrintWindowRef.current = null;
       if (printWindow && !printWindow.closed) {
         printWindow.close();
       }
@@ -1050,6 +1061,7 @@ export default function InvoiceCreate() {
 
   function hydrateInvoiceEditor(invoiceRecord, availableItems = items) {
     if (!invoiceRecord) return;
+    setLoadedInvoiceRecord(invoiceRecord);
     setInvoiceDate(String(invoiceRecord?.invoiceDate || "").trim());
     setInvoiceNo(String(invoiceRecord?.invoiceNo || "").trim());
     setPartyId(String(invoiceRecord?.partyId || "").trim());
@@ -1606,10 +1618,29 @@ export default function InvoiceCreate() {
     return getLineItemSearchResults(activeLineForSearch);
   }, [activeLineForSearch, modeFilteredLineItems, barcodeLookupByItemId]);
 
-  const invoicePreviewData = useMemo(() => {
-    const subTotal = Number(computed.subTotal || 0);
-    const totalTax = Number(computed.tax?.totalTax || 0);
-    const effectiveTaxRate = Number(computed.effectiveTaxRate || taxRate || 0);
+  function buildInvoicePreviewData(fallbackRecord = null) {
+    const fallbackTotals =
+      fallbackRecord?.totals && typeof fallbackRecord.totals === "object" ? fallbackRecord.totals : {};
+    const fallbackTaxObject =
+      fallbackTotals?.tax && typeof fallbackTotals.tax === "object" ? fallbackTotals.tax : {};
+    const fallbackTaxBreakup =
+      fallbackTotals?.taxBreakup && typeof fallbackTotals.taxBreakup === "object"
+        ? fallbackTotals.taxBreakup
+        : null;
+    const liveItems = computed.enriched.filter((line) => line?.itemId);
+    const fallbackItems = Array.isArray(fallbackRecord?.lines) ? fallbackRecord.lines : [];
+    const previewItemsSource = liveItems.length ? liveItems : fallbackItems;
+    const subTotal = Number(computed.subTotal || fallbackTotals?.subTotal || 0);
+    const totalTax = Number(computed.tax?.totalTax || fallbackTaxObject?.totalTax || fallbackTotals?.taxTotal || 0);
+    const effectiveTaxRate = Number(
+      computed.effectiveTaxRate ||
+        taxRate ||
+        fallbackRecord?.taxRate ||
+        fallbackTaxObject?.taxRate ||
+        fallbackTaxObject?.rate ||
+        fallbackTaxBreakup?.taxRate ||
+        0
+    );
     const seller = {
       name: company?.companyName || "",
       address: formatAddress(company?.address),
@@ -1620,12 +1651,12 @@ export default function InvoiceCreate() {
       state: companyState
     };
     const buyer = {
-      name: party?.name || "",
-      address: party?.address || "",
-      gstin: party?.gstin || party?.taxId || "",
-      phone: party?.phone || "",
-      country: customerCountry,
-      state: customerState
+      name: party?.name || fallbackRecord?.buyer?.name || fallbackRecord?.partyName || "",
+      address: party?.address || fallbackRecord?.buyer?.address || "",
+      gstin: party?.gstin || party?.taxId || fallbackRecord?.buyer?.gstin || "",
+      phone: party?.phone || fallbackRecord?.buyer?.phone || fallbackRecord?.phone || "",
+      country: customerCountry || fallbackRecord?.buyer?.country || fallbackRecord?.country || "",
+      state: customerState || fallbackRecord?.buyer?.state || fallbackRecord?.placeOfSupply || ""
     };
     return {
       title: gstRuntimeEnabled ? "Tax Invoice" : "Invoice",
@@ -1633,10 +1664,10 @@ export default function InvoiceCreate() {
       companyName: company?.companyName || "",
       companyLogoUrl: company?.logoBase64 || "",
       currencySymbol: resolveCurrencySymbol(currencySymbol, currency),
-      invoiceNo: invoiceNo || "-",
-      invoiceDate,
-      dueDate: invoiceDate,
-      placeOfSupply: customerState,
+      invoiceNo: invoiceNo || fallbackRecord?.invoiceNo || "-",
+      invoiceDate: invoiceDate || fallbackRecord?.invoiceDate || "",
+      dueDate: invoiceDate || fallbackRecord?.dueDate || fallbackRecord?.invoiceDate || "",
+      placeOfSupply: customerState || fallbackRecord?.placeOfSupply || buyer.state,
       seller,
       buyer,
       customer: {
@@ -1648,15 +1679,16 @@ export default function InvoiceCreate() {
         gstin: buyer.gstin
       },
       taxRate: effectiveTaxRate,
-      taxBreakup: computed.tax?.taxBreakup || null,
+      taxBreakup: computed.tax?.taxBreakup || fallbackTaxBreakup,
       tax: gstRuntimeEnabled
         ? {
             type: "GST",
-            supplyType: computed.tax?.supplyType || "INTRA",
-            sameState: computed.tax?.supplyType !== "INTER",
-            cgst: Number(computed.tax?.cgst || 0),
-            sgst: Number(computed.tax?.sgst || 0),
-            igst: Number(computed.tax?.igst || 0),
+            supplyType: computed.tax?.supplyType || fallbackRecord?.supplyType || fallbackTaxBreakup?.supplyType || "INTRA",
+            sameState:
+              (computed.tax?.supplyType || fallbackRecord?.supplyType || fallbackTaxBreakup?.supplyType || "INTRA") !== "INTER",
+            cgst: Number(computed.tax?.cgst || fallbackTaxObject?.cgst || 0),
+            sgst: Number(computed.tax?.sgst || fallbackTaxObject?.sgst || 0),
+            igst: Number(computed.tax?.igst || fallbackTaxObject?.igst || 0),
             totalTax,
             warning: computed.tax?.warning || ""
           }
@@ -1668,19 +1700,26 @@ export default function InvoiceCreate() {
             totalTax,
             warning: ""
           },
-      items: computed.enriched.filter((line) => line?.itemId).map((line) => {
-        const lineNet = Number(line.net || 0);
-        const lineTaxAmount = Number(line.lineTax || 0);
+      items: previewItemsSource.map((line) => {
+        const lineNet = Number(line.net ?? line.taxableValue ?? line.lineSubTotal ?? 0);
+        const lineTaxAmount = Number(
+          line.lineTax ??
+            line.taxAmount ??
+            Number(line.cgstAmount || 0) +
+              Number(line.sgstAmount || 0) +
+              Number(line.igstAmount || 0) +
+              Number(line.vatAmount || 0)
+        );
         const resolvedLineRate = lineNet > 0 ? round2((lineTaxAmount / lineNet) * 100) : 0;
         return {
           id: line.id,
-          name: line.itemName || "",
-          hsn: line.hsn || "",
+          name: line.itemName || line.name || line.description || "",
+          hsn: line.hsn || line.hsnSac || line.sac || "",
           qty: Number(line.qty || 0),
           rate: Number(line.rate || 0),
-          discount: Number(line.discount || 0),
-          tax: resolvedLineRate,
-          taxRate: resolvedLineRate,
+          discount: Number(line.discount ?? line.discountAmount ?? 0),
+          tax: Number(line.tax ?? line.taxRate ?? resolvedLineRate),
+          taxRate: Number(line.taxRate ?? line.tax ?? resolvedLineRate),
           taxableValue: lineNet,
           net: lineNet,
           amount: lineNet + lineTaxAmount,
@@ -1693,13 +1732,28 @@ export default function InvoiceCreate() {
       }),
       totals: {
         subTotal,
-        tax: totalTax,
-        taxBreakup: computed.tax?.taxBreakup || null,
-        total: Number(computed.grandTotal || 0),
-        balance: Number(computed.grandTotal || 0)
+        tax: gstRuntimeEnabled
+          ? {
+              ...(fallbackTaxObject || {}),
+              ...(computed.tax || {}),
+              totalTax
+            }
+          : totalTax,
+        taxBreakup: computed.tax?.taxBreakup || fallbackTaxBreakup,
+        total: Number(computed.grandTotal || fallbackTotals?.grandTotal || fallbackTotals?.total || 0),
+        balance: Number(
+          fallbackRecord?.remainingBalance ??
+            fallbackTotals?.balance ??
+            computed.grandTotal ??
+            fallbackTotals?.grandTotal ??
+            fallbackTotals?.total ??
+            0
+        )
       }
     };
-  }, [
+  }
+
+  const invoicePreviewData = useMemo(() => buildInvoicePreviewData(loadedInvoiceRecord), [
     company,
     companyCountry,
     companyState,
@@ -1714,6 +1768,7 @@ export default function InvoiceCreate() {
     invoiceDate,
     invoiceNo,
     gstRuntimeEnabled,
+    loadedInvoiceRecord,
     party,
     taxRate,
     computed.effectiveTaxRate
@@ -2202,10 +2257,42 @@ export default function InvoiceCreate() {
       return;
     }
 
-    const savedInvoiceId = await saveInvoice({ silent: true });
-    if (!savedInvoiceId) return;
+    const preopenedWindow = window.open("", "_blank");
+    if (!preopenedWindow) {
+      alert("Popup blocked. Please allow popups for this site to print the invoice.");
+      return;
+    }
+    preopenedWindow.document.write(`<!DOCTYPE html><html><head><title>Preparing invoice...</title></head><body style="font-family: Arial, sans-serif; padding: 24px;">Preparing invoice print preview...</body></html>`);
+    preopenedWindow.document.close();
+    pendingPrintWindowRef.current = preopenedWindow;
 
-    setPrintInvoiceData(invoicePreviewData);
+    const savedInvoiceId = await saveInvoice({ silent: true });
+    if (!savedInvoiceId) {
+      if (pendingPrintWindowRef.current && !pendingPrintWindowRef.current.closed) {
+        pendingPrintWindowRef.current.close();
+      }
+      pendingPrintWindowRef.current = null;
+      return;
+    }
+
+    let savedRecord =
+      invoicesList().find((entry) => String(entry?.id || "").trim() === String(savedInvoiceId).trim()) || null;
+    if (!savedRecord) {
+      try {
+        const synced = await invoicesSyncFromRemote();
+        savedRecord =
+          (Array.isArray(synced) ? synced : []).find(
+            (entry) => String(entry?.id || "").trim() === String(savedInvoiceId).trim()
+          ) || null;
+      } catch {
+        // Fall back to current editor state if refresh fails.
+      }
+    }
+
+    if (savedRecord) {
+      setLoadedInvoiceRecord(savedRecord);
+    }
+    setPrintInvoiceData(savedRecord ? buildInvoicePreviewData(savedRecord) : invoicePreviewData);
     setPrintQueued(true);
   }
 
