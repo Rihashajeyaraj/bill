@@ -45,6 +45,10 @@ function invoiceSortValue(invoiceNo) {
   return match ? Number(match[1]) || 0 : 0;
 }
 
+const actionButtonClass =
+  "inline-flex min-h-9 items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition";
+const neutralActionButtonClass = `${actionButtonClass} border-slate-200 bg-white text-slate-700 hover:bg-slate-50`;
+
 export default function InvoiceHistory() {
   const navigate = useNavigate();
   const toast = useToast();
@@ -116,7 +120,7 @@ export default function InvoiceHistory() {
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">
-          <table className="min-w-[980px] w-full text-left text-sm">
+          <table className="min-w-[1180px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-3 py-3 font-semibold">Invoice No</th>
@@ -126,7 +130,7 @@ export default function InvoiceHistory() {
                 <th className="px-3 py-3 font-semibold text-right">Qty</th>
                 <th className="px-3 py-3 font-semibold text-right">Amount</th>
                 <th className="px-3 py-3 font-semibold">Status</th>
-                <th className="px-3 py-3 font-semibold">Actions</th>
+                <th className="px-3 py-3 font-semibold min-w-[320px]">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -161,14 +165,32 @@ export default function InvoiceHistory() {
                             {status}
                           </span>
                         </td>
-                        <td className="px-3 py-3">
-                          <div className="flex flex-wrap gap-2">
+                        <td className="px-3 py-3 align-top">
+                          <div className="grid min-w-[300px] grid-cols-2 gap-2 lg:grid-cols-3">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                navigate(`/app/sales/invoice?preview=${encodeURIComponent(invoice.id)}`)
+                              }
+                              className={neutralActionButtonClass}
+                            >
+                              View
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                navigate(`/app/sales/invoice?edit=${encodeURIComponent(invoice.id)}`)
+                              }
+                              className={neutralActionButtonClass}
+                            >
+                              Edit
+                            </button>
                             <button
                               type="button"
                               onClick={() =>
                                 navigate(`/app/sales/payment-in?invoiceId=${encodeURIComponent(invoice.id)}`)
                               }
-                              className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                              className={neutralActionButtonClass}
                             >
                               Payment
                             </button>
@@ -177,7 +199,7 @@ export default function InvoiceHistory() {
                               onClick={() =>
                                 navigate(`/app/sales/credit-note?invoiceId=${encodeURIComponent(invoice.id)}`)
                               }
-                              className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                              className={neutralActionButtonClass}
                             >
                               Credit Note
                             </button>

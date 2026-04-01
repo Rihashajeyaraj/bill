@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Printer, Save, Search, X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Eye, Plus, Printer, Save, Search, X } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 
 import PageHeader from "../../components/PageHeader";
@@ -8,18 +8,24 @@ import Card from "../../components/Card";
 import GradientButton from "../../components/GradientButton";
 import FormField from "../../components/FormField";
 import Badge from "../../components/Badge";
+import Modal from "../../components/Modal";
 import InvoicePreview from "../../components/InvoicePreview";
 import DateInput from "../../components/DateInput";
 
 import { useOrganization } from "../../context/OrganizationContext";
-import { invoicesCreate, invoicesList, invoicesSyncFromRemote } from "../../services/invoices.service";
+import {
+  invoicesCreate,
+  invoicesList,
+  invoicesSyncFromRemote,
+  invoicesUpdate
+} from "../../services/invoices.service";
 import { calculateTaxes } from "../../services/tax";
 import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { companyPeekDocumentNumber } from "../../services/company.service";
 import { syncPaymentInRemote } from "../../services/payments.service";
 import { fetchItemStockHistory } from "../../services/inventory.service";
-import { canCreateEntries } from "../../services/roles";
+import { canCreateEntries, canEditEntries } from "../../services/roles";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus, listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../modules/parties/store";
@@ -208,8 +214,16 @@ function resolvePaymentCountryCode(country, countryCode) {
 
 export default function InvoiceCreate() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const role = authGetRole();
   const canCreateInvoice = canCreateEntries(role);
+  const canEditInvoice = canEditEntries(role);
+  const editInvoiceId = String(searchParams.get("edit") || "").trim();
+  const printInvoiceId = String(searchParams.get("print") || "").trim();
+  const previewInvoiceId = String(searchParams.get("preview") || "").trim();
+  const activeInvoiceId = editInvoiceId || printInvoiceId || previewInvoiceId;
+  const isEditMode = !!editInvoiceId;
+  const isPrintMode = !!printInvoiceId;
   const { profile: company = {}, country = "", countryCode = "", currency = "", currencySymbol = "" } = useOrganization();
   const [templateConfig, setTemplateConfig] = useState(() => getInvoiceTemplateConfig());
   const isIndiaOrg = country === "India";
@@ -251,10 +265,14 @@ export default function InvoiceCreate() {
   const [itemBatchMap, setItemBatchMap] = useState({});
 
   const [lines, setLines] = useState([]);
+  const [loadedInvoiceId, setLoadedInvoiceId] = useState("");
+  const [loadingExistingInvoice, setLoadingExistingInvoice] = useState(false);
   const [lastSavedInvoiceId, setLastSavedInvoiceId] = useState("");
   const [printInvoiceData, setPrintInvoiceData] = useState(null);
   const [printQueued, setPrintQueued] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const printContainerRef = useRef(null);
+  const previewAutoOpenedRef = useRef(false);
   const [markAsPaid, setMarkAsPaid] = useState(false);
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [paymentDate, setPaymentDate] = useState("");
@@ -376,6 +394,57 @@ export default function InvoiceCreate() {
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, []);
+
+  useEffect(() => {
+    if (!activeInvoiceId) {
+      setLoadedInvoiceId("");
+      setLoadingExistingInvoice(false);
+      return;
+    }
+    if (loadedInvoiceId === activeInvoiceId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadExistingInvoice() {
+      setLoadingExistingInvoice(true);
+      try {
+        let records = invoicesList();
+        let matched =
+          records.find((entry) => String(entry?.id || "").trim() === activeInvoiceId) || null;
+
+        if (!matched) {
+          const synced = await invoicesSyncFromRemote();
+          records = Array.isArray(synced) ? synced : invoicesList();
+          matched =
+            records.find((entry) => String(entry?.id || "").trim() === activeInvoiceId) || null;
+        }
+
+        if (cancelled) return;
+        if (!matched) {
+          alert("Invoice not found.");
+          navigate("/app/sales/invoice/history", { replace: true });
+          return;
+        }
+
+        hydrateInvoiceEditor(matched, items);
+      } catch (error) {
+        if (cancelled) return;
+        alert(error?.message || "Failed to load invoice.");
+        navigate("/app/sales/invoice/history", { replace: true });
+      } finally {
+        if (!cancelled) {
+          setLoadingExistingInvoice(false);
+        }
+      }
+    }
+
+    void loadExistingInvoice();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeInvoiceId, items, loadedInvoiceId, navigate]);
 
   useEffect(() => {
     if (forceZeroTax) {
@@ -947,6 +1016,65 @@ export default function InvoiceCreate() {
     });
     setCustomerCountryMenuOpen(false);
     setCustomerStateMenuOpen(false);
+  }
+
+  function toEditableInvoiceLines(invoiceLines, availableItems) {
+    const itemByIdMap = new Map(
+      (Array.isArray(availableItems) ? availableItems : []).map((item) => [String(item?.id || ""), item])
+    );
+
+    return (Array.isArray(invoiceLines) ? invoiceLines : []).map((line, index) => {
+      const matchedItem = itemByIdMap.get(String(line?.itemId || "")) || null;
+      const resolvedType = matchedItem
+        ? normalizeInvoiceItemType(matchedItem?.type)
+        : normalizeInvoiceItemType(line?.itemType || "");
+      return {
+        id: String(line?.id || `l_${Date.now()}_${index}`),
+        itemId: String(line?.itemId || ""),
+        itemInput: matchedItem
+          ? formatItemSearchLabel(matchedItem)
+          : String(line?.itemName || line?.description || "").trim(),
+        selectedBatchId: String(line?.selectedBatchId || line?.manual_batch_id || "").trim(),
+        hsnInput: String(line?.hsn || line?.hsnSac || "").trim(),
+        priceTaxMode:
+          String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX" ? "WITH_TAX" : "WITHOUT_TAX",
+        unit: String(line?.unit || matchedItem?.unit || "pcs").trim() || "pcs",
+        qty: Number(line?.qty || line?.quantity || 0),
+        rate: Number(line?.rate || line?.unitPrice || 0),
+        discount: Number(line?.discountAmount ?? line?.discount ?? 0),
+        tax: forceZeroTax ? 0 : Number(line?.taxRate ?? line?.tax ?? 0),
+        itemType: resolvedType
+      };
+    });
+  }
+
+  function hydrateInvoiceEditor(invoiceRecord, availableItems = items) {
+    if (!invoiceRecord) return;
+    setInvoiceDate(String(invoiceRecord?.invoiceDate || "").trim());
+    setInvoiceNo(String(invoiceRecord?.invoiceNo || "").trim());
+    setPartyId(String(invoiceRecord?.partyId || "").trim());
+    setLines(toEditableInvoiceLines(invoiceRecord?.lines, availableItems));
+    const resolvedTaxRate =
+      Number(
+        invoiceRecord?.taxRate ??
+          invoiceRecord?.totals?.tax?.rate ??
+          invoiceRecord?.totals?.tax?.taxRate ??
+          invoiceRecord?.totals?.taxBreakup?.taxRate ??
+          0
+      ) || 0;
+    setTaxRate(forceZeroTax ? 0 : resolvedTaxRate);
+    setVatInput(forceZeroTax ? "" : resolvedTaxRate > 0 ? `TAX ${resolvedTaxRate}%` : "");
+    setMarkAsPaid(false);
+    setPaidAmount("");
+    setReferenceNo("");
+    setTransactionId("");
+    setChequeNo("");
+    setBankName("");
+    setBankAccount("");
+    setPaymentNotes("");
+    setFormErrors({});
+    setLastSavedInvoiceId(String(invoiceRecord?.id || "").trim());
+    setLoadedInvoiceId(String(invoiceRecord?.id || "").trim());
   }
 
   function computeInvoiceSummary(sourceLines, sourceItems) {
@@ -1591,6 +1719,18 @@ export default function InvoiceCreate() {
     computed.effectiveTaxRate
   ]);
 
+  useEffect(() => {
+    if (!isPrintMode || !loadedInvoiceId || loadingExistingInvoice) return;
+    setPrintInvoiceData(invoicePreviewData);
+    setPrintQueued(true);
+  }, [invoicePreviewData, isPrintMode, loadedInvoiceId, loadingExistingInvoice]);
+
+  useEffect(() => {
+    if (!previewInvoiceId || !loadedInvoiceId || loadingExistingInvoice || previewAutoOpenedRef.current) return;
+    setPreviewOpen(true);
+    previewAutoOpenedRef.current = true;
+  }, [previewInvoiceId, loadedInvoiceId, loadingExistingInvoice]);
+
   async function resolveInvoiceLinesWithItems(sourceLines) {
     const nextLines = [];
     let didCreateService = false;
@@ -1700,8 +1840,8 @@ export default function InvoiceCreate() {
   }
 
   async function saveInvoice({ silent = false } = {}) {
-    if (!canCreateInvoice) {
-      alert("You do not have permission to create invoices.");
+    if (isEditMode ? !canEditInvoice : !canCreateInvoice) {
+      alert(isEditMode ? "You do not have permission to edit invoices." : "You do not have permission to create invoices.");
       return null;
     }
 
@@ -1716,6 +1856,7 @@ export default function InvoiceCreate() {
     if (normalizedInvoiceNo && isManualInvoiceNo) {
       const duplicateExists = invoicesList().some(
         (entry) =>
+          String(entry?.id || "").trim() !== String(activeInvoiceId || "").trim() &&
           String(entry?.invoiceNo || "").trim().toLowerCase() === normalizedInvoiceNo.toLowerCase()
       );
       if (duplicateExists) nextErrors.invoiceNo = "Invoice number already exists";
@@ -1892,7 +2033,9 @@ export default function InvoiceCreate() {
       supplyType: effectiveComputed.tax.supplyType || null
     };
     try {
-      const savedInvoiceId = await invoicesCreate(payload);
+      const savedInvoiceId = isEditMode
+        ? await invoicesUpdate(activeInvoiceId, payload)
+        : await invoicesCreate(payload);
       setLastSavedInvoiceId(savedInvoiceId || "");
       if (savedInvoiceId && partyId && advanceAppliedFromWallet > 0) {
         applyAdvanceWalletToCustomerInvoice({
@@ -2021,13 +2164,24 @@ export default function InvoiceCreate() {
       setPaymentNotes("");
       setFormErrors({});
       await invoicesSyncFromRemote();
-      setInvoiceNo(companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }));
+      if (isEditMode) {
+        setInvoiceNo(normalizedInvoiceNo);
+        setLoadedInvoiceId(String(savedInvoiceId || activeInvoiceId || "").trim());
+      } else {
+        setInvoiceNo(companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }));
+      }
 
       if (!silent) {
         if (paymentSavedAsUnapplied) {
           alert("Invoice saved. Payment In saved as advance balance.");
         } else {
-          alert(paymentSaved ? "Invoice and Payment In saved successfully." : "Invoice saved successfully.");
+          alert(
+            paymentSaved
+              ? "Invoice and Payment In saved successfully."
+              : isEditMode
+                ? "Invoice updated successfully."
+                : "Invoice saved successfully."
+          );
         }
         navigate("/app/sales/invoice/history");
       }
@@ -2043,8 +2197,8 @@ export default function InvoiceCreate() {
   }
 
   async function handleSaveAndPrint() {
-    if (!canCreateInvoice) {
-      alert("You do not have permission to create invoices.");
+    if (isEditMode ? !canEditInvoice : !canCreateInvoice) {
+      alert(isEditMode ? "You do not have permission to edit invoices." : "You do not have permission to create invoices.");
       return;
     }
 
@@ -2055,12 +2209,20 @@ export default function InvoiceCreate() {
     setPrintQueued(true);
   }
 
+  function handleViewInvoice() {
+    setPreviewOpen(true);
+  }
+
   return (
     <div className="max-w-6xl">
       <div className="print-hide">
         <PageHeader
-          title="Sales - Invoice"
-          subtitle="Create invoice with line items and country-wise tax breakdown"
+          title={isEditMode ? "Sales - Edit Invoice" : "Sales - Invoice"}
+          subtitle={
+            isEditMode
+              ? "Update invoice details, save changes, or open the print preview."
+              : "Create invoice with line items and country-wise tax breakdown"
+          }
           className="lg:items-center"
           right={
             <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-end lg:w-auto">
@@ -2072,29 +2234,45 @@ export default function InvoiceCreate() {
                 Invoice History
               </button>
               <button
+                type="button"
+                onClick={handleViewInvoice}
+                disabled={loadingExistingInvoice}
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+              >
+                <Eye className="h-4 w-4" />
+                View
+              </button>
+              <button
                 onClick={handleSaveAndPrint}
-                disabled={!canCreateInvoice || hasStockErrors}
+                disabled={(isEditMode ? !canEditInvoice : !canCreateInvoice) || hasStockErrors || loadingExistingInvoice}
                 className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-100 bg-white px-3 text-sm font-semibold hover:bg-slate-50 sm:w-auto"
               >
                 <Printer className="h-4 w-4" />
-                Save & Print
+                {isEditMode ? "Save & Print" : "Save & Print"}
               </button>
               <GradientButton
                 onClick={saveInvoice}
-                disabled={!canCreateInvoice || hasStockErrors}
+                disabled={(isEditMode ? !canEditInvoice : !canCreateInvoice) || hasStockErrors || loadingExistingInvoice}
                 className="h-11 w-full justify-center disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 <Save className="h-4 w-4" />
-                Save
+                {isEditMode ? "Save Changes" : "Save"}
               </GradientButton>
             </div>
           }
         />
       </div>
       <div className="print-hide">
-        {!canCreateInvoice ? (
+        {loadingExistingInvoice ? (
+          <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            Loading invoice details...
+          </div>
+        ) : null}
+        {!(isEditMode ? canEditInvoice : canCreateInvoice) ? (
           <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-          Your role does not have invoice create permission.
+          {isEditMode
+            ? "Your role does not have invoice edit permission."
+            : "Your role does not have invoice create permission."}
           </div>
         ) : null}
 
@@ -3236,22 +3414,45 @@ export default function InvoiceCreate() {
                 </div>
               ) : null}
 
-                <div className="mt-4">
-                  <GradientButton
-                    className="w-full justify-center disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={saveInvoice}
-                    disabled={!canCreateInvoice || hasStockErrors}
-                  >
-                    <Save className="h-4 w-4" />
-                    Save Invoice
-                  </GradientButton>
-                </div>
               </div>
             </div>
           </Card>
         </div>
       </div>
       </div>
+
+      <Modal
+        open={previewOpen}
+        title="Invoice Preview"
+        onClose={() => setPreviewOpen(false)}
+        footer={
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setPreviewOpen(false)}
+              className="inline-flex h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Close
+            </button>
+          </div>
+        }
+      >
+        <div className="rounded-3xl bg-white p-2 sm:p-4">
+          <div className="invoice-preview">
+            <InvoicePreview
+              templateId={templateConfig.templateId}
+              styleConfig={{
+                primaryColor: templateConfig.primaryColor,
+                bgColor: templateConfig.bgColor,
+                fontFamily: templateConfig.fontFamily,
+                logoUrl: templateConfig.logoUrl || company?.logoBase64 || "",
+                logoPosition: templateConfig.logoPosition
+              }}
+              invoiceData={invoicePreviewData}
+            />
+          </div>
+        </div>
+      </Modal>
 
       {printInvoiceData ? (
         <div ref={printContainerRef} className="hidden print:block print-sheet">

@@ -1,5 +1,5 @@
-const APP_SHELL_CACHE = "twite-billing-shell-v1";
-const RUNTIME_CACHE = "twite-billing-runtime-v1";
+const APP_SHELL_CACHE = "twite-billing-shell-v2";
+const RUNTIME_CACHE = "twite-billing-runtime-v2";
 const APP_SHELL_URLS = [
   "/",
   "/index.html",
@@ -82,10 +82,8 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) return cachedResponse;
-
-      return fetch(event.request).then((response) => {
+    fetch(event.request)
+      .then((response) => {
         if (!response || response.status !== 200 || response.type !== "basic") {
           return response;
         }
@@ -93,7 +91,11 @@ self.addEventListener("fetch", (event) => {
         const copy = response.clone();
         caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy));
         return response;
-      });
-    })
+      })
+      .catch(async () => {
+        const cachedResponse = await caches.match(event.request);
+        if (cachedResponse) return cachedResponse;
+        throw new Error(`Offline and no cache available for ${event.request.url}`);
+      })
   );
 });

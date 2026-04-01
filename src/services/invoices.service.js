@@ -28,15 +28,16 @@ function setAll(list) {
   lsSetOrganizationScoped(LS_KEYS.invoices, list);
 }
 
-function applyInvoiceStockDelta(lines) {
+function applyInvoiceStockAdjustment(lines, direction = 1) {
   const itemLines = Array.isArray(lines) ? lines : [];
   if (!itemLines.length) return;
   const quantityByItemId = new Map();
+  const multiplier = Number(direction) === -1 ? -1 : 1;
 
   itemLines.forEach((line) => {
     const itemId = String(line?.itemId || line?.item_id || "").trim();
     if (!itemId) return;
-    const qty = Math.max(0, parseNumber(line?.qty ?? line?.quantity));
+    const qty = Math.max(0, parseNumber(line?.qty ?? line?.quantity)) * multiplier;
     if (!qty) return;
     quantityByItemId.set(itemId, (quantityByItemId.get(itemId) || 0) + qty);
   });
@@ -137,14 +138,20 @@ async function fetchLatestRemoteInvoiceNumber(organizationId, basePrefix) {
   return String((Array.isArray(data) ? data[0] : null)?.invoice_no || "").trim();
 }
 
-async function invoiceNumberExistsRemotely(organizationId, invoiceNo) {
+async function invoiceNumberExistsRemotely(organizationId, invoiceNo, excludeId = "") {
   if (!isSupabaseConfigured || !supabase || !organizationId || !invoiceNo) return false;
-  const { data, error } = await supabase
+  let query = supabase
     .from("invoices")
     .select("id")
     .eq("organization_id", organizationId)
-    .eq("invoice_no", invoiceNo)
-    .limit(1);
+    .eq("invoice_no", invoiceNo);
+
+  const ignoredId = String(excludeId || "").trim();
+  if (ignoredId) {
+    query = query.neq("id", ignoredId);
+  }
+
+  const { data, error } = await query.limit(1);
 
   if (error) {
     if (isMissingColumnError(error)) return false;
@@ -290,6 +297,7 @@ function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
     partyName: metadata?.partyName || metadata?.buyer?.name || "",
     placeOfSupply: row?.place_of_supply_state || metadata?.placeOfSupply || "",
     country: metadata?.country || "",
+    currency: String(row?.currency_code || metadata?.currencyCode || "").trim().toUpperCase(),
     taxMode: metadata?.taxMode || "",
     supplyType: metadata?.supplyType || taxBreakup?.supplyType || null,
     seller: metadata?.seller || {},
@@ -752,6 +760,7 @@ export async function invoicesCreate(invoice) {
       balance: grandTotal
     },
     taxMode: invoice?.taxMode || tax?.type || "",
+    currency: String(invoice?.companySnapshot?.currency || invoice?.currency || "").trim().toUpperCase(),
     supplyType: invoice?.supplyType || tax?.supplyType || taxBreakup?.supplyType || null,
     remainingBalance: grandTotal,
     createdByUserId: actorUserId,
@@ -763,7 +772,7 @@ export async function invoicesCreate(invoice) {
 
   setAll([next, ...getAll().filter((entry) => entry.id !== id && entry.invoiceNo !== invoiceNo)]);
   companySyncDocumentCounter("invoice", invoiceNo, { dateValue: invoiceDate });
-  applyInvoiceStockDelta(lines);
+  applyInvoiceStockAdjustment(lines, 1);
   console.log("[CreditMonitoring] Triggering notification check from invoicesCreate", {
     invoiceId: id,
     invoiceNo,
@@ -772,4 +781,191 @@ export async function invoicesCreate(invoice) {
   await triggerCreditLimitNotifications();
   await triggerLowStockNotifications();
   return id;
+}
+
+export async function invoicesUpdate(invoiceId, invoice) {
+  assertInvoiceWritePermission();
+
+  const existingId = String(invoiceId || invoice?.id || "").trim();
+  if (!existingId) {
+    throw new Error("Invoice id is required.");
+  }
+
+  const existing = getAll().find((entry) => String(entry?.id || "").trim() === existingId);
+  if (!existing) {
+    throw new Error("Invoice not found.");
+  }
+
+  const now = new Date().toISOString();
+  const invoiceDate = invoice?.invoiceDate || existing?.invoiceDate || now.slice(0, 10);
+  const actor = authGetUser();
+  const actorUserId = actor?.id || existing?.createdByUserId || null;
+  const actorName =
+    String(actor?.name || actor?.email || existing?.createdByName || existing?.createdBy || "").trim();
+  const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
+  if (isSupabaseConfigured && supabase && !organizationId) {
+    throw new Error("Organization is required to save invoices.");
+  }
+
+  const requestedInvoiceNo = String(invoice?.invoiceNo || existing?.invoiceNo || "").trim();
+  if (!requestedInvoiceNo) {
+    throw new Error("Invoice Number is required.");
+  }
+  if (hasInvoiceNumberConflict(requestedInvoiceNo, existingId)) {
+    throw new Error("Invoice number already exists");
+  }
+  if (await invoiceNumberExistsRemotely(organizationId, requestedInvoiceNo, looksLikeUuid(existingId) ? existingId : "")) {
+    throw new Error("Invoice number already exists");
+  }
+
+  const lines = Array.isArray(invoice?.lines) ? invoice.lines : [];
+  const totals = invoice?.totals || {};
+  const tax = totals?.tax || {};
+  const taxBreakup =
+    totals?.taxBreakup && typeof totals.taxBreakup === "object"
+      ? totals.taxBreakup
+      : invoice?.taxBreakup && typeof invoice.taxBreakup === "object"
+        ? invoice.taxBreakup
+        : existing?.totals?.taxBreakup && typeof existing.totals.taxBreakup === "object"
+          ? existing.totals.taxBreakup
+          : null;
+  const summary = calculateInvoiceSummary(lines, totals);
+  const matchedFinancialYear =
+    (await financialYearsEnsureForDate(invoiceDate, null, { organizationId }).catch(() => null)) ||
+    financialYearsResolveForDate(invoiceDate);
+  const priorGrandTotal = parseNumber(existing?.totals?.grandTotal);
+  const priorBalance = Math.max(
+    0,
+    parseNumber(existing?.remainingBalance ?? existing?.totals?.balance ?? priorGrandTotal)
+  );
+  const settledAmount = Math.max(0, priorGrandTotal - priorBalance);
+  const nextBalance = Math.max(0, summary.grandTotal - settledAmount);
+  const nextStatus =
+    String(existing?.status || "").toLowerCase() === "cancelled"
+      ? "cancelled"
+      : deriveInvoiceStatus(summary.grandTotal, nextBalance);
+
+  if (isSupabaseConfigured && supabase && organizationId && looksLikeUuid(existingId)) {
+    const remotePayload = {
+      financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
+      invoice_no: requestedInvoiceNo,
+      invoice_date: invoiceDate,
+      due_date: invoice?.dueDate || existing?.dueDate || invoiceDate,
+      party_id: looksLikeUuid(invoice?.partyId) ? invoice.partyId : null,
+      place_of_supply_state: invoice?.placeOfSupply || null,
+      currency_code: String(invoice?.companySnapshot?.currency || invoice?.currency || "INR")
+        .trim()
+        .toUpperCase(),
+      subtotal: summary.subTotal,
+      discount_total: parseNumber(totals?.discountTotal),
+      taxable_total: parseNumber(totals?.taxableTotal ?? summary.subTotal),
+      cgst_total: summary.cgst,
+      sgst_total: summary.sgst,
+      igst_total: summary.igst,
+      cess_total: summary.cess,
+      vat_total: summary.vat,
+      tax_total: summary.taxTotal,
+      round_off: summary.roundOff,
+      grand_total: summary.grandTotal,
+      status: nextStatus,
+      metadata: {
+        country: invoice?.country || "",
+        partyName: invoice?.partyName || "",
+        createdByName: String(existing?.createdByName || actorName).trim(),
+        updatedByName: actorName,
+        buyer: invoice?.buyer || {},
+        seller: invoice?.seller || {},
+        placeOfSupply: invoice?.placeOfSupply || "",
+        taxType: tax?.type || invoice?.taxMode || "",
+        taxMode: invoice?.taxMode || tax?.type || "",
+        supplyType: invoice?.supplyType || tax?.supplyType || taxBreakup?.supplyType || null,
+        taxBreakup,
+        templateId: invoice?.templateId || "",
+        financialYearId: matchedFinancialYear?.id || "",
+        financialYearLabel: matchedFinancialYear?.label || "",
+        financialYearCode: matchedFinancialYear?.yearCode || ""
+      }
+    };
+
+    let updateResult = await supabase
+      .from("invoices")
+      .update(remotePayload)
+      .eq("id", existingId)
+      .eq("organization_id", organizationId)
+      .select("id")
+      .single();
+    if (updateResult.error && isMissingColumnError(updateResult.error)) {
+      const { financial_year_id, ...legacyPayload } = remotePayload;
+      updateResult = await supabase
+        .from("invoices")
+        .update(legacyPayload)
+        .eq("id", existingId)
+        .eq("organization_id", organizationId)
+        .select("id")
+        .single();
+    }
+    if (updateResult.error) {
+      throw new Error(normalizeSupabaseError(updateResult.error, "Failed to update invoice"));
+    }
+
+    const { error: deleteLinesError } = await supabase
+      .from("invoice_items")
+      .delete()
+      .eq("invoice_id", existingId);
+    if (deleteLinesError) {
+      throw new Error(normalizeSupabaseError(deleteLinesError, "Failed to refresh invoice line items"));
+    }
+
+    const remoteLines = buildRemoteLines(existingId, lines);
+    if (remoteLines.length) {
+      const { error: linesError } = await supabase.from("invoice_items").insert(remoteLines);
+      if (linesError) {
+        throw new Error(normalizeSupabaseError(linesError, "Failed to save invoice line items"));
+      }
+    }
+  }
+
+  const next = annotateWithFinancialYear({
+    ...existing,
+    ...invoice,
+    id: existingId,
+    invoiceNo: requestedInvoiceNo,
+    invoiceDate,
+    dueDate: invoice?.dueDate || existing?.dueDate || invoiceDate,
+    totals: {
+      ...existing?.totals,
+      ...totals,
+      subTotal: summary.subTotal,
+      tax: {
+        ...(existing?.totals?.tax && typeof existing.totals.tax === "object" ? existing.totals.tax : {}),
+        ...(typeof tax === "object" ? tax : {}),
+        cgst: summary.cgst,
+        sgst: summary.sgst,
+        igst: summary.igst,
+        vat: summary.vat,
+        cess: summary.cess,
+        totalTax: summary.taxTotal
+      },
+      taxBreakup,
+      grandTotal: summary.grandTotal,
+      balance: nextBalance
+    },
+    taxMode: invoice?.taxMode || tax?.type || existing?.taxMode || "",
+    currency: String(invoice?.companySnapshot?.currency || invoice?.currency || existing?.currency || "").trim().toUpperCase(),
+    supplyType: invoice?.supplyType || tax?.supplyType || taxBreakup?.supplyType || existing?.supplyType || null,
+    remainingBalance: nextBalance,
+    status: nextStatus,
+    createdByUserId: existing?.createdByUserId || actorUserId,
+    createdByName: existing?.createdByName || actorName,
+    createdBy: existing?.createdBy || actorName || String(actorUserId || "").trim(),
+    updated_at: now
+  }, invoiceDate);
+
+  setAll([next, ...getAll().filter((entry) => String(entry?.id || "") !== existingId)]);
+  companySyncDocumentCounter("invoice", requestedInvoiceNo, { dateValue: invoiceDate });
+  applyInvoiceStockAdjustment(existing?.lines || [], -1);
+  applyInvoiceStockAdjustment(lines, 1);
+  await triggerCreditLimitNotifications();
+  await triggerLowStockNotifications();
+  return existingId;
 }
