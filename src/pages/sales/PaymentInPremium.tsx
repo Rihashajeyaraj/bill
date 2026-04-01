@@ -1367,60 +1367,68 @@ export default function PaymentInPremium() {
                           {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
                         </label>
                       </div>
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-xs font-semibold text-slate-600">Settlement Breakdown</p>
-                        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          <label className="block">
-                            <span className="text-xs font-semibold text-slate-600">Invoice Amount</span>
-                            <input
-                              type="text"
-                              value={selectedCustomerDocument ? formatMoney(selectedCustomerDocument.invoiceAmount, country) : "-"}
-                              disabled
-                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
-                            />
-                          </label>
-                          <label className="block">
-                            <span className="text-xs font-semibold text-slate-600">Received Amount</span>
-                            <input
-                              type="text"
-                              value={formatMoney(totals.amountReceived, country)}
-                              disabled
-                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
-                            />
-                          </label>
-                          <label className="block">
-                            <span className="text-xs font-semibold text-slate-600">TDS Percentage</span>
-                            <select
-                              value={form.tdsCategory}
-                              disabled={readOnly}
-                              onChange={(event) => handleTdsCategoryChange(event.target.value)}
-                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                            >
-                              {TDS_CATEGORY_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="block">
-                            <span className="text-xs font-semibold text-slate-600">TDS Amount</span>
-                            <input
-                              type="text"
-                              value={formatMoney(totals.tdsAmount, country)}
-                              disabled
-                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
-                            />
-                          </label>
-                          <label className="block sm:col-span-2">
-                            <span className="text-xs font-semibold text-slate-600">Total Settled Amount</span>
-                            <input
-                              type="text"
-                              value={formatMoney(totals.totalSettled, country)}
-                              disabled
-                              className="mt-1 w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700"
-                            />
-                          </label>
+                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <p className="text-xs font-semibold text-slate-600">Amount Entry</p>
+                          <div className="mt-3 grid grid-cols-1 gap-3">
+                            <label className="block">
+                              <span className="text-xs font-semibold text-slate-600">Invoice Amount</span>
+                              <input
+                                type="text"
+                                value={selectedCustomerDocument ? formatMoney(selectedCustomerDocument.invoiceAmount, country) : "-"}
+                                disabled
+                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="text-xs font-semibold text-slate-600">Received Amount</span>
+                              <input
+                                type="text"
+                                value={formatMoney(totals.amountReceived, country)}
+                                disabled
+                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="text-xs font-semibold text-slate-600">Total Settled Amount</span>
+                              <input
+                                type="text"
+                                value={formatMoney(totals.totalSettled, country)}
+                                disabled
+                                className="mt-1 w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700"
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <p className="text-xs font-semibold text-slate-600">TDS Entry</p>
+                          <div className="mt-3 grid grid-cols-1 gap-3">
+                            <label className="block">
+                              <span className="text-xs font-semibold text-slate-600">TDS Percentage</span>
+                              <select
+                                value={form.tdsCategory}
+                                disabled={readOnly}
+                                onChange={(event) => handleTdsCategoryChange(event.target.value)}
+                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                              >
+                                {TDS_CATEGORY_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="block">
+                              <span className="text-xs font-semibold text-slate-600">TDS Amount</span>
+                              <input
+                                type="text"
+                                value={formatMoney(totals.tdsAmount, country)}
+                                disabled
+                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                              />
+                            </label>
+                          </div>
                         </div>
                       </div>
                       {selectedCustomerDocument?.documentType === "invoice" && availableAdvanceBalance > 0 ? (
