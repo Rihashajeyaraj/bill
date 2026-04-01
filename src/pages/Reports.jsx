@@ -218,6 +218,7 @@ function formatPercent(value) {
 }
 
 function buildExportPayload({ viewModel, currency }) {
+  const footerRows = Array.isArray(viewModel.footerRows) ? viewModel.footerRows : [];
   return {
     title: viewModel.title,
     subtitle: viewModel.subtitle,
@@ -227,7 +228,10 @@ function buildExportPayload({ viewModel, currency }) {
       {
         title: viewModel.tableTitle || "Report Data",
         columns: viewModel.columns.map((column) => ({ label: column.label })),
-        rows: viewModel.exportRows.map((row) => viewModel.columns.map((column) => formatCell(row, column, currency)))
+        rows: [
+          ...viewModel.exportRows.map((row) => viewModel.columns.map((column) => formatCell(row, column, currency))),
+          ...footerRows
+        ]
       }
     ]
   };
@@ -886,6 +890,82 @@ function getDerivedPartyType(activeReport, partyType) {
   return partyType;
 }
 
+function PartyStatementTable({ columns, rows, currency, creditSummary, emptyText = "No records found." }) {
+  const summaryRows = [
+    { label: "TDS Credit Amount", value: creditSummary?.tdsCredit || 0 },
+    { label: "Normal Credit Amount", value: creditSummary?.normalCredit || 0 },
+    { label: "Net Credit Amount", value: creditSummary?.netCredit || 0 }
+  ];
+  const detailRows = [
+    { key: "tdsCreditAmount", label: "TDS Credit Amount" },
+    { key: "normalCreditAmount", label: "Normal Credit Amount" },
+    { key: "netCreditAmount", label: "Net Credit Amount" }
+  ];
+
+  return (
+    <div className="overflow-x-auto rounded-3xl border border-slate-200">
+      <table className="w-full min-w-[1120px] text-left text-xs sm:text-sm">
+        <thead className="bg-slate-50">
+          <tr>
+            {columns.map((column) => (
+              <th key={column.key} className={clsx("whitespace-nowrap px-3 py-3 font-semibold text-slate-700 sm:px-4", column.align === "right" && "text-right")}>
+                {column.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length ? (
+            rows.map((row) => (
+              <React.Fragment key={row.id}>
+                <tr className="border-t border-slate-100 hover:bg-slate-50/70">
+                  {columns.map((column) => (
+                    <td key={`${row.id}_${column.key}`} className={clsx("px-3 py-3 text-slate-700 sm:px-4", column.align === "right" && "text-right", column.emphasis && "font-semibold text-slate-900")}>
+                      {formatCell(row, column, currency)}
+                    </td>
+                  ))}
+                </tr>
+                {detailRows.map((detail) => (
+                  <tr key={`${row.id}_${detail.key}`} className="border-t border-slate-100 bg-slate-50/50">
+                    <td colSpan={5} className="px-3 py-2 text-sm font-medium text-slate-600 sm:px-4">
+                      {detail.label}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-500 sm:px-4">-</td>
+                    <td className="px-3 py-2 text-right font-semibold text-slate-900 sm:px-4">
+                      {formatMoney(row?.[detail.key] || 0, currency)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-500 sm:px-4">-</td>
+                  </tr>
+                ))}
+              </React.Fragment>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={columns.length} className="px-4 py-16 text-center text-slate-500">
+                {emptyText}
+              </td>
+            </tr>
+          )}
+        </tbody>
+        {rows.length ? (
+          <tfoot className="bg-slate-50/70">
+            {summaryRows.map((summary) => (
+              <tr key={summary.label} className="border-t border-slate-200">
+                <td colSpan={5} className="px-3 py-3 font-semibold text-slate-700 sm:px-4">
+                  {summary.label}
+                </td>
+                <td className="px-3 py-3 text-slate-500 sm:px-4">-</td>
+                <td className="px-3 py-3 font-semibold text-slate-900 sm:px-4">{formatMoney(summary.value, currency)}</td>
+                <td className="px-3 py-3 text-slate-500 sm:px-4">-</td>
+              </tr>
+            ))}
+          </tfoot>
+        ) : null}
+      </table>
+    </div>
+  );
+}
+
 function buildViewModel({ activeReport, data, currency, currentPage, agingMetricFilter }) {
   if (!data) return null;
 
@@ -1013,7 +1093,9 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
         columns: [
           { key: "date", label: "Date", format: "date" },
           { key: "transactionType", label: "Transaction Type" },
+          { key: "transactionMode", label: "Transaction Mode" },
           { key: "referenceNumber", label: "Reference Number" },
+          { key: "invoiceNumber", label: "Invoice Number" },
           { key: "debit", label: "Debit", align: "right", format: "money" },
           { key: "credit", label: "Credit", align: "right", format: "money" },
           { key: "runningBalance", label: "Running Balance", align: "right", format: "money", emphasis: true }
@@ -1021,6 +1103,18 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
         tableTitle: "Statement Entries",
         rows: data.rows,
         exportRows: data.allRows || data.rows,
+        footerRows: data.party
+          ? [
+              ["", "", "", "", "TDS Credit Amount", "-", formatMoney(data.totals.tdsCredit, currency), ""],
+              ["", "", "", "", "Normal Credit Amount", "-", formatMoney(data.totals.normalCredit, currency), ""],
+              ["", "", "", "", "Net Credit Amount", "-", formatMoney(data.totals.netCredit, currency), ""]
+            ]
+          : [],
+        creditSummary: {
+          tdsCredit: data.totals.tdsCredit,
+          normalCredit: data.totals.normalCredit,
+          netCredit: data.totals.netCredit
+        },
         pageInfo: data
       };
     case "aging-report": {
@@ -1776,6 +1870,14 @@ export default function Reports() {
                         expandedBucket={expandedAgingBucket}
                         onToggle={handleAgingBucketToggle}
                         emptyText="No records found for the selected filters."
+                      />
+                    ) : activeReport === "party-statement" ? (
+                      <PartyStatementTable
+                        columns={viewModel.columns}
+                        rows={viewModel.rows}
+                        currency={currency}
+                        creditSummary={viewModel.creditSummary}
+                        emptyText={viewModel.pageInfo?.party ? "No records found for the selected filters." : "Select a party to generate the statement."}
                       />
                     ) : (
                       <ReportTable

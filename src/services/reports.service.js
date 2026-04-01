@@ -2,7 +2,7 @@ import { listParties, computePartyFinancials, syncPartiesFromRemote } from "../m
 import { listCreditNotes as listPremiumCreditNotes } from "../modules/creditNote/store";
 import { listDebitNotes } from "../modules/debitNote/store";
 import { listPaymentIn, paymentInAllocationSettledAmount, paymentInAllocationTdsShare } from "../modules/paymentIn/store";
-import { listPaymentOut, paymentOutAllocationTdsShare } from "../modules/paymentOut/store";
+import { listPaymentOut, paymentOutAllocationSettledAmount, paymentOutAllocationTdsShare } from "../modules/paymentOut/store";
 import { normalizeText, openingBalanceSigned, parseNumber, toIsoDate } from "../modules/parties/utils";
 import { creditNotesList, creditNotesSyncFromRemote } from "./creditNotes.service";
 import { expensesList, expensesSyncFromRemote } from "./expenses.service";
@@ -251,6 +251,120 @@ function paymentInSettledAmount(row) {
     0,
     parseNumber(row?.totals?.totalSettled ?? amountFromPayment(row, PARTY_TYPES.customer) + paymentInTdsAmount(row))
   );
+}
+
+function paymentOutSettledAmount(row) {
+  return Math.max(
+    0,
+    parseNumber(row?.totals?.totalSettled ?? amountFromPayment(row, PARTY_TYPES.supplier) + paymentOutTdsAmount(row))
+  );
+}
+
+function statementPaymentMode(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) return "-";
+  if (normalized.includes("cash")) return "Cash";
+  if (normalized.includes("cheque") || normalized.includes("check")) return "Cheque";
+  return "Bank";
+}
+
+function statementReferenceNumber(row, fallback = "") {
+  const mode = statementPaymentMode(row?.paymentMode || row?.mode);
+  if (mode === "Cash") return "Cash";
+  if (mode === "Cheque") {
+    return String(
+      row?.chequeNo ||
+        row?.referenceNo ||
+        row?.reference_no ||
+        row?.paymentReference ||
+        row?.transactionId ||
+        fallback
+    ).trim() || "Cheque";
+  }
+  if (mode === "Bank") {
+    return String(
+      row?.referenceNo ||
+        row?.reference_no ||
+        row?.transactionId ||
+        row?.paymentReference ||
+        row?.bankAccount ||
+        fallback
+    ).trim() || "Bank";
+  }
+  return String(
+    fallback ||
+      row?.referenceNo ||
+      row?.reference_no ||
+      row?.paymentReference ||
+      row?.transactionId ||
+      row?.id ||
+      ""
+  ).trim();
+}
+
+function buildStatementDocumentIndexes(dataset) {
+  const invoicesById = new Map(
+    (Array.isArray(dataset?.invoices) ? dataset.invoices : []).map((row) => [
+      String(row?.id || "").trim(),
+      String(row?.invoiceNo || row?.id || "").trim()
+    ])
+  );
+  const purchasesById = new Map(
+    (Array.isArray(dataset?.purchases) ? dataset.purchases : []).map((row) => [
+      String(row?.id || "").trim(),
+      String(row?.billNumber || row?.invoiceNo || row?.id || "").trim()
+    ])
+  );
+  return { invoicesById, purchasesById };
+}
+
+function statementTransactionSort(left, right) {
+  if (left.date !== right.date) return String(left.date || "").localeCompare(String(right.date || ""));
+  return `${left.transactionType}:${left.invoiceNumber || ""}:${left.referenceNumber || ""}:${left.id}`.localeCompare(
+    `${right.transactionType}:${right.invoiceNumber || ""}:${right.referenceNumber || ""}:${right.id}`
+  );
+}
+
+function withStatementCreditMeta(row, values = {}) {
+  const debit = Math.max(0, parseNumber(values.debit ?? row?.debit));
+  const credit = Math.max(0, parseNumber(values.credit ?? row?.credit));
+  const tdsCreditAmount = Math.max(0, parseNumber(values.tdsCreditAmount ?? 0));
+  const netCreditAmount = Math.max(0, parseNumber(values.netCreditAmount ?? credit));
+  const normalCreditAmount = Math.max(
+    0,
+    parseNumber(values.normalCreditAmount ?? (netCreditAmount > 0 ? netCreditAmount - tdsCreditAmount : 0))
+  );
+
+  return {
+    ...row,
+    ...values,
+    debit,
+    credit,
+    tdsCreditAmount,
+    normalCreditAmount,
+    netCreditAmount: tdsCreditAmount + normalCreditAmount
+  };
+}
+
+function buildLegacyStatementPaymentRows(row, { direction, transactionType, documentNumber, amount, tdsAmount = 0, invoiceNumber = "" }) {
+  const normalCreditAmount = Math.max(0, parseNumber(amount));
+  const tdsCreditAmount = Math.max(0, parseNumber(tdsAmount));
+  const netCreditAmount = normalCreditAmount + tdsCreditAmount;
+  return withStatementCreditMeta({
+    id: `payment_legacy_${direction}_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}_${invoiceNumber || "entry"}`,
+    date: resolvePaymentDate(row),
+    transactionType,
+    transactionMode: statementPaymentMode(row?.mode),
+    referenceNumber: statementReferenceNumber(row, row?.paymentNo || row?.id || ""),
+    invoiceNumber,
+    debit: 0,
+    credit: netCreditAmount,
+    documentNumber
+  }, {
+    tdsCreditAmount,
+    normalCreditAmount,
+    netCreditAmount
+  });
 }
 
 function resolveInvoiceDate(row) {
@@ -820,6 +934,7 @@ export function buildAgingReport(dataset, filters = {}) {
 
 function statementTransactionsForParty(dataset, party) {
   if (!party) return [];
+  const { invoicesById, purchasesById } = buildStatementDocumentIndexes(dataset);
 
   if (normalizePartyType(party?.type) === PARTY_TYPES.supplier) {
     return [
@@ -830,7 +945,9 @@ function statementTransactionsForParty(dataset, party) {
           id: `purchase_${row?.id || row?.billNumber || Math.random().toString(16).slice(2)}`,
           date: resolvePurchaseDate(row),
           transactionType: "Purchase",
+          transactionMode: "-",
           referenceNumber: String(row?.billNumber || row?.invoiceNo || row?.id || "").trim(),
+          invoiceNumber: String(row?.billNumber || row?.invoiceNo || row?.id || "").trim(),
           debit: amountFromInvoice(row),
           credit: 0
         })),
@@ -839,44 +956,88 @@ function statementTransactionsForParty(dataset, party) {
         .filter((row) => !String(row?.referenceNo || row?.reference_no || "").startsWith("PO:"))
         .filter((row) => matchesPartyId(row, party.id, PARTY_TYPES.supplier))
         .filter((row) => normalizeText(row?.status) !== "cancelled" && normalizeText(row?.status) !== "draft")
-        .map((row) => ({
-          id: `payment_legacy_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}`,
-          date: resolvePaymentDate(row),
-          transactionType: "Payment",
-          referenceNumber: String(row?.paymentNo || row?.referenceNo || row?.reference_no || row?.id || "").trim(),
-          debit: 0,
-          credit: parseNumber(row?.amount)
-        })),
+        .flatMap((row) => {
+          const billId = String(row?.billId || row?.bill_id || "").trim();
+          const invoiceNumber = billId ? purchasesById.get(billId) || String(row?.billNo || "").trim() : "";
+          return [
+            buildLegacyStatementPaymentRows(row, {
+              direction: "out",
+              transactionType: "Payment",
+              documentNumber: String(row?.paymentNo || row?.id || "").trim(),
+              amount: row?.amount,
+              tdsAmount: row?.tdsAmount,
+              invoiceNumber
+            })
+          ];
+        }),
       ...(Array.isArray(dataset?.paymentOuts) ? dataset.paymentOuts : [])
         .filter((row) => normalizeText(row?.status) !== "draft")
         .filter((row) => matchesPartyId(row, party.id, PARTY_TYPES.supplier))
-        .map((row) => ({
-          id: `payment_premium_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}`,
-          date: resolvePaymentDate(row),
-          transactionType: "Payment",
-          referenceNumber: String(row?.paymentNo || row?.referenceNo || row?.transactionId || row?.id || "").trim(),
-          debit: 0,
-          credit: amountFromPayment(row, PARTY_TYPES.supplier)
-        }))
+        .flatMap((row) => {
+          const allocations = Array.isArray(row?.allocations) ? row.allocations : [];
+          const positiveAllocations = allocations.filter((entry) => Math.max(0, parseNumber(entry?.applyAmount)) > 0);
+          const allocatedCredit = positiveAllocations.reduce(
+            (sum, entry) => sum + paymentOutAllocationSettledAmount(row, entry),
+            0
+          );
+          const rows = positiveAllocations.map((allocation, index) => {
+            const billId = String(allocation?.billId || "").trim();
+            const netCreditAmount = paymentOutAllocationSettledAmount(row, allocation);
+            const tdsCreditAmount = paymentOutAllocationTdsShare(row, allocation);
+            return withStatementCreditMeta({
+              id: `payment_premium_out_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}_${index}`,
+              date: resolvePaymentDate(row),
+              transactionType: "Payment",
+              transactionMode: statementPaymentMode(row?.paymentMode),
+              referenceNumber: statementReferenceNumber(row, row?.paymentNo || row?.id || ""),
+              invoiceNumber: allocation?.billNo || purchasesById.get(billId) || "",
+              debit: 0,
+              credit: netCreditAmount,
+              documentNumber: String(row?.paymentNo || row?.id || "").trim()
+            }, {
+              tdsCreditAmount,
+              normalCreditAmount: Math.max(0, parseNumber(allocation?.applyAmount)),
+              netCreditAmount
+            });
+          });
+          const remainingCredit = Math.max(0, paymentOutSettledAmount(row) - allocatedCredit);
+          if (remainingCredit > 0 || !rows.length) {
+            rows.push(withStatementCreditMeta({
+              id: `payment_premium_out_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}_balance`,
+              date: resolvePaymentDate(row),
+              transactionType: "Payment",
+              transactionMode: statementPaymentMode(row?.paymentMode),
+              referenceNumber: statementReferenceNumber(row, row?.paymentNo || row?.id || ""),
+              invoiceNumber: "",
+              debit: 0,
+              credit: rows.length ? remainingCredit : paymentOutSettledAmount(row),
+              documentNumber: String(row?.paymentNo || row?.id || "").trim()
+            }, {
+              tdsCreditAmount: rows.length ? 0 : paymentOutTdsAmount(row),
+              normalCreditAmount: rows.length ? remainingCredit : Math.max(0, amountFromPayment(row, PARTY_TYPES.supplier)),
+              netCreditAmount: rows.length ? remainingCredit : paymentOutSettledAmount(row)
+            }));
+          }
+          return rows;
+        })
         .filter((row) => row.credit > 0),
       ...(Array.isArray(dataset?.debitNotes) ? dataset.debitNotes : [])
         .filter((row) => normalizeText(row?.status) === "applied")
         .filter((row) => matchesPartyId(row, party.id, PARTY_TYPES.supplier))
-        .map((row) => ({
-          id: `debit_${row?.id || row?.debitNoteNo || Math.random().toString(16).slice(2)}`,
-          date: resolveDebitDate(row),
-          transactionType: "Credit Note",
-          referenceNumber: String(row?.debitNoteNo || row?.id || "").trim(),
-          debit: 0,
-          credit: amountFromAdjustment(row)
-        }))
+        .map((row) =>
+          withStatementCreditMeta({
+            id: `debit_${row?.id || row?.debitNoteNo || Math.random().toString(16).slice(2)}`,
+            date: resolveDebitDate(row),
+            transactionType: "Credit Note",
+            transactionMode: "-",
+            referenceNumber: String(row?.debitNoteNo || row?.id || "").trim(),
+            invoiceNumber: "",
+            debit: 0,
+            credit: amountFromAdjustment(row)
+          })
+        )
         .filter((row) => row.credit > 0)
-    ].sort((left, right) => {
-      if (left.date !== right.date) return String(left.date || "").localeCompare(String(right.date || ""));
-      return `${left.transactionType}:${left.referenceNumber}:${left.id}`.localeCompare(
-        `${right.transactionType}:${right.referenceNumber}:${right.id}`
-      );
-    });
+    ].sort(statementTransactionSort);
   }
 
   return [
@@ -887,7 +1048,9 @@ function statementTransactionsForParty(dataset, party) {
         id: `invoice_${row?.id || row?.invoiceNo || Math.random().toString(16).slice(2)}`,
         date: resolveInvoiceDate(row),
         transactionType: "Invoice",
+        transactionMode: "-",
         referenceNumber: String(row?.invoiceNo || row?.id || "").trim(),
+        invoiceNumber: String(row?.invoiceNo || row?.id || "").trim(),
         debit: amountFromInvoice(row),
         credit: 0
       })),
@@ -896,55 +1059,103 @@ function statementTransactionsForParty(dataset, party) {
         .filter((row) => !String(row?.referenceNo || row?.reference_no || "").startsWith("PI:"))
         .filter((row) => matchesPartyId(row, party.id, PARTY_TYPES.customer))
         .filter((row) => normalizeText(row?.status) !== "cancelled" && normalizeText(row?.status) !== "draft")
-        .map((row) => ({
-          id: `payment_legacy_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}`,
-          date: resolvePaymentDate(row),
-          transactionType: "Payment",
-          referenceNumber: String(row?.paymentNo || row?.referenceNo || row?.reference_no || row?.id || "").trim(),
-          debit: 0,
-          credit: parseNumber(row?.amount)
-        })),
+        .flatMap((row) => {
+          const invoiceId = String(row?.invoiceId || row?.invoice_id || "").trim();
+          const invoiceNumber = invoiceId ? invoicesById.get(invoiceId) || String(row?.invoiceNo || "").trim() : "";
+          return [
+            buildLegacyStatementPaymentRows(row, {
+              direction: "in",
+              transactionType: "Payment",
+              documentNumber: String(row?.paymentNo || row?.id || "").trim(),
+              amount: row?.amountReceived ?? row?.amount,
+              tdsAmount: row?.tdsAmount,
+              invoiceNumber
+            })
+          ];
+        }),
       ...(Array.isArray(dataset?.paymentIns) ? dataset.paymentIns : [])
         .filter((row) => normalizeText(row?.status) !== "draft")
         .filter((row) => matchesPartyId(row, party.id, PARTY_TYPES.customer))
-        .map((row) => ({
-          id: `payment_premium_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}`,
-          date: resolvePaymentDate(row),
-          transactionType: "Payment",
-          referenceNumber: String(row?.receiptNo || row?.referenceNo || row?.paymentReference || row?.id || "").trim(),
-          debit: 0,
-          credit: paymentInSettledAmount(row)
-        }))
+        .flatMap((row) => {
+          const allocations = Array.isArray(row?.allocations) ? row.allocations : [];
+          const positiveAllocations = allocations.filter((entry) => Math.max(0, parseNumber(entry?.applyAmount)) > 0);
+          const allocatedCredit = positiveAllocations.reduce(
+            (sum, entry) => sum + paymentInAllocationSettledAmount(row, entry),
+            0
+          );
+          const rows = positiveAllocations.map((allocation, index) => {
+            const invoiceId = String(allocation?.invoiceId || "").trim();
+            const netCreditAmount = paymentInAllocationSettledAmount(row, allocation);
+            const tdsCreditAmount = paymentInAllocationTdsShare(row, allocation);
+            return withStatementCreditMeta({
+              id: `payment_premium_in_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}_${index}`,
+              date: resolvePaymentDate(row),
+              transactionType: "Payment",
+              transactionMode: statementPaymentMode(row?.paymentMode),
+              referenceNumber: statementReferenceNumber(row, row?.receiptNo || row?.id || ""),
+              invoiceNumber: allocation?.invoiceNo || invoicesById.get(invoiceId) || "",
+              debit: 0,
+              credit: netCreditAmount,
+              documentNumber: String(row?.receiptNo || row?.id || "").trim()
+            }, {
+              tdsCreditAmount,
+              normalCreditAmount: Math.max(0, parseNumber(allocation?.applyAmount)),
+              netCreditAmount
+            });
+          });
+          const remainingCredit = Math.max(0, paymentInSettledAmount(row) - allocatedCredit);
+          if (remainingCredit > 0 || !rows.length) {
+            rows.push(withStatementCreditMeta({
+              id: `payment_premium_in_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}_balance`,
+              date: resolvePaymentDate(row),
+              transactionType: "Payment",
+              transactionMode: statementPaymentMode(row?.paymentMode),
+              referenceNumber: statementReferenceNumber(row, row?.receiptNo || row?.id || ""),
+              invoiceNumber: "",
+              debit: 0,
+              credit: rows.length ? remainingCredit : paymentInSettledAmount(row),
+              documentNumber: String(row?.receiptNo || row?.id || "").trim()
+            }, {
+              tdsCreditAmount: rows.length ? 0 : paymentInTdsAmount(row),
+              normalCreditAmount: rows.length ? remainingCredit : Math.max(0, amountFromPayment(row, PARTY_TYPES.customer)),
+              netCreditAmount: rows.length ? remainingCredit : paymentInSettledAmount(row)
+            }));
+          }
+          return rows;
+        })
         .filter((row) => row.credit > 0),
       ...(Array.isArray(dataset?.legacyCreditNotes) ? dataset.legacyCreditNotes : [])
         .filter((row) => matchesPartyId(row, party.id, PARTY_TYPES.customer))
-        .map((row) => ({
-          id: `credit_legacy_${row?.id || row?.creditNoteNo || Math.random().toString(16).slice(2)}`,
-          date: resolveCreditDate(row),
-          transactionType: "Credit Note",
-          referenceNumber: String(row?.creditNoteNo || row?.id || "").trim(),
-          debit: 0,
-          credit: amountFromAdjustment(row)
-        }))
+        .map((row) =>
+          withStatementCreditMeta({
+            id: `credit_legacy_${row?.id || row?.creditNoteNo || Math.random().toString(16).slice(2)}`,
+            date: resolveCreditDate(row),
+            transactionType: "Credit Note",
+            transactionMode: "-",
+            referenceNumber: String(row?.creditNoteNo || row?.id || "").trim(),
+            invoiceNumber: "",
+            debit: 0,
+            credit: amountFromAdjustment(row)
+          })
+        )
         .filter((row) => row.credit > 0),
       ...(Array.isArray(dataset?.premiumCreditNotes) ? dataset.premiumCreditNotes : [])
         .filter((row) => normalizeText(row?.status) === "applied")
         .filter((row) => matchesPartyId(row, party.id, PARTY_TYPES.customer))
-        .map((row) => ({
-          id: `credit_premium_${row?.id || row?.creditNoteNo || Math.random().toString(16).slice(2)}`,
-          date: resolveCreditDate(row),
-          transactionType: "Credit Note",
-          referenceNumber: String(row?.creditNoteNo || row?.id || "").trim(),
-          debit: 0,
-          credit: amountFromAdjustment(row)
-        }))
+        .map((row) =>
+          withStatementCreditMeta({
+            id: `credit_premium_${row?.id || row?.creditNoteNo || Math.random().toString(16).slice(2)}`,
+            date: resolveCreditDate(row),
+            transactionType: "Credit Note",
+            transactionMode: "-",
+            referenceNumber: String(row?.creditNoteNo || row?.id || "").trim(),
+            invoiceNumber: "",
+            debit: 0,
+            credit: amountFromAdjustment(row)
+          })
+        )
         .filter((row) => row.credit > 0)
-    ].sort((left, right) => {
-      if (left.date !== right.date) return String(left.date || "").localeCompare(String(right.date || ""));
-      return `${left.transactionType}:${left.referenceNumber}:${left.id}`.localeCompare(
-        `${right.transactionType}:${right.referenceNumber}:${right.id}`
-      );
-    });
+    ].sort(statementTransactionSort);
 }
 
 export function buildPartyStatementReport(dataset, filters = {}, options = {}) {
@@ -969,7 +1180,7 @@ export function buildPartyStatementReport(dataset, filters = {}, options = {}) {
       toDate,
       openingBalance: 0,
       closingBalance: 0,
-      totals: { debit: 0, credit: 0, count: 0 },
+      totals: { debit: 0, credit: 0, tdsCredit: 0, normalCredit: 0, netCredit: 0, count: 0 },
       rows: [],
       ...paginate([], options.page, options.pageSize)
     };
@@ -1006,11 +1217,15 @@ export function buildPartyStatementReport(dataset, filters = {}, options = {}) {
     fromDate,
     toDate,
     openingBalance,
-    closingBalance: periodClosingBalance,
+    closingBalance: runningBalance,
+    periodNetChange: periodClosingBalance,
     endingBalance: runningBalance,
     totals: {
       debit: rows.reduce((sum, row) => sum + parseNumber(row.debit), 0),
       credit: rows.reduce((sum, row) => sum + parseNumber(row.credit), 0),
+      tdsCredit: rows.reduce((sum, row) => sum + parseNumber(row.tdsCreditAmount), 0),
+      normalCredit: rows.reduce((sum, row) => sum + parseNumber(row.normalCreditAmount), 0),
+      netCredit: rows.reduce((sum, row) => sum + parseNumber(row.netCreditAmount), 0),
       count: rows.length
     },
     allRows: rows,
