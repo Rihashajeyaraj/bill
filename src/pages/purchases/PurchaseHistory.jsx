@@ -298,7 +298,7 @@ export default function PurchaseHistory() {
                 <th className="px-3 py-3 font-semibold">TDS</th>
                 <th className="px-3 py-3 font-semibold">Payment</th>
                 <th className="px-3 py-3 font-semibold">Barcodes</th>
-                <th className="px-3 py-3 font-semibold">Actions</th>
+                <th className="px-3 py-3 font-semibold min-w-[260px]">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -362,8 +362,17 @@ export default function PurchaseHistory() {
                         <span className="text-xs text-slate-400">{barcodeLoading ? "Loading..." : "-"}</span>
                       )}
                     </td>
-                    <td className="px-3 py-3">
-                      <div className="flex flex-wrap gap-2">
+                    <td className="px-3 py-3 align-top">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            navigate(`/app/purchase/bill?billId=${encodeURIComponent(bill.id)}`)
+                          }
+                          className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Edit
+                        </button>
                         <button
                           type="button"
                           onClick={() => {

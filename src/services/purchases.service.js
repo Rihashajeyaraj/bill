@@ -83,14 +83,20 @@ async function fetchLatestRemotePurchaseNumber(organizationId, basePrefix) {
   return String((Array.isArray(data) ? data[0] : null)?.bill_no || "").trim();
 }
 
-async function purchaseNumberExistsRemotely(organizationId, billNumber) {
+async function purchaseNumberExistsRemotely(organizationId, billNumber, excludeId = "") {
   if (!isSupabaseConfigured || !supabase || !organizationId || !billNumber) return false;
-  const { data, error } = await supabase
+  let query = supabase
     .from("purchase_bills")
     .select("id")
     .eq("organization_id", organizationId)
-    .eq("bill_no", billNumber)
-    .limit(1);
+    .eq("bill_no", billNumber);
+
+  const ignoredId = String(excludeId || "").trim();
+  if (ignoredId) {
+    query = query.neq("id", ignoredId);
+  }
+
+  const { data, error } = await query.limit(1);
 
   if (error) {
     if (isMissingColumnError(error)) return false;
@@ -233,15 +239,16 @@ function setAll(list) {
   lsSetOrganizationScoped(LS_KEYS.purchases, list);
 }
 
-function applyPurchaseStockDelta(lines) {
+function applyPurchaseStockDelta(lines, direction = 1) {
   const itemLines = Array.isArray(lines) ? lines : [];
   if (!itemLines.length) return;
   const quantityByItemId = new Map();
+  const multiplier = Number(direction) === -1 ? -1 : 1;
 
   itemLines.forEach((line) => {
     const itemId = String(line?.itemId || line?.item_id || "").trim();
     if (!itemId) return;
-    const qty = Math.max(0, parseNumber(line?.qty ?? line?.quantity));
+    const qty = Math.max(0, parseNumber(line?.qty ?? line?.quantity)) * multiplier;
     if (!qty) return;
     quantityByItemId.set(itemId, (quantityByItemId.get(itemId) || 0) + qty);
   });
@@ -273,6 +280,73 @@ function applyPurchaseStockDelta(lines) {
   });
 
   lsSetOrganizationScoped(LS_KEYS.items, nextItems);
+}
+
+export function purchasesGetById(purchaseId) {
+  const normalizedId = String(purchaseId || "").trim();
+  if (!normalizedId) return null;
+  return getAll().find((entry) => String(entry?.id || "").trim() === normalizedId) || null;
+}
+
+function calculatePurchaseSummary(lines, totalsInput = {}) {
+  const safeLines = Array.isArray(lines) ? lines : [];
+  const totals = totalsInput && typeof totalsInput === "object" ? totalsInput : {};
+  const totalQtyFromLines = safeLines.reduce(
+    (sum, line) => sum + Math.max(0, parseNumber(line?.qty ?? line?.quantity)),
+    0
+  );
+  const subTotalFromLines = safeLines.reduce(
+    (sum, line) => sum + Math.max(0, parseNumber(line?.lineSubTotal ?? parseNumber(line?.qty) * parseNumber(line?.rate))),
+    0
+  );
+  const taxTotalFromLines = safeLines.reduce(
+    (sum, line) =>
+      sum +
+      parseNumber(
+        line?.lineTax ??
+          parseNumber(line?.cgstAmount) +
+            parseNumber(line?.sgstAmount) +
+            parseNumber(line?.igstAmount) +
+            parseNumber(line?.vatAmount)
+      ),
+    0
+  );
+
+  const totalQty = totalQtyFromLines || parseNumber(totals?.totalQty);
+  const subTotal = subTotalFromLines || parseNumber(totals?.subTotal);
+  const taxTotal = taxTotalFromLines || parseNumber(totals?.taxTotal);
+  const roundOff = parseNumber(totals?.roundOff);
+  const providedGrandTotal = parseNumber(totals?.grandTotal);
+
+  return {
+    totalQty,
+    subTotal,
+    taxTotal,
+    roundOff,
+    grandTotal: providedGrandTotal || subTotal + taxTotal + roundOff
+  };
+}
+
+function buildRemotePurchaseLines(billId, lines) {
+  return (Array.isArray(lines) ? lines : []).map((line, index) => ({
+    bill_id: billId,
+    item_id: looksLikeUuid(line?.itemId) ? line.itemId : null,
+    item_code: line?.itemCode || null,
+    description: line?.itemName || line?.name || `Line ${index + 1}`,
+    qty: parseNumber(line?.qty),
+    unit_price: parseNumber(line?.rate),
+    tax_rate: parseNumber(line?.tax),
+    taxable_amount: parseNumber(line?.lineSubTotal),
+    tax_amount: parseNumber(line?.lineTax),
+    tax_inclusive:
+      line?.taxInclusive === true ||
+      String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX",
+    cgst_amount: parseNumber(line?.cgstAmount),
+    sgst_amount: parseNumber(line?.sgstAmount),
+    igst_amount: parseNumber(line?.igstAmount),
+    vat_amount: parseNumber(line?.vatAmount ?? line?.lineTax),
+    line_total: parseNumber(line?.amount)
+  }));
 }
 
 function purchaseDateForFilter(entry) {
@@ -739,7 +813,7 @@ export async function purchasesCreate(bill) {
 
   setAll([next, ...getAll()]);
   companySyncDocumentCounter("purchase", effectiveBillNumber, { dateValue: billDate });
-  applyPurchaseStockDelta(next.lines);
+  applyPurchaseStockDelta(next.lines, 1);
   try {
     await createItemBarcodesForPurchase({
       purchaseId: id,
@@ -754,4 +828,196 @@ export async function purchasesCreate(bill) {
   await triggerCreditLimitNotifications();
   await triggerLowStockNotifications();
   return id;
+}
+
+export async function purchasesUpdate(purchaseId, bill) {
+  assertPurchaseWritePermission();
+
+  const existingId = String(purchaseId || bill?.id || "").trim();
+  if (!existingId) {
+    throw new Error("Purchase bill id is required.");
+  }
+
+  const existing = purchasesGetById(existingId);
+  if (!existing) {
+    throw new Error("Purchase bill not found.");
+  }
+
+  const now = new Date().toISOString();
+  const billDate = bill?.billDate || existing?.billDate || now.slice(0, 10);
+  const requestedBillNumber = String(bill?.billNumber || existing?.billNumber || "").trim();
+  if (!requestedBillNumber) {
+    throw new Error("Bill Number is required.");
+  }
+  if (hasPurchaseNumberConflict(requestedBillNumber, existingId)) {
+    throw new Error("Bill number already exists");
+  }
+
+  const actor = authGetUser();
+  const actorUserId = actor?.id || existing?.createdByUserId || null;
+  const actorName =
+    String(actor?.name || actor?.email || existing?.createdByName || existing?.createdBy || "").trim();
+  const organizationId = isSupabaseConfigured && supabase ? authGetOrganizationId() : "";
+  if (
+    organizationId &&
+    (await purchaseNumberExistsRemotely(
+      organizationId,
+      requestedBillNumber,
+      looksLikeUuid(existingId) ? existingId : ""
+    ))
+  ) {
+    throw new Error("Bill number already exists");
+  }
+
+  const lines = Array.isArray(bill?.lines) ? bill.lines : [];
+  const totals = bill?.totals || {};
+  const summary = calculatePurchaseSummary(lines, totals);
+  const matchedFinancialYear =
+    (await financialYearsEnsureForDate(billDate).catch(() => null)) ||
+    financialYearsResolveForDate(billDate);
+  const priorGrandTotal = parseNumber(existing?.totals?.grandTotal);
+  const priorBalance = Math.max(
+    0,
+    parseNumber(existing?.remainingBalance ?? existing?.totals?.balance ?? priorGrandTotal)
+  );
+  const settledAmount = Math.max(0, priorGrandTotal - priorBalance);
+  const nextBalance = Math.max(0, summary.grandTotal - settledAmount);
+  const nextStatus =
+    String(existing?.status || "").toLowerCase() === "cancelled"
+      ? "cancelled"
+      : deriveBillStatus(summary.grandTotal, nextBalance);
+
+  if (isSupabaseConfigured && supabase && organizationId && looksLikeUuid(existingId)) {
+    const remotePayload = {
+      financial_year_id: looksLikeUuid(matchedFinancialYear?.id) ? matchedFinancialYear.id : null,
+      bill_no: requestedBillNumber,
+      bill_date: billDate,
+      due_date: bill?.dueDate || existing?.dueDate || billDate,
+      supplier_id: looksLikeUuid(bill?.partyId) ? bill.partyId : null,
+      subtotal: summary.subTotal,
+      tax_total: summary.taxTotal,
+      grand_total: summary.grandTotal,
+      status: nextStatus,
+      metadata: {
+        country: bill?.country || existing?.country || "",
+        partyName: bill?.partyName || existing?.partyName || "",
+        createdByName: String(existing?.createdByName || actorName).trim(),
+        updatedByName: actorName,
+        partyAddress: bill?.partyAddress || existing?.partyAddress || "",
+        phone: bill?.phone || existing?.phone || "",
+        paymentType: bill?.paymentType || existing?.paymentType || "",
+        taxMode: bill?.taxMode || existing?.taxMode || "",
+        supplyType: bill?.supplyType || existing?.supplyType || null,
+        tax: bill?.totals?.tax || existing?.totals?.tax || null,
+        taxBreakup: bill?.totals?.taxBreakup || existing?.totals?.taxBreakup || null,
+        taxRate: parseNumber(bill?.totals?.taxRate ?? existing?.totals?.taxRate),
+        roundOff: summary.roundOff,
+        totalQty: summary.totalQty,
+        financialYearId: matchedFinancialYear?.id || "",
+        financialYearLabel: matchedFinancialYear?.label || "",
+        financialYearCode: matchedFinancialYear?.yearCode || ""
+      }
+    };
+
+    let updateResult = await supabase
+      .from("purchase_bills")
+      .update(remotePayload)
+      .eq("id", existingId)
+      .eq("organization_id", organizationId)
+      .select("id")
+      .single();
+    if (updateResult.error && isMissingColumnError(updateResult.error)) {
+      const { financial_year_id, ...legacyPayload } = remotePayload;
+      updateResult = await supabase
+        .from("purchase_bills")
+        .update(legacyPayload)
+        .eq("id", existingId)
+        .eq("organization_id", organizationId)
+        .select("id")
+        .single();
+    }
+    if (updateResult.error) {
+      throw new Error(normalizeSupabaseError(updateResult.error, "Failed to update purchase bill"));
+    }
+
+    const { error: deleteLinesError } = await supabase
+      .from("purchase_bill_items")
+      .delete()
+      .eq("bill_id", existingId);
+    if (deleteLinesError) {
+      throw new Error(normalizeSupabaseError(deleteLinesError, "Failed to refresh purchase bill items"));
+    }
+
+    const remoteLines = buildRemotePurchaseLines(existingId, lines);
+    if (remoteLines.length) {
+      let insertResult = await supabase.from("purchase_bill_items").insert(remoteLines);
+      if (insertResult.error?.code === "42703") {
+        const legacyLines = remoteLines.map(
+          ({ item_code, taxable_amount, tax_amount, tax_inclusive, ...line }) => line
+        );
+        insertResult = await supabase.from("purchase_bill_items").insert(legacyLines);
+      }
+      if (insertResult.error) {
+        throw new Error(normalizeSupabaseError(insertResult.error, "Failed to save purchase bill items"));
+      }
+    }
+  }
+
+  const next = annotateWithFinancialYear({
+    ...existing,
+    ...bill,
+    id: existingId,
+    billNumber: requestedBillNumber,
+    billDate,
+    dueDate: bill?.dueDate || existing?.dueDate || billDate,
+    country: bill?.country || existing?.country || "",
+    partyAddress: bill?.partyAddress || existing?.partyAddress || "",
+    totals: {
+      ...existing?.totals,
+      ...totals,
+      totalQty: summary.totalQty,
+      subTotal: summary.subTotal,
+      taxTotal: summary.taxTotal,
+      grandTotal: summary.grandTotal,
+      balance: nextBalance
+    },
+    taxMode: bill?.taxMode || existing?.taxMode || "",
+    supplyType: bill?.supplyType || existing?.supplyType || null,
+    remainingBalance: nextBalance,
+    status: nextStatus,
+    createdByUserId: existing?.createdByUserId || actorUserId,
+    createdByName: existing?.createdByName || actorName,
+    createdBy: existing?.createdBy || actorName || String(actorUserId || "").trim(),
+    updated_at: now,
+    lines: lines.map((line) => ({
+      ...line,
+      qty: parseNumber(line?.qty),
+      itemCode: line?.itemCode || "",
+      rate: parseNumber(line?.rate),
+      saleRate: parseNumber(line?.saleRate),
+      tax: parseNumber(line?.tax),
+      taxInclusive:
+        line?.taxInclusive === true ||
+        String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX",
+      priceTaxMode:
+        String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX"
+          ? "WITH_TAX"
+          : "WITHOUT_TAX",
+      lineSubTotal: parseNumber(line?.lineSubTotal),
+      lineTax: parseNumber(line?.lineTax),
+      cgstAmount: parseNumber(line?.cgstAmount),
+      sgstAmount: parseNumber(line?.sgstAmount),
+      igstAmount: parseNumber(line?.igstAmount),
+      vatAmount: parseNumber(line?.vatAmount),
+      amount: parseNumber(line?.amount)
+    }))
+  }, billDate);
+
+  setAll([next, ...getAll().filter((entry) => String(entry?.id || "").trim() !== existingId)]);
+  companySyncDocumentCounter("purchase", requestedBillNumber, { dateValue: billDate });
+  applyPurchaseStockDelta(existing?.lines || [], -1);
+  applyPurchaseStockDelta(next.lines, 1);
+  await triggerCreditLimitNotifications();
+  await triggerLowStockNotifications();
+  return existingId;
 }

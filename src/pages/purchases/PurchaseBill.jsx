@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Save, Search, Trash2, X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
@@ -11,7 +11,10 @@ import { listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../mod
 import { computeItemStock, listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
 import {
   fetchSupplierAddress,
-  purchasesCreate
+  purchasesCreate,
+  purchasesGetById,
+  purchasesSyncFromRemote,
+  purchasesUpdate
 } from "../../services/purchases.service";
 import { scanInvoiceFree } from "../../services/freeInvoiceScan.service";
 import { useOrganization } from "../../context/OrganizationContext";
@@ -24,7 +27,7 @@ import {
   paymentInsightsBySupplier,
   savePaymentOut
 } from "../../modules/paymentOut/store";
-import { canCreateEntries } from "../../services/roles";
+import { canCreateEntries, canEditEntries } from "../../services/roles";
 import { companyPeekDocumentNumber } from "../../services/company.service";
 import {
   getCanonicalCountryName,
@@ -203,9 +206,14 @@ function createLine(defaultTaxRate = 0) {
 
 export default function PurchaseBill() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const invoiceScanInputRef = useRef(null);
   const role = authGetRole();
   const canCreatePurchase = canCreateEntries(role);
+  const canEditPurchase = canEditEntries(role);
+  const editBillId = String(searchParams.get("billId") || "").trim();
+  const isEditMode = !!editBillId;
+  const canSavePurchase = isEditMode ? canEditPurchase : canCreatePurchase;
   const { country = "", currency = "", profile: company = {} } = useOrganization();
   const isIndiaOrg = country === "India";
   const companyTaxSettings = company?.settings?.tax || {};
@@ -221,6 +229,7 @@ export default function PurchaseBill() {
   const [items, setItems] = useState(() => listItems());
   const [partyId, setPartyId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [editBillLoading, setEditBillLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const party = useMemo(() => suppliers.find((x) => x.id === partyId) || null, [suppliers, partyId]);
 
@@ -248,6 +257,7 @@ export default function PurchaseBill() {
   const [billNumberManuallyEdited, setBillNumberManuallyEdited] = useState(false);
   const [billDate, setBillDate] = useState("");
   const [generateBarcodes, setGenerateBarcodes] = useState(true);
+  const [editingPaymentType, setEditingPaymentType] = useState("Unpaid");
   const [lines, setLines] = useState(() => [createLine(defaultLineTaxRate)]);
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
   const [lineItemPopover, setLineItemPopover] = useState({ top: 0, left: 0, width: 280 });
@@ -317,6 +327,58 @@ export default function PurchaseBill() {
   const suggestionMenuClassName =
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
 
+  function hydrateBillForEdit(bill) {
+    const existingLines = Array.isArray(bill?.lines) ? bill.lines : [];
+    const roundOffAmount = Number(bill?.totals?.roundOff || 0);
+
+    setPartyId(String(bill?.partyId || ""));
+    setPhone(String(bill?.phone || ""));
+    setSupplierSearchPhone(String(bill?.phone || "").replace(/\D/g, "").slice(-10));
+    setSupplierLookupQuery(String(bill?.partyName || ""));
+    setSupplierSearchError("");
+    setSupplierAddress(String(bill?.partyAddress || ""));
+    setBillNumber(String(bill?.billNumber || ""));
+    setBillNumberManuallyEdited(true);
+    setBillDate(String(bill?.billDate || ""));
+    setGenerateBarcodes(true);
+    setEditingPaymentType(String(bill?.paymentType || "Unpaid"));
+    setLines(
+      existingLines.length
+        ? existingLines.map((line, index) => ({
+            ...createLine(forceZeroTax ? 0 : defaultLineTaxRate),
+            id: line?.id || `line_${Date.now()}_${index}`,
+            itemId: String(line?.itemId || ""),
+            itemCode: String(line?.itemCode || ""),
+            itemName: String(line?.itemName || ""),
+            itemInput: String(line?.itemName || ""),
+            qty: Number(line?.qty || 0),
+            unit: normalizeUnit(line?.unit || "pcs"),
+            rate: Number(line?.rate || 0),
+            saleRate: Number(line?.saleRate || 0),
+            lowStockAlert: nonNegativeNumber(line?.lowStockAlert, 0),
+            priceTaxMode:
+              line?.taxInclusive === true ||
+              String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX"
+                ? "WITH_TAX"
+                : "WITHOUT_TAX",
+            tax: forceZeroTax ? 0 : Number(line?.tax ?? 0)
+          }))
+        : [createLine(forceZeroTax ? 0 : defaultLineTaxRate)]
+    );
+    setRoundOffEnabled(Math.abs(roundOffAmount) > 0);
+    setRoundOffValue(roundOffAmount.toFixed(2));
+    setMarkAsPaid(false);
+    setPaymentType("Cash");
+    setPaymentDate(String(bill?.billDate || ""));
+    setPaidAmount("");
+    setReferenceNo("");
+    setTransactionId("");
+    setChequeNo("");
+    setBankName("");
+    setPaymentNotes("");
+    setFormErrors({});
+  }
+
   function clearFormError(field) {
     setFormErrors((prev) => {
       if (!prev?.[field]) return prev;
@@ -363,6 +425,43 @@ export default function PurchaseBill() {
       mounted = false;
     };
   }, [toast, defaultLineTaxRate]);
+
+  useEffect(() => {
+    if (!isEditMode) return undefined;
+
+    let mounted = true;
+    async function loadBillForEdit() {
+      setEditBillLoading(true);
+      try {
+        let matched = purchasesGetById(editBillId);
+        if (!matched) {
+          const synced = await purchasesSyncFromRemote();
+          matched =
+            (Array.isArray(synced) ? synced : []).find(
+              (entry) => String(entry?.id || "").trim() === editBillId
+            ) || null;
+        }
+        if (!mounted) return;
+        if (!matched) {
+          toast.error("Purchase bill not found", "The selected purchase bill could not be loaded.");
+          navigate("/app/purchase/history", { replace: true });
+          return;
+        }
+        hydrateBillForEdit(matched);
+      } catch (error) {
+        if (!mounted) return;
+        toast.error("Failed to load purchase bill", error?.message || "Could not open edit mode.");
+        navigate("/app/purchase/history", { replace: true });
+      } finally {
+        if (mounted) setEditBillLoading(false);
+      }
+    }
+
+    void loadBillForEdit();
+    return () => {
+      mounted = false;
+    };
+  }, [defaultLineTaxRate, editBillId, forceZeroTax, isEditMode, navigate, toast]);
 
   useEffect(() => {
     let mounted = true;
@@ -1271,8 +1370,13 @@ export default function PurchaseBill() {
   }
 
   async function save() {
-    if (!canCreatePurchase) {
-      toast.error("Permission denied", "You do not have permission to create purchase bills.");
+    if (!canSavePurchase) {
+      toast.error(
+        "Permission denied",
+        isEditMode
+          ? "You do not have permission to edit purchase bills."
+          : "You do not have permission to create purchase bills."
+      );
       return;
     }
     const normalizedBillNumber =
@@ -1357,53 +1461,79 @@ export default function PurchaseBill() {
       }
 
       const effectiveBillNumber = normalizedBillNumber;
-      const effectivePaymentType = markAsPaid ? paymentType : "Unpaid";
-      const createdBillId = await purchasesCreate({
-        country,
-        partyId,
-        partyName: party?.name || "",
-        phone,
-        billNumber: effectiveBillNumber,
-        billDate,
-        paymentType: effectivePaymentType,
-        partyAddress: supplierAddress,
-        lines: validLines,
-        totals: {
-          totalQty: computed.totalQty,
-          subTotal: computed.subTotal,
-          taxTotal: computed.taxTotal,
-          tax: computed.tax,
-          taxBreakup: computed.tax.taxBreakup,
-          taxRate: computed.effectiveRate,
-          roundOff: computed.roundOff,
-          grandTotal: computed.finalTotal
-        },
-        taxMode: computed.tax.taxMode,
-        supplyType: computed.tax.supplyType || null,
-        barcodeOptions: {
-          enabled: generateBarcodes,
-          mode: "unit"
-        }
-      });
+      const effectivePaymentType = isEditMode ? editingPaymentType : markAsPaid ? paymentType : "Unpaid";
+      const savedBillId = isEditMode
+        ? await purchasesUpdate(editBillId, {
+            country,
+            partyId,
+            partyName: party?.name || "",
+            phone,
+            billNumber: effectiveBillNumber,
+            billDate,
+            paymentType: effectivePaymentType,
+            partyAddress: supplierAddress,
+            lines: validLines,
+            totals: {
+              totalQty: computed.totalQty,
+              subTotal: computed.subTotal,
+              taxTotal: computed.taxTotal,
+              tax: computed.tax,
+              taxBreakup: computed.tax.taxBreakup,
+              taxRate: computed.effectiveRate,
+              roundOff: computed.roundOff,
+              grandTotal: computed.finalTotal
+            },
+            taxMode: computed.tax.taxMode,
+            supplyType: computed.tax.supplyType || null
+          })
+        : await purchasesCreate({
+            country,
+            partyId,
+            partyName: party?.name || "",
+            phone,
+            billNumber: effectiveBillNumber,
+            billDate,
+            paymentType: effectivePaymentType,
+            partyAddress: supplierAddress,
+            lines: validLines,
+            totals: {
+              totalQty: computed.totalQty,
+              subTotal: computed.subTotal,
+              taxTotal: computed.taxTotal,
+              tax: computed.tax,
+              taxBreakup: computed.tax.taxBreakup,
+              taxRate: computed.effectiveRate,
+              roundOff: computed.roundOff,
+              grandTotal: computed.finalTotal
+            },
+            taxMode: computed.tax.taxMode,
+            supplyType: computed.tax.supplyType || null,
+            barcodeOptions: {
+              enabled: generateBarcodes,
+              mode: "unit"
+            }
+          });
 
-      const autoAppliedAdvanceRecords = applyAdvanceWalletToSupplierBill({
-        country,
-        supplierId: partyId,
-        billId: createdBillId,
-        billNo: effectiveBillNumber,
-        billDate,
-        billAmount: Number(computed.finalTotal || 0),
-        actor: authGetUser()?.name || authGetUser()?.email || "System User"
-      });
-      if (autoAppliedAdvanceRecords.length) {
-        await Promise.all(
-          autoAppliedAdvanceRecords.map((record) => syncPaymentOutRemote(record))
-        );
+      if (!isEditMode) {
+        const autoAppliedAdvanceRecords = applyAdvanceWalletToSupplierBill({
+          country,
+          supplierId: partyId,
+          billId: savedBillId,
+          billNo: effectiveBillNumber,
+          billDate,
+          billAmount: Number(computed.finalTotal || 0),
+          actor: authGetUser()?.name || authGetUser()?.email || "System User"
+        });
+        if (autoAppliedAdvanceRecords.length) {
+          await Promise.all(
+            autoAppliedAdvanceRecords.map((record) => syncPaymentOutRemote(record))
+          );
+        }
       }
 
       let paymentSaved = false;
       let paymentSavedUnapplied = false;
-      if (paymentAmount > 0) {
+      if (!isEditMode && paymentAmount > 0) {
         try {
           const payableBefore = outstandingBySupplier(country, partyId);
           const applyAmount = Math.min(paymentAmount, Math.max(0, Number(computed.finalTotal || 0) - advanceAppliedFromWallet));
@@ -1428,7 +1558,7 @@ export default function PurchaseBill() {
             amountPaid: paymentAmount,
             allocations: [
               {
-                billId: createdBillId,
+                billId: savedBillId,
                 billNo: effectiveBillNumber,
                 billDate,
                 billAmount: Number(computed.finalTotal || 0),
@@ -1489,6 +1619,8 @@ export default function PurchaseBill() {
           "Purchase bill saved",
           `Bill ${effectiveBillNumber} and Payment Out saved successfully.`
         );
+      } else if (isEditMode) {
+        toast.success("Purchase bill updated", `Bill ${effectiveBillNumber} updated successfully.`);
       } else {
         toast.success("Purchase bill saved", `Bill ${effectiveBillNumber} saved successfully.`);
       }
@@ -1515,8 +1647,12 @@ export default function PurchaseBill() {
   return (
     <div className="max-w-6xl space-y-6">
       <PageHeader
-        title="Purchase Bill"
-        subtitle="Search supplier by mobile and create the bill."
+        title={isEditMode ? "Edit Purchase Bill" : "Purchase Bill"}
+        subtitle={
+          isEditMode
+            ? "Update the selected purchase bill and save your changes."
+            : "Search supplier by mobile and create the bill."
+        }
         className="lg:items-center"
         right={
           <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-end lg:w-auto">
@@ -1547,10 +1683,17 @@ export default function PurchaseBill() {
           </div>
         }
       />
-      {!canCreatePurchase ? (
+      {!canSavePurchase ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-          Your role does not have purchase-bill create permission.
+          {isEditMode
+            ? "Your role does not have purchase-bill edit permission."
+            : "Your role does not have purchase-bill create permission."}
         </div>
+      ) : null}
+      {editBillLoading ? (
+        <Card className="p-4">
+          <p className="text-sm text-slate-500">Loading purchase bill for editing...</p>
+        </Card>
       ) : null}
 
       <Card className="p-4">
@@ -1907,7 +2050,7 @@ export default function PurchaseBill() {
           <button
             type="button"
             onClick={addLine}
-            disabled={!canCreatePurchase}
+            disabled={!canSavePurchase}
             className="rounded-2xl border border-slate-100 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2"
           >
             <Plus className="h-4 w-4" />
@@ -2155,6 +2298,14 @@ export default function PurchaseBill() {
           </datalist>
         </div>
         <div className="mt-5 grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {isEditMode ? (
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              <h3 className="text-sm font-semibold text-slate-900">Payment Handling</h3>
+              <p className="mt-1 text-xs text-slate-500">
+                Bill edits update the purchase entry only. Use Payment Out from Purchase History to manage linked payments.
+              </p>
+            </div>
+          ) : (
           <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
             <h3 className="text-sm font-semibold text-slate-900">Payment on Purchase</h3>
             <p className="mt-1 text-xs text-slate-500">Choose whether payment is done now.</p>
@@ -2318,6 +2469,7 @@ export default function PurchaseBill() {
               </p>
             )}
           </div>
+          )}
 
           <div className="rounded-2xl border border-slate-100 bg-white p-4">
             <h3 className="text-sm font-semibold text-slate-900">Summary</h3>
@@ -2457,11 +2609,11 @@ export default function PurchaseBill() {
           onClick={() => {
             void save();
           }}
-          disabled={!canCreatePurchase || saving || loading}
+          disabled={!canSavePurchase || saving || loading || editBillLoading}
           className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Save className="h-4 w-4" />
-          {saving ? "Saving..." : "Save Purchase Bill"}
+          {saving ? "Saving..." : isEditMode ? "Save Changes" : "Save Purchase Bill"}
         </button>
       </div>
       </div>
