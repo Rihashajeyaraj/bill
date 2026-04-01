@@ -896,6 +896,20 @@ export default function PaymentInPremium() {
         setSuccessMessage(`${saved.receiptNo} saved as ${saved.status}.`);
         setErrorMessage("");
       }
+      window.alert(
+        remoteResult?.savedLocallyOnly
+          ? `${saved.receiptNo} saved locally.`
+          : `${saved.receiptNo} saved as ${saved.status}.`
+      );
+      setPanelMode("feed");
+      setFlowMode("create");
+      setActiveStep(0);
+      setForm(null);
+      setActivePayment(null);
+      setDirty(false);
+      setUseAdvanceWallet(false);
+      setCustomerLookupQuery("");
+      setCustomerSearchError("");
       return saved;
     } catch (error: any) {
       setErrorMessage(error?.message || "Unable to save payment.");

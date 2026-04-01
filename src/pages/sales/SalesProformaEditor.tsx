@@ -776,20 +776,7 @@ export default function SalesProformaEditor() {
       } else {
         toast.success("Pro Forma Invoice saved", result?.proformaNo || "Saved successfully.");
       }
-      if (isNew && result?.id) {
-        navigate(`/app/sales/proformas/${encodeURIComponent(result.id)}`, { replace: true });
-      } else {
-        const refreshed = await salesProformaGetByIdRemote(result?.id || form.id);
-        if (refreshed) {
-          updateForm({
-            id: refreshed.id || form.id,
-            proformaNo: refreshed.proformaNo || form.proformaNo,
-            status: refreshed.status || form.status,
-            convertedDocumentId: refreshed.convertedDocumentId || form.convertedDocumentId,
-            convertedAt: refreshed.convertedAt || form.convertedAt
-          });
-        }
-      }
+      navigate("/app/sales/proformas/history", { replace: true });
     } catch (error: any) {
       toast.error("Save failed", error?.message || "Could not save Pro Forma Invoice.");
     } finally {

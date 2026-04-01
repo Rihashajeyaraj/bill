@@ -750,6 +750,13 @@ export default function PaymentOutPremium() {
       setRefreshKey((prev) => prev + 1);
       setDirty(false);
       window.alert(`Payment ${saved.paymentNo} saved as ${saved.status}.`);
+      setPanelMode("feed");
+      setActiveStep(0);
+      setForm(defaultPaymentForm(country, effectiveCurrency));
+      setActivePayment(null);
+      setDirty(false);
+      setSupplierLookupQuery("");
+      setSupplierSearchError("");
     } catch (error) {
       window.alert(error?.message || "Unable to save payment.");
     }

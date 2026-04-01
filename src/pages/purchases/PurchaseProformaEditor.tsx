@@ -673,18 +673,7 @@ export default function PurchaseProformaEditor() {
       } else {
         toast.success("Pro Forma Purchase Order saved", result?.proformaNo || "Saved successfully.");
       }
-      if (isNew && result?.id) {
-        navigate(`/app/purchase/proformas/${encodeURIComponent(result.id)}`, { replace: true });
-      } else {
-        const refreshed = await purchaseProformaGetByIdRemote(result?.id || form.id);
-        if (refreshed) {
-          updateForm({
-            id: refreshed.id || form.id,
-            proformaNo: refreshed.proformaNo || form.proformaNo,
-            status: refreshed.status || form.status
-          });
-        }
-      }
+      navigate("/app/purchase/proformas/history", { replace: true });
     } catch (error: any) {
       toast.error("Save failed", error?.message || "Could not save Pro Forma Purchase Order.");
     } finally {
