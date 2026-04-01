@@ -3,6 +3,7 @@ import { BookOpen, LifeBuoy, RefreshCw, Send } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import DataTable from "../components/DataTable";
+import FieldLabelText from "../components/FieldLabelText";
 import { useToast } from "../context/ToastContext";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
 import { formatDateTimeByPreference } from "../lib/formatPreferences";
@@ -121,7 +122,9 @@ export default function HelpSupport() {
           </div>
           <form onSubmit={handleSubmit} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
-              <label className="text-xs font-semibold text-slate-500">Subject</label>
+              <label className="text-xs font-semibold text-slate-500">
+                <FieldLabelText required>Subject</FieldLabelText>
+              </label>
               <input
                 value={form.subject}
                 onChange={(event) => setForm((prev) => ({ ...prev, subject: event.target.value }))}
@@ -173,7 +176,9 @@ export default function HelpSupport() {
             </div>
 
             <div className="md:col-span-2">
-              <label className="text-xs font-semibold text-slate-500">Message</label>
+              <label className="text-xs font-semibold text-slate-500">
+                <FieldLabelText required>Message</FieldLabelText>
+              </label>
               <textarea
                 value={form.message}
                 onChange={(event) => setForm((prev) => ({ ...prev, message: event.target.value }))}

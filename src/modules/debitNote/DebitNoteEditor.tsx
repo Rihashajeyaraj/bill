@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Loader2, Save, Search, X } from "lucide-react";
 import { COUNTRY_CONFIG, type CountryCode, type DebitStatus } from "./countryConfig";
 import DateInput from "../../components/DateInput";
+import FieldLabelText from "../../components/FieldLabelText";
 import type { PurchaseInvoice, DebitNoteRecord, SupplierOption } from "./store";
 import type { DebitNoteFormState } from "./types";
 import { formatMoney, parseNumber } from "./utils";
@@ -236,7 +237,9 @@ export default function DebitNoteEditor({
                 />
               </label>
               <label className="text-xs font-semibold text-slate-600">
-                Debit Note Date
+                <FieldLabelText required className="text-xs font-semibold text-slate-600">
+                  Debit Note Date
+                </FieldLabelText>
                 <DateInput
                   value={form.debitNoteDate}
                   onChange={(nextValue) => onUpdateForm("debitNoteDate", nextValue)}
@@ -245,7 +248,11 @@ export default function DebitNoteEditor({
                 {fieldErrors.debitNoteDate ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.debitNoteDate}</span> : null}
               </label>
               <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 md:col-span-2 xl:col-span-2">
-                <p className="text-xs font-semibold text-slate-600">Supplier Search</p>
+                <p className="text-xs font-semibold text-slate-600">
+                  <FieldLabelText required className="text-xs font-semibold text-slate-600">
+                    Supplier Search
+                  </FieldLabelText>
+                </p>
                 <div className="flex items-center gap-2">
                   <input
                     value={supplierSearchQuery}
@@ -420,7 +427,9 @@ export default function DebitNoteEditor({
                       />
                     </label>
                     <label className="text-xs font-semibold text-slate-600">
-                      Quantity
+                      <FieldLabelText required className="text-xs font-semibold text-slate-600">
+                        Quantity
+                      </FieldLabelText>
                       <input
                         type="number"
                         min={0}

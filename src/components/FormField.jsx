@@ -1,5 +1,6 @@
 import React from "react";
 import clsx from "clsx";
+import FieldLabelText from "./FieldLabelText";
 
 function parseLabelMeta(label) {
   if (typeof label !== "string") {
@@ -45,17 +46,13 @@ export default function FormField({
       data-invalid={hasError ? "true" : "false"}
     >
       <div className="flex flex-col gap-1">
-        <span className="text-sm font-semibold leading-6 app-main-text">
+        <FieldLabelText
+          className="text-sm font-semibold leading-6 app-main-text"
+          required={showIndicator && isRequired}
+          optional={showIndicator && !isRequired && isOptional}
+        >
           {labelMeta.text}
-          {showIndicator && isRequired ? (
-            <span className="ml-1 text-rose-600" aria-hidden="true">
-              *
-            </span>
-          ) : null}
-          {showIndicator && !isRequired && isOptional ? (
-            <span className="ml-1 text-xs font-medium app-muted-text">(Optional)</span>
-          ) : null}
-        </span>
+        </FieldLabelText>
         {hint ? <span className="text-xs leading-5 app-muted-text">{hint}</span> : null}
       </div>
       <div className="mt-2 flex flex-col">{children}</div>

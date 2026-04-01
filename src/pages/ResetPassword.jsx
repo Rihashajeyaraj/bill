@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Eye, EyeOff, KeyRound, LockKeyhole } from "lucide-react";
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
+import FieldLabelText from "../components/FieldLabelText";
 import { authResetPassword, authValidatePasswordResetToken } from "../services/auth.service";
 import twiteLogo from "../images/twite_ai_technologies_logo.jfif";
 
@@ -386,7 +387,9 @@ export default function ResetPassword() {
 
             {!validating && tokenValid ? (
               <form onSubmit={handleSubmit} className="rp-form">
-                <label className="rp-label" htmlFor="reset-password">New Password</label>
+                <label className="rp-label" htmlFor="reset-password">
+                  <FieldLabelText required>New Password</FieldLabelText>
+                </label>
                 <div className="rp-input-wrap">
                   <LockKeyhole className="rp-input-icon" size={18} />
                   <input
@@ -403,7 +406,9 @@ export default function ResetPassword() {
                   </button>
                 </div>
 
-                <label className="rp-label" htmlFor="reset-confirm-password">Confirm Password</label>
+                <label className="rp-label" htmlFor="reset-confirm-password">
+                  <FieldLabelText required>Confirm Password</FieldLabelText>
+                </label>
                 <div className="rp-input-wrap">
                   <KeyRound className="rp-input-icon" size={18} />
                   <input

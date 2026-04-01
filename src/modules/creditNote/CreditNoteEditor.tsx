@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Loader2, Save, Search, X } from "lucide-react";
 import { COUNTRY_CONFIG, type CountryCode, type CreditStatus } from "./countryConfig";
 import DateInput from "../../components/DateInput";
+import FieldLabelText from "../../components/FieldLabelText";
 import type { CreditInvoice, CreditNoteRecord, CustomerOption } from "./store";
 import type { CreditNoteFormState } from "./types";
 import { formatMoney, parseNumber } from "./utils";
@@ -288,7 +289,9 @@ export default function CreditNoteEditor({
                 />
               </label>
               <label className="text-xs font-semibold text-slate-600">
-                Credit Note Date
+                <FieldLabelText required className="text-xs font-semibold text-slate-600">
+                  Credit Note Date
+                </FieldLabelText>
                 <DateInput
                   value={form.creditNoteDate}
                   onChange={(nextValue) => onUpdateForm("creditNoteDate", nextValue)}
@@ -297,7 +300,11 @@ export default function CreditNoteEditor({
                 {fieldErrors.creditNoteDate ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.creditNoteDate}</span> : null}
               </label>
               <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 md:col-span-2 xl:col-span-2">
-                <p className="text-xs font-semibold text-slate-600">Customer Search</p>
+                <p className="text-xs font-semibold text-slate-600">
+                  <FieldLabelText required className="text-xs font-semibold text-slate-600">
+                    Customer Search
+                  </FieldLabelText>
+                </p>
                 <div className="flex items-center gap-2">
                   <input
                     value={customerSearchQuery}
@@ -492,7 +499,9 @@ export default function CreditNoteEditor({
                       />
                     </label>
                     <label className="text-xs font-semibold text-slate-600">
-                      Return Qty
+                      <FieldLabelText required className="text-xs font-semibold text-slate-600">
+                        Return Qty
+                      </FieldLabelText>
                       <input
                         type="number"
                         min={0}

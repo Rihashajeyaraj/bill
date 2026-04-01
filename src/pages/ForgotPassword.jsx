@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Send } from "lucide-react";
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
+import FieldLabelText from "../components/FieldLabelText";
 import { authRequestPasswordReset, authUsingSupabase } from "../services/auth.service";
 import twiteLogo from "../images/twite_ai_technologies_logo.jfif";
 
@@ -342,7 +343,9 @@ export default function ForgotPassword() {
                 </div>
               ) : null}
 
-              <label className="fp-label" htmlFor="forgot-email">Email</label>
+              <label className="fp-label" htmlFor="forgot-email">
+                <FieldLabelText required>Email</FieldLabelText>
+              </label>
               <div className="fp-input-wrap">
                 <input
                   id="forgot-email"

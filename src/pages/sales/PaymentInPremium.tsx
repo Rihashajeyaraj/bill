@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Search, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import DateInput from "../../components/DateInput";
+import FieldLabelText from "../../components/FieldLabelText";
 import {
   COUNTRY_CONFIG,
   COUNTRY_NAME_TO_CODE,
@@ -1191,7 +1192,11 @@ export default function PaymentInPremium() {
                   <FlowCard title="Customer" subtitle="Search and pick a customer to begin">
                     <div className="space-y-3">
                       <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs font-semibold text-slate-600">Customer Search</p>
+                        <p className="text-xs font-semibold text-slate-600">
+                          <FieldLabelText required className="text-xs font-semibold text-slate-600">
+                            Customer Search
+                          </FieldLabelText>
+                        </p>
                         <div className="flex flex-wrap items-center gap-2">
                           <input
                             value={customerLookupQuery}
@@ -1347,7 +1352,9 @@ export default function PaymentInPremium() {
                     <div className="space-y-3">
                       <div className="grid grid-cols-1 gap-3">
                         <label className="block">
-                          <span className="text-xs font-semibold text-slate-600">Received Amount</span>
+                          <FieldLabelText required className="text-xs font-semibold text-slate-600">
+                            Received Amount
+                          </FieldLabelText>
                           <input
                             type="text"
                             value={numberInputValue(form.amountReceived)}
@@ -1482,7 +1489,9 @@ export default function PaymentInPremium() {
                       </div>
                       {form.allocationMode === "linked" ? (
                         <label className="block">
-                          <span className="text-xs font-semibold text-slate-600">Invoice / Proforma Invoice</span>
+                          <FieldLabelText required className="text-xs font-semibold text-slate-600">
+                            Invoice / Proforma Invoice
+                          </FieldLabelText>
                           <select
                             value={form.selectedDocumentId}
                             disabled={readOnly || !form.customerId || !customerDocuments.length}
@@ -1540,7 +1549,9 @@ export default function PaymentInPremium() {
                         </p>
                       </div>
                       <label className="block">
-                        <span className="text-xs font-semibold text-slate-600">Payment Date</span>
+                        <FieldLabelText required className="text-xs font-semibold text-slate-600">
+                          Payment Date
+                        </FieldLabelText>
                         <DateInput value={form.paymentDate} disabled={readOnly} onChange={(nextValue) => updateForm("paymentDate", nextValue)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
                         {fieldErrors.paymentDate ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.paymentDate}</p> : null}
                       </label>
@@ -1568,7 +1579,12 @@ export default function PaymentInPremium() {
                       ) : null}
                       {(form.paymentMode === "Card" || form.paymentMode === "UPI" || form.paymentMode === "Online Gateway") ? <div><input value={form.transactionId} disabled={readOnly} onChange={(event) => updateForm("transactionId", event.target.value)} placeholder="Transaction ID" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.transactionId ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.transactionId}</p> : null}</div> : null}
                       <label className="block">
-                        <span className="text-xs font-semibold text-slate-600">{COUNTRY_CONFIG[country].registrationLabel}</span>
+                        <FieldLabelText
+                          required={COUNTRY_CONFIG[country].registrationRequired}
+                          className="text-xs font-semibold text-slate-600"
+                        >
+                          {COUNTRY_CONFIG[country].registrationLabel}
+                        </FieldLabelText>
                         <input value={form.registrationNumber} disabled={readOnly} onChange={(event) => updateForm("registrationNumber", event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
                       </label>
                       <label className="block rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">

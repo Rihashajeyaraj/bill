@@ -12,6 +12,7 @@ import {
   ChevronDown
 } from "lucide-react";
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
+import FieldLabelText from "../components/FieldLabelText";
 import {
   authLogin,
   authRegister,
@@ -867,7 +868,7 @@ export default function Login() {
               {isLogin ? (
                 <>
                   {/* Email */}
-                  <label><span className="lp-label">Email</span></label>
+                  <label><FieldLabelText required className="lp-label">Email</FieldLabelText></label>
                   <div className="lp-input-wrap">
                     <input
                       id="login-email"
@@ -881,7 +882,7 @@ export default function Login() {
                   </div>
 
                   {/* Password */}
-                  <label><span className="lp-label">Password</span></label>
+                  <label><FieldLabelText required className="lp-label">Password</FieldLabelText></label>
                   <div className="lp-input-wrap">
                     <input
                       id="login-password"
@@ -938,7 +939,7 @@ export default function Login() {
               ) : (
                 <>
                   {/* Full Name */}
-                  <label><span className="lp-label">Full Name (optional)</span></label>
+                  <label><FieldLabelText optional className="lp-label">Full Name</FieldLabelText></label>
                   <div className="lp-input-wrap">
                     <input id="signup-name" className="lp-input lp-input--plain" placeholder="Full name"
                       value={signupForm.name}
@@ -946,7 +947,7 @@ export default function Login() {
                   </div>
 
                   {/* Email */}
-                  <label><span className="lp-label">Email</span></label>
+                  <label><FieldLabelText required className="lp-label">Email</FieldLabelText></label>
                   <div className="lp-input-wrap">
                     <input id="signup-email" type="email" className="lp-input lp-input--plain" placeholder="Email address"
                       value={signupForm.email} autoComplete="email"
@@ -954,7 +955,7 @@ export default function Login() {
                   </div>
 
                   {/* Password */}
-                  <label><span className="lp-label">Password</span></label>
+                  <label><FieldLabelText required className="lp-label">Password</FieldLabelText></label>
                   <div className="lp-input-wrap">
                     <input id="signup-password" type={showPassword ? "text" : "password"}
                       className="lp-input lp-input--plain" placeholder="Enter your password"
@@ -967,7 +968,7 @@ export default function Login() {
                   </div>
 
                   {/* Confirm Password */}
-                  <label><span className="lp-label">Confirm Password</span></label>
+                  <label><FieldLabelText required className="lp-label">Confirm Password</FieldLabelText></label>
                   <div className="lp-input-wrap">
                     <input id="signup-confirm" type={showConfirmPassword ? "text" : "password"}
                       className="lp-input lp-input--plain" placeholder="Confirm your password"
@@ -981,7 +982,7 @@ export default function Login() {
 
                   <div className={`lp-signup-row${!isOwnerRole(signupForm.role) ? " lp-signup-row--with-code" : ""}`}>
                     <div className="lp-signup-field">
-                      <label><span className="lp-label">Role</span></label>
+                      <label><FieldLabelText required className="lp-label">Role</FieldLabelText></label>
                       <select
                         id="signup-role"
                         className="lp-select"
@@ -996,7 +997,7 @@ export default function Login() {
 
                     {!isOwnerRole(signupForm.role) && (
                       <div className="lp-signup-field">
-                        <label><span className="lp-label">Register Code</span></label>
+                        <label><FieldLabelText required className="lp-label">Register Code</FieldLabelText></label>
                         <div className="lp-input-wrap">
                           <input
                             id="signup-code"

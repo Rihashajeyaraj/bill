@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Plus, Search, X } from "lucide-react";
 import Card from "../../components/Card";
+import FieldLabelText from "../../components/FieldLabelText";
 import GradientButton from "../../components/GradientButton";
 import PageHeader from "../../components/PageHeader";
 import DateInput from "../../components/DateInput";
@@ -744,7 +745,9 @@ export default function PurchaseProformaEditor() {
                 />
               </label>
               <label className="text-sm text-slate-600">
-                Pro Forma Date
+                <FieldLabelText required className="text-sm text-slate-600">
+                  Pro Forma Date
+                </FieldLabelText>
                 <DateInput
                   className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                   value={form.proformaDate || ""}
@@ -767,7 +770,9 @@ export default function PurchaseProformaEditor() {
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
                 <label className="text-sm text-slate-600">
-                  Supplier Lookup
+                  <FieldLabelText required className="text-sm text-slate-600">
+                    Supplier Lookup
+                  </FieldLabelText>
                   <input
                     className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                     value={supplierLookupQuery}
@@ -1006,7 +1011,9 @@ export default function PurchaseProformaEditor() {
 
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
                       <label className="text-xs text-slate-600 xl:col-span-2">
-                        Item
+                        <FieldLabelText required className="text-xs text-slate-600">
+                          Item
+                        </FieldLabelText>
                         <div className="relative">
                           <input
                             className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 pr-8 text-sm"
@@ -1038,7 +1045,9 @@ export default function PurchaseProformaEditor() {
                       </label>
 
                       <label className="text-xs text-slate-600">
-                        Qty
+                        <FieldLabelText required className="text-xs text-slate-600">
+                          Qty
+                        </FieldLabelText>
                         <input
                           type="number"
                           min={0}

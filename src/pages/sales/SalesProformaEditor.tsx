@@ -3,6 +3,7 @@ import { Plus, Search, X } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import Card from "../../components/Card";
+import FieldLabelText from "../../components/FieldLabelText";
 import GradientButton from "../../components/GradientButton";
 import PageHeader from "../../components/PageHeader";
 import DateInput from "../../components/DateInput";
@@ -900,7 +901,9 @@ export default function SalesProformaEditor() {
                 />
               </label>
               <label className="text-sm text-slate-600">
-                Pro Forma Date
+                <FieldLabelText required className="text-sm text-slate-600">
+                  Pro Forma Date
+                </FieldLabelText>
                 <DateInput
                   className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm ${
                     validation?.proformaDate ? "border-rose-300" : "border-slate-200"
@@ -933,7 +936,9 @@ export default function SalesProformaEditor() {
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
                 <label className="text-sm text-slate-600">
-                  Search Customer
+                  <FieldLabelText required className="text-sm text-slate-600">
+                    Search Customer
+                  </FieldLabelText>
                   <input
                     className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                     value={customerLookupQuery}
