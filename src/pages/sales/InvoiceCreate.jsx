@@ -1430,8 +1430,8 @@ export default function InvoiceCreate() {
   const invoiceItemGridClassName =
     "grid grid-cols-[minmax(260px,2.6fr)_minmax(180px,1.7fr)_minmax(88px,0.8fr)_minmax(92px,0.9fr)_minmax(110px,1fr)_minmax(110px,1fr)_minmax(96px,0.85fr)_minmax(124px,1fr)_minmax(124px,1fr)] gap-3";
   const invoiceLineInputClassName =
-    "h-10 min-w-0 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm leading-5 outline-none";
-  const invoiceLineInputRightClassName = `${invoiceLineInputClassName} text-right tabular-nums`;
+    "h-10 min-w-0 w-full rounded-xl border border-slate-200 bg-white px-3 text-center text-sm leading-5 outline-none";
+  const invoiceLineInputRightClassName = `${invoiceLineInputClassName} tabular-nums`;
 
   function getOpenBatchRows(itemId) {
     const rows = Array.isArray(itemBatchMap[itemId]) ? itemBatchMap[itemId] : [];
@@ -2750,16 +2750,16 @@ export default function InvoiceCreate() {
                     <div className="overflow-x-auto">
                       <div className="min-w-[1280px]">
                         <div className="border-b border-slate-100 bg-slate-50 px-3 py-2.5">
-                          <div className={`${invoiceItemGridClassName} items-center text-xs font-semibold text-slate-600`}>
+                          <div className={`${invoiceItemGridClassName} items-center text-center text-xs font-semibold text-slate-600`}>
                             <span>Item</span>
                             <span>{dynamicBatchColumnHeader}</span>
-                            <span className="text-right">Qty</span>
+                            <span>Qty</span>
                             <span>Unit</span>
-                            <span className="text-right">Rate</span>
-                            <span className="text-right">Discount</span>
-                            <span className="text-right">Tax %</span>
-                            <span className="text-right">Net Amount</span>
-                            <span className="text-right">Total Amount</span>
+                            <span>Rate</span>
+                            <span>Discount</span>
+                            <span>Tax %</span>
+                            <span>Net Amount</span>
+                            <span>Total Amount</span>
                           </div>
                         </div>
 
@@ -2777,7 +2777,7 @@ export default function InvoiceCreate() {
 
                               return (
                                 <div key={r.id} className="px-3 py-2.5">
-                                  <div className={`${invoiceItemGridClassName} items-start`}>
+                                  <div className={`${invoiceItemGridClassName} items-start text-center`}>
                                     <div className="min-w-0">
                                       <div className="relative">
                                         <input
@@ -2818,7 +2818,7 @@ export default function InvoiceCreate() {
                                           </button>
                                         ) : null}
                                       </div>
-                                      <div className="mt-1 flex items-center justify-between gap-2">
+                                      <div className="mt-1 flex items-center justify-center gap-2">
                                         <span className={itemTypeBadgeClassName(rowType)}>
                                           {selectedItem ? normalizeInvoiceItemType(selectedItem?.type) : rowType}
                                         </span>
@@ -2841,14 +2841,14 @@ export default function InvoiceCreate() {
                                           placeholder="HSN / SAC"
                                         />
                                       ) : !r.itemId ? (
-                                        <div className="flex h-10 items-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-400">
+                                        <div className="flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-center text-xs text-slate-400">
                                           Select product
                                         </div>
                                       ) : (() => {
                                         const batchRows = getOpenBatchRows(r.itemId);
                                         if (!batchRows.length) {
                                           return (
-                                            <div className="flex h-10 items-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-400">
+                                            <div className="flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-center text-xs text-slate-400">
                                               No open batch
                                             </div>
                                           );
@@ -2955,11 +2955,11 @@ export default function InvoiceCreate() {
                                       inputMode="decimal"
                                     />
 
-                                    <div className="flex h-10 min-w-0 items-center justify-end rounded-xl border border-slate-200 bg-slate-50 px-3 text-right text-sm font-semibold tabular-nums text-slate-700">
+                                    <div className="flex h-10 min-w-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-center text-sm font-semibold tabular-nums text-slate-700">
                                       {money(net)}
                                     </div>
 
-                                    <div className="flex h-10 min-w-0 items-center justify-end rounded-xl border border-slate-200 bg-slate-50 px-3 text-right text-sm font-semibold tabular-nums text-slate-900">
+                                    <div className="flex h-10 min-w-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-center text-sm font-semibold tabular-nums text-slate-900">
                                       {money(total)}
                                     </div>
                                   </div>

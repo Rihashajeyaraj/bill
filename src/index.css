@@ -248,6 +248,16 @@ input[type="number"]::-webkit-inner-spin-button {
   }
 }
 
+@layer base {
+  th {
+    text-align: center !important;
+  }
+
+  td {
+    text-align: center !important;
+  }
+}
+
 @layer components {
   .card {
     @apply border shadow-soft rounded-card;

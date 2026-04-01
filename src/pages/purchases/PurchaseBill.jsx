@@ -2078,15 +2078,15 @@ export default function PurchaseBill() {
               <tr>
                 <th className="px-3 py-3 font-semibold">#</th>
                 <th className="px-3 py-3 font-semibold">Item</th>
-                <th className="px-3 py-3 text-right font-semibold">Qty</th>
+                <th className="px-3 py-3 font-semibold">Qty</th>
                 <th className="px-3 py-3 font-semibold">Unit</th>
-                <th className="px-3 py-3 text-right font-semibold">Rate</th>
-                <th className="px-3 py-3 text-right font-semibold">Sell Rate</th>
-                <th className="px-3 py-3 text-right font-semibold">Low Stock Threshold</th>
-                <th className="px-3 py-3 text-right font-semibold">Tax %</th>
-                <th className="px-3 py-3 font-semibold text-right">Net Amount</th>
-                <th className="px-3 py-3 font-semibold text-right">Total Amount</th>
-                <th className="px-3 py-3 font-semibold text-right"></th>
+                <th className="px-3 py-3 font-semibold">Rate</th>
+                <th className="px-3 py-3 font-semibold">Sell Rate</th>
+                <th className="px-3 py-3 font-semibold">Low Stock Threshold</th>
+                <th className="px-3 py-3 font-semibold">Tax %</th>
+                <th className="px-3 py-3 font-semibold">Net Amount</th>
+                <th className="px-3 py-3 font-semibold">Total Amount</th>
+                <th className="px-3 py-3 font-semibold"></th>
               </tr>
             </thead>
             <tbody>
@@ -2117,7 +2117,7 @@ export default function PurchaseBill() {
                           handleItemInput(line.id, e.target.value);
                           updateLineItemPopoverPosition(e.currentTarget);
                         }}
-                        className="w-full rounded-xl border border-slate-100 bg-white px-2.5 py-2 pr-8 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                        className="w-full rounded-xl border border-slate-100 bg-white px-2.5 py-2 pr-8 text-center text-sm outline-none focus:ring-2 focus:ring-blue-100"
                         placeholder="Search by product name or code"
                       />
                       {(line.itemId || line.itemInput || line.itemName) ? (
@@ -2160,7 +2160,7 @@ export default function PurchaseBill() {
                         }
                         updateLine(line.id, { qty: rawValue });
                       }}
-                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-center text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
                       inputMode="decimal"
                     />
                   </td>
@@ -2170,7 +2170,7 @@ export default function PurchaseBill() {
                       onChange={(e) => updateLine(line.id, { unit: e.target.value })}
                       onBlur={(e) => updateLine(line.id, { unit: normalizeUnit(e.target.value) })}
                       list="purchase-bill-unit-options"
-                      className="w-full min-w-0 rounded-xl border border-slate-100 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 bg-white px-3 py-2 text-center text-sm outline-none focus:ring-2 focus:ring-blue-100"
                       placeholder="Unit"
                     />
                   </td>
@@ -2181,7 +2181,7 @@ export default function PurchaseBill() {
                       onChange={(e) =>
                         updateLine(line.id, { rate: normalizeFormattedNumberInput(e.target.value) })
                       }
-                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-center text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
                       inputMode="decimal"
                     />
                   </td>
@@ -2191,7 +2191,7 @@ export default function PurchaseBill() {
                       min="0"
                       value={line.saleRate ?? ""}
                       onChange={(e) => updateLine(line.id, { saleRate: e.target.value })}
-                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-center text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
                     />
                   </td>
                   <td className="px-3 py-3">
@@ -2200,7 +2200,7 @@ export default function PurchaseBill() {
                       min="0"
                       value={line.lowStockAlert ?? 0}
                       onChange={(e) => updateLine(line.id, { lowStockAlert: e.target.value })}
-                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-center text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
                       placeholder="0"
                     />
                   </td>
@@ -2214,21 +2214,21 @@ export default function PurchaseBill() {
                         if (forceZeroTax) return;
                         updateLine(line.id, { tax: e.target.value });
                       }}
-                      className="w-full min-w-0 rounded-xl border border-slate-100 bg-white px-3 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500"
+                      className="w-full min-w-0 rounded-xl border border-slate-100 bg-white px-3 py-2 text-center text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500"
                       disabled={forceZeroTax}
                     />
                   </td>
-                  <td className="px-3 py-3 text-right font-medium tabular-nums text-slate-800">
+                  <td className="px-3 py-3 font-medium tabular-nums text-slate-800">
                     {money(line.lineSubTotal)}
                   </td>
-                  <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-900">
+                  <td className="px-3 py-3 font-semibold tabular-nums text-slate-900">
                     {money(line.amount)}
                   </td>
-                  <td className="px-3 py-3 text-right">
+                  <td className="px-3 py-3">
                     <button
                       type="button"
                       onClick={() => removeLine(line.id)}
-                      className="h-8 w-8 rounded-full border border-slate-100 bg-white hover:bg-rose-50 flex items-center justify-center"
+                      className="mx-auto flex h-8 w-8 items-center justify-center rounded-full border border-slate-100 bg-white hover:bg-rose-50"
                       title="Delete row"
                     >
                       <Trash2 className="h-4 w-4 text-rose-500" />

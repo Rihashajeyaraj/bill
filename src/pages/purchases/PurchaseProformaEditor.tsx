@@ -1044,7 +1044,7 @@ export default function PurchaseProformaEditor() {
                         ) : null}
                       </label>
 
-                      <label className="text-xs text-slate-600">
+                      <label className="text-center text-xs text-slate-600">
                         <FieldLabelText required className="text-xs text-slate-600">
                           Qty
                         </FieldLabelText>
@@ -1052,7 +1052,7 @@ export default function PurchaseProformaEditor() {
                           type="number"
                           min={0}
                           step="0.001"
-                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-right text-sm"
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-center text-sm"
                           value={typeof line.qty === "number" ? (line.qty === 0 ? "" : line.qty) : (line.qty ?? "")}
                           disabled={locked}
                           onChange={(event) => {
@@ -1076,10 +1076,10 @@ export default function PurchaseProformaEditor() {
                         />
                       </label>
 
-                      <label className="text-xs text-slate-600">
+                      <label className="text-center text-xs text-slate-600">
                         Unit
                         <input
-                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-sm"
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-center text-sm"
                           value={line.unit ?? ""}
                           list="purchase-proforma-unit-options"
                           disabled={locked}
@@ -1088,26 +1088,26 @@ export default function PurchaseProformaEditor() {
                         />
                       </label>
 
-                      <label className="text-xs text-slate-600">
+                      <label className="text-center text-xs text-slate-600">
                         Rate
                         <input
                           type="number"
                           min={0}
                           step="0.01"
-                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-right text-sm"
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-center text-sm"
                           value={typeof line.rate === "number" ? (line.rate === 0 ? "" : line.rate) : (line.rate ?? "")}
                           disabled={locked}
                           onChange={(event) => updateLine(line.id, { rate: event.target.value })}
                         />
                       </label>
 
-                      <label className="text-xs text-slate-600">
+                      <label className="text-center text-xs text-slate-600">
                         Tax %
                         <input
                           type="number"
                           min={0}
                           step="0.01"
-                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-right text-sm"
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-center text-sm"
                           value={typeof line.taxRate === "number" ? (line.taxRate === 0 ? "" : line.taxRate) : (line.taxRate ?? "")}
                           disabled={locked}
                           onChange={(event) => updateLine(line.id, { taxRate: event.target.value })}
@@ -1115,7 +1115,7 @@ export default function PurchaseProformaEditor() {
                       </label>
                     </div>
 
-                    <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-right">
+                    <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-center">
                       <p className="text-[11px] text-slate-500">Line Amount</p>
                       <p className="text-sm font-semibold text-slate-900">{lineAmount(line).toFixed(2)}</p>
                     </div>

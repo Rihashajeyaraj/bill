@@ -321,8 +321,8 @@ export default function SalesProformaEditor() {
   const suggestionMenuClassName =
     "absolute z-30 mt-1 max-h-52 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl";
   const lineItemInputClassName =
-    "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm leading-5 outline-none";
-  const lineItemInputRightClassName = `${lineItemInputClassName} min-w-0 px-2 text-right tabular-nums`;
+    "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-center text-sm leading-5 outline-none";
+  const lineItemInputRightClassName = `${lineItemInputClassName} min-w-0 px-2 tabular-nums`;
   const customerSearchTerm = String(customerLookupQuery || "").trim();
   const customerLookupResults = useMemo(() => {
     const query = customerSearchTerm.toLowerCase();
@@ -1179,13 +1179,13 @@ export default function SalesProformaEditor() {
                   <thead className="bg-slate-50 text-slate-600">
                     <tr>
                       <th className="px-3 py-2.5 align-middle font-semibold">Item</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Qty</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle font-semibold">Qty</th>
                       <th className="px-3 py-2.5 align-middle font-semibold">Unit</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Rate</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Discount %</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Discount Amt</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Tax %</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 align-middle text-right font-semibold">Amount</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle font-semibold">Rate</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle font-semibold">Discount %</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle font-semibold">Discount Amt</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle font-semibold">Tax %</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 align-middle font-semibold">Amount</th>
                       <th className="px-3 py-2.5 align-middle font-semibold">Action</th>
                     </tr>
                   </thead>
@@ -1338,7 +1338,7 @@ export default function SalesProformaEditor() {
                           />
                         </td>
                         <td className="px-3 py-2 align-middle">
-                          <div className="flex h-10 items-center justify-end overflow-hidden rounded-xl border border-slate-200 bg-slate-50 px-3 text-right font-semibold tabular-nums text-slate-900 whitespace-nowrap">
+                          <div className="flex h-10 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50 px-3 text-center font-semibold tabular-nums text-slate-900 whitespace-nowrap">
                             {formatDecimalByPreference(lineAmount(line))}
                           </div>
                         </td>
