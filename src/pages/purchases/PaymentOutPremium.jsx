@@ -822,14 +822,14 @@ export default function PaymentOutPremium() {
             <FlowCard title="Total Payments" subtitle="Count of supplier payments">
               <p className="text-2xl font-bold text-slate-900">{summary.count}</p>
             </FlowCard>
-            <FlowCard title="Cash Paid" subtitle="Actual outgoing payment">
+            <FlowCard title="Amount Paid" subtitle="Actual outgoing payment">
               <p className="text-2xl font-bold text-slate-900">{formatMoney(summary.totalPaid, effectiveCurrency)}</p>
             </FlowCard>
             <FlowCard title="Total TDS" subtitle="Deducted on supplier payments">
               <p className="text-2xl font-bold text-sky-700">{formatMoney(summary.totalTds, effectiveCurrency)}</p>
             </FlowCard>
-            <FlowCard title="Cash Advance Balance" subtitle="Cash kept on supplier account">
-              <p className="text-2xl font-bold text-emerald-700">{formatMoney(summary.totalUnapplied, effectiveCurrency)}</p>
+            <FlowCard title="Advance Balance" subtitle="Amount kept on supplier account">
+              <p className="text-2xl font-bold text-slate-900">{formatMoney(summary.totalUnapplied, effectiveCurrency)}</p>
             </FlowCard>
           </div>
 
@@ -919,10 +919,10 @@ export default function PaymentOutPremium() {
                     <th className="px-3 py-3 font-semibold">Supplier</th>
                     <th className="px-3 py-3 font-semibold">Mode</th>
                     <th className="px-3 py-3 font-semibold">Reference</th>
-                    <th className="px-3 py-3 font-semibold text-right">Cash Paid</th>
+                    <th className="px-3 py-3 font-semibold text-right">Amount Paid</th>
                     <th className="px-3 py-3 font-semibold text-right">TDS</th>
                     <th className="px-3 py-3 font-semibold text-right">Total Settled</th>
-                    <th className="px-3 py-3 font-semibold text-right">Cash Advance</th>
+                    <th className="px-3 py-3 font-semibold text-right">Advance Balance</th>
                     <th className="px-3 py-3 font-semibold">Status</th>
                     <th className="px-3 py-3 font-semibold">Actions</th>
                   </tr>
@@ -1183,7 +1183,7 @@ export default function PaymentOutPremium() {
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block">
                       <span className="text-xs font-semibold text-slate-600">
-                        {form.allocationMode === "linked" && selectedBill ? "Final Payable Amount" : "Cash Paid"}
+                        {form.allocationMode === "linked" && selectedBill ? "Final Payable Amount" : "Amount Paid"}
                       </span>
                       <input
                         type="text"
@@ -1372,7 +1372,7 @@ export default function PaymentOutPremium() {
                 </div>
               </FlowCard>
 
-              <FlowCard title="Advance Handling" subtitle="Cash advance after invoice allocation">
+              <FlowCard title="Advance Handling" subtitle="Advance after invoice allocation">
                 <div className="space-y-3">
                   {selectedBill ? (
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -1390,11 +1390,11 @@ export default function PaymentOutPremium() {
                     </div>
                   ) : null}
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <p className="text-sm font-semibold text-slate-900">Cash Advance Balance</p>
-                    <p className="mt-2 text-2xl font-bold text-emerald-700">{formatMoney(unappliedAmount, effectiveCurrency)}</p>
+                    <p className="text-sm font-semibold text-slate-900">Advance Balance</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900">{formatMoney(unappliedAmount, effectiveCurrency)}</p>
                     <p className="mt-2 text-xs text-slate-500">
                       {form.allocationMode === "linked"
-                        ? "Any cash amount above the selected invoice pending amount stays on the supplier account as advance. TDS is treated as settlement, not cash advance."
+                        ? "Any amount above the selected invoice pending amount stays on the supplier account as advance. TDS is treated as settlement, not advance."
                         : "Normal payment entries are saved without purchase invoice linking."}
                     </p>
                   </div>
@@ -1402,7 +1402,7 @@ export default function PaymentOutPremium() {
                     <p className="text-sm font-semibold text-slate-900">Total Settlement</p>
                     <p className="mt-2 text-2xl font-bold text-slate-900">{formatMoney(totalSettled, effectiveCurrency)}</p>
                     <p className="mt-2 text-xs text-slate-500">
-                      Cash paid {formatMoney(amountPaid, effectiveCurrency)} + TDS {formatMoney(tdsAmount, effectiveCurrency)}
+                      Amount paid {formatMoney(amountPaid, effectiveCurrency)} + TDS {formatMoney(tdsAmount, effectiveCurrency)}
                     </p>
                   </div>
                   {!form.supplierId ? (
@@ -1428,20 +1428,20 @@ export default function PaymentOutPremium() {
                   </div>
                   <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                     <div className="rounded-xl border border-slate-200 p-3">
-                      <p className="text-slate-500">Cash Paid</p>
+                      <p className="text-slate-500">Amount Paid</p>
                       <p className="text-base font-semibold text-slate-900">{formatMoney(amountPaid, effectiveCurrency)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-3">
                       <p className="text-slate-500">TDS Amount</p>
-                      <p className="text-base font-semibold text-sky-700">{formatMoney(tdsAmount, effectiveCurrency)}</p>
+                      <p className={`text-base font-semibold ${tdsAmount < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatMoney(tdsAmount, effectiveCurrency)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-3">
                       <p className="text-slate-500">Total Settled</p>
-                      <p className="text-base font-semibold text-emerald-700">{formatMoney(totalSettled, effectiveCurrency)}</p>
+                      <p className="text-base font-semibold text-slate-900">{formatMoney(totalSettled, effectiveCurrency)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-3">
-                      <p className="text-slate-500">Cash Advance</p>
-                      <p className="text-base font-semibold text-amber-700">{formatMoney(unappliedAmount, effectiveCurrency)}</p>
+                      <p className="text-slate-500">Advance Balance</p>
+                      <p className="text-base font-semibold text-slate-900">{formatMoney(unappliedAmount, effectiveCurrency)}</p>
                       <p className="mt-1 text-[11px] text-slate-500">
                         Extra paid amount stays on the supplier account.
                       </p>

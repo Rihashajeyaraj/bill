@@ -1034,8 +1034,8 @@ export default function PaymentInPremium() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
                 <FlowCard title="Total Payments" subtitle="Count of receipts">{loading ? <PaymentInSkeleton /> : <p className="text-2xl font-bold text-slate-900">{summary?.count || 0}</p>}</FlowCard>
                 <FlowCard title="Received Amount" subtitle="Actual incoming payment"><p className="text-2xl font-bold text-slate-900">{formatMoney(summary?.totalReceived || 0, country)}</p></FlowCard>
-                <FlowCard title="Total Settled" subtitle="Received amount plus TDS"><p className="text-2xl font-bold text-emerald-700">{formatMoney((summary?.totalReceived || 0) + (summary?.totalTds || 0), country)}</p></FlowCard>
-                <FlowCard title="Cash Advance Balance" subtitle="Cash kept on account"><p className="text-2xl font-bold text-amber-700">{formatMoney(summary?.totalUnallocated || 0, country)}</p></FlowCard>
+                <FlowCard title="Total Settled" subtitle="Received amount plus TDS"><p className="text-2xl font-bold text-slate-900">{formatMoney((summary?.totalReceived || 0) + (summary?.totalTds || 0), country)}</p></FlowCard>
+                <FlowCard title="Advance Balance" subtitle="Amount kept on account"><p className="text-2xl font-bold text-slate-900">{formatMoney(summary?.totalUnallocated || 0, country)}</p></FlowCard>
               </div>
 
               <FlowCard>
@@ -1067,7 +1067,7 @@ export default function PaymentInPremium() {
                         <th className="px-3 py-3 font-semibold text-right">Received Amount</th>
                         <th className="px-3 py-3 font-semibold text-right">TDS Amount</th>
                         <th className="px-3 py-3 font-semibold text-right">Total Settled</th>
-                        <th className="px-3 py-3 font-semibold text-right">Cash Advance</th>
+                        <th className="px-3 py-3 font-semibold text-right">Advance Balance</th>
                         <th className="px-3 py-3 font-semibold">Status</th>
                         <th className="px-3 py-3 font-semibold">Actions</th>
                       </tr>
@@ -1409,7 +1409,7 @@ export default function PaymentInPremium() {
                                 type="text"
                                 value={formatMoney(totals.totalSettled, country)}
                                 disabled
-                                className="mt-1 w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700"
+                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
                               />
                             </label>
                           </div>
@@ -1562,11 +1562,11 @@ export default function PaymentInPremium() {
                         </div>
                       ) : null}
                       <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <p className="text-xs font-semibold text-slate-600">Cash Advance Balance</p>
+                        <p className="text-xs font-semibold text-slate-600">Advance Balance</p>
                         <p className="mt-1 text-lg font-semibold text-slate-900">{formatMoney(totals.unappliedAmount, country)}</p>
                         <p className="mt-1 text-xs text-slate-500">
                           {form.allocationMode === "linked"
-                            ? "Any cash amount above the selected document pending amount will stay as advance balance."
+                            ? "Any amount above the selected document pending amount will stay as advance balance."
                             : "Normal payment entries are saved without invoice linking."}
                         </p>
                       </div>
@@ -1670,31 +1670,31 @@ export default function PaymentInPremium() {
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">TDS Amount</p>
-                          <p className="text-base font-semibold text-sky-700">{formatMoney(totals.tdsAmount, country)}</p>
+                          <p className={`text-base font-semibold ${totals.tdsAmount < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatMoney(totals.tdsAmount, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Available Advance</p>
-                          <p className="text-base font-semibold text-amber-700">{formatMoney(availableAdvanceBalance, country)}</p>
+                          <p className={`text-base font-semibold ${availableAdvanceBalance < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatMoney(availableAdvanceBalance, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Advance Used</p>
-                          <p className="text-base font-semibold text-emerald-700">{formatMoney(advanceWalletUsable, country)}</p>
+                          <p className={`text-base font-semibold ${advanceWalletUsable < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatMoney(advanceWalletUsable, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Total Settled</p>
-                          <p className="text-base font-semibold text-emerald-700">{formatMoney(totals.totalSettled, country)}</p>
+                          <p className="text-base font-semibold text-slate-900">{formatMoney(totals.totalSettled, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Remaining Wallet Balance</p>
-                          <p className="text-base font-semibold text-amber-700">{formatMoney(remainingWalletBalance, country)}</p>
+                          <p className={`text-base font-semibold ${remainingWalletBalance < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatMoney(remainingWalletBalance, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
                           <p className="text-slate-500">Final Payable Amount</p>
-                          <p className="text-base font-semibold text-rose-700">{formatMoney(remainingPayableAfterPayment, country)}</p>
+                          <p className={`text-base font-semibold ${remainingPayableAfterPayment < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatMoney(remainingPayableAfterPayment, country)}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Cash Advance</p>
-                          <p className="text-base font-semibold text-amber-700">{formatMoney(totals.unappliedAmount, country)}</p>
+                          <p className="text-slate-500">Advance Balance</p>
+                          <p className="text-base font-semibold text-slate-900">{formatMoney(totals.unappliedAmount, country)}</p>
                           <p className="mt-1 text-[11px] text-slate-500">
                             Extra received amount stays on the customer account.
                           </p>
