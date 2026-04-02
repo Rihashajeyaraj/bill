@@ -163,6 +163,57 @@ function autoTdsBaseAmount(document: CustomerOpenInvoice | null, allocationMode:
   return Math.max(0, parseNumber(fallbackAmount as any));
 }
 
+function normalizeRegion(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function buildDocumentGstLines({
+  taxAmount,
+  taxBreakup,
+  supplyType,
+  companyState,
+  partyState
+}: {
+  taxAmount: unknown;
+  taxBreakup?: Record<string, unknown> | null;
+  supplyType?: unknown;
+  companyState?: unknown;
+  partyState?: unknown;
+}) {
+  const totalTax = Math.max(0, parseNumber(taxAmount as any));
+  const cgstValue = Math.max(0, parseNumber((taxBreakup as any)?.cgst));
+  const sgstValue = Math.max(0, parseNumber((taxBreakup as any)?.sgst));
+  const igstValue = Math.max(0, parseNumber((taxBreakup as any)?.igst));
+
+  if (cgstValue > 0 || sgstValue > 0 || igstValue > 0) {
+    return [
+      cgstValue > 0 ? { label: "CGST", value: cgstValue } : null,
+      sgstValue > 0 ? { label: "SGST", value: sgstValue } : null,
+      igstValue > 0 ? { label: "IGST", value: igstValue } : null
+    ].filter(Boolean) as Array<{ label: string; value: number }>;
+  }
+
+  if (totalTax <= 0) return [];
+
+  const normalizedSupplyType = String(supplyType || "").trim().toUpperCase();
+  const intraState =
+    normalizedSupplyType === "INTRA" ||
+    (normalizedSupplyType !== "INTER" &&
+      normalizeRegion(companyState) &&
+      normalizeRegion(companyState) === normalizeRegion(partyState));
+
+  if (intraState) {
+    const cgst = Number((totalTax / 2).toFixed(2));
+    const sgst = Number((totalTax - cgst).toFixed(2));
+    return [
+      { label: "CGST", value: cgst },
+      { label: "SGST", value: sgst }
+    ];
+  }
+
+  return [{ label: "IGST", value: totalTax }];
+}
+
 export default function PaymentInPremium() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
@@ -277,13 +328,28 @@ export default function PaymentInPremium() {
       country,
       customerId: form?.customerId || "",
       customerName: form?.customerInput || "",
+      customerState: selectedCustomer?.state || "",
       invoiceDate: savedDocument.invoiceDate,
       invoiceAmount: savedDocument.invoiceAmount,
       taxableAmount: savedDocument.invoiceAmount,
+      taxAmount: 0,
+      taxBreakup: null,
+      supplyType: null,
       balanceDue: savedDocument.balanceDue,
       documentType: savedDocument.documentType || "invoice"
     } satisfies CustomerOpenInvoice;
-  }, [country, customerDocuments, form?.allocations, form?.customerId, form?.customerInput, form?.selectedDocumentId]);
+  }, [country, customerDocuments, form?.allocations, form?.customerId, form?.customerInput, form?.selectedDocumentId, selectedCustomer?.state]);
+  const invoiceGstLines = useMemo(
+    () =>
+      buildDocumentGstLines({
+        taxAmount: selectedCustomerDocument?.taxAmount,
+        taxBreakup: selectedCustomerDocument?.taxBreakup || null,
+        supplyType: selectedCustomerDocument?.supplyType,
+        companyState: company?.address?.state || company?.state || "",
+        partyState: selectedCustomerDocument?.customerState || selectedCustomer?.state || ""
+      }),
+    [company?.address?.state, company?.state, selectedCustomer?.state, selectedCustomerDocument]
+  );
   const advanceWalletUsable = useMemo(() => {
     if (!useAdvanceWallet) return 0;
     if (!selectedCustomerDocument || selectedCustomerDocument.documentType !== "invoice") return 0;
@@ -1548,6 +1614,14 @@ export default function PaymentInPremium() {
                           <p className="mt-1">
                             Date: {selectedCustomerDocument.invoiceDate || "-"} | Pending: {formatMoney(selectedCustomerDocument.balanceDue, country)}
                           </p>
+                          <p className="mt-1">
+                            Taxable Amount: {formatMoney(selectedCustomerDocument.taxableAmount || 0, country)}
+                          </p>
+                          {invoiceGstLines.map((line) => (
+                            <p key={line.label} className="mt-1">
+                              {line.label}: {formatMoney(line.value, country)}
+                            </p>
+                          ))}
                           {advanceWalletUsable > 0 ? (
                             <p className="mt-1">
                               Advance Used: {formatMoney(advanceWalletUsable, country)} | Remaining Payable: {formatMoney(documentBalanceAfterAdvance, country)}

@@ -18,10 +18,13 @@ export interface CustomerOpenInvoice {
   country: CountryCode;
   customerId: string;
   customerName: string;
+  customerState?: string;
   invoiceDate: string;
   invoiceAmount: number;
   taxableAmount?: number;
   taxAmount?: number;
+  taxBreakup?: Record<string, unknown> | null;
+  supplyType?: string | null;
   balanceDue: number;
   documentType: "invoice" | "proforma";
 }
@@ -536,10 +539,22 @@ function mapOpenInvoicesByCountryInternal(
         country,
         customerId: invoice.partyId || invoice.customerId || invoice.buyer?.id || invoice.partyName || "unknown_customer",
         customerName: invoice.partyName || invoice.customerName || invoice.buyer?.name || "Customer",
+        customerState: invoice?.buyer?.state || invoice?.partyState || "",
         invoiceDate: invoice.invoiceDate || invoice.date || "",
         invoiceAmount: invoiceTotal,
         taxableAmount,
         taxAmount,
+        taxBreakup:
+          invoice?.totals?.taxBreakup && typeof invoice.totals.taxBreakup === "object"
+            ? invoice.totals.taxBreakup
+            : invoice?.taxBreakup && typeof invoice.taxBreakup === "object"
+              ? invoice.taxBreakup
+              : null,
+        supplyType:
+          invoice?.supplyType ||
+          invoice?.totals?.tax?.supplyType ||
+          invoice?.totals?.taxBreakup?.supplyType ||
+          null,
         balanceDue,
         documentType: "invoice"
       } satisfies CustomerOpenInvoice;
@@ -579,10 +594,22 @@ function mapOpenInvoicesByCountryInternal(
         customerId:
           proforma?.partyId || proforma?.customerId || proforma?.buyer?.id || proforma?.partyName || "unknown_customer",
         customerName: proforma?.partyName || proforma?.customerName || proforma?.buyer?.name || "Customer",
+        customerState: proforma?.buyer?.state || proforma?.partyState || "",
         invoiceDate: proforma?.proformaDate || proforma?.date || "",
         invoiceAmount,
         taxableAmount,
         taxAmount,
+        taxBreakup:
+          proforma?.totals?.taxBreakup && typeof proforma.totals.taxBreakup === "object"
+            ? proforma.totals.taxBreakup
+            : proforma?.taxBreakup && typeof proforma.taxBreakup === "object"
+              ? proforma.taxBreakup
+              : null,
+        supplyType:
+          proforma?.supplyType ||
+          proforma?.totals?.tax?.supplyType ||
+          proforma?.totals?.taxBreakup?.supplyType ||
+          null,
         balanceDue,
         documentType: "proforma"
       } satisfies CustomerOpenInvoice;

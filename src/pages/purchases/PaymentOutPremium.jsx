@@ -112,6 +112,45 @@ function autoTdsBaseAmount(bill, allocationMode, fallbackAmount) {
   return Math.max(0, parseNumber(fallbackAmount));
 }
 
+function normalizeRegion(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function buildDocumentGstLines({ taxAmount, taxBreakup, supplyType, companyState, partyState }) {
+  const totalTax = Math.max(0, parseNumber(taxAmount));
+  const cgstValue = Math.max(0, parseNumber(taxBreakup?.cgst));
+  const sgstValue = Math.max(0, parseNumber(taxBreakup?.sgst));
+  const igstValue = Math.max(0, parseNumber(taxBreakup?.igst));
+
+  if (cgstValue > 0 || sgstValue > 0 || igstValue > 0) {
+    return [
+      cgstValue > 0 ? { label: "CGST", value: cgstValue } : null,
+      sgstValue > 0 ? { label: "SGST", value: sgstValue } : null,
+      igstValue > 0 ? { label: "IGST", value: igstValue } : null
+    ].filter(Boolean);
+  }
+
+  if (totalTax <= 0) return [];
+
+  const normalizedSupplyType = String(supplyType || "").trim().toUpperCase();
+  const intraState =
+    normalizedSupplyType === "INTRA" ||
+    (normalizedSupplyType !== "INTER" &&
+      normalizeRegion(companyState) &&
+      normalizeRegion(companyState) === normalizeRegion(partyState));
+
+  if (intraState) {
+    const cgst = Number((totalTax / 2).toFixed(2));
+    const sgst = Number((totalTax - cgst).toFixed(2));
+    return [
+      { label: "CGST", value: cgst },
+      { label: "SGST", value: sgst }
+    ];
+  }
+
+  return [{ label: "IGST", value: totalTax }];
+}
+
 function normalizePaymentMode(value) {
   const mode = String(value || "").trim();
   if (mode === "Bank Transfer") return "Net Banking";
@@ -167,7 +206,8 @@ export default function PaymentOutPremium() {
     country = "India",
     countryCode = "IN",
     currency = "",
-    currencySymbol = ""
+    currencySymbol = "",
+    profile: company = {}
   } = useOrganization();
   const user = authGetUser();
   const role = authGetRole();
@@ -245,6 +285,17 @@ export default function PaymentOutPremium() {
   const gstAmount = selectedBill ? Math.max(0, parseNumber(selectedBill.taxAmount)) : 0;
   const grossTotal = selectedBill ? Math.max(0, parseNumber(selectedBill.billAmount)) : 0;
   const linkedCashPayable = selectedBill ? calculateFinalPayable(grossTotal, tdsAmount) : 0;
+  const billGstLines = useMemo(
+    () =>
+      buildDocumentGstLines({
+        taxAmount: selectedBill?.taxAmount,
+        taxBreakup: selectedBill?.taxBreakup || null,
+        supplyType: selectedBill?.supplyType,
+        companyState: company?.address?.state || company?.state || "",
+        partyState: selectedBill?.supplierState || selectedSupplier?.state || ""
+      }),
+    [company?.address?.state, company?.state, selectedBill, selectedSupplier?.state]
+  );
   const amountApplied = form.allocations.reduce((sum, line) => sum + parseNumber(line.applyAmount), 0);
   const unappliedAmount = Math.max(0, amountPaid - amountApplied);
   const totalSettled = amountPaid + tdsAmount;
@@ -1380,7 +1431,9 @@ export default function PaymentOutPremium() {
                         <p className="text-sm font-semibold text-slate-900">Bill TDS Summary</p>
                         <div className="mt-3 space-y-1 text-xs text-slate-600">
                           <p>Taxable Amount: <span className="font-semibold text-slate-900">{formatMoney(taxableAmount, effectiveCurrency)}</span></p>
-                          <p>GST Amount: <span className="font-semibold text-slate-900">{formatMoney(gstAmount, effectiveCurrency)}</span></p>
+                          {billGstLines.map((line) => (
+                            <p key={line.label}>{line.label}: <span className="font-semibold text-slate-900">{formatMoney(line.value, effectiveCurrency)}</span></p>
+                          ))}
                           <p>Gross Total: <span className="font-semibold text-slate-900">{formatMoney(grossTotal, effectiveCurrency)}</span></p>
                           <p>TDS Percentage: <span className="font-semibold text-slate-900">{parseNumber(form.tdsRate).toFixed(2)}%</span></p>
                           <p>TDS Amount: <span className="font-semibold text-sky-700">{formatMoney(tdsAmount, effectiveCurrency)}</span></p>

@@ -495,9 +495,21 @@ function mapOpenBillsByCountryInternal(country, { applyAdvance = true } = {}) {
         country: target || bill.country || "",
         supplierId: bill.partyId || bill.supplierId || bill.vendorId || bill.partyName || "unknown_supplier",
         supplierName: bill.partyName || bill.supplierName || bill.vendorName || "Supplier",
+        supplierState: bill?.partyState || bill?.vendorState || bill?.supplierState || "",
         billAmount,
         taxableAmount,
         taxAmount,
+        taxBreakup:
+          bill?.totals?.taxBreakup && typeof bill.totals.taxBreakup === "object"
+            ? bill.totals.taxBreakup
+            : bill?.taxBreakup && typeof bill.taxBreakup === "object"
+              ? bill.taxBreakup
+              : null,
+        supplyType:
+          bill?.supplyType ||
+          bill?.totals?.tax?.supplyType ||
+          bill?.totals?.taxBreakup?.supplyType ||
+          null,
         balanceDue
       };
     })
