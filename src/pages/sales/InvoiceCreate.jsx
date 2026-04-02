@@ -65,8 +65,13 @@ function displayNumericInput(value) {
   return formatInputNumberByPreference(value);
 }
 
+function parseNumberInput(value) {
+  const numeric = parseFormattedNumber(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
 function round2(value) {
-  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+  return Math.round((parseNumberInput(value) + Number.EPSILON) * 100) / 100;
 }
 
 function formatAddress(address) {
@@ -1050,10 +1055,10 @@ export default function InvoiceCreate() {
         priceTaxMode:
           String(line?.priceTaxMode || "").toUpperCase() === "WITH_TAX" ? "WITH_TAX" : "WITHOUT_TAX",
         unit: String(line?.unit || matchedItem?.unit || "pcs").trim() || "pcs",
-        qty: Number(line?.qty || line?.quantity || 0),
-        rate: Number(line?.rate || line?.unitPrice || 0),
-        discount: Number(line?.discountAmount ?? line?.discount ?? 0),
-        tax: forceZeroTax ? 0 : Number(line?.taxRate ?? line?.tax ?? 0),
+        qty: parseNumberInput(line?.qty || line?.quantity || 0),
+        rate: parseNumberInput(line?.rate || line?.unitPrice || 0),
+        discount: parseNumberInput(line?.discountAmount ?? line?.discount ?? 0),
+        tax: forceZeroTax ? 0 : parseNumberInput(line?.taxRate ?? line?.tax ?? 0),
         itemType: resolvedType
       };
     });
@@ -1099,20 +1104,20 @@ export default function InvoiceCreate() {
       if (!typedName) return false;
       return resolveLineItemType(line, itemByIdMap) === "Service";
     });
-    const hasAnyLineTax = forceZeroTax ? false : selectedLines.some((line) => Number(line?.tax || 0) > 0);
-    const fallbackRate = forceZeroTax ? 0 : hasAnyLineTax ? 0 : Number(taxRate || 0);
+      const hasAnyLineTax = forceZeroTax ? false : selectedLines.some((line) => parseNumberInput(line?.tax || 0) > 0);
+      const fallbackRate = forceZeroTax ? 0 : hasAnyLineTax ? 0 : parseNumberInput(taxRate || 0);
 
     const enrichedBase = selectedLines.map((line) => {
       const item = itemByIdMap.get(String(line?.itemId || "")) || null;
       const itemType = item
         ? normalizeInvoiceItemType(item?.type)
         : resolveLineItemType(line, itemByIdMap);
-      const qty = Number(line.qty || 0);
-      const rate = Number(line.rate || 0);
-      const discount = Number(line.discount || 0);
+      const qty = parseNumberInput(line.qty || 0);
+      const rate = parseNumberInput(line.rate || 0);
+      const discount = parseNumberInput(line.discount || 0);
       const hasExplicitLineTax =
-        line?.tax !== "" && line?.tax !== null && line?.tax !== undefined && Number.isFinite(Number(line?.tax));
-      const taxRatePerLine = forceZeroTax ? 0 : hasExplicitLineTax ? Number(line.tax || 0) : Number(fallbackRate || 0);
+        line?.tax !== "" && line?.tax !== null && line?.tax !== undefined && Number.isFinite(parseNumberInput(line?.tax));
+      const taxRatePerLine = forceZeroTax ? 0 : hasExplicitLineTax ? parseNumberInput(line.tax || 0) : parseNumberInput(fallbackRate || 0);
       const net = round2(Math.max(0, qty * rate - discount));
       const lineTax = round2((net * taxRatePerLine) / 100);
       const codeFromItem = itemType === "Service" ? item?.sac || item?.hsn || "" : item?.hsn || item?.sac || "";
@@ -1133,7 +1138,7 @@ export default function InvoiceCreate() {
 
     const subTotal = round2(enrichedBase.reduce((a, x) => a + x.net, 0));
     const lineTaxTotal = round2(enrichedBase.reduce((a, x) => a + x.lineTax, 0));
-    const effectiveTaxRate = subTotal > 0 ? (lineTaxTotal / subTotal) * 100 : Number(taxRate || 0);
+    const effectiveTaxRate = subTotal > 0 ? (lineTaxTotal / subTotal) * 100 : parseNumberInput(taxRate || 0);
 
     const tax = calculateTaxes({
       taxableAmount: subTotal,
@@ -2855,10 +2860,10 @@ export default function InvoiceCreate() {
                             {lines.map((r) => {
                               const selectedItem = itemById.get(String(r?.itemId || "")) || null;
                               const rowType = resolveLineItemType(r);
-                              const qty = Number(r.qty || 0);
-                              const rate = Number(r.rate || 0);
-                              const discount = Number(r.discount || 0);
-                              const taxRateValue = forceZeroTax ? 0 : Number(r.tax || 0);
+                              const qty = parseNumberInput(r.qty || 0);
+                              const rate = parseNumberInput(r.rate || 0);
+                              const discount = parseNumberInput(r.discount || 0);
+                              const taxRateValue = forceZeroTax ? 0 : parseNumberInput(r.tax || 0);
                               const net = round2(Math.max(0, qty * rate - discount));
                               const total = round2(net + (net * taxRateValue) / 100);
 
