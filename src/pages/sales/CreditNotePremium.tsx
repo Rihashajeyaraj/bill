@@ -672,6 +672,8 @@ export default function CreditNotePremium() {
         }
       : form;
     try {
+      let savedLocallyOnly = false;
+      let remoteSyncMessage = "";
       const saved = saveCreditNote({
         id: effectiveFormForSave.id,
         country,
@@ -725,7 +727,13 @@ export default function CreditNotePremium() {
         actor: actorName
       });
 
-      await creditNotesSaveRemote(saved);
+      try {
+        await creditNotesSaveRemote(saved);
+      } catch (remoteError: any) {
+        savedLocallyOnly = true;
+        remoteSyncMessage =
+          remoteError?.message || "Supabase denied access. Saved in local storage only.";
+      }
 
       if (options?.download) exportSingleCreditNotePdf(saved);
       if (options?.email) window.alert(`Email queued for ${saved.creditNoteNo}.`);
@@ -762,10 +770,15 @@ export default function CreditNotePremium() {
       );
       setDirty(false);
       setViewMode("edit");
-      setSuccessMessage(`${saved.creditNoteNo} saved as ${saved.status}.`);
-      setErrorMessage("");
+      setSuccessMessage(
+        savedLocallyOnly
+          ? `${saved.creditNoteNo} saved locally as ${saved.status}.`
+          : `${saved.creditNoteNo} saved as ${saved.status}.`
+      );
+      setErrorMessage(savedLocallyOnly ? remoteSyncMessage : "");
     } catch (error: any) {
       setErrorMessage(error?.message || "Unable to save credit note.");
+      setSuccessMessage("");
     } finally {
       setSavingStatus(null);
     }
