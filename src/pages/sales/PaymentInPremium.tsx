@@ -36,6 +36,7 @@ import {
   defaultForm,
   formFromRecord,
   formatMoney,
+  isCustomTdsCategory,
   TDS_CATEGORY_OPTIONS,
   getTdsRateForCategory,
   parseNumber
@@ -675,6 +676,24 @@ export default function PaymentInPremium() {
   }
 
   function handleTdsCategoryChange(category: string) {
+    if (isCustomTdsCategory(category)) {
+      setForm((prev) =>
+        prev
+          ? {
+              ...prev,
+              tdsCategory: "custom",
+              tdsAmount: calculatedTdsInputValue(
+                autoTdsBaseAmount(selectedCustomerDocument, prev.allocationMode, prev.amountReceived),
+                prev.tdsRate
+              ),
+              isManual: false
+            }
+          : prev
+      );
+      clearFieldError("tdsAmount");
+      setDirty(true);
+      return;
+    }
     const nextRate = getTdsRateForCategory(category);
     setForm((prev) =>
       prev
@@ -690,6 +709,26 @@ export default function PaymentInPremium() {
           }
         : prev
     );
+    clearFieldError("tdsAmount");
+    setDirty(true);
+  }
+
+  function handleTdsRateChange(value: string) {
+    setForm((prev) => {
+      if (!prev) return prev;
+      const parsedRate = Math.max(0, parseNumber(value));
+      const matchedOption = TDS_CATEGORY_OPTIONS.find((option) => option.rate === parsedRate);
+      return {
+        ...prev,
+        tdsCategory: matchedOption ? matchedOption.value : "custom",
+        tdsRate: value,
+        tdsAmount: calculatedTdsInputValue(
+          autoTdsBaseAmount(selectedCustomerDocument, prev.allocationMode, prev.amountReceived),
+          value
+        ),
+        isManual: false
+      };
+    });
     clearFieldError("tdsAmount");
     setDirty(true);
   }
@@ -1486,18 +1525,31 @@ export default function PaymentInPremium() {
                           <div className="mt-3 grid grid-cols-1 gap-3">
                             <label className="block">
                               <span className="text-xs font-semibold text-slate-600">TDS Percentage</span>
-                              <select
-                                value={form.tdsCategory}
-                                disabled={readOnly}
-                                onChange={(event) => handleTdsCategoryChange(event.target.value)}
-                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                              >
-                                {TDS_CATEGORY_OPTIONS.map((option) => (
-                                  <option key={option.value} value={option.value}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
+                              <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px]">
+                                <select
+                                  value={form.tdsCategory}
+                                  disabled={readOnly}
+                                  onChange={(event) => handleTdsCategoryChange(event.target.value)}
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                                >
+                                  {TDS_CATEGORY_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                  <option value="custom">Custom</option>
+                                </select>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={form.tdsRate}
+                                  disabled={readOnly}
+                                  onChange={(event) => handleTdsRateChange(event.target.value)}
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                                  placeholder="%"
+                                />
+                              </div>
                             </label>
                             <label className="block">
                               <span className="text-xs font-semibold text-slate-600">TDS Amount</span>

@@ -586,6 +586,32 @@ export default function PaymentOutPremium() {
   }
 
   function handleTdsCategoryChange(category) {
+    if (isCustomTdsCategory(category)) {
+      setForm((prev) =>
+        ({
+          ...prev,
+          tdsCategory: "custom",
+          tdsAmount: calculatedTdsInputValue(
+            autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
+            prev.tdsRate
+          ),
+          isManual: false,
+          allocations:
+            prev.allocationMode === "linked"
+              ? buildBillAllocation(
+                  selectedBill,
+                  prev.amountPaid,
+                  calculatedTdsInputValue(
+                    autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
+                    prev.tdsRate
+                  )
+                )
+              : prev.allocations
+        })
+      );
+      setDirty(true);
+      return;
+    }
     const nextRate = getTdsRateForCategory(category);
     setForm((prev) =>
       ({
@@ -610,6 +636,29 @@ export default function PaymentOutPremium() {
             : prev.allocations
       })
     );
+    setDirty(true);
+  }
+
+  function handleTdsRateChange(value) {
+    const parsedRate = Math.max(0, parseNumber(value));
+    const matchedOption = TDS_CATEGORY_OPTIONS.find((option) => option.rate === parsedRate);
+    setForm((prev) => {
+      const nextTdsAmount = calculatedTdsInputValue(
+        autoTdsBaseAmount(selectedBill, prev.allocationMode, prev.amountPaid),
+        value
+      );
+      return {
+        ...prev,
+        tdsCategory: matchedOption ? matchedOption.value : "custom",
+        tdsRate: value,
+        tdsAmount: nextTdsAmount,
+        isManual: false,
+        allocations:
+          prev.allocationMode === "linked"
+            ? buildBillAllocation(selectedBill, prev.amountPaid, nextTdsAmount)
+            : prev.allocations
+      };
+    });
     setDirty(true);
   }
 
@@ -1265,18 +1314,31 @@ export default function PaymentOutPremium() {
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                       <label className="block min-w-0 flex-1 sm:min-w-[220px]">
                         <span className="text-xs font-semibold text-slate-600">TDS Percentage</span>
-                        <select
-                          value={form.tdsCategory}
-                          disabled={readOnly || !form.supplierId}
-                          onChange={(event) => handleTdsCategoryChange(event.target.value)}
-                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                        >
-                          {TDS_CATEGORY_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label} ({option.rate}%)
-                            </option>
-                          ))}
-                        </select>
+                        <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px]">
+                          <select
+                            value={form.tdsCategory}
+                            disabled={readOnly || !form.supplierId}
+                            onChange={(event) => handleTdsCategoryChange(event.target.value)}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                          >
+                            {TDS_CATEGORY_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label} ({option.rate}%)
+                              </option>
+                            ))}
+                            <option value="custom">Custom</option>
+                          </select>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={form.tdsRate}
+                            disabled={readOnly || !form.supplierId}
+                            onChange={(event) => handleTdsRateChange(event.target.value)}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                            placeholder="%"
+                          />
+                        </div>
                       </label>
                       <div className="sm:text-right">
                         <p className="text-xs font-semibold text-slate-600">
