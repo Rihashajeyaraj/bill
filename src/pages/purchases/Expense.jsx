@@ -14,6 +14,7 @@ import {
   expensesSyncFromRemote
 } from "../../services/expenses.service";
 import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
+import { sortHistoryRowsByDate } from "../../lib/historySort";
 
 function money(n) {
   return formatNumberByPreference(Number(n || 0), { maximumFractionDigits: 2 });
@@ -64,6 +65,15 @@ export default function Expense() {
 
   const historyTotal = useMemo(
     () => historyRows.reduce((sum, entry) => sum + Number(entry?.totalAmount || entry?.amount || 0), 0),
+    [historyRows]
+  );
+  const sortedHistoryRows = useMemo(
+    () =>
+      sortHistoryRowsByDate(
+        historyRows,
+        (entry) => entry?.date || entry?.created_at || entry?.createdAt,
+        (entry) => entry?.id || entry?.note || entry?.category
+      ),
     [historyRows]
   );
   const filteredCategoryOptions = useMemo(() => {
@@ -215,7 +225,7 @@ export default function Expense() {
             <p className="text-xs text-slate-500">Auto refreshes after every expense entry.</p>
           </div>
           <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {historyRows.length} entries | Total {money(historyTotal)}
+            {sortedHistoryRows.length} entries | Total {money(historyTotal)}
           </div>
         </div>
 
@@ -238,14 +248,14 @@ export default function Expense() {
                     Loading expense history...
                   </td>
                 </tr>
-              ) : historyRows.length === 0 ? (
+              ) : sortedHistoryRows.length === 0 ? (
                 <tr className="border-t border-slate-100">
                   <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
                     No expenses saved yet.
                   </td>
                 </tr>
               ) : (
-                historyRows.map((row) => (
+                sortedHistoryRows.map((row) => (
                   <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                     <td className="px-3 py-3 text-slate-700">{formatDate(row?.date)}</td>
                     <td className="px-3 py-3 font-medium text-slate-900">{row?.category || "-"}</td>

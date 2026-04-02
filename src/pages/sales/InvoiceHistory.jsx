@@ -7,6 +7,7 @@ import { useFinancialYears } from "../../context/FinancialYearContext";
 import { useToast } from "../../context/ToastContext";
 import { invoicesList, invoicesSyncFromRemote } from "../../services/invoices.service";
 import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
+import { compareHistoryDatesDesc, sortHistoryRowsByDate } from "../../lib/historySort";
 
 function money(n) {
   return formatNumberByPreference(Number(n || 0), { maximumFractionDigits: 2 });
@@ -39,12 +40,6 @@ function statusBadgeClass(status) {
   return "bg-slate-100 text-slate-700";
 }
 
-function invoiceSortValue(invoiceNo) {
-  const text = String(invoiceNo || "").trim();
-  const match = text.match(/(\d+)(?!.*\d)/);
-  return match ? Number(match[1]) || 0 : 0;
-}
-
 const actionButtonClass =
   "inline-flex min-h-9 items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition";
 const neutralActionButtonClass = `${actionButtonClass} border-slate-200 bg-white text-slate-700 hover:bg-slate-50`;
@@ -57,15 +52,29 @@ export default function InvoiceHistory() {
   const [invoices, setInvoices] = useState(() => invoicesList(activeRange));
 
   const sortedInvoices = useMemo(
-    () =>
-      [...(Array.isArray(invoices) ? invoices : [])].sort((left, right) => {
-        const bySequence = invoiceSortValue(right?.invoiceNo) - invoiceSortValue(left?.invoiceNo);
-        if (bySequence !== 0) return bySequence;
-        return String(right?.invoiceNo || "").localeCompare(String(left?.invoiceNo || ""), undefined, {
-          numeric: true,
-          sensitivity: "base"
-        });
-      }),
+    () => {
+      const source = sortHistoryRowsByDate(
+        invoices,
+        (invoice) => invoice?.invoiceDate || invoice?.created_at || invoice?.createdAt,
+        (invoice) => invoice?.invoiceNo || invoice?.id
+      );
+      return source.sort((left, right) => {
+        const byCreatedAt = compareHistoryDatesDesc(
+          left?.created_at || left?.createdAt || left?.updated_at || left?.updatedAt,
+          right?.created_at || right?.createdAt || right?.updated_at || right?.updatedAt
+        );
+        if (byCreatedAt !== 0) return byCreatedAt;
+
+        const byInvoiceDate = compareHistoryDatesDesc(left?.invoiceDate, right?.invoiceDate);
+        if (byInvoiceDate !== 0) return byInvoiceDate;
+
+        return String(right?.invoiceNo || right?.id || "").localeCompare(
+          String(left?.invoiceNo || left?.id || ""),
+          undefined,
+          { numeric: true, sensitivity: "base" }
+        );
+      });
+    },
     [invoices]
   );
 

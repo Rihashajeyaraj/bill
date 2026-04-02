@@ -9,6 +9,7 @@ import { canAccessSettings } from "../services/roles";
 import { listAuditEvents, listAuditFilterOptions } from "../services/audit.service";
 import { formatDateTimeByPreference } from "../lib/formatPreferences";
 import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
+import { sortHistoryRowsByDate } from "../lib/historySort";
 
 const DEFAULT_FILTERS = {
   tableName: "",
@@ -142,6 +143,15 @@ export default function AuditHistory() {
     if (selected && selected !== "system" && !list.includes(selected)) list.unshift(selected);
     return list;
   }, [userOptions, draftFilters.actorUserId]);
+  const sortedRows = useMemo(
+    () =>
+      sortHistoryRowsByDate(
+        rows,
+        (row) => row?.happenedAt || row?.created_at || row?.createdAt,
+        (row) => row?.id || row?.recordId
+      ),
+    [rows]
+  );
 
   if (!isOwner) {
     return (
@@ -281,7 +291,7 @@ export default function AuditHistory() {
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <p className="text-sm font-semibold text-slate-900">Events</p>
-          <p className="text-xs font-semibold text-slate-500">{rows.length} records</p>
+          <p className="text-xs font-semibold text-slate-500">{sortedRows.length} records</p>
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto">
@@ -298,8 +308,8 @@ export default function AuditHistory() {
               </tr>
             </thead>
             <tbody>
-              {rows.length ? (
-                rows.map((row) => {
+              {sortedRows.length ? (
+                sortedRows.map((row) => {
                   const expanded = expandedRowId === row.id;
                   return (
                     <React.Fragment key={row.id}>

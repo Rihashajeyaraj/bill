@@ -14,6 +14,7 @@ import {
   listItemBarcodesByPurchaseIds
 } from "../../services/itemBarcodes.service";
 import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
+import { compareHistoryDatesDesc, sortHistoryRowsByDate } from "../../lib/historySort";
 
 function money(n) {
   return formatNumberByPreference(Number(n || 0), { maximumFractionDigits: 2 });
@@ -73,6 +74,31 @@ export default function PurchaseHistory() {
   );
   const selectedBillTdsTotal = useMemo(
     () => selectedBillTdsRows.reduce((sum, entry) => sum + Number(entry?.tdsAmount || 0), 0),
+    [selectedBillTdsRows]
+  );
+  const sortedBills = useMemo(
+    () =>
+      sortHistoryRowsByDate(
+        bills,
+        (bill) => bill?.billDate || bill?.created_at || bill?.createdAt,
+        (bill) => bill?.billNumber || bill?.id
+      ),
+    [bills]
+  );
+  const sortedSelectedBillTdsRows = useMemo(
+    () =>
+      [...selectedBillTdsRows].sort((left, right) => {
+        const byDate = compareHistoryDatesDesc(
+          left?.date || left?.created_at || left?.createdAt,
+          right?.date || right?.created_at || right?.createdAt
+        );
+        if (byDate !== 0) return byDate;
+        return String(right?.paymentNo || right?.paymentId || "").localeCompare(
+          String(left?.paymentNo || left?.paymentId || ""),
+          undefined,
+          { numeric: true, sensitivity: "base" }
+        );
+      }),
     [selectedBillTdsRows]
   );
 
@@ -281,7 +307,7 @@ export default function PurchaseHistory() {
             <p className="text-xs text-slate-500">Review bills and open actions.</p>
           </div>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {bills.length} bills
+            {sortedBills.length} bills
           </span>
         </div>
 
@@ -308,14 +334,14 @@ export default function PurchaseHistory() {
                     Loading purchase history...
                   </td>
                 </tr>
-              ) : bills.length === 0 ? (
+              ) : sortedBills.length === 0 ? (
                 <tr className="border-t border-slate-100">
                   <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
                     No purchase bills yet.
                   </td>
                 </tr>
               ) : (
-                bills.map((bill) => {
+                sortedBills.map((bill) => {
                   const rowBarcodes = barcodesByPurchaseId[String(bill?.id || "").trim()] || [];
                   const hasBarcodes = rowBarcodes.length > 0;
                   const billTdsSummary = tdsSummaryByBill[String(bill?.id || "").trim()] || null;
@@ -618,7 +644,7 @@ export default function PurchaseHistory() {
                 </div>
               </div>
 
-              {selectedBillTdsRows.length ? (
+              {sortedSelectedBillTdsRows.length ? (
                 <div className="overflow-auto">
                   <table className="w-full min-w-[520px] text-left text-sm">
                     <thead className="bg-slate-50 text-slate-600">
@@ -630,7 +656,7 @@ export default function PurchaseHistory() {
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedBillTdsRows.map((entry) => (
+                      {sortedSelectedBillTdsRows.map((entry) => (
                         <tr key={`${entry.paymentId}_${entry.billId}_${entry.paymentNo}`} className="border-t border-slate-100">
                           <td className="px-3 py-2 text-slate-700">{formatDate(entry?.date)}</td>
                           <td className="px-3 py-2 text-slate-700">{entry?.supplierName || selectedBill?.partyName || "-"}</td>
