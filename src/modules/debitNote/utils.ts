@@ -1,10 +1,10 @@
 import { COUNTRY_CONFIG, type CountryCode } from "./countryConfig";
 import type { DebitLineDraft, DebitNoteRecord, PurchaseInvoice } from "./store";
 import type { DebitNoteFormState } from "./types";
-import { formatCurrencyByPreference } from "../../lib/formatPreferences";
+import { formatCurrencyByPreference, parseFormattedNumber } from "../../lib/formatPreferences";
 
 export function parseNumber(value: string | number | null | undefined) {
-  const n = Number(value || 0);
+  const n = parseFormattedNumber(value);
   return Number.isFinite(n) ? n : 0;
 }
 

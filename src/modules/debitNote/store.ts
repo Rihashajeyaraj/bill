@@ -1,6 +1,7 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped } from "../../services/storage";
 import { authGetRole } from "../../services/auth.service";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
+import { parseFormattedNumber } from "../../lib/formatPreferences";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW } from "./countryConfig";
 import type { CountryCode, DebitStatus, DebitType } from "./countryConfig";
 
@@ -201,7 +202,7 @@ function normalizeCountryCode(value: unknown): CountryCode | null {
 }
 
 function toNumber(value: unknown) {
-  const n = Number(value || 0);
+  const n = parseFormattedNumber(value);
   return Number.isFinite(n) ? n : 0;
 }
 

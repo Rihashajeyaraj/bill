@@ -607,6 +607,8 @@ export default function DebitNotePremium() {
         }
       : form;
     try {
+      let savedLocallyOnly = false;
+      let remoteSyncMessage = "";
       const saved = saveDebitNote({
         id: effectiveFormForSave.id,
         country,
@@ -640,7 +642,13 @@ export default function DebitNotePremium() {
         actor: actorName
       });
 
-      await debitNotesSaveRemote(saved);
+      try {
+        await debitNotesSaveRemote(saved);
+      } catch (remoteError: any) {
+        savedLocallyOnly = true;
+        remoteSyncMessage =
+          remoteError?.message || "Supabase denied access. Saved in local storage only.";
+      }
 
       if (linkedReturnRef && saved?.status !== "Draft") {
         saveItemReturnAction({
@@ -686,10 +694,15 @@ export default function DebitNotePremium() {
       );
       setDirty(false);
       setViewMode("edit");
-      setSuccessMessage(`${saved.debitNoteNo} saved as ${saved.status}.`);
-      setErrorMessage("");
+      setSuccessMessage(
+        savedLocallyOnly
+          ? `${saved.debitNoteNo} saved locally as ${saved.status}.`
+          : `${saved.debitNoteNo} saved as ${saved.status}.`
+      );
+      setErrorMessage(savedLocallyOnly ? remoteSyncMessage : "");
     } catch (error: any) {
       setErrorMessage(error?.message || "Unable to save debit note.");
+      setSuccessMessage("");
     } finally {
       setSavingStatus(null);
     }
