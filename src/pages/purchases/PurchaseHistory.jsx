@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import Modal from "../../components/Modal";
+import DateInput from "../../components/DateInput";
 import { useFinancialYears } from "../../context/FinancialYearContext";
 import { useToast } from "../../context/ToastContext";
 import { purchasesList, purchasesSyncFromRemote } from "../../services/purchases.service";
@@ -68,6 +69,10 @@ export default function PurchaseHistory() {
   const [barcodeLoading, setBarcodeLoading] = useState(false);
   const [barcodeActionBillId, setBarcodeActionBillId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [supplierFilter, setSupplierFilter] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState("");
   const tdsSummaryByBill = useMemo(() => summarizeBillTdsByBill(""), [bills]);
   const selectedBillTdsRows = useMemo(
     () => (selectedBill?.id ? listBillTdsHistory(selectedBill?.country, selectedBill.id) : []),
@@ -102,10 +107,38 @@ export default function PurchaseHistory() {
       }),
     [selectedBillTdsRows]
   );
+  const supplierOptions = useMemo(() => {
+    const unique = new Set();
+    sortedBills.forEach((bill) => {
+      const value = String(bill?.partyName || "").trim();
+      if (value) unique.add(value);
+    });
+    return [...unique].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  }, [sortedBills]);
+  const paymentOptions = useMemo(() => {
+    const unique = new Set();
+    sortedBills.forEach((bill) => {
+      const value = String(bill?.paymentType || "").trim();
+      if (value) unique.add(value);
+    });
+    return [...unique];
+  }, [sortedBills]);
+  const filteredByControls = useMemo(() => {
+    return sortedBills.filter((bill) => {
+      const billDate = String(bill?.billDate || "").trim();
+      const supplierName = String(bill?.partyName || "").trim();
+      const paymentType = String(bill?.paymentType || "").trim();
+      if (fromDate && billDate && billDate < fromDate) return false;
+      if (toDate && billDate && billDate > toDate) return false;
+      if (supplierFilter && supplierName !== supplierFilter) return false;
+      if (paymentFilter && paymentType !== paymentFilter) return false;
+      return true;
+    });
+  }, [fromDate, paymentFilter, sortedBills, supplierFilter, toDate]);
   const filteredBills = useMemo(() => {
     const query = String(searchQuery || "").trim().toLowerCase();
-    if (!query) return sortedBills;
-    return sortedBills.filter((bill) => {
+    if (!query) return filteredByControls;
+    return filteredByControls.filter((bill) => {
       const billTdsSummary = tdsSummaryByBill[String(bill?.id || "").trim()] || null;
       const values = [
         bill?.billNumber,
@@ -119,7 +152,7 @@ export default function PurchaseHistory() {
       ];
       return values.some((value) => String(value || "").toLowerCase().includes(query));
     });
-  }, [searchQuery, sortedBills, tdsSummaryByBill]);
+  }, [filteredByControls, searchQuery, tdsSummaryByBill]);
 
   useEffect(() => {
     let mounted = true;
@@ -338,6 +371,45 @@ export default function PurchaseHistory() {
             placeholder="Search bill no, supplier, phone, payment type"
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-300"
           />
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+          <DateInput
+            value={fromDate}
+            onChange={setFromDate}
+            placeholder="From date"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          />
+          <DateInput
+            value={toDate}
+            onChange={setToDate}
+            placeholder="To date"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          />
+          <select
+            value={supplierFilter}
+            onChange={(event) => setSupplierFilter(event.target.value)}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          >
+            <option value="">All Suppliers</option>
+            {supplierOptions.map((supplier) => (
+              <option key={supplier} value={supplier}>
+                {supplier}
+              </option>
+            ))}
+          </select>
+          <select
+            value={paymentFilter}
+            onChange={(event) => setPaymentFilter(event.target.value)}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          >
+            <option value="">All Payment Types</option>
+            {paymentOptions.map((paymentType) => (
+              <option key={paymentType} value={paymentType}>
+                {paymentType}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">

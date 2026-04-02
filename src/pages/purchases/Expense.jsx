@@ -37,6 +37,10 @@ export default function Expense() {
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [historyRows, setHistoryRows] = useState(() => expensesList(activeRange));
   const [searchQuery, setSearchQuery] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -77,14 +81,42 @@ export default function Expense() {
       ),
     [historyRows]
   );
+  const categoryHistoryOptions = useMemo(() => {
+    const unique = new Set();
+    sortedHistoryRows.forEach((row) => {
+      const value = String(row?.category || "").trim();
+      if (value) unique.add(value);
+    });
+    return [...unique].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  }, [sortedHistoryRows]);
+  const paymentHistoryOptions = useMemo(() => {
+    const unique = new Set();
+    sortedHistoryRows.forEach((row) => {
+      const value = String(row?.paymentMode || "").trim();
+      if (value) unique.add(value);
+    });
+    return [...unique];
+  }, [sortedHistoryRows]);
+  const filteredByControls = useMemo(() => {
+    return sortedHistoryRows.filter((row) => {
+      const rowDate = String(row?.date || "").trim();
+      const categoryValue = String(row?.category || "").trim();
+      const paymentModeValue = String(row?.paymentMode || "").trim();
+      if (fromDate && rowDate && rowDate < fromDate) return false;
+      if (toDate && rowDate && rowDate > toDate) return false;
+      if (categoryFilter && categoryValue !== categoryFilter) return false;
+      if (paymentFilter && paymentModeValue !== paymentFilter) return false;
+      return true;
+    });
+  }, [categoryFilter, fromDate, paymentFilter, sortedHistoryRows, toDate]);
   const filteredHistoryRows = useMemo(() => {
     const query = String(searchQuery || "").trim().toLowerCase();
-    if (!query) return sortedHistoryRows;
-    return sortedHistoryRows.filter((row) => {
+    if (!query) return filteredByControls;
+    return filteredByControls.filter((row) => {
       const values = [row?.date, row?.category, row?.paymentMode, row?.amount, row?.note];
       return values.some((value) => String(value || "").toLowerCase().includes(query));
     });
-  }, [searchQuery, sortedHistoryRows]);
+  }, [filteredByControls, searchQuery]);
   const filteredCategoryOptions = useMemo(() => {
     const query = String(category || "").trim().toLowerCase();
     const source = Array.isArray(categoryOptions) ? categoryOptions : [];
@@ -246,6 +278,45 @@ export default function Expense() {
             placeholder="Search date, category, payment method, note"
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-300"
           />
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+          <DateInput
+            value={fromDate}
+            onChange={setFromDate}
+            placeholder="From date"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          />
+          <DateInput
+            value={toDate}
+            onChange={setToDate}
+            placeholder="To date"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          />
+          <select
+            value={categoryFilter}
+            onChange={(event) => setCategoryFilter(event.target.value)}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          >
+            <option value="">All Categories</option>
+            {categoryHistoryOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <select
+            value={paymentFilter}
+            onChange={(event) => setPaymentFilter(event.target.value)}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          >
+            <option value="">All Payment Methods</option>
+            {paymentHistoryOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">

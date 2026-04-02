@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
+import DateInput from "../../components/DateInput";
 import { useFinancialYears } from "../../context/FinancialYearContext";
 import { useToast } from "../../context/ToastContext";
 import { invoicesList, invoicesSyncFromRemote } from "../../services/invoices.service";
@@ -51,6 +52,10 @@ export default function InvoiceHistory() {
   const [loading, setLoading] = useState(true);
   const [invoices, setInvoices] = useState(() => invoicesList(activeRange));
   const [searchQuery, setSearchQuery] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [customerFilter, setCustomerFilter] = useState("");
 
   const sortedInvoices = useMemo(
     () => {
@@ -78,10 +83,34 @@ export default function InvoiceHistory() {
     },
     [invoices]
   );
+  const customerOptions = useMemo(() => {
+    const unique = new Set();
+    sortedInvoices.forEach((invoice) => {
+      const value = String(invoice?.partyName || invoice?.buyer?.name || "").trim();
+      if (value) unique.add(value);
+    });
+    return [...unique].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  }, [sortedInvoices]);
+  const statusOptions = useMemo(() => {
+    const unique = new Set(sortedInvoices.map((invoice) => resolveStatus(invoice)).filter(Boolean));
+    return [...unique];
+  }, [sortedInvoices]);
+  const filteredByControls = useMemo(() => {
+    return sortedInvoices.filter((invoice) => {
+      const invoiceDate = String(invoice?.invoiceDate || "").trim();
+      const status = resolveStatus(invoice);
+      const customerName = String(invoice?.partyName || invoice?.buyer?.name || "").trim();
+      if (fromDate && invoiceDate && invoiceDate < fromDate) return false;
+      if (toDate && invoiceDate && invoiceDate > toDate) return false;
+      if (statusFilter && status !== statusFilter) return false;
+      if (customerFilter && customerName !== customerFilter) return false;
+      return true;
+    });
+  }, [customerFilter, fromDate, sortedInvoices, statusFilter, toDate]);
   const filteredInvoices = useMemo(() => {
     const query = String(searchQuery || "").trim().toLowerCase();
-    if (!query) return sortedInvoices;
-    return sortedInvoices.filter((invoice) => {
+    if (!query) return filteredByControls;
+    return filteredByControls.filter((invoice) => {
       const values = [
         invoice?.invoiceNo,
         invoice?.invoiceDate,
@@ -93,7 +122,7 @@ export default function InvoiceHistory() {
       ];
       return values.some((value) => String(value || "").toLowerCase().includes(query));
     });
-  }, [searchQuery, sortedInvoices]);
+  }, [filteredByControls, searchQuery]);
 
   useEffect(() => {
     let mounted = true;
@@ -153,6 +182,45 @@ export default function InvoiceHistory() {
             placeholder="Search invoice no, customer, phone, status"
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-300"
           />
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+          <DateInput
+            value={fromDate}
+            onChange={setFromDate}
+            placeholder="From date"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          />
+          <DateInput
+            value={toDate}
+            onChange={setToDate}
+            placeholder="To date"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          />
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          >
+            <option value="">All Status</option>
+            {statusOptions.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
+          <select
+            value={customerFilter}
+            onChange={(event) => setCustomerFilter(event.target.value)}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none"
+          >
+            <option value="">All Customers</option>
+            {customerOptions.map((customer) => (
+              <option key={customer} value={customer}>
+                {customer}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">
