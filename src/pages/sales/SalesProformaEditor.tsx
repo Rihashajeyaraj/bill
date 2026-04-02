@@ -19,7 +19,8 @@ import {
 import {
   formatDecimalByPreference,
   formatInputNumberByPreference,
-  normalizeFormattedNumberInput
+  normalizeFormattedNumberInput,
+  parseFormattedNumber
 } from "../../lib/formatPreferences";
 import {
   convertSalesProforma,
@@ -30,7 +31,7 @@ import {
 } from "../../services/proformas.service";
 
 function parseNumber(value: unknown) {
-  const numeric = Number(value ?? 0);
+  const numeric = parseFormattedNumber(value);
   return Number.isFinite(numeric) ? numeric : 0;
 }
 

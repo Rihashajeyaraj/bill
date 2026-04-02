@@ -11,12 +11,13 @@ import { invoicesCreate, invoicesList, invoicesSyncFromRemote } from "./invoices
 import { syncItemsFromRemote } from "../modules/items/store";
 import { listPaymentIn, savePaymentIn } from "../modules/paymentIn/store";
 import { syncPaymentInRemote } from "./payments.service";
+import { parseFormattedNumber } from "../lib/formatPreferences";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROFORMA_STATUSES = new Set(["DRAFT", "SENT", "APPROVED", "REJECTED", "EXPIRED", "CONVERTED"]);
 
 function parseNumber(value) {
-  const numeric = Number(value ?? 0);
+  const numeric = parseFormattedNumber(value);
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
