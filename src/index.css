@@ -168,6 +168,16 @@ input[type="number"]::-webkit-inner-spin-button {
   font-size: 16px;
 }
 
+.theme-root input[required]:invalid:not(:placeholder-shown),
+.theme-root select[required]:invalid,
+.theme-root textarea[required]:invalid:not(:placeholder-shown),
+.theme-root input[aria-required="true"][aria-invalid="true"],
+.theme-root select[aria-required="true"][aria-invalid="true"],
+.theme-root textarea[aria-required="true"][aria-invalid="true"] {
+  border-color: #f43f5e !important;
+  box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.12);
+}
+
 .theme-root .app-main > * {
   min-width: 0;
 }
