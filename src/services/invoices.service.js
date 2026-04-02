@@ -482,7 +482,7 @@ export async function invoicesSyncFromRemote(range) {
 
     const { data: paymentData, error: paymentError } = await supabase
       .from("payments")
-      .select("invoice_id,amount,status,direction")
+      .select("invoice_id,amount,tds_amount,status,direction")
       .eq("organization_id", organizationId)
       .eq("direction", "in")
       .in("invoice_id", ids);
@@ -517,7 +517,10 @@ export async function invoicesSyncFromRemote(range) {
     const status = String(row?.status || "").toLowerCase();
     if (status === "draft" || status === "cancelled") return;
     const current = paymentMap.get(invoiceId) || 0;
-    paymentMap.set(invoiceId, current + Math.max(0, parseNumber(row?.amount)));
+    paymentMap.set(
+      invoiceId,
+      current + Math.max(0, parseNumber(row?.amount)) + Math.max(0, parseNumber(row?.tds_amount))
+    );
   });
 
   const creditMap = new Map();

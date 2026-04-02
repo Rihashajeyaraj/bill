@@ -294,7 +294,11 @@ function appliedPaymentInForDocument(
         ? String(entry?.invoiceId || entry?.invoice_id || "") === String(documentId)
         : false
     )
-    .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.amount)), 0);
+    .reduce(
+      (sum, entry) =>
+        sum + Math.max(0, toNumber(entry?.amount)) + Math.max(0, toNumber(entry?.tdsAmount ?? entry?.tds_amount)),
+      0
+    );
 
   const premium = getAllPayments()
     .filter((entry) => entry.status === "Applied")
