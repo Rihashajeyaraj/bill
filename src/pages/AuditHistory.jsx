@@ -94,6 +94,7 @@ export default function AuditHistory() {
   const [userOptions, setUserOptions] = useState([]);
   const [hasSystemActor, setHasSystemActor] = useState(false);
   const [expandedRowId, setExpandedRowId] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   useGlobalLoadingBridge(loading, "audit-history");
 
   const isOwner = useMemo(() => canAccessSettings(authGetRole()), []);
@@ -152,6 +153,21 @@ export default function AuditHistory() {
       ),
     [rows]
   );
+  const filteredRows = useMemo(() => {
+    const query = String(searchQuery || "").trim().toLowerCase();
+    if (!query) return sortedRows;
+    return sortedRows.filter((row) => {
+      const values = [
+        row?.happenedAt,
+        row?.tableName,
+        row?.action,
+        row?.actorUserId,
+        row?.recordId,
+        changeSummary(row)
+      ];
+      return values.some((value) => String(value || "").toLowerCase().includes(query));
+    });
+  }, [searchQuery, sortedRows]);
 
   if (!isOwner) {
     return (
@@ -291,7 +307,17 @@ export default function AuditHistory() {
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <p className="text-sm font-semibold text-slate-900">Events</p>
-          <p className="text-xs font-semibold text-slate-500">{sortedRows.length} records</p>
+          <p className="text-xs font-semibold text-slate-500">{filteredRows.length} records</p>
+        </div>
+
+        <div className="border-b border-slate-200 px-4 py-3">
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search table, action, user, record id"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+          />
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto">
@@ -308,8 +334,8 @@ export default function AuditHistory() {
               </tr>
             </thead>
             <tbody>
-              {sortedRows.length ? (
-                sortedRows.map((row) => {
+              {filteredRows.length ? (
+                filteredRows.map((row) => {
                   const expanded = expandedRowId === row.id;
                   return (
                     <React.Fragment key={row.id}>
@@ -362,7 +388,11 @@ export default function AuditHistory() {
               ) : (
                 <tr>
                   <td colSpan={7} className="px-4 py-12 text-center text-sm text-slate-500">
-                    {loading ? "Loading audit events..." : "No audit events found for selected filters."}
+                    {loading
+                      ? "Loading audit events..."
+                      : searchQuery
+                        ? "No matching audit events found."
+                        : "No audit events found for selected filters."}
                   </td>
                 </tr>
               )}

@@ -36,6 +36,7 @@ export default function Expense() {
   const [saving, setSaving] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [historyRows, setHistoryRows] = useState(() => expensesList(activeRange));
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -76,6 +77,14 @@ export default function Expense() {
       ),
     [historyRows]
   );
+  const filteredHistoryRows = useMemo(() => {
+    const query = String(searchQuery || "").trim().toLowerCase();
+    if (!query) return sortedHistoryRows;
+    return sortedHistoryRows.filter((row) => {
+      const values = [row?.date, row?.category, row?.paymentMode, row?.amount, row?.note];
+      return values.some((value) => String(value || "").toLowerCase().includes(query));
+    });
+  }, [searchQuery, sortedHistoryRows]);
   const filteredCategoryOptions = useMemo(() => {
     const query = String(category || "").trim().toLowerCase();
     const source = Array.isArray(categoryOptions) ? categoryOptions : [];
@@ -225,8 +234,18 @@ export default function Expense() {
             <p className="text-xs text-slate-500">Auto refreshes after every expense entry.</p>
           </div>
           <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {sortedHistoryRows.length} entries | Total {money(historyTotal)}
+            {filteredHistoryRows.length} entries | Total {money(historyTotal)}
           </div>
+        </div>
+
+        <div className="mt-4">
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search date, category, payment method, note"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+          />
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">
@@ -248,14 +267,14 @@ export default function Expense() {
                     Loading expense history...
                   </td>
                 </tr>
-              ) : sortedHistoryRows.length === 0 ? (
+              ) : filteredHistoryRows.length === 0 ? (
                 <tr className="border-t border-slate-100">
                   <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
-                    No expenses saved yet.
+                    {searchQuery ? "No matching expenses found." : "No expenses saved yet."}
                   </td>
                 </tr>
               ) : (
-                sortedHistoryRows.map((row) => (
+                filteredHistoryRows.map((row) => (
                   <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                     <td className="px-3 py-3 text-slate-700">{formatDate(row?.date)}</td>
                     <td className="px-3 py-3 font-medium text-slate-900">{row?.category || "-"}</td>

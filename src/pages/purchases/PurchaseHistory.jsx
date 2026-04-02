@@ -67,6 +67,7 @@ export default function PurchaseHistory() {
   const [barcodeModalRows, setBarcodeModalRows] = useState([]);
   const [barcodeLoading, setBarcodeLoading] = useState(false);
   const [barcodeActionBillId, setBarcodeActionBillId] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const tdsSummaryByBill = useMemo(() => summarizeBillTdsByBill(""), [bills]);
   const selectedBillTdsRows = useMemo(
     () => (selectedBill?.id ? listBillTdsHistory(selectedBill?.country, selectedBill.id) : []),
@@ -101,6 +102,24 @@ export default function PurchaseHistory() {
       }),
     [selectedBillTdsRows]
   );
+  const filteredBills = useMemo(() => {
+    const query = String(searchQuery || "").trim().toLowerCase();
+    if (!query) return sortedBills;
+    return sortedBills.filter((bill) => {
+      const billTdsSummary = tdsSummaryByBill[String(bill?.id || "").trim()] || null;
+      const values = [
+        bill?.billNumber,
+        bill?.billDate,
+        bill?.partyName,
+        bill?.phone,
+        bill?.paymentType,
+        bill?.totals?.grandTotal,
+        bill?.totals?.totalQty,
+        billTdsSummary?.totalTdsAmount
+      ];
+      return values.some((value) => String(value || "").toLowerCase().includes(query));
+    });
+  }, [searchQuery, sortedBills, tdsSummaryByBill]);
 
   useEffect(() => {
     let mounted = true;
@@ -307,8 +326,18 @@ export default function PurchaseHistory() {
             <p className="text-xs text-slate-500">Review bills and open actions.</p>
           </div>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {sortedBills.length} bills
+            {filteredBills.length} bills
           </span>
+        </div>
+
+        <div className="mt-4">
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search bill no, supplier, phone, payment type"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+          />
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">
@@ -334,14 +363,14 @@ export default function PurchaseHistory() {
                     Loading purchase history...
                   </td>
                 </tr>
-              ) : sortedBills.length === 0 ? (
+              ) : filteredBills.length === 0 ? (
                 <tr className="border-t border-slate-100">
                   <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
-                    No purchase bills yet.
+                    {searchQuery ? "No matching purchase bills found." : "No purchase bills yet."}
                   </td>
                 </tr>
               ) : (
-                sortedBills.map((bill) => {
+                filteredBills.map((bill) => {
                   const rowBarcodes = barcodesByPurchaseId[String(bill?.id || "").trim()] || [];
                   const hasBarcodes = rowBarcodes.length > 0;
                   const billTdsSummary = tdsSummaryByBill[String(bill?.id || "").trim()] || null;

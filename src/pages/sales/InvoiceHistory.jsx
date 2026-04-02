@@ -50,6 +50,7 @@ export default function InvoiceHistory() {
   const { activeRange, selectedYear } = useFinancialYears();
   const [loading, setLoading] = useState(true);
   const [invoices, setInvoices] = useState(() => invoicesList(activeRange));
+  const [searchQuery, setSearchQuery] = useState("");
 
   const sortedInvoices = useMemo(
     () => {
@@ -77,6 +78,22 @@ export default function InvoiceHistory() {
     },
     [invoices]
   );
+  const filteredInvoices = useMemo(() => {
+    const query = String(searchQuery || "").trim().toLowerCase();
+    if (!query) return sortedInvoices;
+    return sortedInvoices.filter((invoice) => {
+      const values = [
+        invoice?.invoiceNo,
+        invoice?.invoiceDate,
+        invoice?.partyName,
+        invoice?.buyer?.name,
+        invoice?.buyer?.phone,
+        resolveStatus(invoice),
+        invoice?.totals?.grandTotal
+      ];
+      return values.some((value) => String(value || "").toLowerCase().includes(query));
+    });
+  }, [searchQuery, sortedInvoices]);
 
   useEffect(() => {
     let mounted = true;
@@ -124,8 +141,18 @@ export default function InvoiceHistory() {
             <p className="text-xs text-slate-500">Review invoices and open actions.</p>
           </div>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {sortedInvoices.length} invoices
+            {filteredInvoices.length} invoices
           </span>
+        </div>
+
+        <div className="mt-4">
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search invoice no, customer, phone, status"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-300"
+          />
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">
@@ -149,14 +176,14 @@ export default function InvoiceHistory() {
                     Loading invoice history...
                   </td>
                 </tr>
-              ) : sortedInvoices.length === 0 ? (
+              ) : filteredInvoices.length === 0 ? (
                 <tr className="border-t border-slate-100">
                   <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
-                    No invoices yet.
+                    {searchQuery ? "No matching invoices found." : "No invoices yet."}
                   </td>
                 </tr>
               ) : (
-                sortedInvoices.map((invoice) => {
+                filteredInvoices.map((invoice) => {
                   const status = resolveStatus(invoice);
                   return (
                     <React.Fragment key={invoice.id}>
