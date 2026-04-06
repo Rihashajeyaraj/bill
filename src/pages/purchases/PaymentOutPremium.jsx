@@ -222,7 +222,7 @@ export default function PaymentOutPremium() {
 
   const [panelMode, setPanelMode] = useState("feed");
   const [activeStep, setActiveStep] = useState(0);
-  const [form, setForm] = useState(defaultPaymentForm(country, effectiveCurrency));
+  const [form, setForm] = useState(defaultPaymentForm(fixedCountry, effectiveCurrency));
   const [activePayment, setActivePayment] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [dirty, setDirty] = useState(false);
@@ -236,10 +236,10 @@ export default function PaymentOutPremium() {
   const [supplierSearchError, setSupplierSearchError] = useState("");
   const prefillBillId = searchParams.get("billId") || "";
 
-  const payments = useMemo(() => listPaymentOut(country), [country, refreshKey]);
-  const suppliers = useMemo(() => mapSuppliersByCountry(country), [country, refreshKey]);
-  const bills = useMemo(() => mapOpenBillsByCountry(country), [country, refreshKey]);
-  const summary = useMemo(() => summarizePaymentOut(country), [country, refreshKey]);
+  const payments = useMemo(() => listPaymentOut(fixedCountry), [fixedCountry, refreshKey]);
+  const suppliers = useMemo(() => mapSuppliersByCountry(fixedCountry), [fixedCountry, refreshKey]);
+  const bills = useMemo(() => mapOpenBillsByCountry(fixedCountry), [fixedCountry, refreshKey]);
+  const summary = useMemo(() => summarizePaymentOut(fixedCountry), [fixedCountry, refreshKey]);
 
   const selectedSupplier = useMemo(
     () => suppliers.find((entry) => entry.id === form.supplierId) || null,
@@ -275,8 +275,8 @@ export default function PaymentOutPremium() {
     };
   }, [activePayment?.id, activePayment?.supplierId, form.allocations, form.selectedBillId, form.supplierId, form.supplierName, supplierBills]);
   const supplierOutstandingBefore = useMemo(
-    () => (form.supplierId ? outstandingBySupplier(country, form.supplierId) : 0),
-    [country, form.supplierId, refreshKey]
+    () => (form.supplierId ? outstandingBySupplier(fixedCountry, form.supplierId) : 0),
+    [fixedCountry, form.supplierId, refreshKey]
   );
 
   const amountPaid = Math.max(0, parseNumber(form.amountPaid));
@@ -343,15 +343,15 @@ export default function PaymentOutPremium() {
   const supplierInsights = useMemo(
     () =>
       form.supplierId
-        ? paymentInsightsBySupplier(country, form.supplierId)
+        ? paymentInsightsBySupplier(fixedCountry, form.supplierId)
         : { lastPaymentDate: "", advanceWallet: 0, totalPaid: 0, paymentCount: 0 },
-    [country, form.supplierId, payments]
+    [fixedCountry, form.supplierId, payments]
   );
   const supplierLastPayment = supplierInsights.lastPaymentDate || "";
   const supplierAdvanceWallet = Math.max(0, parseNumber(supplierInsights.advanceWallet));
   const supplierAdvanceHistory = useMemo(
-    () => (form.supplierId ? listSupplierAdvanceWalletHistory(country, form.supplierId).slice(0, 12) : []),
-    [country, form.supplierId, payments]
+    () => (form.supplierId ? listSupplierAdvanceWalletHistory(fixedCountry, form.supplierId).slice(0, 12) : []),
+    [fixedCountry, form.supplierId, payments]
   );
   const autoCalculatedTdsAmount = useMemo(
     () => calculateTdsAmount(autoTdsBaseAmount(selectedBill, form.allocationMode, form.amountPaid), form.tdsRate),
@@ -459,7 +459,7 @@ export default function PaymentOutPremium() {
     if (!bill) return;
 
     setForm(() => ({
-      ...defaultPaymentForm(country, effectiveCurrency),
+      ...defaultPaymentForm(fixedCountry, effectiveCurrency),
       supplierId: bill.supplierId,
       supplierName: bill.supplierName,
       allocationMode: "linked",
@@ -480,7 +480,7 @@ export default function PaymentOutPremium() {
       window.alert("You do not have permission to create payment out entries.");
       return;
     }
-    setForm(defaultPaymentForm(country, effectiveCurrency));
+    setForm(defaultPaymentForm(fixedCountry, effectiveCurrency));
     setActivePayment(null);
     setPanelMode("flow");
     setActiveStep(0);
@@ -508,7 +508,7 @@ export default function PaymentOutPremium() {
     if (dirty && !window.confirm("Discard unsaved changes?")) return;
     setPanelMode("feed");
     setActiveStep(0);
-    setForm(defaultPaymentForm(country, effectiveCurrency));
+    setForm(defaultPaymentForm(fixedCountry, effectiveCurrency));
     setActivePayment(null);
     setDirty(false);
     setSupplierLookupQuery("");
@@ -852,7 +852,7 @@ export default function PaymentOutPremium() {
       window.alert(`Payment ${saved.paymentNo} saved as ${saved.status}.`);
       setPanelMode("feed");
       setActiveStep(0);
-      setForm(defaultPaymentForm(country, effectiveCurrency));
+      setForm(defaultPaymentForm(fixedCountry, effectiveCurrency));
       setActivePayment(null);
       setDirty(false);
       setSupplierLookupQuery("");
@@ -878,7 +878,7 @@ export default function PaymentOutPremium() {
       if (activePayment?.id === record.id) {
         setPanelMode("feed");
         setActiveStep(0);
-        setForm(defaultPaymentForm(country, effectiveCurrency));
+        setForm(defaultPaymentForm(fixedCountry, effectiveCurrency));
         setActivePayment(null);
         setDirty(false);
       }
@@ -991,7 +991,7 @@ export default function PaymentOutPremium() {
             <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => exportPaymentOutSummaryPdf(filteredPayments, country, effectiveCurrency)}
+                  onClick={() => exportPaymentOutSummaryPdf(filteredPayments, fixedCountry, effectiveCurrency)}
                   disabled={!filteredPayments.length}
                   className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >

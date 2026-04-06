@@ -3,6 +3,7 @@ import { authGetRole } from "../../services/auth.service";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { triggerLowStockNotifications } from "../items/store";
 import { parseFormattedNumber } from "../../lib/formatPreferences";
+import { parseDateInputToIso } from "../../lib/dateUtils";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW } from "./countryConfig";
 import type { CountryCode, CreditStatus, CreditType } from "./countryConfig";
 
@@ -10,6 +11,16 @@ const CREDIT_NOTE_STORE_KEY = "creditNotesPremiumV1";
 const CREDIT_NOTE_SEQUENCE_KEY = "creditNotesPremiumSequenceV1";
 const SELECTED_COUNTRY_KEY = "creditNoteSelectedCountryV1";
 const PAYMENT_IN_PREMIUM_KEY = "paymentInPremiumV1";
+
+function normalizeStoredDate(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const direct = parseDateInputToIso(raw);
+  if (direct) return direct;
+  const dateOnly = raw.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || "";
+  if (dateOnly) return parseDateInputToIso(dateOnly);
+  return "";
+}
 
 export interface CreditInvoiceLine {
   id: string;
@@ -193,6 +204,15 @@ function normalizeCountryCode(value: unknown): CountryCode | null {
   if (!value) return null;
   const clean = String(value).trim();
   if (clean in COUNTRY_CONFIG) return clean as CountryCode;
+  const upper = clean.toUpperCase();
+  if (upper === "LK") return "SL";
+  if (upper === "GB") return "UK";
+  if (upper in COUNTRY_CONFIG) return upper as CountryCode;
+  const compact = clean.toLowerCase().replace(/[^a-z]/g, "");
+  if (compact === "srilanka") return "SL";
+  if (compact === "unitedkingdom" || compact === "greatbritain" || compact === "britain") return "UK";
+  if (compact === "unitedstates" || compact === "usa" || compact === "us") return "US";
+  if (compact === "uae" || compact === "unitedarabemirates") return "AE";
   return COUNTRY_NAME_TO_CODE[clean] || null;
 }
 
@@ -236,6 +256,16 @@ function resolveLegacyCreditCountry(row: any): CountryCode {
     const invoiceCountry = normalizeCountryCode(invoice?.country);
     if (invoiceCountry) return invoiceCountry;
   }
+
+  const selectedCountry = normalizeCountryCode(lsGetOrganizationScoped(SELECTED_COUNTRY_KEY, ""));
+  if (selectedCountry) return selectedCountry;
+
+  const companyProfile = lsGetOrganizationScoped(LS_KEYS.company_profile, null) as any;
+  const companyCountry =
+    normalizeCountryCode(companyProfile?.countryCode) ||
+    normalizeCountryCode(companyProfile?.country) ||
+    normalizeCountryCode(companyProfile?.address?.country);
+  if (companyCountry) return companyCountry;
 
   return "IN";
 }
@@ -366,7 +396,9 @@ function getLegacyCreditNotes(): CreditNoteRecord[] {
       sourceSystem: "legacy",
       country,
       creditNoteNo: String(row?.creditNoteNo || row?.referenceNo || `LEGACY-CN-${index + 1}`),
-      creditNoteDate: String(row?.creditDate || row?.credit_note_date || row?.created_at || ""),
+      creditNoteDate:
+        normalizeStoredDate(row?.creditDate || row?.credit_note_date || row?.created_at) ||
+        String(row?.creditDate || row?.credit_note_date || row?.created_at || ""),
       customerId,
       customerName: String(
         row?.customerName ||
@@ -381,7 +413,9 @@ function getLegacyCreditNotes(): CreditNoteRecord[] {
       linkedInvoiceNo: String(
         row?.referenceInvoiceNo || row?.linkedInvoiceNo || invoice?.invoiceNo || ""
       ),
-      linkedInvoiceDate: String(row?.linkedInvoiceDate || invoice?.invoiceDate || invoice?.date || ""),
+      linkedInvoiceDate:
+        normalizeStoredDate(row?.linkedInvoiceDate || invoice?.invoiceDate || invoice?.date) ||
+        String(row?.linkedInvoiceDate || invoice?.invoiceDate || invoice?.date || ""),
       reason: String(row?.reason || row?.notes || row?.description || ""),
       status,
       creditType: "Full Credit",
@@ -1133,12 +1167,12 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
     id,
     country: payload.country,
     creditNoteNo,
-    creditNoteDate: payload.creditNoteDate,
+    creditNoteDate: normalizeStoredDate(payload.creditNoteDate) || payload.creditNoteDate,
     customerId: payload.customerId,
     customerName: payload.customerName,
     linkedInvoiceId: payload.linkedInvoiceId,
     linkedInvoiceNo: payload.linkedInvoiceNo,
-    linkedInvoiceDate: payload.linkedInvoiceDate,
+    linkedInvoiceDate: normalizeStoredDate(payload.linkedInvoiceDate) || payload.linkedInvoiceDate,
     reason: payload.reason,
     status: nextStatus,
     creditType: payload.creditType,

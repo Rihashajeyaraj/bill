@@ -40,6 +40,7 @@ import EmptyState from "../../components/EmptyState";
 import GradientButton from "../../components/GradientButton";
 import { UI } from "../../theme/tokens";
 import { useGlobalLoadingBridge } from "../../hooks/useGlobalLoadingBridge";
+import { parseDateInputToIso } from "../../lib/dateUtils";
 
 type ViewMode = "list" | "create" | "edit" | "view";
 
@@ -387,8 +388,9 @@ export default function CreditNotePremium() {
       notes.filter((note) => {
         const haystack = `${note.customerName} ${note.linkedInvoiceNo} ${note.creditNoteNo}`.toLowerCase();
         const matchSearch = search.trim() ? haystack.includes(search.trim().toLowerCase()) : true;
-        const matchFrom = fromDate ? note.creditNoteDate >= fromDate : true;
-        const matchTo = toDate ? note.creditNoteDate <= toDate : true;
+        const noteDateIso = parseDateInputToIso(note.creditNoteDate);
+        const matchFrom = fromDate ? (!!noteDateIso && noteDateIso >= fromDate) : true;
+        const matchTo = toDate ? (!!noteDateIso && noteDateIso <= toDate) : true;
         return matchSearch && matchFrom && matchTo;
       }),
     [notes, search, fromDate, toDate]

@@ -193,6 +193,15 @@ function normalizeCountryCode(value: unknown): CountryCode | null {
   if (!value) return null;
   const clean = String(value).trim();
   if (clean in COUNTRY_CONFIG) return clean as CountryCode;
+  const upper = clean.toUpperCase();
+  if (upper === "LK") return "SL";
+  if (upper === "GB") return "UK";
+  if (upper in COUNTRY_CONFIG) return upper as CountryCode;
+  const compact = clean.toLowerCase().replace(/[^a-z]/g, "");
+  if (compact === "srilanka") return "SL";
+  if (compact === "unitedkingdom" || compact === "greatbritain" || compact === "britain") return "UK";
+  if (compact === "unitedstates" || compact === "usa" || compact === "us") return "US";
+  if (compact === "uae" || compact === "unitedarabemirates") return "AE";
   return COUNTRY_NAME_TO_CODE[clean] || null;
 }
 
@@ -210,6 +219,94 @@ function getAllPayments(): PaymentInRecord[] {
         }))
       : []
   })) as PaymentInRecord[];
+}
+
+function getLegacyPayments(): PaymentInRecord[] {
+  const legacy = lsGetOrganizationScoped(LS_KEYS.payments, []) as any[];
+  if (!Array.isArray(legacy)) return [];
+
+  return legacy
+    .filter((entry) => String(entry?.direction || "").toUpperCase() === "IN")
+    .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PI:"))
+    .map((entry: any, index: number) => {
+      const amountReceived = Math.max(0, toNumber(entry?.amountReceived ?? entry?.amount));
+      const tdsAmount = Math.max(0, toNumber(entry?.tdsAmount ?? entry?.tds_amount));
+      const totalSettled = amountReceived + tdsAmount;
+      const applyAmount = Math.max(0, toNumber(entry?.appliedAmount ?? entry?.amountApplied ?? entry?.amount));
+      const invoiceId = String(entry?.invoiceId || entry?.invoice_id || "").trim();
+      const invoiceNo = String(entry?.invoiceNo || entry?.invoice_no || invoiceId || "").trim();
+      const paymentDate = String(entry?.paymentDate || entry?.payment_date || entry?.date || "").trim();
+
+      return {
+        id: `legacy_pi_${String(entry?.id || entry?.paymentNo || entry?.referenceNo || index + 1)}`,
+        country: normalizeCountryCode(entry?.country) || "IN",
+        receiptNo: String(entry?.receiptNo || entry?.paymentNo || entry?.referenceNo || `LEGACY-PR-${index + 1}`),
+        paymentDate,
+        customerId: String(entry?.partyId || entry?.party_id || entry?.customerId || entry?.customer_id || "").trim(),
+        customerName: String(entry?.partyName || entry?.customerName || entry?.customer_name || "Customer"),
+        currency: String(entry?.currency || ""),
+        paymentMode: normalizePaymentMode(entry?.mode || entry?.paymentMode || entry?.payment_mode),
+        referenceNo: String(entry?.referenceNo || entry?.reference_no || ""),
+        chequeNo: String(entry?.chequeNo || entry?.cheque_no || ""),
+        bankName: String(entry?.bankName || entry?.bank_name || ""),
+        bankAccount: String(entry?.bankAccount || entry?.bank_account || ""),
+        transactionId: String(entry?.transactionId || entry?.transaction_id || ""),
+        paymentReference: String(entry?.paymentReference || ""),
+        registrationNumber: String(entry?.registrationNumber || entry?.gstin || entry?.trn || entry?.vatNo || ""),
+        tdsCategory: String(entry?.tdsCategory || "none"),
+        tdsRate: Math.max(0, toNumber(entry?.tdsRate ?? entry?.tds_rate)),
+        isManual: !!entry?.isManual || !!entry?.is_manual,
+        internalNotes: String(entry?.note || entry?.notes || ""),
+        customerNotes: String(entry?.customerNotes || ""),
+        attachment: null,
+        status: normalizePaymentStatus(entry?.status),
+        allocations: invoiceId
+          ? [
+              {
+                invoiceId,
+                invoiceNo: invoiceNo || invoiceId,
+                invoiceDate: String(entry?.invoiceDate || entry?.invoice_date || ""),
+                invoiceAmount: totalSettled,
+                balanceDue: totalSettled,
+                applyAmount,
+                documentType: "invoice"
+              }
+            ]
+          : [],
+        totals: {
+          amountReceived,
+          tdsAmount,
+          totalSettled,
+          amountApplied: applyAmount,
+          unappliedAmount: Math.max(0, totalSettled - applyAmount),
+          customerOutstandingBefore: 0,
+          customerOutstandingAfter: 0
+        },
+        audit: {
+          createdBy: String(entry?.createdBy || "Legacy Import"),
+          createdAt: String(entry?.created_at || nowIso()),
+          modifiedBy: String(entry?.modifiedBy || entry?.createdBy || "Legacy Import"),
+          modifiedAt: String(entry?.modifiedAt || entry?.created_at || nowIso())
+        },
+        history: [
+          {
+            status: normalizePaymentStatus(entry?.status),
+            at: String(entry?.created_at || nowIso()),
+            by: String(entry?.createdBy || "Legacy Import"),
+            note: "Imported from legacy payments"
+          }
+        ]
+      } satisfies PaymentInRecord;
+    });
+}
+
+function getMergedPayments(): PaymentInRecord[] {
+  return [...getAllPayments(), ...getLegacyPayments()].sort((a, b) => {
+    const left = String(a?.paymentDate || a?.audit?.modifiedAt || "");
+    const right = String(b?.paymentDate || b?.audit?.modifiedAt || "");
+    if (left !== right) return right.localeCompare(left);
+    return String(b?.receiptNo || "").localeCompare(String(a?.receiptNo || ""));
+  });
 }
 
 function setAllPayments(list: PaymentInRecord[]) {
@@ -481,13 +578,13 @@ export function setSelectedPaymentCountry(country: CountryCode) {
 }
 
 export function listPaymentIn(country?: CountryCode) {
-  const payments = getAllPayments();
+  const payments = getMergedPayments();
   if (!country) return payments;
   return payments.filter((entry) => entry.country === country);
 }
 
 export function getPaymentIn(id: string) {
-  return getAllPayments().find((entry) => entry.id === id) || null;
+  return getMergedPayments().find((entry) => entry.id === id) || null;
 }
 
 export function listPaymentLedger(country?: CountryCode) {

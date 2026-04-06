@@ -89,6 +89,81 @@ function getAllPayments() {
   return ensureArray(lsGetOrganizationScoped(PAYMENT_OUT_STORE_KEY, []));
 }
 
+function getLegacyPayments() {
+  const legacy = ensureArray(lsGetOrganizationScoped(LS_KEYS.payments, []));
+  return legacy
+    .filter((entry) => String(entry?.direction || "").toUpperCase() === "OUT")
+    .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PO:"))
+    .map((entry, index) => {
+      const amountPaid = Math.max(0, parseNumber(entry?.amountPaid ?? entry?.amount));
+      const tdsAmount = Math.max(0, parseNumber(entry?.tdsAmount ?? entry?.tds_amount));
+      const totalSettled = amountPaid + tdsAmount;
+      const applyAmount = Math.max(0, parseNumber(entry?.appliedAmount ?? entry?.amountApplied ?? entry?.amount));
+      const billId = String(entry?.billId || entry?.bill_id || "").trim();
+      const billNo = String(entry?.billNo || entry?.bill_no || billId || "").trim();
+      return {
+        id: `legacy_po_${String(entry?.id || entry?.paymentNo || entry?.referenceNo || index + 1)}`,
+        country: normalizeCountry(entry?.country) || "IN",
+        paymentNo: String(entry?.paymentNo || entry?.referenceNo || `LEGACY-PO-${index + 1}`),
+        paymentDate: String(entry?.paymentDate || entry?.payment_date || entry?.date || "").trim(),
+        supplierId: String(entry?.partyId || entry?.party_id || entry?.supplierId || entry?.supplier_id || "").trim(),
+        supplierName: String(entry?.partyName || entry?.supplierName || entry?.supplier_name || "Supplier"),
+        currency: String(entry?.currency || ""),
+        paymentMode: normalizePaymentMode(entry?.mode || entry?.paymentMode || entry?.payment_mode),
+        referenceNo: String(entry?.referenceNo || entry?.reference_no || ""),
+        chequeNo: String(entry?.chequeNo || entry?.cheque_no || ""),
+        bankName: String(entry?.bankName || entry?.bank_name || ""),
+        transactionId: String(entry?.transactionId || entry?.transaction_id || ""),
+        paymentReference: String(entry?.paymentReference || ""),
+        internalNotes: String(entry?.note || entry?.notes || ""),
+        attachment: null,
+        status: String(entry?.status || "").toLowerCase() === "applied" ? "Applied" : String(entry?.status || "").toLowerCase() === "paid" ? "Paid" : "Draft",
+        allocations: billId
+          ? [
+              {
+                billId,
+                billNo: billNo || billId,
+                billDate: String(entry?.billDate || entry?.bill_date || ""),
+                billAmount: totalSettled,
+                balanceDue: totalSettled,
+                applyAmount
+              }
+            ]
+          : [],
+        totals: {
+          amountPaid,
+          tdsAmount,
+          totalSettled,
+          amountApplied: applyAmount,
+          unappliedAmount: Math.max(0, totalSettled - applyAmount)
+        },
+        audit: {
+          createdBy: String(entry?.createdBy || "Legacy Import"),
+          createdAt: String(entry?.created_at || nowIso()),
+          modifiedBy: String(entry?.modifiedBy || entry?.createdBy || "Legacy Import"),
+          modifiedAt: String(entry?.modifiedAt || entry?.created_at || nowIso())
+        },
+        history: [
+          {
+            status: String(entry?.status || "").toLowerCase() === "applied" ? "Applied" : String(entry?.status || "").toLowerCase() === "paid" ? "Paid" : "Draft",
+            at: String(entry?.created_at || nowIso()),
+            by: String(entry?.createdBy || "Legacy Import"),
+            note: "Imported from legacy payments"
+          }
+        ]
+      };
+    });
+}
+
+function getMergedPayments() {
+  return [...getAllPayments(), ...getLegacyPayments()].sort((a, b) => {
+    const left = String(a?.paymentDate || a?.audit?.modifiedAt || "");
+    const right = String(b?.paymentDate || b?.audit?.modifiedAt || "");
+    if (left !== right) return right.localeCompare(left);
+    return String(b?.paymentNo || "").localeCompare(String(a?.paymentNo || ""));
+  });
+}
+
 function setAllPayments(list) {
   lsSetOrganizationScoped(PAYMENT_OUT_STORE_KEY, list);
 }
@@ -393,13 +468,13 @@ function postLedgerEntry(note, actor) {
 }
 
 export function listPaymentOut(country) {
-  const list = getAllPayments();
+  const list = getMergedPayments();
   if (!country) return list;
   return list.filter((entry) => normalizeCountry(entry.country) === normalizeCountry(country));
 }
 
 export function getPaymentOut(id) {
-  return getAllPayments().find((entry) => entry.id === id) || null;
+  return getMergedPayments().find((entry) => entry.id === id) || null;
 }
 
 export function listPaymentOutLedger(country) {

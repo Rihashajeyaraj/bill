@@ -197,6 +197,18 @@ export default function DateInput({
           )
         );
         updateDraft(nextValue, nextCaret);
+        if (!nextDigits.length) {
+          onRawChange?.("");
+          onChange?.("");
+          return;
+        }
+        if (nextDigits.length === 6) {
+          const nextIso = draftDigitsToIso(nextDigits);
+          if (nextIso && !isOutOfRange(nextIso, minIso, maxIso)) {
+            onRawChange?.(nextValue);
+            onChange?.(nextIso);
+          }
+        }
       }}
       onPaste={(event) => {
         event.preventDefault();
@@ -258,7 +270,7 @@ export default function DateInput({
           event.preventDefault();
         }
       }}
-      className={`${className} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+      className={`text-slate-700 placeholder:text-slate-400 ${className} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
       {...props}
     />
   );

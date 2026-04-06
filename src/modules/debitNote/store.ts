@@ -198,6 +198,15 @@ function normalizeCountryCode(value: unknown): CountryCode | null {
   if (!value) return null;
   const clean = String(value).trim();
   if (clean in COUNTRY_CONFIG) return clean as CountryCode;
+  const upper = clean.toUpperCase();
+  if (upper === "LK") return "SL";
+  if (upper === "GB") return "UK";
+  if (upper in COUNTRY_CONFIG) return upper as CountryCode;
+  const compact = clean.toLowerCase().replace(/[^a-z]/g, "");
+  if (compact === "srilanka") return "SL";
+  if (compact === "unitedkingdom" || compact === "greatbritain" || compact === "britain") return "UK";
+  if (compact === "unitedstates" || compact === "usa" || compact === "us") return "US";
+  if (compact === "uae" || compact === "unitedarabemirates") return "AE";
   return COUNTRY_NAME_TO_CODE[clean] || null;
 }
 
@@ -273,6 +282,10 @@ function normalizeStoredDebitNotes(): DebitNoteRecord[] {
       normalizeCountryCode(note?.country) ||
       normalizeCountryCode(purchase?.country) ||
       inferCountryFromDebitNoteNo(note?.debitNoteNo) ||
+      normalizeCountryCode(lsGetOrganizationScoped(SELECTED_COUNTRY_KEY, "")) ||
+      normalizeCountryCode((lsGetOrganizationScoped(LS_KEYS.company_profile, null) as any)?.countryCode) ||
+      normalizeCountryCode((lsGetOrganizationScoped(LS_KEYS.company_profile, null) as any)?.country) ||
+      normalizeCountryCode((lsGetOrganizationScoped(LS_KEYS.company_profile, null) as any)?.address?.country) ||
       "IN";
 
     return {

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Download, Eye, FilePenLine, MoreHorizontal, Trash2 } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { CreditNoteRecord } from "./store";
+import { formatDateByPreference } from "../../lib/formatPreferences";
 
 interface CreditNoteListTableProps {
   notes: CreditNoteRecord[];
@@ -105,7 +106,9 @@ export default function CreditNoteListTable({
               rows.map((note) => (
                 <tr key={note.id} className="border-t border-slate-100 hover:bg-slate-50/70">
                   <td className="px-4 py-3 align-middle font-semibold text-slate-900">{note.creditNoteNo}</td>
-                  <td className="px-4 py-3 align-middle text-slate-700">{note.creditNoteDate}</td>
+                  <td className="px-4 py-3 align-middle text-slate-700">
+                    {formatDateByPreference(note.creditNoteDate, note.creditNoteDate || "-")}
+                  </td>
                   <td className="px-4 py-3 align-middle text-slate-700">{note.customerName}</td>
                   <td className="px-4 py-3 align-middle text-slate-700">{note.linkedInvoiceNo}</td>
                   <td className="px-4 py-3 align-middle text-slate-700">{note.reason}</td>
