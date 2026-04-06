@@ -639,26 +639,6 @@ export default function PurchaseProformaEditor() {
         return;
       }
 
-      const qtyExceededLine = cleanedLines.find((line: any) => {
-        const matchedItem = (supplierScopedItems || []).find(
-          (item: any) => String(item?.id || "") === String(line?.itemId || "")
-        );
-        if (!matchedItem) return false;
-        const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
-        return itemQty > 0 && Number(line?.qty || 0) > itemQty;
-      });
-      if (qtyExceededLine) {
-        const matchedItem = (supplierScopedItems || []).find(
-          (item: any) => String(item?.id || "") === String(qtyExceededLine?.itemId || "")
-        );
-        const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
-        toast.warning(
-          "Quantity exceeds item qty",
-          `"${matchedItem?.name || "Item"}" has qty ${itemQty}, but ${Number(qtyExceededLine?.qty || 0)} was entered.`
-        );
-        return;
-      }
-
       const result = await purchaseProformaUpsert({
         ...form,
         status: "DRAFT",
@@ -1045,21 +1025,6 @@ export default function PurchaseProformaEditor() {
                           value={typeof line.qty === "number" ? (line.qty === 0 ? "" : line.qty) : (line.qty ?? "")}
                           disabled={locked}
                           onChange={(event) => {
-                            const enteredQty = Number(event.target.value);
-                            if (line.itemId) {
-                              const matchedItem = (supplierScopedItems || []).find(
-                                (item: any) => String(item?.id || "") === String(line.itemId || "")
-                              );
-                              const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
-                              if (matchedItem && itemQty > 0 && enteredQty > itemQty) {
-                                toast.warning(
-                                  "Quantity exceeds item qty",
-                                  `Cannot enter ${enteredQty}. Maximum allowed is ${itemQty}.`
-                                );
-                                updateLine(line.id, { qty: itemQty });
-                                return;
-                              }
-                            }
                             updateLine(line.id, { qty: event.target.value });
                           }}
                         />

@@ -1440,26 +1440,6 @@ export default function PurchaseBill() {
       }
       clearFormError("lines");
 
-      const qtyExceededLine = validLines.find((line) => {
-        const matchedItem = purchasableItems.find(
-          (item) => String(item.id) === String(line.itemId)
-        );
-        if (!matchedItem) return false;
-        const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
-        return itemQty > 0 && Number(line.qty || 0) > itemQty;
-      });
-      if (qtyExceededLine) {
-        const matchedItem = purchasableItems.find(
-          (item) => String(item.id) === String(qtyExceededLine.itemId)
-        );
-        const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
-        toast.error(
-          "Quantity exceeds item qty",
-          `"${matchedItem?.name || "Item"}" has qty ${wholeNumber(itemQty)}, but ${wholeNumber(qtyExceededLine.qty || 0)} was entered.`
-        );
-        return;
-      }
-
       const effectiveBillNumber = normalizedBillNumber;
       const effectivePaymentType = isEditMode ? editingPaymentType : markAsPaid ? paymentType : "Unpaid";
       const savedBillId = isEditMode
@@ -2145,18 +2125,6 @@ export default function PurchaseBill() {
                         const rawValue = normalizeFormattedNumberInput(e.target.value);
                         const enteredQty = parseFormattedNumber(rawValue);
                         if (line.itemId) {
-                          const matchedItem = purchasableItems.find(
-                            (item) => String(item.id) === String(line.itemId)
-                          );
-                          const itemQty = Number(matchedItem?.quantity ?? matchedItem?.currentStock ?? 0);
-                          if (matchedItem && itemQty > 0 && enteredQty > itemQty) {
-                            toast.warning(
-                              "Quantity exceeds item qty",
-                              `Cannot enter ${wholeNumber(enteredQty)}. Maximum allowed is ${wholeNumber(itemQty)}.`
-                            );
-                            updateLine(line.id, { qty: itemQty });
-                            return;
-                          }
                         }
                         updateLine(line.id, { qty: rawValue });
                       }}
