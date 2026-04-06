@@ -137,6 +137,9 @@ function buildAllocation(document: CustomerOpenInvoice | null, amountReceived: u
       invoiceNo: document.invoiceNo,
       invoiceDate: document.invoiceDate,
       invoiceAmount: document.invoiceAmount,
+      discountAmount: document.discountAmount,
+      taxableAmount: document.taxableAmount,
+      taxAmount: document.taxAmount,
       balanceDue: document.balanceDue,
       applyAmount: Math.min(amount, document.balanceDue),
       documentType: document.documentType
@@ -332,8 +335,9 @@ export default function PaymentInPremium() {
       customerState: selectedCustomer?.state || "",
       invoiceDate: savedDocument.invoiceDate,
       invoiceAmount: savedDocument.invoiceAmount,
-      taxableAmount: savedDocument.invoiceAmount,
-      taxAmount: 0,
+      discountAmount: savedDocument.discountAmount ?? 0,
+      taxableAmount: savedDocument.taxableAmount ?? savedDocument.invoiceAmount,
+      taxAmount: savedDocument.taxAmount ?? 0,
       taxBreakup: null,
       supplyType: null,
       balanceDue: savedDocument.balanceDue,
@@ -351,6 +355,29 @@ export default function PaymentInPremium() {
       }),
     [company?.address?.state, company?.state, selectedCustomer?.state, selectedCustomerDocument]
   );
+  useEffect(() => {
+    if (!form || form.allocationMode !== "linked" || !selectedCustomerDocument) return;
+    const invoiceAmount = Math.max(0, parseNumber(selectedCustomerDocument.invoiceAmount as any));
+    const taxableAmount = Math.max(0, parseNumber(selectedCustomerDocument.taxableAmount as any));
+    const discountAmount = Math.max(0, parseNumber((selectedCustomerDocument as any).discountAmount as any));
+    const gstAmount = Math.max(0, parseNumber(selectedCustomerDocument.taxAmount as any));
+    const tdsPercentage = Math.max(0, parseNumber(form.tdsRate as any));
+    const calculatedTdsAmount = calculateTdsAmount(
+      autoTdsBaseAmount(selectedCustomerDocument, form.allocationMode, form.amountReceived),
+      tdsPercentage
+    );
+    console.log("[PaymentIn:TDS]", {
+      invoiceAmount,
+      taxableAmount,
+      discountAmount,
+      gstAmount,
+      tdsPercentage,
+      calculatedTdsAmount
+    });
+  }, [
+    form,
+    selectedCustomerDocument
+  ]);
   const advanceWalletUsable = useMemo(() => {
     if (!useAdvanceWallet) return 0;
     if (!selectedCustomerDocument || selectedCustomerDocument.documentType !== "invoice") return 0;

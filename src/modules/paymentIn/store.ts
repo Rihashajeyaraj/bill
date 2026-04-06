@@ -21,6 +21,7 @@ export interface CustomerOpenInvoice {
   customerState?: string;
   invoiceDate: string;
   invoiceAmount: number;
+  discountAmount?: number;
   taxableAmount?: number;
   taxAmount?: number;
   taxBreakup?: Record<string, unknown> | null;
@@ -46,6 +47,9 @@ export interface PaymentAllocationDraft {
   invoiceNo: string;
   invoiceDate: string;
   invoiceAmount: number;
+  discountAmount?: number;
+  taxableAmount?: number;
+  taxAmount?: number;
   balanceDue: number;
   applyAmount: number;
   documentType?: "invoice" | "proforma";
@@ -619,6 +623,7 @@ function mapOpenInvoicesByCountryInternal(
         0,
         toNumber(invoice?.totals?.subTotal ?? invoice?.totals?.taxableTotal ?? invoiceTotal)
       );
+      const discountAmount = Math.max(0, toNumber(invoice?.totals?.discountTotal ?? invoice?.totals?.discount ?? 0));
       const taxAmount = Math.max(
         0,
         toNumber(invoice?.totals?.taxTotal ?? invoice?.totals?.taxAmount ?? invoiceTotal - taxableAmount)
@@ -643,6 +648,7 @@ function mapOpenInvoicesByCountryInternal(
         customerState: invoice?.buyer?.state || invoice?.partyState || "",
         invoiceDate: invoice.invoiceDate || invoice.date || "",
         invoiceAmount: invoiceTotal,
+        discountAmount,
         taxableAmount,
         taxAmount,
         taxBreakup:
@@ -681,6 +687,10 @@ function mapOpenInvoicesByCountryInternal(
         0,
         toNumber(proforma?.totals?.subTotal ?? proforma?.totals?.taxableTotal ?? invoiceAmount)
       );
+      const discountAmount = Math.max(
+        0,
+        toNumber(proforma?.totals?.discountTotal ?? proforma?.totals?.discount ?? 0)
+      );
       const taxAmount = Math.max(
         0,
         toNumber(proforma?.totals?.taxTotal ?? proforma?.totals?.taxAmount ?? invoiceAmount - taxableAmount)
@@ -698,6 +708,7 @@ function mapOpenInvoicesByCountryInternal(
         customerState: proforma?.buyer?.state || proforma?.partyState || "",
         invoiceDate: proforma?.proformaDate || proforma?.date || "",
         invoiceAmount,
+        discountAmount,
         taxableAmount,
         taxAmount,
         taxBreakup:

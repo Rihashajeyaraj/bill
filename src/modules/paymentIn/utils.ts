@@ -154,6 +154,9 @@ export function formFromRecord(note: PaymentInRecord): PaymentInFormState {
       invoiceNo: line.invoiceNo,
       invoiceDate: line.invoiceDate,
       invoiceAmount: line.invoiceAmount,
+      discountAmount: line.discountAmount,
+      taxableAmount: line.taxableAmount,
+      taxAmount: line.taxAmount,
       balanceDue: line.balanceDue,
       applyAmount: line.applyAmount,
       documentType: line.documentType || "invoice"
