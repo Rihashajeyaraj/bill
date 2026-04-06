@@ -2155,11 +2155,13 @@ export default function PurchaseBill() {
                   </td>
                   <td className="px-3 py-3">
                     <input
-                      type="number"
-                      min="0"
-                      value={line.saleRate ?? ""}
-                      onChange={(e) => updateLine(line.id, { saleRate: e.target.value })}
+                      type="text"
+                      value={displayNumericInput(line.saleRate)}
+                      onChange={(e) =>
+                        updateLine(line.id, { saleRate: normalizeFormattedNumberInput(e.target.value) })
+                      }
                       className="w-full min-w-0 rounded-xl border border-slate-100 px-3 py-2 text-center text-sm tabular-nums outline-none focus:ring-2 focus:ring-blue-100"
+                      inputMode="decimal"
                     />
                   </td>
                   <td className="px-3 py-3">
