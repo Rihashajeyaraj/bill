@@ -155,6 +155,18 @@ function withAdjustedDocumentBalance(document: CustomerOpenInvoice | null, advan
   };
 }
 
+function updatePrimaryAllocationAmount(allocations: any[], nextInvoiceAmount: number) {
+  if (!Array.isArray(allocations) || !allocations.length) return allocations;
+  return allocations.map((line, index) =>
+    index === 0
+      ? {
+          ...line,
+          invoiceAmount: nextInvoiceAmount
+        }
+      : line
+  );
+}
+
 function calculatedTdsInputValue(amountReceived: unknown, tdsRate: unknown) {
   return String(calculateTdsAmount(amountReceived, tdsRate));
 }
@@ -391,6 +403,13 @@ export default function PaymentInPremium() {
     () => Math.max(0, availableAdvanceBalance - advanceWalletUsable),
     [availableAdvanceBalance, advanceWalletUsable]
   );
+  const editableInvoiceAmount = useMemo(() => {
+    const allocationInvoiceAmount = form?.allocations?.[0]?.invoiceAmount;
+    if (allocationInvoiceAmount !== undefined && allocationInvoiceAmount !== null && allocationInvoiceAmount !== "") {
+      return parseNumber(allocationInvoiceAmount as any);
+    }
+    return parseNumber(selectedCustomerDocument?.invoiceAmount as any);
+  }, [form?.allocations, selectedCustomerDocument?.invoiceAmount]);
   const remainingPayableAfterPayment = useMemo(
     () => Math.max(0, documentBalanceAfterAdvance - totals.totalSettled),
     [documentBalanceAfterAdvance, totals.totalSettled]
@@ -683,6 +702,18 @@ export default function PaymentInPremium() {
     });
     clearFieldError("amountReceived");
     clearFieldError("tdsAmount");
+    setDirty(true);
+  }
+
+  function handleInvoiceAmountChange(value: string) {
+    setForm((prev) => {
+      if (!prev) return prev;
+      const nextInvoiceAmount = Math.max(0, parseNumber(value));
+      return {
+        ...prev,
+        allocations: updatePrimaryAllocationAmount(prev.allocations, nextInvoiceAmount)
+      };
+    });
     setDirty(true);
   }
 
@@ -1521,18 +1552,22 @@ export default function PaymentInPremium() {
                               <span className="text-xs font-semibold text-slate-600">Invoice Amount</span>
                               <input
                                 type="text"
-                                value={selectedCustomerDocument ? formatMoney(selectedCustomerDocument.invoiceAmount, country) : "-"}
-                                disabled
-                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                                value={numberInputValue(editableInvoiceAmount)}
+                                disabled={readOnly}
+                                onChange={(event) => handleInvoiceAmountChange(normalizeFormattedNumberInput(event.target.value))}
+                                inputMode="decimal"
+                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-slate-200"
                               />
                             </label>
                             <label className="block">
                               <span className="text-xs font-semibold text-slate-600">Received Amount</span>
                               <input
                                 type="text"
-                                value={formatMoney(totals.amountReceived, country)}
-                                disabled
-                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                                value={numberInputValue(form.amountReceived)}
+                                disabled={readOnly}
+                                onChange={(event) => handleAmountReceivedChange(normalizeFormattedNumberInput(event.target.value))}
+                                inputMode="decimal"
+                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-slate-200"
                               />
                             </label>
                             <label className="block">
@@ -1552,7 +1587,7 @@ export default function PaymentInPremium() {
                           <div className="mt-3 grid grid-cols-1 gap-3">
                             <label className="block">
                               <span className="text-xs font-semibold text-slate-600">TDS Percentage</span>
-                              <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px]">
+                              <div className="mt-1 grid grid-cols-1 gap-2">
                                 <select
                                   value={form.tdsCategory}
                                   disabled={readOnly}
@@ -1566,16 +1601,18 @@ export default function PaymentInPremium() {
                                   ))}
                                   <option value="custom">Custom</option>
                                 </select>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={form.tdsRate}
-                                  disabled={readOnly}
-                                  onChange={(event) => handleTdsRateChange(event.target.value)}
-                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                                  placeholder="%"
-                                />
+                                {form.tdsCategory === "custom" ? (
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={form.tdsRate}
+                                    disabled={readOnly}
+                                    onChange={(event) => handleTdsRateChange(event.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                                    placeholder="%"
+                                  />
+                                ) : null}
                               </div>
                             </label>
                             <label className="block">
