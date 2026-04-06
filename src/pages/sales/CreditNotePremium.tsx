@@ -444,6 +444,11 @@ export default function CreditNotePremium() {
   function openNote(noteId: string, mode: "view" | "edit") {
     const note = getCreditNote(noteId);
     if (!note || !country || note.country !== country) return;
+    if (mode === "edit" && note.sourceSystem === "legacy") {
+      setErrorMessage("Legacy credit notes are read-only on this page.");
+      setSuccessMessage("");
+      return;
+    }
     if (mode === "edit" && !canEditNote) {
       setErrorMessage("You do not have permission to edit credit notes.");
       setSuccessMessage("");

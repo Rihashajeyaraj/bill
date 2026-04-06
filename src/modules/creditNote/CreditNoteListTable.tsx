@@ -22,6 +22,10 @@ function statusClass(status: CreditNoteRecord["status"]) {
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
+function isLegacyNote(note: CreditNoteRecord) {
+  return note.sourceSystem === "legacy";
+}
+
 export default function CreditNoteListTable({
   notes,
   page,
@@ -137,8 +141,8 @@ export default function CreditNoteListTable({
                                   noteId: note.id,
                                   top,
                                   left,
-                                  canEdit: canEdit && note.status !== "Applied",
-                                  canDelete: canDelete && note.status !== "Applied"
+                                  canEdit: canEdit && note.status !== "Applied" && !isLegacyNote(note),
+                                  canDelete: canDelete && note.status !== "Applied" && !isLegacyNote(note)
                                 }
                           );
                         }}

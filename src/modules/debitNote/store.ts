@@ -201,6 +201,19 @@ function normalizeCountryCode(value: unknown): CountryCode | null {
   return COUNTRY_NAME_TO_CODE[clean] || null;
 }
 
+function inferCountryFromDebitNoteNo(value: unknown): CountryCode | null {
+  const noteNo = String(value || "").trim().toUpperCase();
+  if (!noteNo) return null;
+  if (noteNo.startsWith("DN-IN-")) return "IN";
+  if (noteNo.startsWith("DN-SL-")) return "SL";
+  if (noteNo.startsWith("DN-UAE-")) return "AE";
+  if (noteNo.startsWith("DN-SG-")) return "SG";
+  if (noteNo.startsWith("DN-UK-")) return "UK";
+  if (noteNo.startsWith("DN-IE-")) return "IE";
+  if (noteNo.startsWith("DN-US-")) return "US";
+  return null;
+}
+
 function toNumber(value: unknown) {
   const n = parseFormattedNumber(value);
   return Number.isFinite(n) ? n : 0;
@@ -238,6 +251,60 @@ function appliedDebitForBill(billId: string) {
 
 function getAllNotes(): DebitNoteRecord[] {
   return lsGetOrganizationScoped(DEBIT_NOTE_STORE_KEY, []);
+}
+
+function normalizeStoredDebitNotes(): DebitNoteRecord[] {
+  const notes = getAllNotes();
+  const purchases = lsGetOrganizationScoped(LS_KEYS.purchases, []) as any[];
+  const parties = lsGetOrganizationScoped(LS_KEYS.parties, []) as any[];
+  const purchasesById = new Map(
+    purchases.map((row) => [String(row?.id || "").trim(), row]).filter(([id]) => !!id)
+  );
+  const partiesById = new Map(
+    parties.map((row) => [String(row?.id || "").trim(), row]).filter(([id]) => !!id)
+  );
+
+  return notes.map((note) => {
+    const linkedInvoiceId = String(note?.linkedPurchaseInvoiceId || "").trim();
+    const purchase = linkedInvoiceId ? purchasesById.get(linkedInvoiceId) : null;
+    const supplierId = String(note?.supplierId || purchase?.partyId || purchase?.supplierId || "").trim();
+    const supplier = supplierId ? partiesById.get(supplierId) : null;
+    const country =
+      normalizeCountryCode(note?.country) ||
+      normalizeCountryCode(purchase?.country) ||
+      inferCountryFromDebitNoteNo(note?.debitNoteNo) ||
+      "IN";
+
+    return {
+      ...note,
+      country,
+      supplierId: supplierId || String(note?.supplierId || ""),
+      supplierName:
+        String(
+          note?.supplierName ||
+            purchase?.partyName ||
+            purchase?.supplierName ||
+            purchase?.vendorName ||
+            supplier?.name ||
+            "Supplier"
+        ),
+      linkedPurchaseInvoiceNo: String(
+        note?.linkedPurchaseInvoiceNo ||
+          purchase?.billNumber ||
+          purchase?.invoiceNo ||
+          purchase?.id ||
+          ""
+      ),
+      linkedPurchaseInvoiceDate: String(
+        note?.linkedPurchaseInvoiceDate ||
+          purchase?.billDate ||
+          purchase?.invoiceDate ||
+          purchase?.date ||
+          ""
+      ),
+      placeOfSupply: String(note?.placeOfSupply || purchase?.placeOfSupply || purchase?.state || "")
+    };
+  });
 }
 
 function setAllNotes(list: DebitNoteRecord[]) {
@@ -535,13 +602,13 @@ export function setSelectedDebitCountry(country: CountryCode) {
 }
 
 export function listDebitNotes(country?: CountryCode) {
-  const notes = getAllNotes();
+  const notes = normalizeStoredDebitNotes();
   if (!country) return notes;
   return notes.filter((note) => note.country === country);
 }
 
 export function getDebitNote(id: string) {
-  return getAllNotes().find((note) => note.id === id) || null;
+  return normalizeStoredDebitNotes().find((note) => note.id === id) || null;
 }
 
 export function listDebitLedger(country?: CountryCode) {

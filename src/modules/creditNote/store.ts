@@ -94,6 +94,7 @@ export interface CreditTotals {
 
 export interface CreditNoteRecord {
   id: string;
+  sourceSystem?: "premium" | "legacy";
   country: CountryCode;
   creditNoteNo: string;
   creditNoteDate: string;
@@ -195,8 +196,252 @@ function normalizeCountryCode(value: unknown): CountryCode | null {
   return COUNTRY_NAME_TO_CODE[clean] || null;
 }
 
+function normalizeCreditStatus(value: unknown): CreditStatus {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "applied") return "Applied";
+  if (normalized === "issued") return "Issued";
+  return "Draft";
+}
+
+function inferCountryFromCreditNoteNo(value: unknown): CountryCode | null {
+  const noteNo = String(value || "").trim().toUpperCase();
+  if (!noteNo) return null;
+  if (noteNo.startsWith("CN-IN-")) return "IN";
+  if (noteNo.startsWith("CN-SL-")) return "SL";
+  if (noteNo.startsWith("CN-UAE-")) return "AE";
+  if (noteNo.startsWith("CN-SG-")) return "SG";
+  if (noteNo.startsWith("CN-UK-")) return "UK";
+  if (noteNo.startsWith("CN-IE-")) return "IE";
+  if (noteNo.startsWith("CN-US-")) return "US";
+  return null;
+}
+
 function getAllNotes(): CreditNoteRecord[] {
   return lsGetOrganizationScoped(CREDIT_NOTE_STORE_KEY, []);
+}
+
+function resolveLegacyCreditCountry(row: any): CountryCode {
+  const directCountry =
+    normalizeCountryCode(row?.country) ||
+    inferCountryFromCreditNoteNo(row?.creditNoteNo || row?.referenceNo);
+  if (directCountry) return directCountry;
+
+  const linkedInvoiceId = String(
+    row?.referenceInvoiceId || row?.linkedInvoiceId || row?.related_invoice_id || ""
+  ).trim();
+  if (linkedInvoiceId) {
+    const invoice = (lsGetOrganizationScoped(LS_KEYS.invoices, []) as any[]).find(
+      (entry) => String(entry?.id || "").trim() === linkedInvoiceId
+    );
+    const invoiceCountry = normalizeCountryCode(invoice?.country);
+    if (invoiceCountry) return invoiceCountry;
+  }
+
+  return "IN";
+}
+
+function buildLegacyCreditLine(line: any, index: number): CreditLineComputed {
+  const quantity = Math.max(0, toNumber(line?.quantity ?? line?.qty ?? 0));
+  const rate = Math.max(0, toNumber(line?.rate));
+  const taxRate = Math.max(0, toNumber(line?.taxRate ?? line?.tax ?? 0));
+  const baseAmount = Math.max(0, toNumber(line?.baseAmount ?? line?.taxableAmount ?? line?.net));
+  const taxAmount = Math.max(
+    0,
+    toNumber(
+      line?.taxAmount ??
+        line?.lineTax ??
+        toNumber(line?.cgstAmount) +
+          toNumber(line?.sgstAmount) +
+          toNumber(line?.igstAmount) +
+          toNumber(line?.vatAmount)
+    )
+  );
+  const amountAfterTax = Math.max(
+    0,
+    toNumber(line?.amountAfterTax ?? line?.amount ?? line?.lineTotal ?? line?.total ?? baseAmount + taxAmount)
+  );
+  const creditAmount = Math.max(
+    0,
+    toNumber(line?.creditAmount ?? line?.creditApplied ?? line?.amount ?? amountAfterTax)
+  );
+  const lineId = String(line?.id || line?.sourceInvoiceItemId || line?.source_invoice_item_id || `legacy_line_${index + 1}`);
+
+  return {
+    id: lineId,
+    sourceInvoiceItemId: String(line?.sourceInvoiceItemId || line?.source_invoice_item_id || lineId),
+    itemId: String(line?.itemId || line?.item_id || ""),
+    sourceInvoiceQty: Math.max(0, toNumber(line?.sourceInvoiceQty ?? line?.source_invoice_qty ?? quantity)),
+    sourceInvoiceAmountAfterTax: Math.max(
+      0,
+      toNumber(line?.sourceInvoiceAmountAfterTax ?? line?.source_invoice_amount_after_tax ?? amountAfterTax)
+    ),
+    priceTaxMode:
+      String(line?.priceTaxMode || line?.price_tax_mode || "").trim().toUpperCase() === "WITH_TAX"
+        ? "WITH_TAX"
+        : "WITHOUT_TAX",
+    taxInclusive:
+      line?.taxInclusive === true ||
+      line?.tax_inclusive === true ||
+      String(line?.priceTaxMode || line?.price_tax_mode || "").trim().toUpperCase() === "WITH_TAX",
+    returnCondition:
+      line?.returnCondition === "REUSABLE" || line?.returnCondition === "NOT_REUSABLE"
+        ? line.returnCondition
+        : "",
+    purchaseRate: Math.max(0, toNumber(line?.purchaseRate ?? line?.purchase_rate)),
+    itemName: String(line?.itemName || line?.name || `Item ${index + 1}`),
+    quantity,
+    rate,
+    taxRate,
+    hsnSac: String(line?.hsnSac || line?.hsn || line?.sac || ""),
+    creditType: line?.creditType === "Fixed" ? "Fixed" : "Percentage",
+    creditValue: Math.max(0, toNumber(line?.creditValue)),
+    baseAmount,
+    taxAmount,
+    amountAfterTax,
+    creditApplied: Math.max(0, amountAfterTax - creditAmount),
+    creditAmount
+  };
+}
+
+function getLegacyCreditNotes(): CreditNoteRecord[] {
+  const rawNotes = lsGetOrganizationScoped(LS_KEYS.creditNotes, []) as any[];
+  const invoiceRows = lsGetOrganizationScoped(LS_KEYS.invoices, []) as any[];
+  const partyRows = lsGetOrganizationScoped(LS_KEYS.parties, []) as any[];
+  const invoicesById = new Map(
+    invoiceRows.map((row) => [String(row?.id || "").trim(), row]).filter(([id]) => !!id)
+  );
+  const partiesById = new Map(
+    partyRows.map((row) => [String(row?.id || "").trim(), row]).filter(([id]) => !!id)
+  );
+
+  return rawNotes.map((row, index) => {
+    const linkedInvoiceId = String(
+      row?.referenceInvoiceId || row?.linkedInvoiceId || row?.related_invoice_id || ""
+    ).trim();
+    const invoice = linkedInvoiceId ? invoicesById.get(linkedInvoiceId) : null;
+    const customerId = String(
+      row?.partyId || row?.customerId || row?.party_id || invoice?.partyId || invoice?.customerId || ""
+    ).trim();
+    const party = customerId ? partiesById.get(customerId) : null;
+    const country = resolveLegacyCreditCountry(row);
+    const lines = (Array.isArray(row?.lines) ? row.lines : []).map((line: any, lineIndex: number) =>
+      buildLegacyCreditLine(line, lineIndex)
+    );
+    const subtotal = Math.max(
+      0,
+      toNumber(
+        row?.totals?.subTotal ??
+          row?.totals?.subtotal ??
+          row?.totals?.taxable ??
+          lines.reduce((sum, line) => sum + Math.max(0, toNumber(line.baseAmount)), 0)
+      )
+    );
+    const taxTotal = Math.max(
+      0,
+      toNumber(
+        row?.totals?.taxTotal ??
+          row?.totals?.tax ??
+          row?.tax_total ??
+          lines.reduce((sum, line) => sum + Math.max(0, toNumber(line.taxAmount)), 0)
+      )
+    );
+    const total = Math.max(
+      0,
+      toNumber(
+        row?.totals?.grandTotal ??
+          row?.totals?.total ??
+          row?.grand_total ??
+          row?.grandTotal ??
+          row?.amount ??
+          subtotal + taxTotal
+      )
+    );
+    const status = normalizeCreditStatus(row?.status);
+    const createdAt = String(row?.created_at || row?.createdAt || nowIso());
+    const refundMode =
+      row?.refundMode === "PARTIAL" || row?.refundMode === "NONE" ? row.refundMode : "FULL";
+
+    return {
+      id: `legacy_${String(row?.id || row?.creditNoteNo || row?.referenceNo || index + 1)}`,
+      sourceSystem: "legacy",
+      country,
+      creditNoteNo: String(row?.creditNoteNo || row?.referenceNo || `LEGACY-CN-${index + 1}`),
+      creditNoteDate: String(row?.creditDate || row?.credit_note_date || row?.created_at || ""),
+      customerId,
+      customerName: String(
+        row?.customerName ||
+          row?.partyName ||
+          row?.customer_name ||
+          invoice?.partyName ||
+          invoice?.customerName ||
+          party?.name ||
+          "Customer"
+      ),
+      linkedInvoiceId,
+      linkedInvoiceNo: String(
+        row?.referenceInvoiceNo || row?.linkedInvoiceNo || invoice?.invoiceNo || ""
+      ),
+      linkedInvoiceDate: String(row?.linkedInvoiceDate || invoice?.invoiceDate || invoice?.date || ""),
+      reason: String(row?.reason || row?.notes || row?.description || ""),
+      status,
+      creditType: "Full Credit",
+      currency: COUNTRY_CONFIG[country].currency,
+      placeOfSupply: String(row?.placeOfSupply || invoice?.placeOfSupply || invoice?.buyer?.state || ""),
+      taxRate: Math.max(0, toNumber(row?.taxRate ?? row?.tax_rate ?? lines[0]?.taxRate)),
+      registrationNumber: String(row?.registrationNumber || row?.gstin || row?.trn || row?.vatNo || ""),
+      hmrcReference: String(row?.hmrcReference || ""),
+      salesTaxState: String(row?.salesTaxState || ""),
+      internalNotes: String(row?.internalNotes || row?.notes || ""),
+      customerNotes: String(row?.customerNotes || ""),
+      returnToStock: false,
+      refundMode,
+      partialRefundAmount: Math.max(0, toNumber(row?.partialRefundAmount)),
+      discountPercent: Math.max(0, toNumber(row?.discountPercent)),
+      partialAmountCap: Math.max(0, toNumber(row?.partialAmountCap)),
+      priceAdjustmentAmount: Math.max(0, toNumber(row?.priceAdjustmentAmount)),
+      invoiceBalanceBefore: Math.max(0, toNumber(row?.invoiceBalanceBefore ?? invoice?.remainingBalance)),
+      invoiceBalanceAfter: Math.max(0, toNumber(row?.invoiceBalanceAfter ?? row?.pendingAmount ?? 0)),
+      lines,
+      totals: {
+        subtotal,
+        taxTotal,
+        total,
+        maxRefundTotal: Math.max(0, toNumber(row?.totals?.maxRefundTotal ?? total)),
+        refundMode,
+        cgst: Math.max(0, toNumber(row?.totals?.cgst)),
+        sgst: Math.max(0, toNumber(row?.totals?.sgst)),
+        igst: Math.max(0, toNumber(row?.totals?.igst)),
+        pendingAmount: Math.max(
+          0,
+          toNumber(
+            row?.totals?.pendingAmount ?? row?.pendingAmount ?? row?.invoiceBalanceAfter ?? 0
+          )
+        )
+      },
+      audit: {
+        createdBy: String(row?.createdBy || "Legacy Import"),
+        createdAt,
+        modifiedBy: String(row?.modifiedBy || row?.createdBy || "Legacy Import"),
+        modifiedAt: String(row?.modifiedAt || createdAt)
+      },
+      history: Array.isArray(row?.history)
+        ? row.history
+        : [{ status, at: createdAt, by: "Legacy Import", note: "Imported from legacy credit notes" }]
+    } satisfies CreditNoteRecord;
+  });
+}
+
+function getMergedCreditNotes(): CreditNoteRecord[] {
+  const premiumNotes = getAllNotes().map((note) => ({
+    ...note,
+    sourceSystem: note?.sourceSystem || "premium"
+  }));
+  return [...premiumNotes, ...getLegacyCreditNotes()].sort((a, b) => {
+    const left = String(a?.creditNoteDate || a?.audit?.createdAt || "");
+    const right = String(b?.creditNoteDate || b?.audit?.createdAt || "");
+    if (left === right) return String(b?.creditNoteNo || "").localeCompare(String(a?.creditNoteNo || ""));
+    return left < right ? 1 : -1;
+  });
 }
 
 function setAllNotes(list: CreditNoteRecord[]) {
@@ -668,13 +913,13 @@ export function setSelectedCreditCountry(country: CountryCode) {
 }
 
 export function listCreditNotes(country?: CountryCode) {
-  const notes = getAllNotes();
+  const notes = getMergedCreditNotes();
   if (!country) return notes;
   return notes.filter((note) => note.country === country);
 }
 
 export function getCreditNote(id: string) {
-  return getAllNotes().find((note) => note.id === id) || null;
+  return getMergedCreditNotes().find((note) => note.id === id) || null;
 }
 
 export function mapInvoicesByCountry(country: CountryCode): CreditInvoice[] {
@@ -949,6 +1194,10 @@ export function removeCreditNote(noteId: string): CreditNoteRecord {
   const list = getAllNotes();
   const existing = list.find((note) => String(note?.id || "") === normalizedId);
   if (!existing) {
+    const legacy = getLegacyCreditNotes().find((note) => String(note?.id || "") === normalizedId);
+    if (legacy) {
+      throw new Error("Legacy credit notes are read-only on this page.");
+    }
     throw new Error("Credit note not found.");
   }
   if (existing.status === "Applied") {
