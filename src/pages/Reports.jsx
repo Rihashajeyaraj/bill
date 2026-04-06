@@ -202,6 +202,13 @@ function InteractiveMetricCard({ label, value, tone = "default", active = false,
   );
 }
 
+const STATEMENT_TRANSACTION_BADGES = {
+  "Payment In": "border-emerald-200 bg-emerald-50 text-emerald-700",
+  "Payment Out": "border-rose-200 bg-rose-50 text-rose-700",
+  "TDS Credit": "border-teal-200 bg-teal-50 text-teal-700",
+  "TDS Debit": "border-amber-200 bg-amber-50 text-amber-700"
+};
+
 function formatCell(row, column, currency) {
   const value = row?.[column.key];
   if (column.format === "date") return formatDateByPreference(value, "-");
@@ -890,63 +897,7 @@ function getDerivedPartyType(activeReport, partyType) {
   return partyType;
 }
 
-function PartyStatementTable({ columns, rows, currency, creditSummary, emptyText = "No records found." }) {
-  const [expandedRows, setExpandedRows] = useState(() => new Set());
-  const summaryRows = [
-    { label: "TDS Credit Amount", value: creditSummary?.tdsCredit || 0 },
-    { label: "Normal Credit Amount", value: creditSummary?.normalCredit || 0 },
-    { label: "Net Credit Amount", value: creditSummary?.netCredit || 0 }
-  ];
-  const hasCreditSummary = summaryRows.some((row) => Number(row.value || 0) > 0);
-
-  useEffect(() => {
-    const validIds = new Set(rows.map((row) => row.id));
-    setExpandedRows((current) => {
-      const next = new Set([...current].filter((id) => validIds.has(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [rows]);
-
-  function hasCreditBreakdown(row) {
-    return Number(row?.credit || 0) > 0;
-  }
-
-  function buildDetailRows(row) {
-    const netCreditAmount = Number(row?.tdsCreditAmount || 0) + Number(row?.normalCreditAmount || 0);
-    return [
-      { key: "tdsCreditAmount", label: "TDS Credit Amount", value: Number(row?.tdsCreditAmount || 0), visible: true },
-      { key: "normalCreditAmount", label: "Normal Credit Amount", value: Number(row?.normalCreditAmount || 0), visible: true },
-      { key: "netCreditAmount", label: "Net Credit Amount", value: netCreditAmount, visible: true },
-      {
-        key: "advanceUsed",
-        label: "Advance Used",
-        value: Number(row?.advanceUsed || 0),
-        visible: row?.advanceUsed !== undefined && row?.advanceUsed !== null
-      },
-      {
-        key: "creditNoteUsed",
-        label: "Credit Note Used",
-        value: Number(row?.creditNoteUsed || 0),
-        visible: row?.creditNoteUsed !== undefined && row?.creditNoteUsed !== null
-      },
-      {
-        key: "remainingOutstanding",
-        label: "Remaining Outstanding",
-        value: Number(row?.remainingOutstanding || 0),
-        visible: row?.remainingOutstanding !== undefined && row?.remainingOutstanding !== null
-      }
-    ].filter((detail) => detail.visible);
-  }
-
-  function toggleRow(rowId) {
-    setExpandedRows((current) => {
-      const next = new Set(current);
-      if (next.has(rowId)) next.delete(rowId);
-      else next.add(rowId);
-      return next;
-    });
-  }
-
+function PartyStatementTable({ columns, rows, currency, emptyText = "No records found." }) {
   return (
     <div className="overflow-x-auto rounded-3xl border border-slate-200">
       <table className="w-full min-w-[1120px] text-left text-xs sm:text-sm">
@@ -961,80 +912,37 @@ function PartyStatementTable({ columns, rows, currency, creditSummary, emptyText
         </thead>
         <tbody>
           {rows.length ? (
-            rows.map((row) => {
-              const rowCanExpand = hasCreditBreakdown(row);
-              const isExpanded = expandedRows.has(row.id);
-              const expandedDetailRows = rowCanExpand ? buildDetailRows(row) : [];
-
-              return (
-                <React.Fragment key={row.id}>
-                  <tr className="border-t border-slate-100 hover:bg-slate-50/70">
-                    {columns.map((column) => {
-                      const isTransactionTypeColumn = column.key === "transactionType";
-                      return (
-                        <td
-                          key={`${row.id}_${column.key}`}
+            rows.map((row) => (
+              <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50/70">
+                {columns.map((column) => {
+                  const isTransactionTypeColumn = column.key === "transactionType";
+                  const displayValue = formatCell(row, column, currency);
+                  return (
+                    <td
+                      key={`${row.id}_${column.key}`}
+                      className={clsx(
+                        "px-3 py-3 text-slate-700 sm:px-4",
+                        column.align === "right" && "text-right",
+                        column.emphasis && "font-semibold text-slate-900"
+                      )}
+                    >
+                      {isTransactionTypeColumn ? (
+                        <span
                           className={clsx(
-                            "px-3 py-3 text-slate-700 sm:px-4",
-                            column.align === "right" && "text-right",
-                            column.emphasis && "font-semibold text-slate-900"
+                            "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
+                            STATEMENT_TRANSACTION_BADGES[displayValue] || "border-slate-200 bg-slate-50 text-slate-700"
                           )}
                         >
-                          {isTransactionTypeColumn ? (
-                            rowCanExpand ? (
-                              <button
-                                type="button"
-                                onClick={() => toggleRow(row.id)}
-                                aria-expanded={isExpanded}
-                                className="inline-flex items-center gap-2 text-left font-medium text-slate-700 transition hover:text-slate-950"
-                              >
-                                <ChevronDown className={clsx("h-4 w-4 shrink-0 text-slate-500 transition-transform", !isExpanded && "-rotate-90")} />
-                                <span>{formatCell(row, column, currency)}</span>
-                              </button>
-                            ) : (
-                              formatCell(row, column, currency)
-                            )
-                          ) : (
-                            formatCell(row, column, currency)
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                  {rowCanExpand ? (
-                    <tr className={clsx("bg-slate-50/70 transition-colors", !isExpanded && "border-t-0")}>
-                      <td colSpan={columns.length} className="p-0">
-                        <div
-                          className={clsx(
-                            "overflow-hidden transition-all duration-200 ease-out",
-                            isExpanded ? "max-h-96 opacity-100" : "max-h-0 opacity-0"
-                          )}
-                        >
-                          <div className="border-t border-slate-100 bg-slate-50/80 px-3 py-2.5 sm:px-4">
-                            <div className="ml-6 rounded-2xl border border-slate-200/80 bg-white/70">
-                              {expandedDetailRows.map((detail, index) => (
-                                <div
-                                  key={`${row.id}_${detail.key}`}
-                                  className={clsx(
-                                    "grid grid-cols-[minmax(0,1fr)_180px] items-center gap-4 px-4 py-2.5 text-xs sm:text-sm",
-                                    index > 0 && "border-t border-slate-100"
-                                  )}
-                                >
-                                  <div className="pl-4 font-medium text-slate-600">{detail.label}</div>
-                                  <div className="text-right font-semibold text-slate-900">
-                                    {formatMoney(detail.value, currency)}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : null}
-                </React.Fragment>
-              );
-            })
+                          {displayValue}
+                        </span>
+                      ) : (
+                        displayValue
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))
           ) : (
             <tr>
               <td colSpan={columns.length} className="px-4 py-16 text-center text-slate-500">
@@ -1043,20 +951,6 @@ function PartyStatementTable({ columns, rows, currency, creditSummary, emptyText
             </tr>
           )}
         </tbody>
-        {rows.length && hasCreditSummary ? (
-          <tfoot className="bg-slate-50/70">
-            {summaryRows.map((summary) => (
-              <tr key={summary.label} className="border-t border-slate-200">
-                <td colSpan={5} className="px-3 py-3 font-semibold text-slate-700 sm:px-4">
-                  {summary.label}
-                </td>
-                <td className="px-3 py-3 text-slate-500 sm:px-4">-</td>
-                <td className="px-3 py-3 font-semibold text-slate-900 sm:px-4">{formatMoney(summary.value, currency)}</td>
-                <td className="px-3 py-3 text-slate-500 sm:px-4">-</td>
-              </tr>
-            ))}
-          </tfoot>
-        ) : null}
       </table>
     </div>
   );
@@ -1199,18 +1093,6 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
         tableTitle: "Statement Entries",
         rows: data.rows,
         exportRows: data.allRows || data.rows,
-        footerRows: data.party
-          ? [
-              ["", "", "", "", "TDS Credit Amount", "-", formatMoney(data.totals.tdsCredit, currency), ""],
-              ["", "", "", "", "Normal Credit Amount", "-", formatMoney(data.totals.normalCredit, currency), ""],
-              ["", "", "", "", "Net Credit Amount", "-", formatMoney(data.totals.netCredit, currency), ""]
-            ]
-          : [],
-        creditSummary: {
-          tdsCredit: data.totals.tdsCredit,
-          normalCredit: data.totals.normalCredit,
-          netCredit: data.totals.netCredit
-        },
         pageInfo: data
       };
     case "aging-report": {
@@ -1972,7 +1854,6 @@ export default function Reports() {
                         columns={viewModel.columns}
                         rows={viewModel.rows}
                         currency={currency}
-                        creditSummary={viewModel.creditSummary}
                         emptyText={viewModel.pageInfo?.party ? "No records found for the selected filters." : "Select a party to generate the statement."}
                       />
                     ) : (

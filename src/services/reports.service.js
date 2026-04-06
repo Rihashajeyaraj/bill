@@ -320,8 +320,8 @@ function buildStatementDocumentIndexes(dataset) {
 
 function statementTransactionSort(left, right) {
   if (left.date !== right.date) return String(left.date || "").localeCompare(String(right.date || ""));
-  return `${left.transactionType}:${left.invoiceNumber || ""}:${left.referenceNumber || ""}:${left.id}`.localeCompare(
-    `${right.transactionType}:${right.invoiceNumber || ""}:${right.referenceNumber || ""}:${right.id}`
+  return `${left.statementSortBase || left.transactionType}:${left.statementSequence || 0}:${left.invoiceNumber || ""}:${left.referenceNumber || ""}:${left.id}`.localeCompare(
+    `${right.statementSortBase || right.transactionType}:${right.statementSequence || 0}:${right.invoiceNumber || ""}:${right.referenceNumber || ""}:${right.id}`
   );
 }
 
@@ -349,22 +349,88 @@ function withStatementCreditMeta(row, values = {}) {
 function buildLegacyStatementPaymentRows(row, { direction, transactionType, documentNumber, amount, tdsAmount = 0, invoiceNumber = "" }) {
   const normalCreditAmount = Math.max(0, parseNumber(amount));
   const tdsCreditAmount = Math.max(0, parseNumber(tdsAmount));
-  const netCreditAmount = normalCreditAmount + tdsCreditAmount;
-  return withStatementCreditMeta({
-    id: `payment_legacy_${direction}_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}_${invoiceNumber || "entry"}`,
+  return buildStatementPaymentRows({
+    baseId: `payment_legacy_${direction}_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}_${invoiceNumber || "entry"}`,
     date: resolvePaymentDate(row),
-    transactionType,
+    direction,
     transactionMode: statementPaymentMode(row?.mode),
     referenceNumber: statementReferenceNumber(row, row?.paymentNo || row?.id || ""),
     invoiceNumber,
-    debit: 0,
-    credit: netCreditAmount,
-    documentNumber
-  }, {
-    tdsCreditAmount,
-    normalCreditAmount,
-    netCreditAmount
+    documentNumber,
+    normalAmount: normalCreditAmount,
+    tdsAmount: tdsCreditAmount
   });
+}
+
+function statementPaymentLabel(direction) {
+  return direction === "out" ? "Payment Out" : "Payment In";
+}
+
+function statementTdsLabel(direction) {
+  return direction === "out" ? "TDS Debit" : "TDS Credit";
+}
+
+function buildStatementPaymentRows({
+  baseId,
+  date,
+  direction,
+  transactionMode,
+  referenceNumber,
+  invoiceNumber = "",
+  documentNumber = "",
+  normalAmount = 0,
+  tdsAmount = 0
+}) {
+  const normalizedPayment = Math.max(0, parseNumber(normalAmount));
+  const normalizedTds = Math.max(0, parseNumber(tdsAmount));
+  const sortBase = `payment:${direction}:${invoiceNumber || ""}:${referenceNumber || ""}:${documentNumber || ""}:${baseId || ""}`;
+  const rows = [];
+
+  if (normalizedPayment > 0) {
+    rows.push(
+      withStatementCreditMeta({
+        id: `${baseId}_payment`,
+        date,
+        transactionType: statementPaymentLabel(direction),
+        transactionMode,
+        referenceNumber,
+        invoiceNumber,
+        debit: 0,
+        credit: normalizedPayment,
+        documentNumber,
+        statementSortBase: sortBase,
+        statementSequence: 0
+      }, {
+        tdsCreditAmount: 0,
+        normalCreditAmount: normalizedPayment,
+        netCreditAmount: normalizedPayment
+      })
+    );
+  }
+
+  if (normalizedTds > 0) {
+    rows.push(
+      withStatementCreditMeta({
+        id: `${baseId}_tds`,
+        date,
+        transactionType: statementTdsLabel(direction),
+        transactionMode: "-",
+        referenceNumber,
+        invoiceNumber,
+        debit: 0,
+        credit: normalizedTds,
+        documentNumber,
+        statementSortBase: sortBase,
+        statementSequence: 1
+      }, {
+        tdsCreditAmount: normalizedTds,
+        normalCreditAmount: 0,
+        netCreditAmount: normalizedTds
+      })
+    );
+  }
+
+  return rows;
 }
 
 function resolveInvoiceDate(row) {
@@ -959,16 +1025,14 @@ function statementTransactionsForParty(dataset, party) {
         .flatMap((row) => {
           const billId = String(row?.billId || row?.bill_id || "").trim();
           const invoiceNumber = billId ? purchasesById.get(billId) || String(row?.billNo || "").trim() : "";
-          return [
-            buildLegacyStatementPaymentRows(row, {
-              direction: "out",
-              transactionType: "Payment",
-              documentNumber: String(row?.paymentNo || row?.id || "").trim(),
-              amount: row?.amount,
-              tdsAmount: row?.tdsAmount,
-              invoiceNumber
-            })
-          ];
+          return buildLegacyStatementPaymentRows(row, {
+            direction: "out",
+            transactionType: "Payment",
+            documentNumber: String(row?.paymentNo || row?.id || "").trim(),
+            amount: row?.amount,
+            tdsAmount: row?.tdsAmount,
+            invoiceNumber
+          });
         }),
       ...(Array.isArray(dataset?.paymentOuts) ? dataset.paymentOuts : [])
         .filter((row) => normalizeText(row?.status) !== "draft")
@@ -982,43 +1046,34 @@ function statementTransactionsForParty(dataset, party) {
           );
           const rows = positiveAllocations.map((allocation, index) => {
             const billId = String(allocation?.billId || "").trim();
-            const netCreditAmount = paymentOutAllocationSettledAmount(row, allocation);
             const tdsCreditAmount = paymentOutAllocationTdsShare(row, allocation);
-            return withStatementCreditMeta({
-              id: `payment_premium_out_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}_${index}`,
+            return buildStatementPaymentRows({
+              baseId: `payment_premium_out_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}_${index}`,
               date: resolvePaymentDate(row),
-              transactionType: "Payment",
+              direction: "out",
               transactionMode: statementPaymentMode(row?.paymentMode),
               referenceNumber: statementReferenceNumber(row, row?.paymentNo || row?.id || ""),
               invoiceNumber: allocation?.billNo || purchasesById.get(billId) || "",
-              debit: 0,
-              credit: netCreditAmount,
-              documentNumber: String(row?.paymentNo || row?.id || "").trim()
-            }, {
-              tdsCreditAmount,
-              normalCreditAmount: Math.max(0, parseNumber(allocation?.applyAmount)),
-              netCreditAmount
+              documentNumber: String(row?.paymentNo || row?.id || "").trim(),
+              normalAmount: Math.max(0, parseNumber(allocation?.applyAmount)),
+              tdsAmount: tdsCreditAmount
             });
           });
           const remainingCredit = Math.max(0, paymentOutSettledAmount(row) - allocatedCredit);
           if (remainingCredit > 0 || !rows.length) {
-            rows.push(withStatementCreditMeta({
-              id: `payment_premium_out_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}_balance`,
+            rows.push(...buildStatementPaymentRows({
+              baseId: `payment_premium_out_${row?.id || row?.paymentNo || Math.random().toString(16).slice(2)}_balance`,
               date: resolvePaymentDate(row),
-              transactionType: "Payment",
+              direction: "out",
               transactionMode: statementPaymentMode(row?.paymentMode),
               referenceNumber: statementReferenceNumber(row, row?.paymentNo || row?.id || ""),
               invoiceNumber: "",
-              debit: 0,
-              credit: rows.length ? remainingCredit : paymentOutSettledAmount(row),
-              documentNumber: String(row?.paymentNo || row?.id || "").trim()
-            }, {
-              tdsCreditAmount: rows.length ? 0 : paymentOutTdsAmount(row),
-              normalCreditAmount: rows.length ? remainingCredit : Math.max(0, amountFromPayment(row, PARTY_TYPES.supplier)),
-              netCreditAmount: rows.length ? remainingCredit : paymentOutSettledAmount(row)
+              documentNumber: String(row?.paymentNo || row?.id || "").trim(),
+              normalAmount: rows.length ? remainingCredit : Math.max(0, amountFromPayment(row, PARTY_TYPES.supplier)),
+              tdsAmount: rows.length ? 0 : paymentOutTdsAmount(row)
             }));
           }
-          return rows;
+          return rows.flat();
         })
         .filter((row) => row.credit > 0),
       ...(Array.isArray(dataset?.debitNotes) ? dataset.debitNotes : [])
@@ -1062,16 +1117,14 @@ function statementTransactionsForParty(dataset, party) {
         .flatMap((row) => {
           const invoiceId = String(row?.invoiceId || row?.invoice_id || "").trim();
           const invoiceNumber = invoiceId ? invoicesById.get(invoiceId) || String(row?.invoiceNo || "").trim() : "";
-          return [
-            buildLegacyStatementPaymentRows(row, {
-              direction: "in",
-              transactionType: "Payment",
-              documentNumber: String(row?.paymentNo || row?.id || "").trim(),
-              amount: row?.amountReceived ?? row?.amount,
-              tdsAmount: row?.tdsAmount,
-              invoiceNumber
-            })
-          ];
+          return buildLegacyStatementPaymentRows(row, {
+            direction: "in",
+            transactionType: "Payment",
+            documentNumber: String(row?.paymentNo || row?.id || "").trim(),
+            amount: row?.amountReceived ?? row?.amount,
+            tdsAmount: row?.tdsAmount,
+            invoiceNumber
+          });
         }),
       ...(Array.isArray(dataset?.paymentIns) ? dataset.paymentIns : [])
         .filter((row) => normalizeText(row?.status) !== "draft")
@@ -1085,43 +1138,34 @@ function statementTransactionsForParty(dataset, party) {
           );
           const rows = positiveAllocations.map((allocation, index) => {
             const invoiceId = String(allocation?.invoiceId || "").trim();
-            const netCreditAmount = paymentInAllocationSettledAmount(row, allocation);
             const tdsCreditAmount = paymentInAllocationTdsShare(row, allocation);
-            return withStatementCreditMeta({
-              id: `payment_premium_in_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}_${index}`,
+            return buildStatementPaymentRows({
+              baseId: `payment_premium_in_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}_${index}`,
               date: resolvePaymentDate(row),
-              transactionType: "Payment",
+              direction: "in",
               transactionMode: statementPaymentMode(row?.paymentMode),
               referenceNumber: statementReferenceNumber(row, row?.receiptNo || row?.id || ""),
               invoiceNumber: allocation?.invoiceNo || invoicesById.get(invoiceId) || "",
-              debit: 0,
-              credit: netCreditAmount,
-              documentNumber: String(row?.receiptNo || row?.id || "").trim()
-            }, {
-              tdsCreditAmount,
-              normalCreditAmount: Math.max(0, parseNumber(allocation?.applyAmount)),
-              netCreditAmount
+              documentNumber: String(row?.receiptNo || row?.id || "").trim(),
+              normalAmount: Math.max(0, parseNumber(allocation?.applyAmount)),
+              tdsAmount: tdsCreditAmount
             });
           });
           const remainingCredit = Math.max(0, paymentInSettledAmount(row) - allocatedCredit);
           if (remainingCredit > 0 || !rows.length) {
-            rows.push(withStatementCreditMeta({
-              id: `payment_premium_in_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}_balance`,
+            rows.push(...buildStatementPaymentRows({
+              baseId: `payment_premium_in_${row?.id || row?.receiptNo || Math.random().toString(16).slice(2)}_balance`,
               date: resolvePaymentDate(row),
-              transactionType: "Payment",
+              direction: "in",
               transactionMode: statementPaymentMode(row?.paymentMode),
               referenceNumber: statementReferenceNumber(row, row?.receiptNo || row?.id || ""),
               invoiceNumber: "",
-              debit: 0,
-              credit: rows.length ? remainingCredit : paymentInSettledAmount(row),
-              documentNumber: String(row?.receiptNo || row?.id || "").trim()
-            }, {
-              tdsCreditAmount: rows.length ? 0 : paymentInTdsAmount(row),
-              normalCreditAmount: rows.length ? remainingCredit : Math.max(0, amountFromPayment(row, PARTY_TYPES.customer)),
-              netCreditAmount: rows.length ? remainingCredit : paymentInSettledAmount(row)
+              documentNumber: String(row?.receiptNo || row?.id || "").trim(),
+              normalAmount: rows.length ? remainingCredit : Math.max(0, amountFromPayment(row, PARTY_TYPES.customer)),
+              tdsAmount: rows.length ? 0 : paymentInTdsAmount(row)
             }));
           }
-          return rows;
+          return rows.flat();
         })
         .filter((row) => row.credit > 0),
       ...(Array.isArray(dataset?.legacyCreditNotes) ? dataset.legacyCreditNotes : [])
