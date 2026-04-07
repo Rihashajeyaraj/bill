@@ -45,6 +45,20 @@ function drawSummaryRow(doc, label, value, x, y, width, height, emphasized = fal
   doc.text(value, x + width - 3, y + height / 2 + 1, { align: "right" });
 }
 
+function ensurePdfSpace(doc, y, requiredHeight, margin = 14) {
+  const pageHeight = doc.internal.pageSize.getHeight();
+  if (y + requiredHeight <= pageHeight - margin) return y;
+  doc.addPage();
+  return margin;
+}
+
+function drawWrappedLine(doc, label, value, x, y, maxWidth, lineHeight = 4.5) {
+  const text = `${label}: ${pdfSafeText(value)}`;
+  const lines = doc.splitTextToSize(text, maxWidth);
+  doc.text(lines, x, y);
+  return y + lines.length * lineHeight;
+}
+
 function downloadBlob(content, filename) {
   const url = URL.createObjectURL(content);
   const anchor = document.createElement("a");
@@ -158,17 +172,23 @@ export function exportPaymentOutPdf(record) {
   const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
   const margin = 14;
   const pageWidth = doc.internal.pageSize.getWidth();
+  const contentRight = pageWidth - margin;
+  const contentWidth = contentRight - margin;
   let y = margin;
   doc.setFont("helvetica", "normal");
 
-  doc.setFontSize(16);
+  doc.setFontSize(15);
   doc.text("Payment Advice", margin, y);
-  y += 8;
+  doc.setFontSize(9);
+  doc.text(`Status: ${pdfSafeText(record.status || "Draft")}`, contentRight, y, { align: "right" });
+  y += 7;
 
   doc.setFontSize(10);
   doc.text(`Payment No: ${pdfSafeText(record.paymentNo)}`, margin, y);
-  doc.text(`Date: ${pdfSafeText(record.paymentDate)}`, 120, y);
+  doc.text(`Date: ${pdfSafeText(record.paymentDate)}`, contentRight, y, { align: "right" });
   y += 6;
+
+  const detailsY = y;
   const partyBlockBottom = drawPdfPartyDetails(
     doc,
     {
@@ -180,36 +200,56 @@ export function exportPaymentOutPdf(record) {
     },
     {
       x: margin,
-      y,
-      maxWidth: 82,
-      title: "Party Details",
+      y: detailsY,
+      maxWidth: 88,
+      title: "Supplier Details",
       nameLabel: "Name"
     }
   );
-  doc.text(`Payment Mode: ${pdfSafeText(record.paymentMode)}`, margin, y);
+
+  const metaX = 118;
+  let metaY = detailsY;
+  doc.setFontSize(10);
+  doc.text("Payment Details", metaX, metaY);
+  metaY += 5;
+  doc.setFontSize(9);
+  metaY = drawWrappedLine(doc, "Payment Mode", record.paymentMode, metaX, metaY, contentRight - metaX);
   if (record.referenceNo) {
-    doc.text(`Reference: ${pdfSafeText(record.referenceNo)}`, 120, y);
+    metaY = drawWrappedLine(doc, "Reference", record.referenceNo, metaX, metaY, contentRight - metaX);
   }
   if (parseNumber(record?.totals?.tdsAmount) > 0) {
-    y += 5;
-    doc.text(`TDS Deducted: ${pdfMoney(record?.totals?.tdsAmount, record.currency)}`, margin, y);
+    metaY = drawWrappedLine(
+      doc,
+      "TDS Deducted",
+      pdfMoney(record?.totals?.tdsAmount, record.currency),
+      metaX,
+      metaY,
+      contentRight - metaX
+    );
   }
-  y = Math.max(partyBlockBottom, y + 6);
-  y += 2;
+  y = Math.max(partyBlockBottom, metaY) + 8;
 
   const allocations = Array.isArray(record.allocations) ? record.allocations : [];
   if (allocations.length) {
+    y = ensurePdfSpace(doc, y, 38);
     const colX = {
       bill: margin,
-      date: 82,
-      total: 118,
-      paid: 152,
-      balance: pageWidth - margin
+      date: 64,
+      total: 103,
+      paid: 136,
+      tds: 164,
+      balance: contentRight
     };
     const totalAmount = allocations.reduce((sum, line) => sum + parseNumber(line?.billAmount), 0);
     const totalPaid = allocations.reduce((sum, line) => sum + parseNumber(line?.applyAmount), 0);
+    const totalTds = allocations.reduce((sum, line) => sum + paymentOutAllocationTdsShare(record, line), 0);
     const totalBalance = allocations.reduce(
-      (sum, line) => sum + Math.max(0, parseNumber(line?.balanceDue) - parseNumber(line?.applyAmount)),
+      (sum, line) =>
+        sum +
+        Math.max(
+          0,
+          parseNumber(line?.balanceDue) - parseNumber(line?.applyAmount) - paymentOutAllocationTdsShare(record, line)
+        ),
       0
     );
 
@@ -221,17 +261,21 @@ export function exportPaymentOutPdf(record) {
     doc.text("Date", colX.date, y);
     doc.text("Total Amount", colX.total, y, { align: "right" });
     doc.text("Amount Paid", colX.paid, y, { align: "right" });
+    doc.text("TDS", colX.tds, y, { align: "right" });
     doc.text("Amount Balance", colX.balance, y, { align: "right" });
     y += 3;
-    doc.line(margin, y, pageWidth - margin, y);
+    doc.line(margin, y, contentRight, y);
     y += 5;
 
     allocations.forEach((line) => {
+      y = ensurePdfSpace(doc, y, 10);
       const tdsShare = paymentOutAllocationTdsShare(record, line);
-      doc.text(pdfSafeText(line?.billNo, "-").slice(0, 34), colX.bill, y);
+      const billLines = doc.splitTextToSize(pdfSafeText(line?.billNo, "-"), 44);
+      doc.text(billLines, colX.bill, y);
       doc.text(pdfSafeText(line?.billDate), colX.date, y);
       doc.text(pdfMoney(line?.billAmount, record.currency), colX.total, y, { align: "right" });
       doc.text(pdfMoney(line?.applyAmount, record.currency), colX.paid, y, { align: "right" });
+      doc.text(pdfMoney(tdsShare, record.currency), colX.tds, y, { align: "right" });
       doc.text(
         pdfMoney(
           Math.max(0, parseNumber(line?.balanceDue) - parseNumber(line?.applyAmount) - tdsShare),
@@ -241,34 +285,41 @@ export function exportPaymentOutPdf(record) {
         y,
         { align: "right" }
       );
-      y += 6;
+      y += Math.max(6, billLines.length * 4.2);
     });
 
     y += 2;
-    doc.line(margin, y, pageWidth - margin, y);
+    doc.line(margin, y, contentRight, y);
     y += 6;
-    drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, 54, 9);
-    drawSummaryRow(doc, "Cash Paid", pdfMoney(totalPaid, record.currency), margin + 58, y, 64, 9);
-    drawSummaryRow(doc, "Balance", pdfMoney(totalBalance, record.currency), margin + 126, y, 56, 9, true);
+    y = ensurePdfSpace(doc, y, 26);
+    drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, 42, 9);
+    drawSummaryRow(doc, "Cash Paid", pdfMoney(totalPaid, record.currency), margin + 46, y, 42, 9);
+    drawSummaryRow(doc, "TDS", pdfMoney(totalTds, record.currency), margin + 92, y, 42, 9);
+    drawSummaryRow(doc, "Balance", pdfMoney(totalBalance, record.currency), margin + 138, y, 44, 9, true);
     y += 12;
-    drawSummaryRow(doc, "TDS Deducted", pdfMoney(record?.totals?.tdsAmount, record.currency), margin, y, 86, 9);
-    drawSummaryRow(doc, "Total Settled", pdfMoney(record?.totals?.totalSettled, record.currency), margin + 96, y, 86, 9, true);
+    drawSummaryRow(doc, "Total Settled", pdfMoney(record?.totals?.totalSettled, record.currency), margin + 92, y, 90, 9, true);
     y += 14;
   } else {
+    y = ensurePdfSpace(doc, y, 28);
     const totalAmount = parseNumber(record?.totals?.amountPaid);
     const totalPaid = parseNumber(record?.totals?.amountApplied);
     const totalBalance = parseNumber(record?.totals?.unappliedAmount);
-    drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, 54, 9);
-    drawSummaryRow(doc, "Cash Paid", pdfMoney(totalPaid, record.currency), margin + 58, y, 64, 9);
-    drawSummaryRow(doc, "Cash Advance", pdfMoney(totalBalance, record.currency), margin + 126, y, 56, 9, true);
+    drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, 42, 9);
+    drawSummaryRow(doc, "Cash Paid", pdfMoney(totalPaid, record.currency), margin + 46, y, 42, 9);
+    drawSummaryRow(doc, "Cash Advance", pdfMoney(totalBalance, record.currency), margin + 92, y, 90, 9, true);
     y += 12;
     drawSummaryRow(doc, "TDS Deducted", pdfMoney(record?.totals?.tdsAmount, record.currency), margin, y, 86, 9);
     drawSummaryRow(doc, "Total Settled", pdfMoney(record?.totals?.totalSettled, record.currency), margin + 96, y, 86, 9, true);
     y += 14;
   }
 
+  y = ensurePdfSpace(doc, y, 8);
   doc.setFontSize(8);
-  doc.text("This payment advice is system generated and valid without signature.", margin, y);
+  const footerLines = doc.splitTextToSize(
+    "This payment advice is system generated and valid without signature.",
+    contentWidth
+  );
+  doc.text(footerLines, margin, y);
 
   doc.save(`PaymentAdvice_${pdfSafeText(record.paymentNo, "payment")}.pdf`);
 }
