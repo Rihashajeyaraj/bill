@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   FileDown,
@@ -225,6 +225,8 @@ export default function PaymentOutPremium() {
   const [form, setForm] = useState(defaultPaymentForm(fixedCountry, effectiveCurrency));
   const [activePayment, setActivePayment] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [saveSuccessPopup, setSaveSuccessPopup] = useState("");
   const [dirty, setDirty] = useState(false);
   const [search, setSearch] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("");
@@ -234,6 +236,7 @@ export default function PaymentOutPremium() {
   const [toDate, setToDate] = useState("");
   const [supplierLookupQuery, setSupplierLookupQuery] = useState("");
   const [supplierSearchError, setSupplierSearchError] = useState("");
+  const savingRef = useRef(false);
   const prefillBillId = searchParams.get("billId") || "";
 
   const payments = useMemo(() => listPaymentOut(fixedCountry), [fixedCountry, refreshKey]);
@@ -785,25 +788,39 @@ export default function PaymentOutPremium() {
   }
 
   async function persist(status, options = {}) {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
     const isEditMode = !!form?.id;
     if (isEditMode && !canEditPayment) {
       window.alert("You do not have permission to edit payment out entries.");
+      savingRef.current = false;
+      setSaving(false);
       return;
     }
     if (!isEditMode && !canCreatePayment) {
       window.alert("You do not have permission to create payment out entries.");
+      savingRef.current = false;
+      setSaving(false);
       return;
     }
     if (!form.supplierId) {
       window.alert("Select a supplier before saving.");
+      savingRef.current = false;
+      setSaving(false);
       return;
     }
     if (!String(form.paymentDate || "").trim()) {
       window.alert("Payment date is required before saving.");
+      savingRef.current = false;
+      setSaving(false);
       return;
     }
     if (form.allocationMode === "linked" && !form.selectedBillId) {
       window.alert("Select a purchase invoice before saving.");
+      savingRef.current = false;
+      setSaving(false);
       return;
     }
     if (
@@ -815,18 +832,26 @@ export default function PaymentOutPremium() {
       )
     ) {
       window.alert("Selected bill does not belong to the chosen supplier.");
+      savingRef.current = false;
+      setSaving(false);
       return;
     }
     if (Math.max(0, parseNumber(form.amountPaid)) <= 0) {
       window.alert("Amount paid must be greater than zero.");
+      savingRef.current = false;
+      setSaving(false);
       return;
     }
     if (parseNumber(form.tdsAmount) < 0) {
       window.alert("TDS amount cannot be negative.");
+      savingRef.current = false;
+      setSaving(false);
       return;
     }
     if (Math.max(0, parseNumber(form.tdsAmount)) > Math.max(0, parseNumber(form.amountPaid))) {
       window.alert("TDS amount cannot exceed amount paid.");
+      savingRef.current = false;
+      setSaving(false);
       return;
     }
     try {
@@ -841,7 +866,7 @@ export default function PaymentOutPremium() {
         actorName
       );
       const saved = savePaymentOut(payload);
-      await syncPaymentOutRemote(saved);
+      setSaveSuccessPopup(`Payment ${saved.paymentNo} saved successfully.`);
       if (options?.download) {
         exportPaymentOutPdf(saved);
       }
@@ -849,17 +874,26 @@ export default function PaymentOutPremium() {
       setForm(paymentOutFormFromRecord(saved));
       setRefreshKey((prev) => prev + 1);
       setDirty(false);
-      window.alert(`Payment ${saved.paymentNo} saved as ${saved.status}.`);
-      setPanelMode("feed");
-      setActiveStep(0);
-      setForm(defaultPaymentForm(fixedCountry, effectiveCurrency));
-      setActivePayment(null);
-      setDirty(false);
-      setSupplierLookupQuery("");
-      setSupplierSearchError("");
+      void syncPaymentOutRemote(saved).catch((syncError) => {
+        console.warn("Payment Out remote sync failed after local save", syncError);
+      });
     } catch (error) {
       window.alert(error?.message || "Unable to save payment.");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
+  }
+
+  function closeSaveSuccessPopup() {
+    setSaveSuccessPopup("");
+    setPanelMode("feed");
+    setActiveStep(0);
+    setForm(defaultPaymentForm(fixedCountry, effectiveCurrency));
+    setActivePayment(null);
+    setDirty(false);
+    setSupplierLookupQuery("");
+    setSupplierSearchError("");
   }
 
   async function removeRecord(record) {
@@ -889,13 +923,42 @@ export default function PaymentOutPremium() {
     }
   }
 
-  const canSaveCurrentFlow = form?.id ? canEditPayment : canCreatePayment;
+  const canSaveCurrentFlow = !saving && (form?.id ? canEditPayment : canCreatePayment);
   const confirmStatus = form.allocationMode === "linked" && form.allocations.length ? "Applied" : "Paid";
   const hasPreviousStep = activeStep > 0;
   const hasNextStep = activeStep < FORM_STEPS.length - 1;
 
   return (
     <div className="mx-auto min-h-full max-w-[1360px] space-y-4 pb-32">
+      {saving ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 backdrop-blur-sm">
+          <div className="rounded-3xl border border-slate-200 bg-white px-6 py-5 text-center shadow-2xl">
+            <div className="mx-auto mb-3 h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-slate-900" />
+            <p className="text-sm font-semibold text-slate-900">Saving payment...</p>
+            <p className="mt-1 text-xs text-slate-500">Please wait. Do not click again.</p>
+          </div>
+        </div>
+      ) : null}
+
+      {saveSuccessPopup ? (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl border border-emerald-200 bg-white p-6 text-center shadow-2xl">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-xl font-bold text-emerald-700">
+              ✓
+            </div>
+            <p className="text-base font-semibold text-slate-900">Payment saved successfully</p>
+            <p className="mt-2 text-sm text-slate-600">{saveSuccessPopup}</p>
+            <button
+              type="button"
+              onClick={closeSaveSuccessPopup}
+              className="mt-5 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="z-30 rounded-2xl border border-slate-200/80 bg-gradient-to-r from-white/95 to-slate-50/95 px-3 py-2 shadow-sm backdrop-blur sm:px-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -1661,7 +1724,7 @@ export default function PaymentOutPremium() {
                 className={`${ACTION_BAR_BASE} border border-slate-200 text-slate-700 disabled:cursor-not-allowed disabled:opacity-50`}
               >
                 <Save className="h-3.5 w-3.5" />
-                Save
+                {saving ? "Saving..." : "Save"}
               </button>
               <button
                 type="button"
@@ -1676,7 +1739,7 @@ export default function PaymentOutPremium() {
                 className={`${ACTION_BAR_BASE} border border-slate-200 text-slate-700 disabled:cursor-not-allowed disabled:opacity-50`}
               >
                 <FileDown className="h-3.5 w-3.5" />
-                Download PDF
+                {saving ? "Saving..." : "Download PDF"}
               </button>
             </div>
           ) : null}

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Search, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import DateInput from "../../components/DateInput";
@@ -252,6 +252,8 @@ export default function PaymentInPremium() {
   const [activePayment, setActivePayment] = useState<PaymentInRecord | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveSuccessPopup, setSaveSuccessPopup] = useState("");
   const [dirty, setDirty] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -266,7 +268,8 @@ export default function PaymentInPremium() {
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerSearchError, setCustomerSearchError] = useState("");
   const [useAdvanceWallet, setUseAdvanceWallet] = useState(false);
-  useGlobalLoadingBridge(loading, "payment-in");
+  const savingRef = useRef(false);
+  useGlobalLoadingBridge(loading || saving, "payment-in");
 
   const payments = useMemo(() => listPaymentIn(country), [country, refreshKey]);
   const customers = useMemo(() => mapCustomersByCountry(country), [country, refreshKey]);
@@ -1031,24 +1034,41 @@ export default function PaymentInPremium() {
     payloadOptions?: { id?: string; outstandingOverride?: number }
   ) {
     if (!form) return;
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("Saving payment...");
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
     const isEditMode = !!form?.id;
     if (isEditMode && !canEditPayment) {
       setErrorMessage("You do not have permission to edit payment receipts.");
       setSuccessMessage("");
+      savingRef.current = false;
+      setSaving(false);
       return;
     }
     if (!isEditMode && !canCreatePayment) {
       setErrorMessage("You do not have permission to create payment receipts.");
       setSuccessMessage("");
+      savingRef.current = false;
+      setSaving(false);
       return;
     }
-    if (!validate(targetStatus)) return;
+    if (!validate(targetStatus)) {
+      savingRef.current = false;
+      setSaving(false);
+      return;
+    }
     try {
       const payload = buildPayload(targetStatus, payloadOptions);
       if (!payload) return;
       const saved = savePaymentIn(payload);
       if (!saved) return;
-      const remoteResult = await syncPaymentInRemote(saved);
+      const savedMessage = `${saved.receiptNo} payment saved successfully.`;
+      setSuccessMessage(savedMessage);
+      setErrorMessage("");
+      setSaveSuccessPopup(savedMessage);
       if (options?.download) exportSinglePaymentInPdf(saved);
       if (options?.email) window.alert(`Email queued for ${saved.receiptNo}.`);
       setRefreshKey((prev) => prev + 1);
@@ -1057,32 +1077,34 @@ export default function PaymentInPremium() {
       setFlowMode("edit");
       setActiveStep(2);
       setDirty(false);
-      if (remoteResult?.savedLocallyOnly) {
-        setSuccessMessage(`${saved.receiptNo} saved locally.`);
-        setErrorMessage(remoteResult?.remoteSyncMessage || "Supabase denied access. Saved in local storage only.");
-      } else {
-        setSuccessMessage(`${saved.receiptNo} saved as ${saved.status}.`);
-        setErrorMessage("");
-      }
-      window.alert(
-        remoteResult?.savedLocallyOnly
-          ? `${saved.receiptNo} saved locally.`
-          : `${saved.receiptNo} saved as ${saved.status}.`
-      );
-      setPanelMode("feed");
-      setFlowMode("create");
-      setActiveStep(0);
-      setForm(null);
-      setActivePayment(null);
-      setDirty(false);
-      setUseAdvanceWallet(false);
-      setCustomerLookupQuery("");
-      setCustomerSearchError("");
+      void syncPaymentInRemote(saved).then((remoteResult) => {
+        if (remoteResult?.savedLocallyOnly) {
+          setErrorMessage(remoteResult?.remoteSyncMessage || "Supabase denied access. Saved in local storage only.");
+        }
+      }).catch((syncError) => {
+        console.warn("Payment In remote sync failed after local save", syncError);
+      });
       return saved;
     } catch (error: any) {
       setErrorMessage(error?.message || "Unable to save payment.");
       return null;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
+  }
+
+  function closeSaveSuccessPopup() {
+    setSaveSuccessPopup("");
+    setPanelMode("feed");
+    setFlowMode("create");
+    setActiveStep(0);
+    setForm(null);
+    setActivePayment(null);
+    setDirty(false);
+    setUseAdvanceWallet(false);
+    setCustomerLookupQuery("");
+    setCustomerSearchError("");
   }
 
   async function handleApply() {
@@ -1173,10 +1195,39 @@ export default function PaymentInPremium() {
       : "Draft";
   const hasPreviousStep = activeStep > 0;
   const hasNextStep = activeStep < STEPS.length - 1;
-  const canSaveCurrentFlow = form?.id ? canEditPayment : canCreatePayment;
+  const canSaveCurrentFlow = !saving && (form?.id ? canEditPayment : canCreatePayment);
 
   return (
     <div className="mx-auto min-h-full max-w-[1360px] space-y-4 pb-36">
+      {saving ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 backdrop-blur-sm">
+          <div className="rounded-3xl border border-slate-200 bg-white px-6 py-5 text-center shadow-2xl">
+            <div className="mx-auto mb-3 h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-slate-900" />
+            <p className="text-sm font-semibold text-slate-900">Saving payment...</p>
+            <p className="mt-1 text-xs text-slate-500">Please wait. Do not click again.</p>
+          </div>
+        </div>
+      ) : null}
+
+      {saveSuccessPopup ? (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl border border-emerald-200 bg-white p-6 text-center shadow-2xl">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-xl font-bold text-emerald-700">
+              ✓
+            </div>
+            <p className="text-base font-semibold text-slate-900">Payment saved successfully</p>
+            <p className="mt-2 text-sm text-slate-600">{saveSuccessPopup}</p>
+            <button
+              type="button"
+              onClick={closeSaveSuccessPopup}
+              className="mt-5 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="z-30 rounded-2xl border border-slate-200/80 bg-gradient-to-r from-white/95 to-slate-50/95 px-3 py-2 shadow-sm backdrop-blur sm:px-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -1998,7 +2049,7 @@ export default function PaymentInPremium() {
             className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Save className="h-3.5 w-3.5" />
-            {saveStatus === "Draft" ? "Save Draft" : "Save Confirmed"}
+            {saving ? "Saving..." : saveStatus === "Draft" ? "Save Draft" : "Save Confirmed"}
           </button>
           <button
             type="button"
@@ -2026,7 +2077,7 @@ export default function PaymentInPremium() {
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <FileDown className="h-3.5 w-3.5" />
-            Download PDF
+            {saving ? "Saving..." : "Download PDF"}
           </button>
         </div>
       ) : null}
