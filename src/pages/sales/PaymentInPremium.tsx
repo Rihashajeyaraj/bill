@@ -47,7 +47,7 @@ import { authGetRole, authGetUser } from "../../services/auth.service";
 import { canCreateEntries, canDeleteEntries, canEditEntries, roleTypeLabel } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { invoicesSyncFromRemote } from "../../services/invoices.service";
-import { deletePaymentInRemote, syncPaymentInRemote } from "../../services/payments.service";
+import { deletePaymentInRemote, paymentsSyncFromRemote, syncPaymentInRemote } from "../../services/payments.service";
 import { salesProformasSyncFromRemote } from "../../services/proformas.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
 import { formatInputNumberByPreference, normalizeFormattedNumberInput } from "../../lib/formatPreferences";
@@ -499,7 +499,12 @@ export default function PaymentInPremium() {
     let mounted = true;
     async function syncReferenceData() {
       try {
-        await Promise.all([syncPartiesFromRemote(), invoicesSyncFromRemote(), salesProformasSyncFromRemote()]);
+        await Promise.all([
+          syncPartiesFromRemote(),
+          invoicesSyncFromRemote(),
+          salesProformasSyncFromRemote(),
+          paymentsSyncFromRemote()
+        ]);
       } catch {
         // Continue with local cache.
       } finally {
