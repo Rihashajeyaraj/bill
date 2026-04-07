@@ -1200,15 +1200,6 @@ export default function PaymentOutPremium() {
 
               <FlowCard title="Supplier" subtitle="Search and pick a supplier to begin">
                 <div className="space-y-3">
-                  <label className="block">
-                    <span className="text-xs font-semibold text-slate-600">Payment Date</span>
-                    <DateInput
-                      value={form.paymentDate}
-                      onChange={(nextValue) => updateField("paymentDate", nextValue)}
-                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                      disabled={readOnly}
-                    />
-                  </label>
                   <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs font-semibold text-slate-600">Supplier Search</p>
                     <div className="flex flex-wrap items-center gap-2">
@@ -1489,6 +1480,15 @@ export default function PaymentOutPremium() {
                       <p className="mt-1">Total Settled: {formatMoney(totalSettled, effectiveCurrency)}</p>
                     </div>
                   ) : null}
+                  <label className="block">
+                    <span className="text-xs font-semibold text-slate-600">Payment Date</span>
+                    <DateInput
+                      value={form.paymentDate}
+                      onChange={(nextValue) => updateField("paymentDate", nextValue)}
+                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                      disabled={readOnly}
+                    />
+                  </label>
                   <label className="block">
                     <span className="text-xs font-semibold text-slate-600">Payment Mode</span>
                     <div className="mt-1">
