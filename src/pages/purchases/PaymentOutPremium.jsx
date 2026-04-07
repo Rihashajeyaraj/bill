@@ -104,6 +104,11 @@ function calculateFinalPayable(grossTotal, tdsAmount) {
   return Math.max(0, parseNumber(grossTotal) - Math.max(0, parseNumber(tdsAmount)));
 }
 
+function calculatePendingCashPayable(bill, tdsAmount) {
+  const pendingAmount = Math.max(0, parseNumber(bill?.balanceDue));
+  return Math.max(0, pendingAmount - Math.min(Math.max(0, parseNumber(tdsAmount)), pendingAmount));
+}
+
 function autoTdsBaseAmount(bill, allocationMode, fallbackAmount) {
   if (allocationMode === "linked") {
     const taxableAmount = Math.max(0, parseNumber(bill?.taxableAmount));
@@ -287,7 +292,8 @@ export default function PaymentOutPremium() {
   const taxableAmount = selectedBill ? Math.max(0, parseNumber(selectedBill.taxableAmount)) : 0;
   const gstAmount = selectedBill ? Math.max(0, parseNumber(selectedBill.taxAmount)) : 0;
   const grossTotal = selectedBill ? Math.max(0, parseNumber(selectedBill.billAmount)) : 0;
-  const linkedCashPayable = selectedBill ? calculateFinalPayable(grossTotal, tdsAmount) : 0;
+  const linkedFinalPayable = selectedBill ? calculateFinalPayable(grossTotal, tdsAmount) : 0;
+  const linkedPendingCashPayable = selectedBill ? calculatePendingCashPayable(selectedBill, tdsAmount) : 0;
   const billGstLines = useMemo(
     () =>
       buildDocumentGstLines({
@@ -364,7 +370,7 @@ export default function PaymentOutPremium() {
 
   useEffect(() => {
     if (readOnly || form.allocationMode !== "linked" || !selectedBill) return;
-    const nextAmountPaid = calculateFinalPayable(grossTotal, form.tdsAmount);
+    const nextAmountPaid = calculatePendingCashPayable(selectedBill, form.tdsAmount);
     const currentAmountPaid = Math.max(0, parseNumber(form.amountPaid));
     const nextAllocations = buildBillAllocation(selectedBill, nextAmountPaid, form.tdsAmount);
     const currentApplied = form.allocations.reduce((sum, line) => sum + parseNumber(line.applyAmount), 0);
@@ -377,7 +383,7 @@ export default function PaymentOutPremium() {
       amountPaid: nextAmountPaid,
       allocations: buildBillAllocation(selectedBill, nextAmountPaid, prev.tdsAmount)
     }));
-  }, [form.allocationMode, form.amountPaid, form.allocations, form.tdsAmount, grossTotal, readOnly, selectedBill]);
+  }, [form.allocationMode, form.tdsAmount, readOnly, selectedBill?.id]);
 
   useEffect(() => {
     let mounted = true;
@@ -1337,7 +1343,7 @@ export default function PaymentOutPremium() {
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block">
                       <span className="text-xs font-semibold text-slate-600">
-                        {form.allocationMode === "linked" && selectedBill ? "Final Payable Amount" : "Amount Paid"}
+                        Amount Paid
                       </span>
                       <input
                         type="text"
@@ -1345,10 +1351,12 @@ export default function PaymentOutPremium() {
                         onChange={(event) => handleAmountPaidChange(normalizeFormattedNumberInput(event.target.value))}
                         inputMode="decimal"
                         className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
-                        disabled={readOnly || !form.supplierId || (form.allocationMode === "linked" && !!selectedBill)}
+                        disabled={readOnly || !form.supplierId}
                       />
                       {form.allocationMode === "linked" && selectedBill ? (
-                        <p className="mt-1 text-xs text-slate-500">Auto-calculated as Gross Total - TDS Amount.</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Auto-filled from pending amount. You can edit this if you are paying a different amount.
+                        </p>
                       ) : null}
                     </label>
                     <label className="block">
@@ -1475,7 +1483,10 @@ export default function PaymentOutPremium() {
                         Gross Total: {formatMoney(grossTotal, effectiveCurrency)} | TDS Amount: {formatMoney(tdsAmount, effectiveCurrency)}
                       </p>
                       <p className="mt-1">
-                        TDS Percentage: {parseNumber(form.tdsRate).toFixed(2)}% | Final Payable Amount: {formatMoney(linkedCashPayable, effectiveCurrency)}
+                        TDS Percentage: {parseNumber(form.tdsRate).toFixed(2)}% | Final Payable Amount: {formatMoney(linkedFinalPayable, effectiveCurrency)}
+                      </p>
+                      <p className="mt-1">
+                        Pending Payable Amount: {formatMoney(linkedPendingCashPayable, effectiveCurrency)}
                       </p>
                       <p className="mt-1">Total Settled: {formatMoney(totalSettled, effectiveCurrency)}</p>
                     </div>
@@ -1562,7 +1573,8 @@ export default function PaymentOutPremium() {
                           <p>Gross Total: <span className="font-semibold text-slate-900">{formatMoney(grossTotal, effectiveCurrency)}</span></p>
                           <p>TDS Percentage: <span className="font-semibold text-slate-900">{parseNumber(form.tdsRate).toFixed(2)}%</span></p>
                           <p>TDS Amount: <span className="font-semibold text-sky-700">{formatMoney(tdsAmount, effectiveCurrency)}</span></p>
-                          <p>Final Payable Amount: <span className="font-semibold text-emerald-700">{formatMoney(linkedCashPayable, effectiveCurrency)}</span></p>
+                          <p>Final Payable Amount: <span className="font-semibold text-emerald-700">{formatMoney(linkedFinalPayable, effectiveCurrency)}</span></p>
+                          <p>Pending Payable Amount: <span className="font-semibold text-emerald-700">{formatMoney(linkedPendingCashPayable, effectiveCurrency)}</span></p>
                         </div>
                       </div>
                     </div>
