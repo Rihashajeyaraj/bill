@@ -1274,16 +1274,18 @@ export default function PaymentOutPremium() {
                   ) : null}
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <div className="rounded-xl bg-slate-50 p-3 text-xs">
-                      <p className="text-slate-500">Outstanding</p>
+                      <p className="text-slate-500">Outstanding Payable</p>
                       <p className="font-semibold text-slate-900">{formatMoney(supplierOutstandingBefore, effectiveCurrency)}</p>
+                      <p className="mt-1 text-[11px] text-slate-500">Amount still payable to the supplier.</p>
                     </div>
                     <div className="rounded-xl bg-slate-50 p-3 text-xs">
                       <p className="text-slate-500">Last Payment</p>
                       <p className="font-semibold text-slate-900">{supplierLastPayment || "-"}</p>
                     </div>
                     <div className="rounded-xl bg-slate-50 p-3 text-xs">
-                      <p className="text-slate-500">Available Advance Balance</p>
+                      <p className="text-slate-500">Extra Paid / Advance</p>
                       <p className="font-semibold text-emerald-700">{formatMoney(supplierAdvanceWallet, effectiveCurrency)}</p>
+                      <p className="mt-1 text-[11px] text-slate-500">Amount paid above the outstanding balance.</p>
                     </div>
                   </div>
                   {supplierAdvanceHistory.length ? (
