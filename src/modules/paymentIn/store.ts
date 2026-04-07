@@ -402,7 +402,7 @@ function appliedPaymentInForDocument(
     );
 
   const premium = getAllPayments()
-    .filter((entry) => entry.status === "Applied")
+    .filter((entry) => entry.status !== "Draft")
     .reduce(
       (sum, entry) =>
         sum +
