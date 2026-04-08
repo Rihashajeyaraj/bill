@@ -3,6 +3,7 @@ import { Plus, Save, Search, Trash2, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import PageHeader from "../../components/PageHeader";
+import ActionStatusDialog from "../../components/ActionStatusDialog";
 import Card from "../../components/Card";
 import FormField from "../../components/FormField";
 import DateInput from "../../components/DateInput";
@@ -258,6 +259,13 @@ export default function PurchaseBill() {
   const [billDate, setBillDate] = useState("");
   const [generateBarcodes, setGenerateBarcodes] = useState(true);
   const [editingPaymentType, setEditingPaymentType] = useState("Unpaid");
+  const [saveStatusDialog, setSaveStatusDialog] = useState({
+    open: false,
+    title: "",
+    message: "",
+    tone: "success",
+    onClose: null
+  });
   const [lines, setLines] = useState(() => [createLine(defaultLineTaxRate)]);
   const [activeLineItemSearchId, setActiveLineItemSearchId] = useState("");
   const [lineItemPopover, setLineItemPopover] = useState({ top: 0, left: 0, width: 280 });
@@ -386,6 +394,28 @@ export default function PurchaseBill() {
       delete next[field];
       return next;
     });
+  }
+
+  function showSaveStatusDialog({ title, message, tone = "success", onClose }) {
+    setSaveStatusDialog({
+      open: true,
+      title,
+      message,
+      tone,
+      onClose: typeof onClose === "function" ? onClose : null
+    });
+  }
+
+  function closeSaveStatusDialog() {
+    const nextAction = saveStatusDialog.onClose;
+    setSaveStatusDialog({
+      open: false,
+      title: "",
+      message: "",
+      tone: "success",
+      onClose: null
+    });
+    if (typeof nextAction === "function") nextAction();
   }
 
   useEffect(() => {
@@ -1513,6 +1543,7 @@ export default function PurchaseBill() {
 
       let paymentSaved = false;
       let paymentSavedUnapplied = false;
+      let partialSaveErrorMessage = "";
       if (!isEditMode && paymentAmount > 0) {
         try {
           const payableBefore = outstandingBySupplier(country, partyId);
@@ -1581,29 +1612,21 @@ export default function PurchaseBill() {
             paymentSaved = true;
             paymentSavedUnapplied = true;
           } catch (fallbackError) {
-            toast.warning(
-              "Bill saved but payment not linked",
-              fallbackError?.message || paymentError?.message || "Payment record could not be saved."
-            );
+            partialSaveErrorMessage =
+              fallbackError?.message || paymentError?.message || "Payment record could not be saved.";
           }
         }
       }
 
-      if (paymentSavedUnapplied) {
-        toast.success(
-          "Purchase bill saved",
-          `Bill ${effectiveBillNumber} saved. Payment saved as advance balance in Payment Out.`
-        );
-      } else if (paymentSaved) {
-        toast.success(
-          "Purchase bill saved",
-          `Bill ${effectiveBillNumber} and Payment Out saved successfully.`
-        );
-      } else if (isEditMode) {
-        toast.success("Purchase bill updated", `Bill ${effectiveBillNumber} updated successfully.`);
-      } else {
-        toast.success("Purchase bill saved", `Bill ${effectiveBillNumber} saved successfully.`);
-      }
+      const saveMessage = partialSaveErrorMessage
+        ? `Bill ${effectiveBillNumber} saved, but Payment Out was not saved: ${partialSaveErrorMessage}`
+        : paymentSavedUnapplied
+          ? `Bill ${effectiveBillNumber} saved. Payment saved as advance balance in Payment Out.`
+          : paymentSaved
+            ? `Bill ${effectiveBillNumber} and Payment Out saved successfully.`
+            : isEditMode
+              ? `Bill ${effectiveBillNumber} updated successfully.`
+              : `Bill ${effectiveBillNumber} saved successfully.`;
       setBillNumber(String(companyPeekDocumentNumber("purchase", { dateValue: billDate || new Date() }) || ""));
       setBillNumberManuallyEdited(false);
       setMarkAsPaid(false);
@@ -1616,9 +1639,18 @@ export default function PurchaseBill() {
       setBankName("");
       setPaymentNotes("");
       setFormErrors({});
-      navigate("/app/purchase/history");
+      showSaveStatusDialog({
+        title: partialSaveErrorMessage ? "Save completed with errors" : "Success",
+        message: saveMessage,
+        tone: partialSaveErrorMessage ? "error" : "success",
+        onClose: () => navigate("/app/purchase/history")
+      });
     } catch (error) {
-      toast.error("Failed to save purchase bill", error?.message || "Could not save bill.");
+      showSaveStatusDialog({
+        title: "Save failed",
+        message: error?.message || "Could not save bill.",
+        tone: "error"
+      });
     } finally {
       setSaving(false);
     }
@@ -1626,6 +1658,13 @@ export default function PurchaseBill() {
 
   return (
     <div className="max-w-6xl space-y-6">
+      <ActionStatusDialog
+        open={saveStatusDialog.open}
+        title={saveStatusDialog.title}
+        message={saveStatusDialog.message}
+        tone={saveStatusDialog.tone}
+        onClose={closeSaveStatusDialog}
+      />
       <PageHeader
         title={isEditMode ? "Edit Purchase Bill" : "Purchase Bill"}
         subtitle={

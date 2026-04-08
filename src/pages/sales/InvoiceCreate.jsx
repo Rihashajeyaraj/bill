@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 
 import PageHeader from "../../components/PageHeader";
+import ActionStatusDialog from "../../components/ActionStatusDialog";
 import Card from "../../components/Card";
 import GradientButton from "../../components/GradientButton";
 import FormField from "../../components/FormField";
@@ -277,6 +278,13 @@ export default function InvoiceCreate() {
   const [printInvoiceData, setPrintInvoiceData] = useState(null);
   const [printQueued, setPrintQueued] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [saveStatusDialog, setSaveStatusDialog] = useState({
+    open: false,
+    title: "",
+    message: "",
+    tone: "success",
+    onClose: null
+  });
   const printContainerRef = useRef(null);
   const pendingPrintWindowRef = useRef(null);
   const previewAutoOpenedRef = useRef(false);
@@ -1032,6 +1040,28 @@ export default function InvoiceCreate() {
     });
     setCustomerCountryMenuOpen(false);
     setCustomerStateMenuOpen(false);
+  }
+
+  function showSaveStatusDialog({ title, message, tone = "success", onClose }) {
+    setSaveStatusDialog({
+      open: true,
+      title,
+      message,
+      tone,
+      onClose: typeof onClose === "function" ? onClose : null
+    });
+  }
+
+  function closeSaveStatusDialog() {
+    const nextAction = saveStatusDialog.onClose;
+    setSaveStatusDialog({
+      open: false,
+      title: "",
+      message: "",
+      tone: "success",
+      onClose: null
+    });
+    if (typeof nextAction === "function") nextAction();
   }
 
   function toEditableInvoiceLines(invoiceLines, availableItems) {
@@ -2111,6 +2141,7 @@ export default function InvoiceCreate() {
       }
       let paymentSaved = false;
       let paymentSavedAsUnapplied = false;
+      let partialSaveErrorMessage = "";
 
       if (markAsPaid && paymentAmount > 0 && savedInvoiceId) {
         try {
@@ -2203,11 +2234,9 @@ export default function InvoiceCreate() {
             paymentSaved = true;
             paymentSavedAsUnapplied = true;
           } catch (fallbackError) {
-            alert(
-              `Invoice saved, but Payment In was not saved: ${
-                fallbackError?.message || paymentError?.message || "Unknown payment error"
-              }`
-            );
+            partialSaveErrorMessage = `Invoice saved, but Payment In was not saved: ${
+              fallbackError?.message || paymentError?.message || "Unknown payment error"
+            }`;
           }
         }
       }
@@ -2232,25 +2261,31 @@ export default function InvoiceCreate() {
       }
 
       if (!silent) {
-        if (paymentSavedAsUnapplied) {
-          alert("Invoice saved. Payment In saved as advance balance.");
-        } else {
-          alert(
-            paymentSaved
+        showSaveStatusDialog({
+          title: partialSaveErrorMessage ? "Save completed with errors" : "Success",
+          message: partialSaveErrorMessage
+            ? partialSaveErrorMessage
+            : paymentSavedAsUnapplied
+            ? "Invoice saved. Payment In saved as advance balance."
+            : paymentSaved
               ? "Invoice and Payment In saved successfully."
               : isEditMode
                 ? "Invoice updated successfully."
-                : "Invoice saved successfully."
-          );
-        }
-        navigate("/app/sales/invoice/history");
+                : "Invoice saved successfully.",
+          tone: partialSaveErrorMessage ? "error" : "success",
+          onClose: () => navigate("/app/sales/invoice/history")
+        });
       }
       return savedInvoiceId || "";
     } catch (error) {
       if (String(error?.message || "").trim().toLowerCase() === "invoice number already exists") {
         setFormErrors((prev) => ({ ...prev, invoiceNo: "Invoice number already exists" }));
       } else {
-        alert(error?.message || "Failed to save invoice.");
+        showSaveStatusDialog({
+          title: "Save failed",
+          message: error?.message || "Failed to save invoice.",
+          tone: "error"
+        });
       }
       return null;
     }
@@ -2308,6 +2343,13 @@ export default function InvoiceCreate() {
   return (
     <div className="max-w-6xl">
       <div className="print-hide">
+        <ActionStatusDialog
+          open={saveStatusDialog.open}
+          title={saveStatusDialog.title}
+          message={saveStatusDialog.message}
+          tone={saveStatusDialog.tone}
+          onClose={closeSaveStatusDialog}
+        />
         <PageHeader
           title={isEditMode ? "Sales - Edit Invoice" : "Sales - Invoice"}
           subtitle={
