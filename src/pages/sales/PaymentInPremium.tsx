@@ -1807,15 +1807,6 @@ export default function PaymentInPremium() {
                           </p>
                         </div>
                       ) : null}
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <p className="text-xs font-semibold text-slate-600">Advance Balance</p>
-                        <p className="mt-1 text-lg font-semibold text-slate-900">{formatMoney(totals.unappliedAmount, country)}</p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {form.allocationMode === "linked"
-                            ? "Any amount above the selected document pending amount will stay as advance balance."
-                            : "Normal payment entries are saved without invoice linking."}
-                        </p>
-                      </div>
                       <label className="block">
                         <FieldLabelText required className="text-xs font-semibold text-slate-600">
                           Payment Date

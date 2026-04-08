@@ -1569,15 +1569,6 @@ export default function PaymentOutPremium() {
                       </div>
                     </div>
                   ) : null}
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <p className="text-sm font-semibold text-slate-900">Advance Balance</p>
-                    <p className="mt-2 text-2xl font-bold text-slate-900">{formatMoney(unappliedAmount, effectiveCurrency)}</p>
-                    <p className="mt-2 text-xs text-slate-500">
-                      {form.allocationMode === "linked"
-                        ? "Any amount above the selected invoice pending amount stays on the supplier account as advance. TDS is treated as settlement, not advance."
-                        : "Normal payment entries are saved without purchase invoice linking."}
-                    </p>
-                  </div>
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
                     <p className="text-sm font-semibold text-slate-900">Total Settlement</p>
                     <p className="mt-2 text-2xl font-bold text-slate-900">{formatMoney(totalSettled, effectiveCurrency)}</p>
