@@ -370,6 +370,61 @@ export default function PaymentInPremium() {
       }),
     [company?.address?.state, company?.state, selectedCustomer?.state, selectedCustomerDocument]
   );
+  const selectedDocumentPaymentHistory = useMemo(() => {
+    if (!selectedCustomerDocument) return [];
+    return payments
+      .filter((entry) => entry.status !== "Draft")
+      .flatMap((entry) =>
+        (Array.isArray(entry.allocations) ? entry.allocations : [])
+          .filter(
+            (allocation) =>
+              (
+                String(allocation?.invoiceId || "") === String(selectedCustomerDocument.id) ||
+                (
+                  String(allocation?.invoiceNo || "").trim().toLowerCase() ===
+                    String(selectedCustomerDocument.invoiceNo || "").trim().toLowerCase() &&
+                  String(entry?.customerId || "") === String(selectedCustomerDocument.customerId || "")
+                )
+              ) &&
+              String(allocation?.documentType || "invoice") === String(selectedCustomerDocument.documentType || "invoice")
+          )
+          .map((allocation, index) => {
+            const appliedAmount = Math.max(0, parseNumber(allocation?.applyAmount as any));
+            const tdsShare = Math.max(0, paymentInAllocationTdsShare(entry, allocation));
+            return {
+              id: `${entry.id}_${allocation.invoiceId || index}`,
+              receiptNo: entry.receiptNo || "-",
+              paymentDate: entry.paymentDate || "",
+              paymentMode: formatPaymentModeLabel(entry.paymentMode),
+              appliedAmount,
+              tdsShare,
+              settledAmount: appliedAmount + tdsShare,
+              referenceNo: entry.referenceNo || entry.transactionId || ""
+            };
+          })
+      )
+      .filter((entry) => entry.appliedAmount > 0 || entry.tdsShare > 0)
+      .sort((left, right) => {
+        const byDate = String(right.paymentDate || "").localeCompare(String(left.paymentDate || ""));
+        if (byDate !== 0) return byDate;
+        return String(right.receiptNo || "").localeCompare(String(left.receiptNo || ""));
+      });
+  }, [payments, selectedCustomerDocument]);
+  const inferredPreviouslySettledAmount = useMemo(() => {
+    if (!selectedCustomerDocument) return 0;
+    return Math.max(
+      0,
+      parseNumber(selectedCustomerDocument.invoiceAmount as any) - parseNumber(selectedCustomerDocument.balanceDue as any)
+    );
+  }, [selectedCustomerDocument]);
+  const selectedDocumentPreviouslyPaidAmount = useMemo(
+    () =>
+      Math.max(
+        selectedDocumentPaymentHistory.reduce((sum, entry) => sum + entry.appliedAmount, 0),
+        inferredPreviouslySettledAmount
+      ),
+    [inferredPreviouslySettledAmount, selectedDocumentPaymentHistory]
+  );
   useEffect(() => {
     if (!form || form.allocationMode !== "linked" || !selectedCustomerDocument) return;
     const invoiceAmount = Math.max(0, parseNumber(selectedCustomerDocument.invoiceAmount as any));
@@ -1789,6 +1844,41 @@ export default function PaymentInPremium() {
                           <p className="mt-1">
                             Taxable Amount: {formatMoney(selectedCustomerDocument.taxableAmount || 0, country)}
                           </p>
+                          {selectedDocumentPreviouslyPaidAmount > 0 ? (
+                            <>
+                              <p className="mt-1">
+                                Previously Paid: {formatMoney(selectedDocumentPreviouslyPaidAmount, country)}
+                              </p>
+                              {selectedDocumentPaymentHistory.length ? (
+                                <div className="mt-2 rounded-xl border border-emerald-200 bg-white/70 px-3 py-2 text-[11px] text-emerald-950">
+                                  <p className="font-semibold text-emerald-900">Previous Payment History</p>
+                                  <div className="mt-1 space-y-1">
+                                    {selectedDocumentPaymentHistory.slice(0, 3).map((entry) => (
+                                      <p key={entry.id}>
+                                        {entry.paymentDate || "-"} | {entry.receiptNo} | {entry.paymentMode} | Applied{" "}
+                                        {formatMoney(entry.appliedAmount, country)}
+                                        {entry.tdsShare > 0
+                                          ? ` | TDS ${formatMoney(entry.tdsShare, country)} | Settled ${formatMoney(entry.settledAmount, country)}`
+                                          : ""}
+                                        {entry.referenceNo ? ` | Ref ${entry.referenceNo}` : ""}
+                                      </p>
+                                    ))}
+                                    {selectedDocumentPaymentHistory.length > 3 ? (
+                                      <p className="text-emerald-800">
+                                        +{selectedDocumentPaymentHistory.length - 3} more payment entr
+                                        {selectedDocumentPaymentHistory.length - 3 === 1 ? "y" : "ies"}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="mt-1 text-[11px] text-emerald-800">
+                                  Previous payment date/details are not available for this older linked entry, but the settled
+                                  amount is included in the pending balance.
+                                </p>
+                              )}
+                            </>
+                          ) : null}
                           {invoiceGstLines.map((line) => (
                             <p key={line.label} className="mt-1">
                               {line.label}: {formatMoney(line.value, country)}
