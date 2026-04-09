@@ -468,6 +468,12 @@ export default function PaymentInPremium() {
     }
     return parseNumber(selectedCustomerDocument?.invoiceAmount as any);
   }, [form?.allocations, selectedCustomerDocument?.invoiceAmount]);
+  const displayedInvoiceAmount = useMemo(() => {
+    if (form?.allocationMode === "linked" && selectedCustomerDocument) {
+      return parseNumber(selectedCustomerDocument.balanceDue as any);
+    }
+    return editableInvoiceAmount;
+  }, [editableInvoiceAmount, form?.allocationMode, selectedCustomerDocument]);
   const remainingPayableAfterPayment = useMemo(
     () => Math.max(0, documentBalanceAfterAdvance - totals.totalSettled),
     [documentBalanceAfterAdvance, totals.totalSettled]
@@ -1660,11 +1666,13 @@ export default function PaymentInPremium() {
                           <p className="text-xs font-semibold text-slate-600">Amount Entry</p>
                           <div className="mt-3 grid grid-cols-1 gap-3">
                             <label className="block">
-                              <span className="text-xs font-semibold text-slate-600">Invoice Amount</span>
+                              <span className="text-xs font-semibold text-slate-600">
+                                {form.allocationMode === "linked" ? "Pending Amount" : "Invoice Amount"}
+                              </span>
                               <input
                                 type="text"
-                                value={numberInputValue(editableInvoiceAmount)}
-                                disabled={readOnly}
+                                value={numberInputValue(displayedInvoiceAmount)}
+                                disabled={readOnly || form.allocationMode === "linked"}
                                 onChange={(event) => handleInvoiceAmountChange(normalizeFormattedNumberInput(event.target.value))}
                                 inputMode="decimal"
                                 className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-slate-200"
