@@ -389,27 +389,35 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
         <div className={clsx("mt-5", variant.divider)} />
 
         <div className="mt-4">
-          <div className={clsx("grid grid-cols-12 gap-2 text-slate-500", variant.tableHead)}>
-            <span className="col-span-4">Item</span>
-            <span className="col-span-2">HSN/SAC</span>
-            <span className="col-span-1 text-right">Qty</span>
-            <span className="col-span-1 text-right">Rate</span>
-            <span className="col-span-2 text-right">Taxable</span>
-            <span className="col-span-1 text-right">GST %</span>
-            <span className="col-span-1 text-right">Total</span>
+          <div
+            className={clsx(
+              "grid grid-cols-[minmax(0,3.2fr)_minmax(72px,1.2fr)_minmax(44px,0.7fr)_minmax(76px,1fr)_minmax(88px,1.15fr)_minmax(52px,0.7fr)_minmax(96px,1.25fr)] gap-2 text-slate-500",
+              variant.tableHead
+            )}
+          >
+            <span className="min-w-0 text-center">Item</span>
+            <span className="min-w-0 text-center">HSN/SAC</span>
+            <span className="whitespace-nowrap text-center">Qty</span>
+            <span className="whitespace-nowrap text-center">Rate</span>
+            <span className="whitespace-nowrap text-center">Taxable</span>
+            <span className="whitespace-nowrap text-center">GST %</span>
+            <span className="whitespace-nowrap text-center">Total</span>
           </div>
           <div className="mt-2 space-y-2">
             {gstLines.map((line) => (
-              <div key={line.id} className="grid grid-cols-12 gap-2 text-slate-700">
-                <span className={clsx("col-span-4", variant.value)}>{line.name}</span>
-                <span className={clsx("col-span-2", variant.value)}>{line.hsn}</span>
-                <span className={clsx("col-span-1 text-right", variant.value)}>{qty(line.qty)}</span>
-                <span className={clsx("col-span-1 text-right", variant.value)}>{money(line.rate, currencySymbol)}</span>
-                <span className={clsx("col-span-2 text-right", variant.value)}>
+              <div
+                key={line.id}
+                className="grid grid-cols-[minmax(0,3.2fr)_minmax(72px,1.2fr)_minmax(44px,0.7fr)_minmax(76px,1fr)_minmax(88px,1.15fr)_minmax(52px,0.7fr)_minmax(96px,1.25fr)] gap-2 text-slate-700"
+              >
+                <span className={clsx("min-w-0 break-words", variant.value)}>{line.name}</span>
+                <span className={clsx("min-w-0 break-words", variant.value)}>{line.hsn}</span>
+                <span className={clsx("whitespace-nowrap text-right", variant.value)}>{qty(line.qty)}</span>
+                <span className={clsx("whitespace-nowrap text-right", variant.value)}>{money(line.rate, currencySymbol)}</span>
+                <span className={clsx("whitespace-nowrap text-right", variant.value)}>
                   {money(line.taxableValue, currencySymbol)}
                 </span>
-                <span className={clsx("col-span-1 text-right", variant.value)}>{line.taxRate}%</span>
-                <span className={clsx("col-span-1 text-right font-semibold", variant.value)}>
+                <span className={clsx("whitespace-nowrap text-right", variant.value)}>{line.taxRate}%</span>
+                <span className={clsx("whitespace-nowrap text-right font-semibold", variant.value)}>
                   {money(line.total, currencySymbol)}
                 </span>
               </div>
