@@ -294,7 +294,7 @@ function resolveRecordTotal(record, partyType) {
 
 function resolveRecordOutstanding(record, fallbackTotal) {
   const explicitBalance = parseNumber(
-    record?.totals?.balance ?? record?.remainingBalance ?? record?.balance
+    record?.totals?.balance ?? record?.remainingBalance ?? record?.balanceAmount ?? record?.balance
   );
   if (explicitBalance > 0) return explicitBalance;
   return Math.max(0, parseNumber(fallbackTotal));
@@ -312,6 +312,15 @@ function resolveRecordCreatedBy(record) {
   return text || SYSTEM_ACTOR;
 }
 
+function resolveRecordPartyId(record, partyType) {
+  const normalizedPartyType = normalizePartyType(partyType);
+  const value =
+    normalizedPartyType === "supplier"
+      ? record?.partyId || record?.party_id || record?.supplierId || record?.supplier_id || record?.vendorId || record?.vendor_id
+      : record?.partyId || record?.party_id || record?.customerId || record?.customer_id || record?.buyer?.id;
+  return String(value || "").trim();
+}
+
 function listPartyDocuments(partyId, partyType) {
   const normalizedPartyType = normalizePartyType(partyType);
   const sourceKey = normalizedPartyType === "supplier" ? LS_KEYS.purchases : LS_KEYS.invoices;
@@ -321,7 +330,7 @@ function listPartyDocuments(partyId, partyType) {
   const todayEpoch = today.getTime();
 
   return records
-    .filter((record) => String(record?.partyId || "") === String(partyId || ""))
+    .filter((record) => resolveRecordPartyId(record, normalizedPartyType) === String(partyId || ""))
     .map((record) => {
       if (!isOpenStatus(record?.status || record?.paymentStatus)) return null;
       const totalAmount = resolveRecordTotal(record, normalizedPartyType);

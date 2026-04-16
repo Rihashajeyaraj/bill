@@ -193,6 +193,10 @@ function toNumber(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function ensureArray<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
 function normalizeCountryCode(value: unknown): CountryCode | null {
   if (!value) return null;
   const clean = String(value).trim();
@@ -339,6 +343,31 @@ function normalizedDocumentType(value: unknown): "invoice" | "proforma" {
   return String(value || "").trim().toLowerCase() === "proforma" ? "proforma" : "invoice";
 }
 
+function invoiceLikeTotal(record: any) {
+  return Math.max(
+    0,
+    toNumber(
+      record?.totals?.grandTotal ??
+        record?.totals?.finalTotal ??
+        record?.totals?.total ??
+        record?.totals?.subTotal ??
+        record?.grandTotal ??
+        record?.finalTotal ??
+        record?.total ??
+        record?.amount
+    )
+  );
+}
+
+function invoiceLikeStatus(totalAmount: number, balanceAmount: number) {
+  const total = Math.max(0, toNumber(totalAmount));
+  const balance = Math.max(0, toNumber(balanceAmount));
+  if (total <= 0) return "draft";
+  if (balance <= 0) return "paid";
+  if (balance < total) return "partial";
+  return "issued";
+}
+
 export function paymentInAllocationTdsShare(record: Pick<PaymentInRecord, "allocations" | "totals">, line: Partial<PaymentAllocationDraft>) {
   const totalTdsAmount = Math.max(0, toNumber(record?.totals?.tdsAmount));
   if (totalTdsAmount <= 0) return 0;
@@ -451,6 +480,79 @@ function appliedCreditForInvoice(invoiceId: string, documentType: "invoice" | "p
     .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.totals?.total)), 0);
 
   return legacy + premium;
+}
+
+function recalculateLocalInvoiceBalance(invoiceId: string) {
+  const normalizedInvoiceId = String(invoiceId || "").trim();
+  if (!normalizedInvoiceId) return;
+  const invoices = lsGetOrganizationScoped(LS_KEYS.invoices, []);
+  if (!Array.isArray(invoices) || !invoices.length) return;
+
+  const paymentApplied = appliedPaymentInForDocument(normalizedInvoiceId, "invoice");
+  const creditApplied = appliedCreditForInvoice(normalizedInvoiceId, "invoice");
+
+  const nextInvoices = invoices.map((invoice: any) => {
+    if (String(invoice?.id || "").trim() !== normalizedInvoiceId) return invoice;
+    const invoiceTotal = invoiceLikeTotal(invoice);
+    const nextBalance = Math.max(0, invoiceTotal - paymentApplied - creditApplied);
+    const nextStatus = invoiceLikeStatus(invoiceTotal, nextBalance);
+    const nextTotals =
+      invoice?.totals && typeof invoice.totals === "object"
+        ? { ...invoice.totals, balance: nextBalance }
+        : { balance: nextBalance };
+    return {
+      ...invoice,
+      totals: nextTotals,
+      remainingBalance: nextBalance,
+      balanceAmount: nextBalance,
+      status: nextStatus,
+      paymentStatus: nextStatus
+    };
+  });
+
+  lsSetOrganizationScoped(LS_KEYS.invoices, nextInvoices);
+}
+
+function recalculateLocalProformaBalance(proformaId: string) {
+  const normalizedProformaId = String(proformaId || "").trim();
+  if (!normalizedProformaId) return;
+  const proformas = lsGetOrganizationScoped(SALES_PROFORMAS_KEY, []);
+  if (!Array.isArray(proformas) || !proformas.length) return;
+
+  const paymentApplied = appliedPaymentInForDocument(normalizedProformaId, "proforma");
+
+  const nextProformas = proformas.map((proforma: any) => {
+    if (String(proforma?.id || "").trim() !== normalizedProformaId) return proforma;
+    const proformaTotal = invoiceLikeTotal(proforma);
+    const nextBalance = Math.max(0, proformaTotal - paymentApplied);
+    return {
+      ...proforma,
+      remainingBalance: nextBalance,
+      balanceAmount: nextBalance
+    };
+  });
+
+  lsSetOrganizationScoped(SALES_PROFORMAS_KEY, nextProformas);
+}
+
+function syncLinkedDocumentBalances(records: Array<Pick<PaymentInRecord, "allocations"> | undefined>) {
+  const invoiceIds = new Set<string>();
+  const proformaIds = new Set<string>();
+
+  records.forEach((record) => {
+    ensureArray(record?.allocations).forEach((line) => {
+      const documentId = String(line?.invoiceId || "").trim();
+      if (!documentId) return;
+      if (normalizedDocumentType(line?.documentType) === "proforma") {
+        proformaIds.add(documentId);
+      } else {
+        invoiceIds.add(documentId);
+      }
+    });
+  });
+
+  invoiceIds.forEach((invoiceId) => recalculateLocalInvoiceBalance(invoiceId));
+  proformaIds.forEach((proformaId) => recalculateLocalProformaBalance(proformaId));
 }
 
 function getSequenceStore(): SequenceStore {
@@ -599,10 +701,25 @@ export function listPaymentLedger(country?: CountryCode) {
 
 function rawAdvanceWalletByCustomer(country: CountryCode, customerId: string) {
   if (!customerId) return 0;
-  return listPaymentIn(country)
-    .filter((entry) => entry.customerId === customerId)
-    .filter((entry) => entry.status !== "Draft")
-    .reduce((sum, entry) => sum + entry.totals.unappliedAmount, 0);
+  return Math.max(
+    0,
+    round2(
+      listPaymentIn(country)
+        .filter((entry) => entry.customerId === customerId)
+        .filter((entry) => entry.status !== "Draft")
+        .reduce(
+          (sum, entry) =>
+            sum +
+            Math.max(0, toNumber(entry?.totals?.unappliedAmount)) -
+            round2(
+              ensureArray(entry?.allocations)
+                .filter((line) => line?.appliedFromAdvance === true)
+                .reduce((lineSum, line) => lineSum + Math.max(0, toNumber(line?.applyAmount)), 0)
+            ),
+          0
+        )
+    )
+  );
 }
 
 function mapOpenInvoicesByCountryInternal(
@@ -613,26 +730,28 @@ function mapOpenInvoicesByCountryInternal(
   const rawProformas = lsGetOrganizationScoped(SALES_PROFORMAS_KEY, []);
   const fromStorage: CustomerOpenInvoice[] = (Array.isArray(rawInvoices) ? rawInvoices : [])
     .map((invoice: any) => {
-      const mappedCountry = normalizeCountryCode(invoice?.country);
+      const mappedCountry = normalizeCountryCode(invoice?.country || invoice?.country_code);
       if (mappedCountry && mappedCountry !== country) return null;
-      const invoiceTotal = Math.max(
-        0,
-        toNumber(invoice?.totals?.grandTotal ?? invoice?.totals?.total ?? invoice?.totals?.subTotal)
-      );
+      const invoiceId = String(invoice?.id || invoice?.invoiceId || invoice?.invoice_id || "").trim();
+      if (!invoiceId) return null;
+      const invoiceTotal = invoiceLikeTotal(invoice);
       const taxableAmount = Math.max(
         0,
-        toNumber(invoice?.totals?.subTotal ?? invoice?.totals?.taxableTotal ?? invoiceTotal)
+        toNumber(invoice?.totals?.subTotal ?? invoice?.totals?.taxableTotal ?? invoice?.taxableTotal ?? invoiceTotal)
       );
-      const discountAmount = Math.max(0, toNumber(invoice?.totals?.discountTotal ?? invoice?.totals?.discount ?? 0));
+      const discountAmount = Math.max(
+        0,
+        toNumber(invoice?.totals?.discountTotal ?? invoice?.totals?.discount ?? invoice?.discountTotal ?? 0)
+      );
       const taxAmount = Math.max(
         0,
-        toNumber(invoice?.totals?.taxTotal ?? invoice?.totals?.taxAmount ?? invoiceTotal - taxableAmount)
+        toNumber(invoice?.totals?.taxTotal ?? invoice?.totals?.taxAmount ?? invoice?.taxTotal ?? invoiceTotal - taxableAmount)
       );
-      const paymentApplied = appliedPaymentInForDocument(invoice?.id, "invoice");
-      const creditApplied = appliedCreditForInvoice(invoice?.id, "invoice");
+      const paymentApplied = appliedPaymentInForDocument(invoiceId, "invoice");
+      const creditApplied = appliedCreditForInvoice(invoiceId, "invoice");
       const storedBalance = Math.max(
         0,
-        toNumber(invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoiceTotal)
+        toNumber(invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoice?.balanceAmount ?? invoiceTotal)
       );
       const hasLinkedActivity = paymentApplied > 0 || creditApplied > 0;
       const balanceDue = hasLinkedActivity
@@ -640,13 +759,22 @@ function mapOpenInvoicesByCountryInternal(
         : storedBalance;
       if (balanceDue <= 0) return null;
       return {
-        id: invoice.id,
-        invoiceNo: invoice.invoiceNo || invoice.id,
+        id: invoiceId,
+        invoiceNo: invoice.invoiceNo || invoice?.invoice_no || invoiceId,
         country,
-        customerId: invoice.partyId || invoice.customerId || invoice.buyer?.id || invoice.partyName || "unknown_customer",
-        customerName: invoice.partyName || invoice.customerName || invoice.buyer?.name || "Customer",
-        customerState: invoice?.buyer?.state || invoice?.partyState || "",
-        invoiceDate: invoice.invoiceDate || invoice.date || "",
+        customerId:
+          invoice.partyId ||
+          invoice.party_id ||
+          invoice.customerId ||
+          invoice.customer_id ||
+          invoice.buyer?.id ||
+          invoice.partyName ||
+          invoice.customerName ||
+          "unknown_customer",
+        customerName:
+          invoice.partyName || invoice.party_name || invoice.customerName || invoice.customer_name || invoice.buyer?.name || "Customer",
+        customerState: invoice?.buyer?.state || invoice?.partyState || invoice?.party_state || invoice?.customerState || "",
+        invoiceDate: invoice.invoiceDate || invoice.invoice_date || invoice.date || "",
         invoiceAmount: invoiceTotal,
         discountAmount,
         taxableAmount,
@@ -670,43 +798,45 @@ function mapOpenInvoicesByCountryInternal(
 
   const fromProformas: CustomerOpenInvoice[] = (Array.isArray(rawProformas) ? rawProformas : [])
     .map((proforma: any) => {
-      const mappedCountry = normalizeCountryCode(proforma?.country);
+      const mappedCountry = normalizeCountryCode(proforma?.country || proforma?.country_code);
       if (mappedCountry && mappedCountry !== country) return null;
       const status = String(proforma?.status || "").toUpperCase();
       if (status === "CONVERTED" || status === "EXPIRED") return null;
-      const invoiceAmount = Math.max(
-        0,
-        toNumber(
-          proforma?.totals?.grandTotal ??
-            proforma?.totals?.total ??
-            proforma?.totals?.subTotal ??
-            proforma?.grandTotal
-        )
-      );
+      const proformaId = String(proforma?.id || proforma?.proformaId || proforma?.proforma_id || "").trim();
+      if (!proformaId) return null;
+      const invoiceAmount = invoiceLikeTotal(proforma);
       const taxableAmount = Math.max(
         0,
-        toNumber(proforma?.totals?.subTotal ?? proforma?.totals?.taxableTotal ?? invoiceAmount)
+        toNumber(proforma?.totals?.subTotal ?? proforma?.totals?.taxableTotal ?? proforma?.taxableTotal ?? invoiceAmount)
       );
       const discountAmount = Math.max(
         0,
-        toNumber(proforma?.totals?.discountTotal ?? proforma?.totals?.discount ?? 0)
+        toNumber(proforma?.totals?.discountTotal ?? proforma?.totals?.discount ?? proforma?.discountTotal ?? 0)
       );
       const taxAmount = Math.max(
         0,
-        toNumber(proforma?.totals?.taxTotal ?? proforma?.totals?.taxAmount ?? invoiceAmount - taxableAmount)
+        toNumber(proforma?.totals?.taxTotal ?? proforma?.totals?.taxAmount ?? proforma?.taxTotal ?? invoiceAmount - taxableAmount)
       );
-      const paymentApplied = appliedPaymentInForDocument(proforma?.id, "proforma");
+      const paymentApplied = appliedPaymentInForDocument(proformaId, "proforma");
       const balanceDue = Math.max(0, invoiceAmount - paymentApplied);
       if (balanceDue <= 0) return null;
       return {
-        id: proforma?.id,
-        invoiceNo: proforma?.proformaNo || proforma?.id,
+        id: proformaId,
+        invoiceNo: proforma?.proformaNo || proforma?.proforma_no || proformaId,
         country,
         customerId:
-          proforma?.partyId || proforma?.customerId || proforma?.buyer?.id || proforma?.partyName || "unknown_customer",
-        customerName: proforma?.partyName || proforma?.customerName || proforma?.buyer?.name || "Customer",
-        customerState: proforma?.buyer?.state || proforma?.partyState || "",
-        invoiceDate: proforma?.proformaDate || proforma?.date || "",
+          proforma?.partyId ||
+          proforma?.party_id ||
+          proforma?.customerId ||
+          proforma?.customer_id ||
+          proforma?.buyer?.id ||
+          proforma?.partyName ||
+          proforma?.customerName ||
+          "unknown_customer",
+        customerName:
+          proforma?.partyName || proforma?.party_name || proforma?.customerName || proforma?.customer_name || proforma?.buyer?.name || "Customer",
+        customerState: proforma?.buyer?.state || proforma?.partyState || proforma?.party_state || proforma?.customerState || "",
+        invoiceDate: proforma?.proformaDate || proforma?.proforma_date || proforma?.date || "",
         invoiceAmount,
         discountAmount,
         taxableAmount,
@@ -854,7 +984,7 @@ export function listCustomerAdvanceWalletHistory(country: CountryCode, customerI
       const advanceUsed = round2(
         advanceUsageLines.reduce((sum, line) => sum + Math.max(0, toNumber(line?.applyAmount)), 0)
       );
-      const advanceAdded = round2(Math.max(0, toNumber(entry?.totals?.unappliedAmount)) + advanceUsed);
+      const advanceAdded = round2(Math.max(0, toNumber(entry?.totals?.unappliedAmount)));
 
       if (advanceAdded > 0) {
         events.push({
@@ -986,7 +1116,7 @@ export function applyAdvanceWalletToCustomerInvoice({
         applyAmount,
         documentType: "invoice" as const,
         appliedFromAdvance: true,
-        appliedAt: invoiceDate || "",
+        appliedAt: nowIso(),
         sourceReceiptNo: record?.receiptNo || "",
         sourcePaymentId: record?.id || ""
       }
@@ -1112,6 +1242,7 @@ export function savePaymentIn(payload: SavePaymentInPayload): PaymentInRecord {
   postLedgerEntry(note, payload.actor);
   const next = existing ? payments.map((entry) => (entry.id === existing.id ? note : entry)) : [note, ...payments];
   setAllPayments(next);
+  syncLinkedDocumentBalances([existing, note]);
   return note;
 }
 
@@ -1131,6 +1262,7 @@ export function removePaymentIn(id: string): PaymentInRecord {
   }
   setAllPayments(payments.filter((entry) => String(entry?.id || "") !== normalizedId));
   setLedgerEntries(getLedgerEntries().filter((entry) => String(entry?.noteId || "") !== normalizedId));
+  syncLinkedDocumentBalances([existing]);
   return existing;
 }
 
