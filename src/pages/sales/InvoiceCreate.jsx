@@ -2377,6 +2377,7 @@ export default function InvoiceCreate() {
                 View
               </button>
               <button
+                type="button"
                 onClick={handleSaveAndPrint}
                 disabled={(isEditMode ? !canEditInvoice : !canCreateInvoice) || hasStockErrors || loadingExistingInvoice}
                 className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-100 bg-white px-3 text-sm font-semibold hover:bg-slate-50 sm:w-auto"
