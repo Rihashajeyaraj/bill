@@ -3240,6 +3240,26 @@ export default function InvoiceCreate() {
                       style={{ "--tw-ring-color": UI.COLORS.ring }}
                     />
                     {formErrors.paidAmount ? <p className="mt-1 text-xs text-rose-600">{formErrors.paidAmount}</p> : null}
+                    {paymentAmount > 0 ? (
+                      <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                        <p>
+                          Invoice payable now:{" "}
+                          <span className="font-semibold text-slate-900">{money(balanceAfterExistingAdvance)}</span>
+                        </p>
+                        {advanceAmount > 0 ? (
+                          <p className="mt-1">
+                            Excess received:{" "}
+                            <span className="font-semibold text-emerald-700">{money(advanceAmount)}</span>. This will
+                            be added to the customer wallet.
+                          </p>
+                        ) : (
+                          <p className="mt-1">
+                            Remaining after this payment:{" "}
+                            <span className="font-semibold text-rose-700">{money(pendingAmount)}</span>
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
                   </FormField>
                   <FormField label="Payment Mode">
                     <select

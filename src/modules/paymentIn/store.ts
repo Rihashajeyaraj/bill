@@ -707,17 +707,9 @@ function rawAdvanceWalletByCustomer(country: CountryCode, customerId: string) {
       listPaymentIn(country)
         .filter((entry) => entry.customerId === customerId)
         .filter((entry) => entry.status !== "Draft")
-        .reduce(
-          (sum, entry) =>
-            sum +
-            Math.max(0, toNumber(entry?.totals?.unappliedAmount)) -
-            round2(
-              ensureArray(entry?.allocations)
-                .filter((line) => line?.appliedFromAdvance === true)
-                .reduce((lineSum, line) => lineSum + Math.max(0, toNumber(line?.applyAmount)), 0)
-            ),
-          0
-        )
+        // `unappliedAmount` is already the live remaining advance on the receipt.
+        // Subtracting applied-from-advance lines again undercounts the wallet balance.
+        .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.totals?.unappliedAmount)), 0)
     )
   );
 }
