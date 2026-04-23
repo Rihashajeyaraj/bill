@@ -535,13 +535,24 @@ export default function InvoiceCreate() {
   </body>
 </html>`);
           printWindow.document.close();
-          printWindow.onload = () => {
+          let printTriggered = false;
+          const triggerPrint = () => {
+            if (printTriggered || printWindow?.closed) return;
+            printTriggered = true;
             window.setTimeout(() => {
               if (printWindow?.closed) return;
               printWindow.focus();
               printWindow.print();
             }, 200);
           };
+          printWindow.onload = triggerPrint;
+          window.setTimeout(() => {
+            if (!printWindow || printWindow.closed) return;
+            const readyState = String(printWindow.document?.readyState || "").toLowerCase();
+            if (readyState === "interactive" || readyState === "complete") {
+              triggerPrint();
+            }
+          }, 250);
           printWindow.onafterprint = () => {
             if (!printWindow?.closed) {
               printWindow.close();
@@ -1281,7 +1292,7 @@ export default function InvoiceCreate() {
   const creditLimitType = creditStatus.creditLimitType || "Amount";
   const projectedOutstanding =
     creditLimitEnabled && creditLimitType === "Amount"
-      ? creditStatus.outstanding + computed.grandTotal
+      ? creditStatus.outstanding + pendingAmount
       : creditStatus.outstanding;
   const projectedAmountExceeded =
     creditLimitEnabled &&
@@ -1653,7 +1664,8 @@ export default function InvoiceCreate() {
     return getLineItemSearchResults(activeLineForSearch);
   }, [activeLineForSearch, modeFilteredLineItems, barcodeLookupByItemId]);
 
-  function buildInvoicePreviewData(fallbackRecord = null) {
+  function buildInvoicePreviewData(fallbackRecord = null, options = {}) {
+    const preferFallbackRecord = options?.preferFallbackRecord === true;
     const fallbackTotals =
       fallbackRecord?.totals && typeof fallbackRecord.totals === "object" ? fallbackRecord.totals : {};
     const fallbackTaxObject =
@@ -1664,17 +1676,32 @@ export default function InvoiceCreate() {
         : null;
     const liveItems = computed.enriched.filter((line) => line?.itemId);
     const fallbackItems = Array.isArray(fallbackRecord?.lines) ? fallbackRecord.lines : [];
-    const previewItemsSource = liveItems.length ? liveItems : fallbackItems;
-    const subTotal = Number(computed.subTotal || fallbackTotals?.subTotal || 0);
-    const totalTax = Number(computed.tax?.totalTax || fallbackTaxObject?.totalTax || fallbackTotals?.taxTotal || 0);
+    const previewItemsSource =
+      preferFallbackRecord && fallbackItems.length ? fallbackItems : liveItems.length ? liveItems : fallbackItems;
+    const subTotal = Number(
+      preferFallbackRecord ? fallbackTotals?.subTotal || computed.subTotal || 0 : computed.subTotal || fallbackTotals?.subTotal || 0
+    );
+    const totalTax = Number(
+      preferFallbackRecord
+        ? fallbackTaxObject?.totalTax || fallbackTotals?.taxTotal || computed.tax?.totalTax || 0
+        : computed.tax?.totalTax || fallbackTaxObject?.totalTax || fallbackTotals?.taxTotal || 0
+    );
     const effectiveTaxRate = Number(
-      computed.effectiveTaxRate ||
-        taxRate ||
-        fallbackRecord?.taxRate ||
-        fallbackTaxObject?.taxRate ||
-        fallbackTaxObject?.rate ||
-        fallbackTaxBreakup?.taxRate ||
-        0
+      preferFallbackRecord
+        ? fallbackRecord?.taxRate ||
+          fallbackTaxObject?.taxRate ||
+          fallbackTaxObject?.rate ||
+          fallbackTaxBreakup?.taxRate ||
+          computed.effectiveTaxRate ||
+          taxRate ||
+          0
+        : computed.effectiveTaxRate ||
+          taxRate ||
+          fallbackRecord?.taxRate ||
+          fallbackTaxObject?.taxRate ||
+          fallbackTaxObject?.rate ||
+          fallbackTaxBreakup?.taxRate ||
+          0
     );
     const seller = {
       name: company?.companyName || "",
@@ -1699,10 +1726,14 @@ export default function InvoiceCreate() {
       companyName: company?.companyName || "",
       companyLogoUrl: company?.logoBase64 || "",
       currencySymbol: resolveCurrencySymbol(currencySymbol, currency),
-      invoiceNo: invoiceNo || fallbackRecord?.invoiceNo || "-",
-      invoiceDate: invoiceDate || fallbackRecord?.invoiceDate || "",
-      dueDate: invoiceDate || fallbackRecord?.dueDate || fallbackRecord?.invoiceDate || "",
-      placeOfSupply: customerState || fallbackRecord?.placeOfSupply || buyer.state,
+      invoiceNo: preferFallbackRecord ? fallbackRecord?.invoiceNo || invoiceNo || "-" : invoiceNo || fallbackRecord?.invoiceNo || "-",
+      invoiceDate: preferFallbackRecord ? fallbackRecord?.invoiceDate || invoiceDate || "" : invoiceDate || fallbackRecord?.invoiceDate || "",
+      dueDate: preferFallbackRecord
+        ? fallbackRecord?.dueDate || fallbackRecord?.invoiceDate || invoiceDate || ""
+        : invoiceDate || fallbackRecord?.dueDate || fallbackRecord?.invoiceDate || "",
+      placeOfSupply: preferFallbackRecord
+        ? fallbackRecord?.placeOfSupply || buyer.state || customerState
+        : customerState || fallbackRecord?.placeOfSupply || buyer.state,
       seller,
       buyer,
       customer: {
@@ -1714,23 +1745,31 @@ export default function InvoiceCreate() {
         gstin: buyer.gstin
       },
       taxRate: effectiveTaxRate,
-      taxBreakup: computed.tax?.taxBreakup || fallbackTaxBreakup,
+      taxBreakup: preferFallbackRecord ? fallbackTaxBreakup || computed.tax?.taxBreakup : computed.tax?.taxBreakup || fallbackTaxBreakup,
       tax: gstRuntimeEnabled
         ? {
             type: "GST",
-            supplyType: computed.tax?.supplyType || fallbackRecord?.supplyType || fallbackTaxBreakup?.supplyType || "INTRA",
+            supplyType: preferFallbackRecord
+              ? fallbackRecord?.supplyType || fallbackTaxBreakup?.supplyType || computed.tax?.supplyType || "INTRA"
+              : computed.tax?.supplyType || fallbackRecord?.supplyType || fallbackTaxBreakup?.supplyType || "INTRA",
             sameState:
-              (computed.tax?.supplyType || fallbackRecord?.supplyType || fallbackTaxBreakup?.supplyType || "INTRA") !== "INTER",
-            cgst: Number(computed.tax?.cgst || fallbackTaxObject?.cgst || 0),
-            sgst: Number(computed.tax?.sgst || fallbackTaxObject?.sgst || 0),
-            igst: Number(computed.tax?.igst || fallbackTaxObject?.igst || 0),
+              (
+                preferFallbackRecord
+                  ? fallbackRecord?.supplyType || fallbackTaxBreakup?.supplyType || computed.tax?.supplyType || "INTRA"
+                  : computed.tax?.supplyType || fallbackRecord?.supplyType || fallbackTaxBreakup?.supplyType || "INTRA"
+              ) !== "INTER",
+            cgst: Number(preferFallbackRecord ? fallbackTaxObject?.cgst || computed.tax?.cgst || 0 : computed.tax?.cgst || fallbackTaxObject?.cgst || 0),
+            sgst: Number(preferFallbackRecord ? fallbackTaxObject?.sgst || computed.tax?.sgst || 0 : computed.tax?.sgst || fallbackTaxObject?.sgst || 0),
+            igst: Number(preferFallbackRecord ? fallbackTaxObject?.igst || computed.tax?.igst || 0 : computed.tax?.igst || fallbackTaxObject?.igst || 0),
             totalTax,
-            warning: computed.tax?.warning || ""
+            warning: preferFallbackRecord ? "" : computed.tax?.warning || ""
           }
         : {
             type: "NORMAL",
             rate: effectiveTaxRate,
-            taxLabel: computed.tax?.taxBreakup?.taxLabel || "TAX",
+            taxLabel: preferFallbackRecord
+              ? fallbackTaxBreakup?.taxLabel || computed.tax?.taxBreakup?.taxLabel || "TAX"
+              : computed.tax?.taxBreakup?.taxLabel || fallbackTaxBreakup?.taxLabel || "TAX",
             taxAmount: totalTax,
             totalTax,
             warning: ""
@@ -1769,20 +1808,31 @@ export default function InvoiceCreate() {
         subTotal,
         tax: gstRuntimeEnabled
           ? {
-              ...(fallbackTaxObject || {}),
-              ...(computed.tax || {}),
+              ...(preferFallbackRecord ? computed.tax || {} : fallbackTaxObject || {}),
+              ...(preferFallbackRecord ? fallbackTaxObject || {} : computed.tax || {}),
               totalTax
             }
           : totalTax,
-        taxBreakup: computed.tax?.taxBreakup || fallbackTaxBreakup,
-        total: Number(computed.grandTotal || fallbackTotals?.grandTotal || fallbackTotals?.total || 0),
+        taxBreakup: preferFallbackRecord ? fallbackTaxBreakup || computed.tax?.taxBreakup : computed.tax?.taxBreakup || fallbackTaxBreakup,
+        total: Number(
+          preferFallbackRecord
+            ? fallbackTotals?.grandTotal || fallbackTotals?.total || computed.grandTotal || 0
+            : computed.grandTotal || fallbackTotals?.grandTotal || fallbackTotals?.total || 0
+        ),
         balance: Number(
-          fallbackRecord?.remainingBalance ??
-            fallbackTotals?.balance ??
-            computed.grandTotal ??
-            fallbackTotals?.grandTotal ??
-            fallbackTotals?.total ??
-            0
+          preferFallbackRecord
+            ? fallbackRecord?.remainingBalance ??
+              fallbackTotals?.balance ??
+              fallbackTotals?.grandTotal ??
+              fallbackTotals?.total ??
+              computed.grandTotal ??
+              0
+            : fallbackRecord?.remainingBalance ??
+              fallbackTotals?.balance ??
+              computed.grandTotal ??
+              fallbackTotals?.grandTotal ??
+              fallbackTotals?.total ??
+              0
         )
       }
     };
@@ -2261,19 +2311,26 @@ export default function InvoiceCreate() {
       }
 
       if (!silent) {
-        showSaveStatusDialog({
-          title: partialSaveErrorMessage ? "Save completed with errors" : "Success",
-          message: partialSaveErrorMessage
-            ? partialSaveErrorMessage
-            : paymentSavedAsUnapplied
-            ? "Invoice saved. Payment In saved as advance balance."
-            : paymentSaved
-              ? "Invoice and Payment In saved successfully."
-              : isEditMode
-                ? "Invoice updated successfully."
-                : "Invoice saved successfully.",
-          tone: partialSaveErrorMessage ? "error" : "success",
-          onClose: () => navigate("/app/sales/invoice/history")
+        const dialogTitle = partialSaveErrorMessage ? "Save completed with errors" : "Success";
+        const dialogMessage = partialSaveErrorMessage
+          ? partialSaveErrorMessage
+          : paymentSavedAsUnapplied
+          ? "Invoice saved. Payment In saved as advance balance."
+          : paymentSaved
+            ? "Invoice and Payment In saved successfully."
+            : isEditMode
+              ? "Invoice updated successfully."
+              : "Invoice saved successfully.";
+        const dialogTone = partialSaveErrorMessage ? "error" : "success";
+
+        navigate("/app/sales/invoice/history", {
+          state: {
+            statusDialog: {
+              title: dialogTitle,
+              message: dialogMessage,
+              tone: dialogTone
+            }
+          }
         });
       }
       return savedInvoiceId || "";
@@ -2291,9 +2348,13 @@ export default function InvoiceCreate() {
     }
   }
 
-  async function handleSaveAndPrint() {
-    if (isEditMode ? !canEditInvoice : !canCreateInvoice) {
-      alert(isEditMode ? "You do not have permission to edit invoices." : "You do not have permission to create invoices.");
+  function handlePrintInvoice() {
+    const nextPrintData = loadedInvoiceRecord
+      ? buildInvoicePreviewData(loadedInvoiceRecord, { preferFallbackRecord: true })
+      : invoicePreviewData;
+
+    if (!nextPrintData?.items?.length) {
+      alert("No invoice data available to print.");
       return;
     }
 
@@ -2305,34 +2366,7 @@ export default function InvoiceCreate() {
     preopenedWindow.document.write(`<!DOCTYPE html><html><head><title>Preparing invoice...</title></head><body style="font-family: Arial, sans-serif; padding: 24px;">Preparing invoice print preview...</body></html>`);
     preopenedWindow.document.close();
     pendingPrintWindowRef.current = preopenedWindow;
-
-    const savedInvoiceId = await saveInvoice({ silent: true });
-    if (!savedInvoiceId) {
-      if (pendingPrintWindowRef.current && !pendingPrintWindowRef.current.closed) {
-        pendingPrintWindowRef.current.close();
-      }
-      pendingPrintWindowRef.current = null;
-      return;
-    }
-
-    let savedRecord =
-      invoicesList().find((entry) => String(entry?.id || "").trim() === String(savedInvoiceId).trim()) || null;
-    if (!savedRecord) {
-      try {
-        const synced = await invoicesSyncFromRemote();
-        savedRecord =
-          (Array.isArray(synced) ? synced : []).find(
-            (entry) => String(entry?.id || "").trim() === String(savedInvoiceId).trim()
-          ) || null;
-      } catch {
-        // Fall back to current editor state if refresh fails.
-      }
-    }
-
-    if (savedRecord) {
-      setLoadedInvoiceRecord(savedRecord);
-    }
-    setPrintInvoiceData(savedRecord ? buildInvoicePreviewData(savedRecord) : invoicePreviewData);
+    setPrintInvoiceData(nextPrintData);
     setPrintQueued(true);
   }
 
@@ -2378,12 +2412,12 @@ export default function InvoiceCreate() {
               </button>
               <button
                 type="button"
-                onClick={handleSaveAndPrint}
-                disabled={(isEditMode ? !canEditInvoice : !canCreateInvoice) || hasStockErrors || loadingExistingInvoice}
-                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-100 bg-white px-3 text-sm font-semibold hover:bg-slate-50 sm:w-auto"
+                onClick={handlePrintInvoice}
+                disabled={loadingExistingInvoice || !invoicePreviewData?.items?.length}
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 <Printer className="h-4 w-4" />
-                {isEditMode ? "Save & Print" : "Save & Print"}
+                Print
               </button>
               <GradientButton
                 onClick={saveInvoice}
@@ -3297,9 +3331,9 @@ export default function InvoiceCreate() {
                           <p className="mt-1">Updated Balance Due: <span className="font-semibold text-rose-700">{money(finalPayableAmount)}</span></p>
                         </div>
                         <div className="rounded-2xl border border-amber-200 bg-white px-3 py-2.5 text-xs text-slate-600">
-                          <p>Remaining Wallet Balance: <span className="font-semibold text-amber-700">{money(Math.max(0, customerAdvanceWallet - advanceAppliedFromWallet))}</span></p>
+                          <p>Remaining Wallet Balance: <span className="font-semibold text-amber-700">{money(projectedAdvanceWallet)}</span></p>
                           <p className="mt-1">Paid Now: <span className="font-semibold text-emerald-700">{money(paymentAmount)}</span></p>
-                          <p className="mt-1">Final Payable: <span className="font-semibold text-rose-700">{money(finalPayableAmount)}</span></p>
+                          <p className="mt-1">Final Payable: <span className="font-semibold text-rose-700">{money(pendingAmount)}</span></p>
                         </div>
                       </div>
                     </div>
@@ -3421,7 +3455,7 @@ export default function InvoiceCreate() {
                             <p className="mt-1">Advance Used: <span className="font-semibold text-emerald-700">{money(advanceAppliedFromWallet)}</span></p>
                           </div>
                           <div className="rounded-2xl border border-amber-200 bg-white px-3 py-2.5 text-xs text-slate-600">
-                            <p>Remaining Wallet Balance: <span className="font-semibold text-amber-700">{money(Math.max(0, customerAdvanceWallet - advanceAppliedFromWallet))}</span></p>
+                            <p>Remaining Wallet Balance: <span className="font-semibold text-amber-700">{money(projectedAdvanceWallet)}</span></p>
                             <p className="mt-1">Updated Balance Due: <span className="font-semibold text-rose-700">{money(finalPayableAmount)}</span></p>
                           </div>
                         </div>
@@ -3437,7 +3471,7 @@ export default function InvoiceCreate() {
               <div className="rounded-2xl border border-slate-100 bg-white p-4">
                 <p className="text-sm font-semibold text-slate-900">Invoice Summary</p>
                 <p className="text-xs text-slate-500 mt-1">
-                  Bill template is shown only when you click Save & Print.
+                  Bill template is shown when you click Print.
                 </p>
 
               <div className="mt-4 flex items-center justify-between text-sm">
@@ -3522,7 +3556,7 @@ export default function InvoiceCreate() {
                   </div>
                   <div className="mt-2 flex items-center justify-between text-sm">
                     <span className="text-slate-600">Remaining Wallet Balance</span>
-                    <span className="font-semibold text-amber-700">{money(Math.max(0, customerAdvanceWallet - advanceAppliedFromWallet))}</span>
+                    <span className="font-semibold text-amber-700">{money(projectedAdvanceWallet)}</span>
                   </div>
                   <div className="mt-2 flex items-center justify-between text-sm">
                     <span className="text-slate-600">Final Payable Amount</span>
@@ -3581,7 +3615,14 @@ export default function InvoiceCreate() {
         title="Invoice Preview"
         onClose={() => setPreviewOpen(false)}
         footer={
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={handlePrintInvoice}
+              className="inline-flex h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Print
+            </button>
             <button
               type="button"
               onClick={() => setPreviewOpen(false)}

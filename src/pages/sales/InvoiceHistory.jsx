@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
+import ActionStatusDialog from "../../components/ActionStatusDialog";
 import PageHeader from "../../components/PageHeader";
 import Card from "../../components/Card";
 import DateInput from "../../components/DateInput";
@@ -47,6 +48,7 @@ const neutralActionButtonClass = `${actionButtonClass} border-slate-200 bg-white
 
 export default function InvoiceHistory() {
   const navigate = useNavigate();
+  const location = useLocation();
   const toast = useToast();
   const { activeRange, selectedYear } = useFinancialYears();
   const [loading, setLoading] = useState(true);
@@ -56,6 +58,12 @@ export default function InvoiceHistory() {
   const [toDate, setToDate] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [customerFilter, setCustomerFilter] = useState("");
+  const [statusDialog, setStatusDialog] = useState({
+    open: false,
+    title: "",
+    message: "",
+    tone: "success"
+  });
 
   const sortedInvoices = useMemo(
     () => {
@@ -146,8 +154,36 @@ export default function InvoiceHistory() {
     };
   }, [toast, activeRange?.fromDate, activeRange?.toDate]);
 
+  useEffect(() => {
+    const dialogState = location.state?.statusDialog;
+    if (!dialogState?.title || !dialogState?.message) return;
+
+    setStatusDialog({
+      open: true,
+      title: dialogState.title,
+      message: dialogState.message,
+      tone: dialogState.tone || "success"
+    });
+
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [location.pathname, location.state, navigate]);
+
   return (
     <div className="max-w-6xl space-y-6">
+      <ActionStatusDialog
+        open={statusDialog.open}
+        title={statusDialog.title}
+        message={statusDialog.message}
+        tone={statusDialog.tone}
+        onClose={() =>
+          setStatusDialog({
+            open: false,
+            title: "",
+            message: "",
+            tone: "success"
+          })
+        }
+      />
       <PageHeader
         title="Invoice History"
         subtitle={`All saved sales invoices in one place.${selectedYear?.label ? ` FY ${selectedYear.label}` : ""}`}
