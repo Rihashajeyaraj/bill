@@ -1574,7 +1574,7 @@ export default function Reports() {
 
     return (
       <Card className="p-4 sm:p-6">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           {years.length ? (
             <label className="text-xs font-semibold text-slate-600">
               Financial Year
@@ -1725,7 +1725,7 @@ export default function Reports() {
       ) : null}
 
       <div
-        className="grid gap-4 2xl:grid-cols-[var(--reports-sidebar-width)_14px_minmax(0,1fr)] 2xl:gap-0"
+        className="grid gap-4 xl:grid-cols-[minmax(260px,var(--reports-sidebar-width))_14px_minmax(0,1fr)] xl:gap-0"
         style={{ "--reports-sidebar-width": `${sidebarWidth}px` }}
       >
         <div className="min-w-0">
@@ -1736,7 +1736,7 @@ export default function Reports() {
           />
         </div>
 
-        <div className="relative hidden 2xl:flex items-stretch justify-center">
+        <div className="relative hidden xl:flex items-stretch justify-center">
           <div className="w-px bg-slate-200" />
           <button
             type="button"
@@ -1781,7 +1781,7 @@ export default function Reports() {
                 </div>
 
                 {viewModel.metrics.length ? (
-                  <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     {viewModel.metrics.map((metric) => (
                       metric.metricKey && activeReport === "aging-report" ? (
                         <InteractiveMetricCard

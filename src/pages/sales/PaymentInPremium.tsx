@@ -478,6 +478,14 @@ export default function PaymentInPremium() {
     () => Math.max(0, documentBalanceAfterAdvance - totals.totalSettled),
     [documentBalanceAfterAdvance, totals.totalSettled]
   );
+  const maxReceivableAmount = useMemo(() => {
+    if (form?.allocationMode !== "linked" || !selectedCustomerDocument) return null;
+    const baseBalance =
+      useAdvanceWallet && selectedCustomerDocument.documentType === "invoice"
+        ? documentBalanceAfterAdvance
+        : Math.max(0, Number(selectedCustomerDocument.balanceDue || 0));
+    return Math.max(0, baseBalance);
+  }, [documentBalanceAfterAdvance, form?.allocationMode, selectedCustomerDocument, useAdvanceWallet]);
   const filteredPayments = useMemo(() => payments.filter((entry) => {
     const haystack = `${entry.customerName} ${entry.receiptNo} ${entry.referenceNo || ""} ${entry.transactionId || ""}`.toLowerCase();
     const q = search.trim().toLowerCase();
@@ -740,7 +748,25 @@ export default function PaymentInPremium() {
   function handleAmountReceivedChange(value: string) {
     setForm((prev) => {
       if (!prev) return prev;
-      const next = { ...prev, amountReceived: value };
+      let nextAmountReceived = value;
+      if (prev.allocationMode === "linked" && prev.selectedDocumentId) {
+        const linkedDocument =
+          openInvoices.find(
+            (entry) => entry.id === prev.selectedDocumentId && entry.customerId === prev.customerId
+          ) || null;
+        const cappedAmount = linkedDocument
+          ? Math.min(
+              Math.max(0, parseNumber(value as any)),
+              Math.max(
+                0,
+                Number(linkedDocument.balanceDue || 0) -
+                  (useAdvanceWallet && linkedDocument?.documentType === "invoice" ? advanceWalletUsable : 0)
+              )
+            )
+          : Math.max(0, parseNumber(value as any));
+        nextAmountReceived = String(cappedAmount);
+      }
+      const next = { ...prev, amountReceived: nextAmountReceived };
       if (next.allocationMode === "linked" && next.selectedDocumentId) {
         const linkedDocument =
           openInvoices.find(
@@ -751,11 +777,11 @@ export default function PaymentInPremium() {
             linkedDocument,
             useAdvanceWallet && linkedDocument?.documentType === "invoice" ? advanceWalletUsable : 0
           ),
-          value
+          nextAmountReceived
         );
         if (!next.isManual) {
           next.tdsAmount = calculatedTdsInputValue(
-            autoTdsBaseAmount(linkedDocument, next.allocationMode, value),
+            autoTdsBaseAmount(linkedDocument, next.allocationMode, nextAmountReceived),
             next.tdsRate
           );
         }
@@ -1659,6 +1685,11 @@ export default function PaymentInPremium() {
                             className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
                           />
                           {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
+                          {maxReceivableAmount !== null ? (
+                            <p className="mt-1 text-xs text-slate-500">
+                              Received amount is capped to the selected document pending balance of {formatMoney(maxReceivableAmount, country)}.
+                            </p>
+                          ) : null}
                         </label>
                       </div>
                       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">

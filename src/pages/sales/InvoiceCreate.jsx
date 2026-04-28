@@ -32,6 +32,10 @@ import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus, listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../modules/parties/store";
 import { computeItemStock, listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
 import {
+  applyAvailableCreditToInvoice,
+  availableCreditByCustomer
+} from "../../modules/creditNote/store";
+import {
   applyAdvanceWalletToCustomerInvoice,
   listCustomerAdvanceWalletHistory,
   outstandingByCustomer,
@@ -1248,13 +1252,26 @@ export default function InvoiceCreate() {
     [partyId, paymentCountryCode]
   );
   const customerAdvanceWallet = round2(Number(customerPaymentInsights?.advanceWallet || 0));
+  const customerCreditBalance = useMemo(
+    () => round2(availableCreditByCustomer(paymentCountryCode, partyId)),
+    [paymentCountryCode, partyId]
+  );
+  const customerAvailableCredit = round2(customerAdvanceWallet + customerCreditBalance);
   const maxAdvanceUsable = useMemo(
-    () => round2(Math.min(customerAdvanceWallet, Number(computed.grandTotal || 0))),
-    [customerAdvanceWallet, computed.grandTotal]
+    () => round2(Math.min(customerAvailableCredit, Number(computed.grandTotal || 0))),
+    [customerAvailableCredit, computed.grandTotal]
   );
   const advanceAppliedFromWallet = useMemo(
     () => (useAvailableAdvance ? maxAdvanceUsable : 0),
     [useAvailableAdvance, maxAdvanceUsable]
+  );
+  const advanceAppliedFromPayments = useMemo(
+    () => (useAvailableAdvance ? round2(Math.min(customerAdvanceWallet, advanceAppliedFromWallet)) : 0),
+    [useAvailableAdvance, customerAdvanceWallet, advanceAppliedFromWallet]
+  );
+  const advanceAppliedFromCreditNotes = useMemo(
+    () => round2(Math.max(0, advanceAppliedFromWallet - advanceAppliedFromPayments)),
+    [advanceAppliedFromWallet, advanceAppliedFromPayments]
   );
   const balanceAfterExistingAdvance = useMemo(
     () => round2(Math.max(0, Number(computed.grandTotal || 0) - advanceAppliedFromWallet)),
@@ -1271,8 +1288,12 @@ export default function InvoiceCreate() {
     [paymentAmount, balanceAfterExistingAdvance]
   );
   const projectedAdvanceWallet = round2(
-    Math.max(0, customerAdvanceWallet - advanceAppliedFromWallet) + advanceAmount
+    Math.max(0, customerAdvanceWallet - advanceAppliedFromPayments) + advanceAmount
   );
+  const projectedCreditBalance = round2(
+    Math.max(0, customerCreditBalance - advanceAppliedFromCreditNotes)
+  );
+  const projectedAvailableCredit = round2(projectedAdvanceWallet + projectedCreditBalance);
   const finalPayableAmount = useMemo(
     () => round2(Math.max(0, Number(computed.grandTotal || 0) - advanceAppliedFromWallet)),
     [computed.grandTotal, advanceAppliedFromWallet]
@@ -1283,17 +1304,20 @@ export default function InvoiceCreate() {
   }, [partyId]);
 
   useEffect(() => {
-    if (!customerAdvanceWallet) {
+    if (!customerAvailableCredit) {
       setUseAvailableAdvance(false);
     }
-  }, [customerAdvanceWallet]);
+  }, [customerAvailableCredit]);
 
   const creditLimitEnabled = !!creditStatus.party?.creditLimitEnabled;
   const creditLimitType = creditStatus.creditLimitType || "Amount";
+  const currentReceivableExposure = round2(
+    Math.max(0, Number(creditStatus.outstanding || 0) - customerAvailableCredit)
+  );
   const projectedOutstanding =
     creditLimitEnabled && creditLimitType === "Amount"
-      ? creditStatus.outstanding + pendingAmount
-      : creditStatus.outstanding;
+      ? round2(currentReceivableExposure + pendingAmount)
+      : currentReceivableExposure;
   const projectedAmountExceeded =
     creditLimitEnabled &&
     creditLimitType === "Amount" &&
@@ -2178,16 +2202,31 @@ export default function InvoiceCreate() {
         : await invoicesCreate(payload);
       setLastSavedInvoiceId(savedInvoiceId || "");
       if (savedInvoiceId && partyId && advanceAppliedFromWallet > 0) {
-        applyAdvanceWalletToCustomerInvoice({
-          country: paymentCountryCode,
-          customerId: partyId,
-          invoiceId: savedInvoiceId,
-          invoiceNo: normalizedInvoiceNo,
-          invoiceDate,
-          invoiceAmount: Number(effectiveComputed.grandTotal || 0),
-          maxApplyAmount: advanceAppliedFromWallet,
-          actor: authGetUser()?.name || authGetUser()?.email || "System User"
-        });
+        const actor = authGetUser()?.name || authGetUser()?.email || "System User";
+        if (advanceAppliedFromPayments > 0) {
+          applyAdvanceWalletToCustomerInvoice({
+            country: paymentCountryCode,
+            customerId: partyId,
+            invoiceId: savedInvoiceId,
+            invoiceNo: normalizedInvoiceNo,
+            invoiceDate,
+            invoiceAmount: Number(effectiveComputed.grandTotal || 0),
+            maxApplyAmount: advanceAppliedFromPayments,
+            actor
+          });
+        }
+        if (advanceAppliedFromCreditNotes > 0) {
+          applyAvailableCreditToInvoice({
+            country: paymentCountryCode,
+            customerId: partyId,
+            invoiceId: savedInvoiceId,
+            invoiceNo: normalizedInvoiceNo,
+            invoiceDate,
+            invoiceAmount: Number(effectiveComputed.grandTotal || 0),
+            maxApplyAmount: advanceAppliedFromCreditNotes,
+            actor
+          });
+        }
       }
       let paymentSaved = false;
       let paymentSavedAsUnapplied = false;
@@ -3309,11 +3348,11 @@ export default function InvoiceCreate() {
                       ))}
                     </select>
                   </FormField>
-                  {customerAdvanceWallet > 0 ? (
+                  {customerAvailableCredit > 0 ? (
                     <div className="md:col-span-2 rounded-2xl border border-amber-200 bg-amber-50 p-3">
-                      <p className="text-sm font-semibold text-slate-900">Customer Advance Balance</p>
+                      <p className="text-sm font-semibold text-slate-900">Customer Available Credit</p>
                       <p className="mt-1 text-xs text-slate-600">
-                        Available Advance Balance: {money(customerAdvanceWallet)}
+                        Available Credit Balance: {money(customerAvailableCredit)}
                       </p>
                       <label className="mt-3 inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800">
                         <input
@@ -3322,16 +3361,16 @@ export default function InvoiceCreate() {
                           onChange={(event) => setUseAvailableAdvance(event.target.checked)}
                           className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
                         />
-                        Use Available Advance Balance
+                        Apply Available Credit
                       </label>
                       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                         <div className="rounded-2xl border border-amber-200 bg-white px-3 py-2.5 text-xs text-slate-600">
                           <p>Invoice Total: <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span></p>
-                          <p className="mt-1">Advance Used: <span className="font-semibold text-emerald-700">{money(advanceAppliedFromWallet)}</span></p>
+                          <p className="mt-1">Credit Used: <span className="font-semibold text-emerald-700">{money(advanceAppliedFromWallet)}</span></p>
                           <p className="mt-1">Updated Balance Due: <span className="font-semibold text-rose-700">{money(finalPayableAmount)}</span></p>
                         </div>
                         <div className="rounded-2xl border border-amber-200 bg-white px-3 py-2.5 text-xs text-slate-600">
-                          <p>Remaining Wallet Balance: <span className="font-semibold text-amber-700">{money(projectedAdvanceWallet)}</span></p>
+                          <p>Remaining Credit Balance: <span className="font-semibold text-amber-700">{money(projectedAvailableCredit)}</span></p>
                           <p className="mt-1">Paid Now: <span className="font-semibold text-emerald-700">{money(paymentAmount)}</span></p>
                           <p className="mt-1">Final Payable: <span className="font-semibold text-rose-700">{money(pendingAmount)}</span></p>
                         </div>
@@ -3434,11 +3473,11 @@ export default function InvoiceCreate() {
                   </div>
                 ) : (
                   <>
-                    {customerAdvanceWallet > 0 ? (
+                    {customerAvailableCredit > 0 ? (
                       <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3">
-                        <p className="text-sm font-semibold text-slate-900">Customer Advance Balance</p>
+                        <p className="text-sm font-semibold text-slate-900">Customer Available Credit</p>
                         <p className="mt-1 text-xs text-slate-600">
-                          Available Advance Balance: {money(customerAdvanceWallet)}
+                          Available Credit Balance: {money(customerAvailableCredit)}
                         </p>
                         <label className="mt-3 inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800">
                           <input
@@ -3447,15 +3486,15 @@ export default function InvoiceCreate() {
                             onChange={(event) => setUseAvailableAdvance(event.target.checked)}
                             className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
                           />
-                          Use Available Advance Balance
+                          Apply Available Credit
                         </label>
                         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                           <div className="rounded-2xl border border-amber-200 bg-white px-3 py-2.5 text-xs text-slate-600">
                             <p>Invoice Total: <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span></p>
-                            <p className="mt-1">Advance Used: <span className="font-semibold text-emerald-700">{money(advanceAppliedFromWallet)}</span></p>
+                            <p className="mt-1">Credit Used: <span className="font-semibold text-emerald-700">{money(advanceAppliedFromWallet)}</span></p>
                           </div>
                           <div className="rounded-2xl border border-amber-200 bg-white px-3 py-2.5 text-xs text-slate-600">
-                            <p>Remaining Wallet Balance: <span className="font-semibold text-amber-700">{money(projectedAdvanceWallet)}</span></p>
+                            <p>Remaining Credit Balance: <span className="font-semibold text-amber-700">{money(projectedAvailableCredit)}</span></p>
                             <p className="mt-1">Updated Balance Due: <span className="font-semibold text-rose-700">{money(finalPayableAmount)}</span></p>
                           </div>
                         </div>
@@ -3504,15 +3543,15 @@ export default function InvoiceCreate() {
                 <span className="font-semibold text-slate-900">Grand Total</span>
                 <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span>
               </div>
-              {customerAdvanceWallet > 0 ? (
+              {customerAvailableCredit > 0 ? (
                 <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Available Advance Balance</span>
-                  <span className="font-semibold text-amber-700">{money(customerAdvanceWallet)}</span>
+                  <span className="text-slate-600">Available Credit Balance</span>
+                  <span className="font-semibold text-amber-700">{money(customerAvailableCredit)}</span>
                 </div>
               ) : null}
-              {customerAdvanceWallet > 0 ? (
+              {customerAvailableCredit > 0 ? (
                 <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Use Available Advance</span>
+                  <span className="text-slate-600">Apply Available Credit</span>
                   <span className="font-semibold text-slate-900">
                     {useAvailableAdvance ? "Enabled" : "Disabled"}
                   </span>
@@ -3520,7 +3559,7 @@ export default function InvoiceCreate() {
               ) : null}
               {advanceAppliedFromWallet > 0 ? (
                 <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Advance Used</span>
+                  <span className="text-slate-600">Credit Used</span>
                   <span className="font-semibold text-emerald-700">{money(advanceAppliedFromWallet)}</span>
                 </div>
               ) : null}
@@ -3538,25 +3577,25 @@ export default function InvoiceCreate() {
                   <span className="font-semibold text-emerald-700">{money(advanceAmount)}</span>
                 </div>
               ) : null}
-              {projectedAdvanceWallet > 0 || customerAdvanceWallet > 0 || advanceAppliedFromWallet > 0 ? (
+              {projectedAvailableCredit > 0 || customerAvailableCredit > 0 || advanceAppliedFromWallet > 0 ? (
                 <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Remaining Wallet Balance</span>
-                  <span className="font-semibold text-amber-700">{money(projectedAdvanceWallet)}</span>
+                  <span className="text-slate-600">Remaining Credit Balance</span>
+                  <span className="font-semibold text-amber-700">{money(projectedAvailableCredit)}</span>
                 </div>
               ) : null}
-              {customerAdvanceWallet > 0 || advanceAppliedFromWallet > 0 ? (
+              {customerAvailableCredit > 0 || advanceAppliedFromWallet > 0 ? (
                 <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-600">Available Advance</span>
-                    <span className="font-semibold text-amber-700">{money(customerAdvanceWallet)}</span>
+                    <span className="text-slate-600">Available Credit</span>
+                    <span className="font-semibold text-amber-700">{money(customerAvailableCredit)}</span>
                   </div>
                   <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="text-slate-600">Advance Used</span>
+                    <span className="text-slate-600">Credit Used</span>
                     <span className="font-semibold text-emerald-700">{money(advanceAppliedFromWallet)}</span>
                   </div>
                   <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="text-slate-600">Remaining Wallet Balance</span>
-                    <span className="font-semibold text-amber-700">{money(projectedAdvanceWallet)}</span>
+                    <span className="text-slate-600">Remaining Credit Balance</span>
+                    <span className="font-semibold text-amber-700">{money(projectedAvailableCredit)}</span>
                   </div>
                   <div className="mt-2 flex items-center justify-between text-sm">
                     <span className="text-slate-600">Final Payable Amount</span>

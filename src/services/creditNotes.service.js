@@ -225,15 +225,6 @@ async function validateCreditNoteRemoteLimits({
     return sum + Math.max(0, parseNumber(row?.grand_total));
   }, 0);
 
-  const availableAmount = Math.max(
-    0,
-    Math.max(0, parseNumber(invoiceHeader?.grand_total)) - paidAmount - alreadyCreditedAmount
-  );
-  if (Math.max(0, parseNumber(grandTotal)) > availableAmount + 0.01) {
-    throw new Error(
-      `Credit amount ${parseNumber(grandTotal).toFixed(2)} exceeds invoice balance ${availableAmount.toFixed(2)}.`
-    );
-  }
 }
 
 async function applyCreditNoteReturnToStock({
@@ -598,6 +589,9 @@ export async function creditNotesSaveRemote(note) {
       country: note?.country || "",
       customerName: note?.customerName || note?.partyName || "",
       referenceInvoiceNo: note?.linkedInvoiceNo || note?.referenceInvoiceNo || "",
+      appliedToInvoiceAmount: parseNumber(note?.appliedToInvoiceAmount),
+      availableCreditAmount: parseNumber(note?.availableCreditAmount),
+      creditApplications: Array.isArray(note?.creditApplications) ? note.creditApplications : [],
       refundMode:
         note?.refundMode === "PARTIAL" || note?.refundMode === "NONE" ? note.refundMode : "FULL",
       partialRefundAmount: parseNumber(note?.partialRefundAmount),

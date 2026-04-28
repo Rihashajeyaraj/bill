@@ -543,7 +543,7 @@ export async function purchasesSyncFromRemote(range) {
   const mapped = bills.map((entry) => {
     const bill = mapRemotePurchaseBill(
       entry,
-      parseNumber(entry?.grand_total) - (debitMap.get(entry.id) || 0) - (paymentMap.get(entry.id) || 0)
+      parseNumber(entry?.grand_total) + (debitMap.get(entry.id) || 0) - (paymentMap.get(entry.id) || 0)
     );
     return {
       ...bill,

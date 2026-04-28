@@ -9,6 +9,8 @@ import { companyGetProfile } from "../../services/company.service";
 import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
 import { normalizeContactType, validateContactTax } from "../../services/customerTax";
 import { syncCreditMonitoringNotifications } from "../../services/creditNotifications.service";
+import { paymentInsightsByCustomer } from "../paymentIn/store";
+import { COUNTRY_CONFIG, type CountryCode } from "../paymentIn/countryConfig";
 import type {
   CreditLimitType,
   LedgerEntry,
@@ -54,6 +56,14 @@ const COUNTRY_CODE_TO_NAME: Record<string, string> = {
   GB: "United Kingdom",
   IE: "Ireland"
 };
+
+function resolvePaymentCountryCode(value: unknown): CountryCode {
+  const raw = String(value || "").trim();
+  if (raw === "LK") return "SL";
+  if (raw === "GB") return "UK";
+  if (raw && raw in COUNTRY_CONFIG) return raw as CountryCode;
+  return (COUNTRY_NAME_TO_CODE[raw.toLowerCase()] || "IN") as CountryCode;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -1017,6 +1027,14 @@ export function computePartyFinancials(party: PartyRecord): PartyFinancials {
   const openingBalance = openingBalanceSigned(party);
   const totals = party.type === "Supplier" ? supplierTotals(party) : customerTotals(party);
   const outstanding = openingBalance + totals.invoices - totals.payments - totals.creditNotes + totals.debitNotes;
+  const customerAdvanceWallet =
+    party.type === "Customer"
+      ? Math.max(0, paymentInsightsByCustomer(resolvePaymentCountryCode(party.country), party.id).advanceWallet)
+      : 0;
+  const creditExposure =
+    party.type === "Customer"
+      ? Math.max(0, outstanding - customerAdvanceWallet)
+      : outstanding;
 
   const creditLimit = Math.max(0, parseNumber(party.creditLimit));
   const creditLimitDays = Math.max(0, parseNumber(party.creditLimitDays));
@@ -1028,14 +1046,14 @@ export function computePartyFinancials(party: PartyRecord): PartyFinancials {
     creditLimitEnabled &&
     creditLimitType === "Amount" &&
     creditLimit > 0 &&
-    outstanding > creditLimit;
+    creditExposure > creditLimit;
   const overdueExceeded =
     creditLimitEnabled &&
     creditLimitType === "Days" &&
     creditLimitDays > 0 &&
     maxOverdueDays >= creditLimitDays;
   const creditExceeded = amountExceeded || overdueExceeded;
-  const creditOverBy = amountExceeded ? outstanding - creditLimit : 0;
+  const creditOverBy = amountExceeded ? creditExposure - creditLimit : 0;
   const overdueByDays = overdueExceeded ? maxOverdueDays - creditLimitDays : 0;
 
   return {

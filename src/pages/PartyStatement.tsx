@@ -102,6 +102,7 @@ export default function PartyStatement() {
   }
 
   const balanceMeta = outstandingMeta(party, financials?.outstanding ?? 0);
+  const closingMeta = outstandingMeta(party, statement.closingBalance);
   const summaryCardClassName =
     "flex h-full min-h-[168px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-soft transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow";
   const summaryTitleClassName = "text-xs font-semibold tracking-[0.02em] text-slate-500";
@@ -158,9 +159,20 @@ export default function PartyStatement() {
           <div className={summaryCardClassName}>
             <p className={summaryTitleClassName}>Closing Balance</p>
             <div className={summaryBodyClassName}>
-              <p className={summaryAmountClassName}>{formatMoney(statement.closingBalance, currency)}</p>
+              <p className={`${summaryAmountClassName} ${closingMeta.color}`}>
+                {formatMoney(closingMeta.absolute, currency)}
+              </p>
               <div className="min-h-[40px]">
-                <p className={summaryDescriptionClassName}>After filtered entries</p>
+                <p className={summaryDescriptionClassName}>
+                  {party.type === "Customer" && statement.closingBalance < 0
+                    ? "Negative closing balance means the customer has an advance/credit balance."
+                    : "After filtered entries"}
+                </p>
+                {party.type === "Customer" && statement.closingBalance < 0 ? (
+                  <div className="mt-2">
+                    <Badge tone={closingMeta.tone}>{closingMeta.label}</Badge>
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>

@@ -54,6 +54,15 @@ export function openingBalanceSigned(party: PartyRecord) {
 
 export function outstandingMeta(party: PartyRecord, outstanding: number) {
   const absolute = Math.abs(outstanding);
+  if (party.type === "Customer" && outstanding < 0) {
+    return {
+      absolute,
+      label: "Advance",
+      tone: "warning",
+      color: "text-amber-700",
+      badge: "bg-amber-50 text-amber-700 border-amber-200"
+    };
+  }
   const isReceivable =
     party.type === "Customer" ? outstanding >= 0 : outstanding < 0;
   return {
