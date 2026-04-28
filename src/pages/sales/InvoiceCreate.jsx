@@ -2361,15 +2361,11 @@ export default function InvoiceCreate() {
               ? "Invoice updated successfully."
               : "Invoice saved successfully.";
         const dialogTone = partialSaveErrorMessage ? "error" : "success";
-
-        navigate("/app/sales/invoice/history", {
-          state: {
-            statusDialog: {
-              title: dialogTitle,
-              message: dialogMessage,
-              tone: dialogTone
-            }
-          }
+        showSaveStatusDialog({
+          title: dialogTitle,
+          message: dialogMessage,
+          tone: dialogTone,
+          onClose: () => navigate("/app/sales/invoice/history")
         });
       }
       return savedInvoiceId || "";
