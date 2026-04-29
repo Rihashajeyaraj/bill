@@ -82,32 +82,45 @@ export async function syncReportsData(range) {
 }
 
 export function getReportsDataset(range) {
+  const allLegacyPayments = paymentsList();
+  const allPaymentIns = listPaymentIn();
+  const allPaymentOuts = listPaymentOut();
+  const allLegacyCreditNotes = creditNotesList();
+  const allPremiumCreditNotes = listPremiumCreditNotes();
+  const allDebitNotes = listDebitNotes();
+
   return {
     parties: listParties(),
     invoices: invoicesList(range),
     purchases: purchasesList(range),
     legacyPayments: paymentsList(range),
+    allLegacyPayments,
     paymentIns: filterRowsByFinancialYear(
-      listPaymentIn(),
+      allPaymentIns,
       (row) => row?.paymentDate || row?.payment_date || row?.date || row?.created_at,
       range
     ),
+    allPaymentIns,
     paymentOuts: filterRowsByFinancialYear(
-      listPaymentOut(),
+      allPaymentOuts,
       (row) => row?.paymentDate || row?.payment_date || row?.date || row?.created_at,
       range
     ),
+    allPaymentOuts,
     legacyCreditNotes: creditNotesList(range),
+    allLegacyCreditNotes,
     premiumCreditNotes: filterRowsByFinancialYear(
-      listPremiumCreditNotes(),
+      allPremiumCreditNotes,
       (row) => row?.creditNoteDate || row?.creditDate || row?.credit_note_date || row?.created_at,
       range
     ),
+    allPremiumCreditNotes,
     debitNotes: filterRowsByFinancialYear(
-      listDebitNotes(),
+      allDebitNotes,
       (row) => row?.debitNoteDate || row?.date || row?.created_at,
       range
     ),
+    allDebitNotes,
     expenses: expensesList(range)
   };
 }
@@ -522,8 +535,10 @@ export function listReportParties(dataset, partyType = PARTY_TYPES.customer) {
 
 function customerPaymentAppliedByInvoice(dataset, asOfDate = "") {
   const applied = new Map();
+  const legacyPayments = Array.isArray(dataset?.allLegacyPayments) ? dataset.allLegacyPayments : dataset?.legacyPayments;
+  const paymentIns = Array.isArray(dataset?.allPaymentIns) ? dataset.allPaymentIns : dataset?.paymentIns;
 
-  (Array.isArray(dataset?.legacyPayments) ? dataset.legacyPayments : [])
+  (Array.isArray(legacyPayments) ? legacyPayments : [])
     .filter((row) => String(row?.direction || "").trim().toUpperCase() === "IN")
     .filter((row) => !String(row?.referenceNo || row?.reference_no || "").startsWith("PI:"))
     .filter((row) => !asOfDate || resolvePaymentDate(row) <= asOfDate)
@@ -533,15 +548,18 @@ function customerPaymentAppliedByInvoice(dataset, asOfDate = "") {
       applied.set(invoiceId, (applied.get(invoiceId) || 0) + parseNumber(row?.amount));
     });
 
-  (Array.isArray(dataset?.paymentIns) ? dataset.paymentIns : [])
+  (Array.isArray(paymentIns) ? paymentIns : [])
     .filter((row) => normalizeText(row?.status) !== "draft")
-    .filter((row) => !asOfDate || resolvePaymentDate(row) <= asOfDate)
     .forEach((row) => {
       const allocations = Array.isArray(row?.allocations) ? row.allocations : [];
       allocations.forEach((allocation) => {
         if (normalizeText(allocation?.documentType || "invoice") !== "invoice") return;
         const invoiceId = String(allocation?.invoiceId || "").trim();
         if (!invoiceId) return;
+        const allocationDate = allocation?.appliedFromAdvance
+          ? String(allocation?.appliedAt || allocation?.invoiceDate || resolvePaymentDate(row) || "").slice(0, 10)
+          : resolvePaymentDate(row);
+        if (asOfDate && allocationDate && allocationDate > asOfDate) return;
         applied.set(invoiceId, (applied.get(invoiceId) || 0) + paymentInAllocationSettledAmount(row, allocation));
       });
     });
@@ -551,8 +569,14 @@ function customerPaymentAppliedByInvoice(dataset, asOfDate = "") {
 
 function customerCreditAppliedByInvoice(dataset, asOfDate = "") {
   const applied = new Map();
+  const legacyCreditNotes = Array.isArray(dataset?.allLegacyCreditNotes)
+    ? dataset.allLegacyCreditNotes
+    : dataset?.legacyCreditNotes;
+  const premiumCreditNotes = Array.isArray(dataset?.allPremiumCreditNotes)
+    ? dataset.allPremiumCreditNotes
+    : dataset?.premiumCreditNotes;
 
-  (Array.isArray(dataset?.legacyCreditNotes) ? dataset.legacyCreditNotes : [])
+  (Array.isArray(legacyCreditNotes) ? legacyCreditNotes : [])
     .filter((row) => !asOfDate || resolveCreditDate(row) <= asOfDate)
     .forEach((row) => {
       const invoiceId = String(row?.referenceInvoiceId || row?.related_invoice_id || "").trim();
@@ -560,7 +584,7 @@ function customerCreditAppliedByInvoice(dataset, asOfDate = "") {
       applied.set(invoiceId, (applied.get(invoiceId) || 0) + amountFromAdjustment(row));
     });
 
-  (Array.isArray(dataset?.premiumCreditNotes) ? dataset.premiumCreditNotes : [])
+  (Array.isArray(premiumCreditNotes) ? premiumCreditNotes : [])
     .filter((row) => normalizeText(row?.status) === "applied")
     .filter((row) => !asOfDate || resolveCreditDate(row) <= asOfDate)
     .forEach((row) => {
@@ -574,8 +598,10 @@ function customerCreditAppliedByInvoice(dataset, asOfDate = "") {
 
 function supplierPaymentAppliedByBill(dataset, asOfDate = "") {
   const applied = new Map();
+  const legacyPayments = Array.isArray(dataset?.allLegacyPayments) ? dataset.allLegacyPayments : dataset?.legacyPayments;
+  const paymentOuts = Array.isArray(dataset?.allPaymentOuts) ? dataset.allPaymentOuts : dataset?.paymentOuts;
 
-  (Array.isArray(dataset?.legacyPayments) ? dataset.legacyPayments : [])
+  (Array.isArray(legacyPayments) ? legacyPayments : [])
     .filter((row) => String(row?.direction || "").trim().toUpperCase() === "OUT")
     .filter((row) => !String(row?.referenceNo || row?.reference_no || "").startsWith("PO:"))
     .filter((row) => !asOfDate || resolvePaymentDate(row) <= asOfDate)
@@ -585,7 +611,7 @@ function supplierPaymentAppliedByBill(dataset, asOfDate = "") {
       applied.set(billId, (applied.get(billId) || 0) + parseNumber(row?.amount));
     });
 
-  (Array.isArray(dataset?.paymentOuts) ? dataset.paymentOuts : [])
+  (Array.isArray(paymentOuts) ? paymentOuts : [])
     .filter((row) => normalizeText(row?.status) !== "draft")
     .filter((row) => !asOfDate || resolvePaymentDate(row) <= asOfDate)
     .forEach((row) => {
@@ -602,8 +628,9 @@ function supplierPaymentAppliedByBill(dataset, asOfDate = "") {
 
 function supplierDebitAppliedByBill(dataset, asOfDate = "") {
   const applied = new Map();
+  const debitNotes = Array.isArray(dataset?.allDebitNotes) ? dataset.allDebitNotes : dataset?.debitNotes;
 
-  (Array.isArray(dataset?.debitNotes) ? dataset.debitNotes : [])
+  (Array.isArray(debitNotes) ? debitNotes : [])
     .filter((row) => normalizeText(row?.status) === "applied")
     .filter((row) => !asOfDate || resolveDebitDate(row) <= asOfDate)
     .forEach((row) => {

@@ -452,7 +452,7 @@ function computeTotals(
     total = Math.min(total, cap);
   }
 
-  const updatedPayable = Math.max(0, toNumber(payableBalanceBefore) + total);
+  const updatedPayable = Math.max(0, toNumber(payableBalanceBefore) - total);
   const cfg = COUNTRY_CONFIG[country];
   if (cfg.taxModel !== "GST" || country !== "IN") {
     return {
@@ -744,7 +744,7 @@ export function mapPurchaseInvoicesByCountry(country: CountryCode): PurchaseInvo
           const hasLinkedActivity = paymentApplied > 0 || debitApplied > 0;
           return Math.max(
             0,
-            hasLinkedActivity ? billTotal + debitApplied - paymentApplied : storedBalance
+            hasLinkedActivity ? billTotal - paymentApplied - debitApplied : storedBalance
           );
         })(),
         placeOfSupply: invoice.placeOfSupply || invoice.state || "",
@@ -860,7 +860,7 @@ export function saveDebitNote(payload: SaveDebitNotePayload): DebitNoteRecord {
     payableBalanceBefore: authoritativePayableBefore,
     payableBalanceAfter:
       nextStatus === "Applied"
-        ? Math.max(0, authoritativePayableBefore + totals.total)
+        ? Math.max(0, authoritativePayableBefore - totals.total)
         : authoritativePayableBefore,
     lines,
     totals: {

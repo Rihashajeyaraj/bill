@@ -1,4 +1,5 @@
 import { jsPDF } from "jspdf";
+import * as XLSX from "xlsx";
 import { formatCurrencyByPreference, formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
 
 function safeText(value, fallback = "-") {
@@ -78,46 +79,44 @@ function walletRows(report, currency) {
 }
 
 export function exportPartyReportExcel(report, currency) {
-  const statementHeaders = ["Date", "Transaction Type", "Reference Number", "Debit", "Credit", "Running Balance"];
-  const agingHeaders = ["Party Name", "Total Outstanding", "Current", "0-30 Days", "31-60 Days", "61-90 Days", "90+ Days"];
-  const walletHeaders = ["Date", "Receipt", "Invoice", "Advance Added", "Advance Used", "Remaining Balance"];
-  const statementHtmlRows = [
-    `<tr>${statementHeaders.map((label) => `<th>${safeText(label)}</th>`).join("")}</tr>`,
-    ...statementRows(report, currency).map((row) => `<tr>${row.map((cell) => `<td>${safeText(cell, "")}</td>`).join("")}</tr>`)
-  ];
-  const agingHtmlRows = [
-    `<tr>${agingHeaders.map((label) => `<th>${safeText(label)}</th>`).join("")}</tr>`,
-    ...agingRows(report, currency).map((row) => `<tr>${row.map((cell) => `<td>${safeText(cell, "")}</td>`).join("")}</tr>`)
-  ];
-  const walletHtmlRows = [
-    `<tr>${walletHeaders.map((label) => `<th>${safeText(label)}</th>`).join("")}</tr>`,
-    ...walletRows(report, currency).map((row) => `<tr>${row.map((cell) => `<td>${safeText(cell, "")}</td>`).join("")}</tr>`)
-  ];
+  const workbook = XLSX.utils.book_new();
 
-  const html = `
-    <html>
-      <head>
-        <meta charset="utf-8" />
-      </head>
-      <body>
-        <h2>${safeText(report?.party?.name || `${report?.party_type || "Party"} Report`)}</h2>
-        <p>Statement Period: ${safeText(report?.period?.from_date || "All")} to ${safeText(report?.period?.to_date || report?.period?.as_of_date || "Today")}</p>
-        <p>Opening Balance: ${safeText(money(report?.opening_balance, currency))}</p>
-        <p>Closing Balance: ${safeText(money(report?.closing_balance, currency))}</p>
-        <p>Available Advance Balance: ${safeText(money(report?.advance_wallet, currency))}</p>
-        <h3>Statement</h3>
-        <table border="1">${statementHtmlRows.join("")}</table>
-        <h3 style="margin-top:20px;">Advance Wallet History</h3>
-        <table border="1">${walletHtmlRows.join("")}</table>
-        <h3 style="margin-top:20px;">Aging Summary</h3>
-        <table border="1">${agingHtmlRows.join("")}</table>
-      </body>
-    </html>
-  `;
+  const summarySheet = XLSX.utils.aoa_to_sheet([
+    ["Party", safeText(report?.party?.name || `${report?.party_type || "Party"} Report`)],
+    ["From Date", safeText(report?.period?.from_date || "All")],
+    ["To Date", safeText(report?.period?.to_date || report?.period?.as_of_date || "Today")],
+    ["Opening Balance", safeText(money(report?.opening_balance, currency))],
+    ["Closing Balance", safeText(money(report?.closing_balance, currency))],
+    ["Advance Wallet", safeText(money(report?.advance_wallet, currency))]
+  ]);
+  summarySheet["!cols"] = [{ wch: 24 }, { wch: 28 }];
+  XLSX.utils.book_append_sheet(workbook, summarySheet, "Summary");
 
+  const statementSheet = XLSX.utils.aoa_to_sheet([
+    ["Date", "Transaction Type", "Reference Number", "Debit", "Credit", "Running Balance"],
+    ...statementRows(report, currency)
+  ]);
+  statementSheet["!cols"] = [{ wch: 14 }, { wch: 22 }, { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 16 }];
+  XLSX.utils.book_append_sheet(workbook, statementSheet, "Statement");
+
+  const walletSheet = XLSX.utils.aoa_to_sheet([
+    ["Date", "Receipt", "Invoice", "Advance Added", "Advance Used", "Remaining Balance"],
+    ...walletRows(report, currency)
+  ]);
+  walletSheet["!cols"] = [{ wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 18 }];
+  XLSX.utils.book_append_sheet(workbook, walletSheet, "Advance Wallet");
+
+  const agingSheet = XLSX.utils.aoa_to_sheet([
+    ["Party Name", "Total Outstanding", "Current", "0-30 Days", "31-60 Days", "61-90 Days", "90+ Days"],
+    ...agingRows(report, currency)
+  ]);
+  agingSheet["!cols"] = [{ wch: 24 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+  XLSX.utils.book_append_sheet(workbook, agingSheet, "Aging Summary");
+
+  const content = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
   downloadBlob(
-    new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" }),
-    `${reportFileStem(report)}.xls`
+    new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+    `${reportFileStem(report)}.xlsx`
   );
 }
 

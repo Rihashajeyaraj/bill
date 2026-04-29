@@ -21,7 +21,7 @@ import { authGetRole, authGetUser } from "../../services/auth.service";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
-import { deletePaymentOutRemote, syncPaymentOutRemote } from "../../services/payments.service";
+import { deletePaymentOutRemote, paymentsSyncFromRemote, syncPaymentOutRemote } from "../../services/payments.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
 import { LS_KEYS, lsGetOrganizationScoped } from "../../services/storage";
 import {
@@ -383,7 +383,7 @@ export default function PaymentOutPremium() {
     let mounted = true;
     async function syncReferenceData() {
       try {
-        await Promise.all([syncPartiesFromRemote(), purchasesSyncFromRemote()]);
+        await Promise.allSettled([syncPartiesFromRemote(), purchasesSyncFromRemote(), paymentsSyncFromRemote()]);
       } catch {
         // Keep local cache if remote sync fails.
       } finally {

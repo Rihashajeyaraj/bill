@@ -1,4 +1,5 @@
 import { jsPDF } from "jspdf";
+import * as XLSX from "xlsx";
 
 function safeText(value, fallback = "-") {
   const normalized = String(value ?? "")
@@ -116,21 +117,38 @@ function htmlSections(report) {
 }
 
 export function exportReportExcel(report) {
-  const html = `
-    <html>
-      <head><meta charset="utf-8" /></head>
-      <body>
-        <h2>${safeText(report?.title || "Report")}</h2>
-        <p>${safeText(report?.subtitle || "", "")}</p>
-        ${htmlSummary(report)}
-        ${htmlSections(report)}
-      </body>
-    </html>
-  `;
+  const workbook = XLSX.utils.book_new();
 
+  const summaryRows = [
+    ["Title", safeText(report?.title || "Report")],
+    ["Subtitle", safeText(report?.subtitle || "", "")]
+  ];
+  (Array.isArray(report?.summary) ? report.summary : []).forEach((item) => {
+    summaryRows.push([safeText(item?.label), safeText(item?.value, "")]);
+  });
+  const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+  summarySheet["!cols"] = [{ wch: 24 }, { wch: 48 }];
+  XLSX.utils.book_append_sheet(workbook, summarySheet, "Summary");
+
+  normalizeSections(report).forEach((section, index) => {
+    const columns = Array.isArray(section?.columns) ? section.columns : [];
+    const rows = Array.isArray(section?.rows) ? section.rows : [];
+    const aoa = [
+      columns.map((column) => safeText(column?.label || column?.key || `Column ${index + 1}`))
+    ];
+    rows.forEach((row) => {
+      aoa.push((Array.isArray(row) ? row : []).map((cell) => safeText(cell, "")));
+    });
+    const sheet = XLSX.utils.aoa_to_sheet(aoa);
+    sheet["!cols"] = columns.map(() => ({ wch: 24 }));
+    const sheetName = safeText(section?.title || `Section ${index + 1}`, `Section ${index + 1}`).slice(0, 31);
+    XLSX.utils.book_append_sheet(workbook, sheet, sheetName || `Section${index + 1}`);
+  });
+
+  const content = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
   downloadBlob(
-    new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" }),
-    `${getFileName(report)}.xls`
+    new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+    `${getFileName(report)}.xlsx`
   );
 }
 
@@ -213,22 +231,30 @@ export function exportReportPdf(report) {
     doc.setFillColor(241, 245, 249);
     doc.rect(margins.left, y - 4.5, usableWidth, 7, "F");
     columns.forEach((column, index) => {
-      doc.text(safeText(column?.label), margins.left + index * colWidth + 1.5, y);
+      const headerText = doc.splitTextToSize(safeText(column?.label), Math.max(8, colWidth - 3));
+      doc.text(headerText, margins.left + index * colWidth + 1.5, y);
     });
     y += 6;
 
     doc.setFontSize(8);
     rows.forEach((row, rowIndex) => {
-      ensureSpace(7);
+      const wrappedCells = row.map((cell) =>
+        doc.splitTextToSize(safeText(cell, ""), Math.max(8, colWidth - 3))
+      );
+      const maxLines = wrappedCells.reduce(
+        (max, lines) => Math.max(max, Array.isArray(lines) ? lines.length : 1),
+        1
+      );
+      const rowHeight = Math.max(6.5, maxLines * 3.8);
+      ensureSpace(rowHeight + 1);
       if (rowIndex % 2 === 0) {
         doc.setFillColor(248, 250, 252);
-        doc.rect(margins.left, y - 4.5, usableWidth, 6.5, "F");
+        doc.rect(margins.left, y - 4.5, usableWidth, rowHeight, "F");
       }
-      row.forEach((cell, index) => {
-        const text = safeText(cell, "");
-        doc.text(text.slice(0, 28), margins.left + index * colWidth + 1.5, y);
+      wrappedCells.forEach((lines, index) => {
+        doc.text(lines, margins.left + index * colWidth + 1.5, y);
       });
-      y += 6;
+      y += rowHeight;
     });
 
     y += 2;

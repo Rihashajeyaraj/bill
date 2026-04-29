@@ -11,6 +11,22 @@ import {
 } from "./financialYears.service";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PAYMENT_IN_PREMIUM_KEY = "paymentInPremiumV1";
+const PAYMENT_OUT_PREMIUM_KEY = "paymentOutPremiumV1";
+
+const COUNTRY_NAME_TO_CODE = {
+  india: "IN",
+  uae: "AE",
+  "united arab emirates": "AE",
+  singapore: "SG",
+  uk: "UK",
+  "united kingdom": "UK",
+  ireland: "IE",
+  usa: "US",
+  us: "US",
+  "united states": "US",
+  "sri lanka": "SL"
+};
 
 function getAll() {
   return lsGetOrganizationScoped(LS_KEYS.payments, []);
@@ -83,6 +99,301 @@ function buildRemotePaymentNo(base, suffix = "") {
 
 function referenceFromEntry(entry) {
   return String(entry?.referenceNo || entry?.reference_no || "");
+}
+
+function normalizeCountryCode(value, fallback = "IN") {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  const upper = raw.toUpperCase();
+  if (upper === "LK") return "SL";
+  if (upper === "GB") return "UK";
+  if (["IN", "AE", "SG", "UK", "IE", "US", "SL"].includes(upper)) return upper;
+  return COUNTRY_NAME_TO_CODE[raw.toLowerCase()] || fallback;
+}
+
+function inferCountryFromPaymentNo(paymentNo = "", fallback = "") {
+  const raw = String(paymentNo || "").trim().toUpperCase();
+  if (!raw) return fallback;
+  const parts = raw.split("-");
+  const candidate = parts.length >= 2 ? parts[1] : "";
+  return normalizeCountryCode(candidate, fallback || "IN");
+}
+
+function getOrganizationCountryProfile() {
+  const profile = lsGetOrganizationScoped(LS_KEYS.company_profile, {}) || {};
+  return {
+    country: normalizeCountryCode(profile?.countryCode || profile?.country || profile?.country_name, "IN"),
+    currency: String(profile?.currency || profile?.base_currency || "INR").trim().toUpperCase() || "INR"
+  };
+}
+
+function sourceRecordIdFromReference(referenceNo, prefix) {
+  const raw = String(referenceNo || "").trim();
+  if (!raw.startsWith(prefix)) return "";
+  const remainder = raw.slice(prefix.length);
+  const separatorIndex = remainder.indexOf(":");
+  return separatorIndex >= 0 ? remainder.slice(0, separatorIndex) : remainder;
+}
+
+function buildPartyLookup() {
+  const rows = lsGetOrganizationScoped(LS_KEYS.parties, []);
+  return new Map(
+    (Array.isArray(rows) ? rows : [])
+      .filter((row) => row?.id)
+      .map((row) => [
+        String(row.id),
+        {
+          name: row?.name || row?.display_name || "",
+          country: row?.country || row?.country_code || ""
+        }
+      ])
+  );
+}
+
+function buildInvoiceLookup() {
+  const rows = lsGetOrganizationScoped(LS_KEYS.invoices, []);
+  return new Map(
+    (Array.isArray(rows) ? rows : [])
+      .filter((row) => row?.id)
+      .map((row) => [
+        String(row.id),
+        {
+          invoiceNo: row?.invoiceNo || row?.invoice_no || row?.id || "",
+          invoiceDate: row?.invoiceDate || row?.invoice_date || row?.date || "",
+          invoiceAmount:
+            parseNumber(
+              row?.totals?.grandTotal ??
+                row?.totals?.finalTotal ??
+                row?.totals?.total ??
+                row?.grandTotal ??
+                row?.finalTotal ??
+                row?.amount
+            ) || 0
+        }
+      ])
+  );
+}
+
+function buildBillLookup() {
+  const rows = lsGetOrganizationScoped(LS_KEYS.purchases, []);
+  return new Map(
+    (Array.isArray(rows) ? rows : [])
+      .filter((row) => row?.id)
+      .map((row) => [
+        String(row.id),
+        {
+          billNo: row?.billNumber || row?.bill_no || row?.invoiceNo || row?.id || "",
+          billDate: row?.billDate || row?.invoiceDate || row?.date || "",
+          billAmount:
+            parseNumber(
+              row?.totals?.grandTotal ??
+                row?.totals?.finalTotal ??
+                row?.totals?.total ??
+                row?.grandTotal ??
+                row?.finalTotal ??
+                row?.amount
+            ) || 0
+        }
+      ])
+  );
+}
+
+function mergeRemotePremiumRecords(storageKey, remoteRecords) {
+  const existing = lsGetOrganizationScoped(storageKey, []);
+  const current = Array.isArray(existing) ? existing : [];
+  const remoteIds = new Set(remoteRecords.map((entry) => String(entry?.id || "")).filter(Boolean));
+  const preservedDrafts = current.filter(
+    (entry) => String(entry?.status || "").toLowerCase() === "draft" && !remoteIds.has(String(entry?.id || ""))
+  );
+  lsSetOrganizationScoped(storageKey, [...remoteRecords, ...preservedDrafts]);
+}
+
+function hydratePremiumPaymentStores(remoteRows) {
+  const rows = Array.isArray(remoteRows) ? remoteRows : [];
+  const partyLookup = buildPartyLookup();
+  const invoiceLookup = buildInvoiceLookup();
+  const billLookup = buildBillLookup();
+  const organizationProfile = getOrganizationCountryProfile();
+
+  const paymentInGroups = new Map();
+  const paymentOutGroups = new Map();
+  rows.forEach((row) => {
+    const status = String(row?.status || "").toLowerCase();
+    if (status === "cancelled" || status === "draft") return;
+    const referenceNo = String(row?.reference_no || "");
+    const paymentInId = sourceRecordIdFromReference(referenceNo, "PI:");
+    const paymentOutId = sourceRecordIdFromReference(referenceNo, "PO:");
+    if (paymentInId) {
+      const list = paymentInGroups.get(paymentInId) || [];
+      list.push(row);
+      paymentInGroups.set(paymentInId, list);
+    } else if (paymentOutId) {
+      const list = paymentOutGroups.get(paymentOutId) || [];
+      list.push(row);
+      paymentOutGroups.set(paymentOutId, list);
+    }
+  });
+
+  const paymentInRecords = Array.from(paymentInGroups.entries())
+    .map(([id, group]) => {
+      const row = group
+        .slice()
+        .sort((left, right) => String(right?.created_at || "").localeCompare(String(left?.created_at || "")))[0];
+      if (!row) return null;
+      const party = partyLookup.get(String(row?.party_id || "")) || {};
+      const country = inferCountryFromPaymentNo(
+        row?.payment_no,
+        normalizeCountryCode(party?.country, organizationProfile.country)
+      );
+      const invoiceId = String(row?.invoice_id || "").trim();
+      const invoice = invoiceLookup.get(invoiceId) || {};
+      const amountReceived = parseNumber(row?.amount_received ?? row?.amount);
+      const tdsAmount = parseNumber(row?.tds_amount);
+      const amountApplied = invoiceId ? amountReceived : 0;
+      const totalSettled = amountReceived + tdsAmount;
+      const paymentDate = row?.payment_date || "";
+      const receiptNo = String(row?.payment_no || id).replace(/-ENTRY$/i, "");
+      return {
+        id,
+        country,
+        receiptNo,
+        paymentDate,
+        customerId: String(row?.party_id || ""),
+        customerName: String(party?.name || "Customer"),
+        currency: organizationProfile.currency,
+        paymentMode: row?.payment_mode || "Cash",
+        referenceNo: row?.reference_no || "",
+        chequeNo: "",
+        bankName: "",
+        bankAccount: "",
+        transactionId: "",
+        paymentReference: "",
+        registrationNumber: "",
+        tdsCategory: tdsAmount > 0 ? "custom" : "",
+        tdsRate: parseNumber(row?.tds_rate),
+        isManual: !!row?.is_manual,
+        internalNotes: row?.notes || "",
+        customerNotes: "",
+        attachment: null,
+        status: invoiceId ? "Applied" : "Confirmed",
+        allocations: invoiceId
+          ? [
+              {
+                invoiceId,
+                invoiceNo: String(invoice?.invoiceNo || invoiceId),
+                invoiceDate: String(invoice?.invoiceDate || paymentDate),
+                invoiceAmount: parseNumber(invoice?.invoiceAmount || totalSettled),
+                balanceDue: parseNumber(invoice?.invoiceAmount || totalSettled),
+                applyAmount: amountReceived,
+                documentType: "invoice"
+              }
+            ]
+          : [],
+        totals: {
+          amountReceived,
+          tdsAmount,
+          totalSettled,
+          amountApplied,
+          unappliedAmount: Math.max(0, amountReceived - amountApplied),
+          customerOutstandingBefore: 0,
+          customerOutstandingAfter: 0
+        },
+        audit: {
+          createdBy: "Remote Sync",
+          createdAt: row?.created_at || new Date().toISOString(),
+          modifiedBy: "Remote Sync",
+          modifiedAt: row?.updated_at || row?.created_at || new Date().toISOString()
+        },
+        history: [
+          {
+            status: invoiceId ? "Applied" : "Confirmed",
+            at: row?.updated_at || row?.created_at || new Date().toISOString(),
+            by: "Remote Sync",
+            note: "Hydrated from payments table"
+          }
+        ]
+      };
+    })
+    .filter(Boolean);
+
+  const paymentOutRecords = Array.from(paymentOutGroups.entries())
+    .map(([id, group]) => {
+      const ordered = group
+        .slice()
+        .sort((left, right) => String(left?.created_at || "").localeCompare(String(right?.created_at || "")));
+      const head = ordered[0];
+      if (!head) return null;
+      const party = partyLookup.get(String(head?.party_id || "")) || {};
+      const country = inferCountryFromPaymentNo(
+        head?.payment_no,
+        normalizeCountryCode(party?.country, organizationProfile.country)
+      );
+      const allocations = ordered
+        .filter((row) => row?.bill_id)
+        .map((row) => {
+          const billId = String(row?.bill_id || "");
+          const bill = billLookup.get(billId) || {};
+          return {
+            billId,
+            billNo: String(bill?.billNo || billId),
+            billDate: String(bill?.billDate || head?.payment_date || ""),
+            billAmount: parseNumber(bill?.billAmount || row?.amount),
+            balanceDue: parseNumber(bill?.billAmount || row?.amount),
+            applyAmount: parseNumber(row?.amount)
+          };
+        });
+      const amountPaid = ordered.reduce((sum, row) => sum + parseNumber(row?.amount), 0);
+      const tdsAmount = ordered.reduce((sum, row) => sum + parseNumber(row?.tds_amount), 0);
+      const amountApplied = allocations.reduce((sum, row) => sum + parseNumber(row?.applyAmount), 0);
+      const totalSettled = amountPaid + tdsAmount;
+      const paymentNo = String(head?.payment_no || id).replace(/-(\d+|UNAPPLIED|PAID)$/i, "");
+      return {
+        id,
+        country,
+        paymentNo,
+        paymentDate: head?.payment_date || "",
+        supplierId: String(head?.party_id || ""),
+        supplierName: String(party?.name || "Supplier"),
+        currency: organizationProfile.currency,
+        paymentMode: head?.payment_mode || "Cash",
+        referenceNo: head?.reference_no || "",
+        chequeNo: "",
+        bankName: "",
+        transactionId: "",
+        paymentReference: "",
+        internalNotes: head?.notes || "",
+        attachment: null,
+        status: allocations.length ? "Applied" : "Paid",
+        allocations,
+        totals: {
+          amountPaid,
+          tdsAmount,
+          totalSettled,
+          amountApplied,
+          unappliedAmount: Math.max(0, amountPaid - amountApplied)
+        },
+        tdsRate: ordered.reduce((maxRate, row) => Math.max(maxRate, parseNumber(row?.tds_rate)), 0),
+        isManual: ordered.some((row) => !!row?.is_manual),
+        audit: {
+          createdBy: "Remote Sync",
+          createdAt: head?.created_at || new Date().toISOString(),
+          modifiedBy: "Remote Sync",
+          modifiedAt: head?.updated_at || head?.created_at || new Date().toISOString()
+        },
+        history: [
+          {
+            status: allocations.length ? "Applied" : "Paid",
+            at: head?.updated_at || head?.created_at || new Date().toISOString(),
+            by: "Remote Sync",
+            note: "Hydrated from payments table"
+          }
+        ]
+      };
+    })
+    .filter(Boolean);
+
+  mergeRemotePremiumRecords(PAYMENT_IN_PREMIUM_KEY, paymentInRecords);
+  mergeRemotePremiumRecords(PAYMENT_OUT_PREMIUM_KEY, paymentOutRecords);
 }
 
 function mergeSourceRowsToLocalPayments(sourcePrefix, rows) {
@@ -203,6 +514,7 @@ export async function paymentsSyncFromRemote(range) {
 
   if (!fromDate && !toDate) {
     setAll(mapped);
+    hydratePremiumPaymentStores(data);
   }
   return mapped;
 }

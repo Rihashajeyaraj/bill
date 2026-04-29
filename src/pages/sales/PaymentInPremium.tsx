@@ -571,7 +571,7 @@ export default function PaymentInPremium() {
     let mounted = true;
     async function syncReferenceData() {
       try {
-        await Promise.all([
+        await Promise.allSettled([
           syncPartiesFromRemote(),
           invoicesSyncFromRemote(),
           salesProformasSyncFromRemote(),

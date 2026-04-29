@@ -391,33 +391,34 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
         <div className="mt-4">
           <div
             className={clsx(
-              "grid grid-cols-[minmax(0,3.2fr)_minmax(72px,1.2fr)_minmax(44px,0.7fr)_minmax(76px,1fr)_minmax(88px,1.15fr)_minmax(52px,0.7fr)_minmax(96px,1.25fr)] gap-2 text-slate-500",
+              "grid items-start gap-2 text-slate-500",
+              gstColumnLayout,
               variant.tableHead
             )}
           >
-            <span className="min-w-0 text-center">Item</span>
-            <span className="min-w-0 text-center">HSN/SAC</span>
-            <span className="whitespace-nowrap text-center">Qty</span>
-            <span className="whitespace-nowrap text-center">Rate</span>
-            <span className="whitespace-nowrap text-center">Taxable</span>
-            <span className="whitespace-nowrap text-center">GST %</span>
-            <span className="whitespace-nowrap text-center">Total</span>
+            <span className={gstHeaderCellClass}>Item</span>
+            <span className={gstHeaderCellClass}>HSN/SAC</span>
+            <span className={gstHeaderCellClass}>Qty</span>
+            <span className={gstHeaderCellClass}>Rate</span>
+            <span className={gstHeaderCellClass}>Taxable</span>
+            <span className={gstHeaderCellClass}>GST %</span>
+            <span className={gstHeaderCellClass}>Total</span>
           </div>
           <div className="mt-2 space-y-2">
             {gstLines.map((line) => (
               <div
                 key={line.id}
-                className="grid grid-cols-[minmax(0,3.2fr)_minmax(72px,1.2fr)_minmax(44px,0.7fr)_minmax(76px,1fr)_minmax(88px,1.15fr)_minmax(52px,0.7fr)_minmax(96px,1.25fr)] gap-2 text-slate-700"
+                className={clsx("grid items-start gap-2 text-slate-700", gstColumnLayout)}
               >
                 <span className={clsx("min-w-0 break-words", variant.value)}>{line.name}</span>
                 <span className={clsx("min-w-0 break-words", variant.value)}>{line.hsn}</span>
-                <span className={clsx("whitespace-nowrap text-right", variant.value)}>{qty(line.qty)}</span>
-                <span className={clsx("whitespace-nowrap text-right", variant.value)}>{money(line.rate, currencySymbol)}</span>
-                <span className={clsx("whitespace-nowrap text-right", variant.value)}>
+                <span className={clsx(gstNumberCellClass, variant.value)}>{qty(line.qty)}</span>
+                <span className={clsx(gstNumberCellClass, variant.value)}>{money(line.rate, currencySymbol)}</span>
+                <span className={clsx(gstNumberCellClass, variant.value)}>
                   {money(line.taxableValue, currencySymbol)}
                 </span>
-                <span className={clsx("whitespace-nowrap text-right", variant.value)}>{line.taxRate}%</span>
-                <span className={clsx("whitespace-nowrap text-right font-semibold", variant.value)}>
+                <span className={clsx(gstNumberCellClass, variant.value)}>{line.taxRate}%</span>
+                <span className={clsx(gstNumberCellClass, "font-semibold", variant.value)}>
                   {money(line.total, currencySymbol)}
                 </span>
               </div>
@@ -492,6 +493,10 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
   const showTaxLine = taxType !== "NONE" && taxValue > 0;
   const taxIdLabel = invoiceData.tax?.idLabel || "Tax ID";
   const taxIdValue = invoiceData.tax?.idValue || "";
+  const gstColumnLayout =
+    "grid-cols-[minmax(0,2.8fr)_minmax(64px,1fr)_minmax(40px,0.55fr)_minmax(72px,0.9fr)_minmax(84px,1fr)_minmax(44px,0.55fr)_minmax(92px,1.05fr)]";
+  const gstHeaderCellClass = "min-w-0 break-words text-center leading-4";
+  const gstNumberCellClass = "min-w-0 break-all text-right leading-5";
 
   return (
     <div
@@ -611,13 +616,13 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
         </div>
         <div className="mt-2 space-y-2">
           {invoiceData.items.map((item) => (
-            <div key={item.id} className="grid grid-cols-12 gap-2 text-slate-700">
-              <span className={clsx("col-span-6", variant.value)}>{item.name}</span>
-              <span className={clsx("col-span-2 text-right", variant.value)}>{item.qty}</span>
-              <span className={clsx("col-span-2 text-right", variant.value)}>
+            <div key={item.id} className="grid grid-cols-12 items-start gap-2 text-slate-700">
+              <span className={clsx("col-span-6 min-w-0 break-words", variant.value)}>{item.name}</span>
+              <span className={clsx("col-span-2 min-w-0 break-all text-right", variant.value)}>{item.qty}</span>
+              <span className={clsx("col-span-2 min-w-0 break-all text-right", variant.value)}>
                 {money(item.rate, currencySymbol)}
               </span>
-              <span className={clsx("col-span-2 text-right font-semibold", variant.value)}>
+              <span className={clsx("col-span-2 min-w-0 break-all text-right font-semibold", variant.value)}>
                 {money(item.amount, currencySymbol)}
               </span>
             </div>
