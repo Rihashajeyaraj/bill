@@ -28,6 +28,7 @@ import {
   paymentInsightsBySupplier,
   savePaymentOut
 } from "../../modules/paymentOut/store";
+import { listDebitNotesForPurchaseBill } from "../../modules/debitNote/store";
 import { canCreateEntries, canEditEntries } from "../../services/roles";
 import { companyPeekDocumentNumber } from "../../services/company.service";
 import {
@@ -157,6 +158,11 @@ function supplierAddressSummary(supplier) {
     .map((value) => String(value || "").trim())
     .filter(Boolean)
     .join(", ");
+}
+
+function formatCompactDate(value) {
+  const text = String(value || "").trim();
+  return text || "-";
 }
 
 function findSupplierImportMatch(suppliers, importedName, importedPhone) {
@@ -1245,6 +1251,10 @@ export default function PurchaseBill() {
   );
   const projectedAdvanceWallet = round2(
     Math.max(0, supplierAdvanceWallet - advanceAppliedFromWallet) + advanceAmount
+  );
+  const linkedDebitNotes = useMemo(
+    () => (isEditMode ? listDebitNotesForPurchaseBill(country, editBillId) : []),
+    [country, editBillId, isEditMode]
   );
 
   async function resolveLinesWithItems(detailedLines) {
@@ -2610,6 +2620,53 @@ export default function PurchaseBill() {
                 ) : null}
               </div>
             </div>
+
+            {linkedDebitNotes.length ? (
+              <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                <div className="border-b border-slate-200 px-3 py-2">
+                  <p className="text-xs font-semibold text-slate-700">Debit Notes Against This Bill</p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">
+                    Debit note date, amount, bill no, and whether it is already used on this purchase bill.
+                  </p>
+                </div>
+                <div className="max-h-64 overflow-auto">
+                  <table className="w-full min-w-[720px] text-left text-xs">
+                    <thead className="bg-white text-slate-500">
+                      <tr>
+                        <th className="px-3 py-2 font-semibold">Debit Note</th>
+                        <th className="px-3 py-2 font-semibold">Date</th>
+                        <th className="px-3 py-2 font-semibold">Bill No</th>
+                        <th className="px-3 py-2 text-right font-semibold">Amount</th>
+                        <th className="px-3 py-2 font-semibold">Use</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {linkedDebitNotes.map((entry) => (
+                        <tr key={entry.id} className="border-t border-slate-200 bg-white">
+                          <td className="px-3 py-2 font-semibold text-slate-900">{entry.debitNoteNo || "-"}</td>
+                          <td className="px-3 py-2 text-slate-700">{formatCompactDate(entry.debitNoteDate)}</td>
+                          <td className="px-3 py-2 text-slate-700">{entry.linkedPurchaseInvoiceNo || "-"}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-900">{money(entry.totalAmount)}</td>
+                          <td className="px-3 py-2">
+                            <label className="inline-flex items-center gap-2 text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={entry.usedOnBill}
+                                disabled
+                                className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                              />
+                              <span className="text-[11px] font-semibold">
+                                {entry.usedOnBill ? "Used" : entry.status}
+                              </span>
+                            </label>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </Card>

@@ -557,24 +557,11 @@ function appliedCreditForInvoice(invoiceId: string) {
   const premium = getAllNotes()
     .filter((entry) => entry.status === "Applied")
     .reduce((sum, entry) => {
-      const directApplied =
-        String(entry.linkedInvoiceId || "") === String(invoiceId)
-          ? Math.max(
-              0,
-              toNumber(
-                entry?.appliedToInvoiceAmount ??
-                  Math.min(
-                    toNumber(entry?.totals?.total),
-                    toNumber(entry?.invoiceBalanceBefore)
-                  )
-              )
-            )
-          : 0;
       const transferredApplied = ensureArray(entry?.creditApplications).reduce((lineSum, line) => {
         if (String(line?.invoiceId || "") !== String(invoiceId)) return lineSum;
         return lineSum + Math.max(0, toNumber(line?.applyAmount));
       }, 0);
-      return sum + directApplied + transferredApplied;
+      return sum + transferredApplied;
     }, 0);
 
   const legacy = (lsGetOrganizationScoped(LS_KEYS.creditNotes, []) as any[])
@@ -604,22 +591,19 @@ function appliedCreditForInvoice(invoiceId: string) {
 }
 
 function directAppliedAmountForNote(note: CreditNoteRecord | null | undefined) {
-  return Math.max(
-    0,
-    toNumber(
-      note?.appliedToInvoiceAmount ??
-        Math.min(toNumber(note?.totals?.total), toNumber(note?.invoiceBalanceBefore))
-    )
-  );
+  return 0;
 }
 
 function availableCreditBaseForNote(note: CreditNoteRecord | null | undefined) {
+  const storedAvailableCredit = Math.max(0, toNumber(note?.availableCreditAmount));
+  const hasRecordedTransfers = ensureArray(note?.creditApplications).some(
+    (entry) => Math.max(0, toNumber(entry?.applyAmount)) > 0
+  );
   return Math.max(
     0,
-    toNumber(
-      note?.availableCreditAmount ??
-        Math.max(0, toNumber(note?.totals?.total) - directAppliedAmountForNote(note))
-    )
+    storedAvailableCredit > 0 || hasRecordedTransfers
+      ? storedAvailableCredit
+      : Math.max(0, toNumber(note?.totals?.total))
   );
 }
 
@@ -1037,6 +1021,154 @@ export function availableCreditByCustomer(country: CountryCode, customerId: stri
   );
 }
 
+export function listCreditNotesForCustomer(country: CountryCode, customerId: string, invoiceId = "") {
+  const normalizedCustomerId = String(customerId || "").trim();
+  const normalizedInvoiceId = String(invoiceId || "").trim();
+  if (!normalizedCustomerId) return [] as Array<{
+    id: string;
+    creditNoteNo: string;
+    creditNoteDate: string;
+    linkedInvoiceId: string;
+    linkedInvoiceNo: string;
+    linkedInvoiceDate: string;
+    status: CreditStatus;
+    totalAmount: number;
+    directlyAppliedAmount: number;
+    transferredAppliedAmount: number;
+    availableAmount: number;
+    appliedToCurrentInvoiceAmount: number;
+    isLinkedToCurrentInvoice: boolean;
+    canUse: boolean;
+  }>;
+
+  return getMergedCreditNotes()
+    .filter((entry) => entry.country === country)
+    .filter((entry) => String(entry.customerId || "") === normalizedCustomerId)
+    .filter((entry) => entry.status !== "Draft")
+    .map((entry) => {
+      const directlyAppliedAmount = round2(directAppliedAmountForNote(entry));
+      const transferredAppliedAmount = round2(appliedCreditTransfersForNote(entry));
+      const availableAmount = round2(remainingAvailableCreditForNote(entry));
+      const directUsageForCurrentInvoice =
+        normalizedInvoiceId && String(entry.linkedInvoiceId || "") === normalizedInvoiceId
+          ? directlyAppliedAmount
+          : 0;
+      const transferredUsageForCurrentInvoice = round2(
+        ensureArray(entry.creditApplications).reduce((sum, line) => {
+          if (String(line?.invoiceId || "") !== normalizedInvoiceId) return sum;
+          return sum + Math.max(0, toNumber(line?.applyAmount));
+        }, 0)
+      );
+      const appliedToCurrentInvoiceAmount = round2(
+        directUsageForCurrentInvoice + transferredUsageForCurrentInvoice
+      );
+
+      return {
+        id: entry.id,
+        creditNoteNo: entry.creditNoteNo,
+        creditNoteDate: entry.creditNoteDate,
+        linkedInvoiceId: entry.linkedInvoiceId,
+        linkedInvoiceNo: entry.linkedInvoiceNo,
+        linkedInvoiceDate: entry.linkedInvoiceDate,
+        status: entry.status,
+        totalAmount: round2(toNumber(entry?.totals?.total)),
+        directlyAppliedAmount,
+        transferredAppliedAmount,
+        availableAmount,
+        appliedToCurrentInvoiceAmount,
+        isLinkedToCurrentInvoice:
+          !!normalizedInvoiceId && String(entry.linkedInvoiceId || "") === normalizedInvoiceId,
+        canUse: entry.status === "Applied" && availableAmount > 0
+      };
+    })
+    .filter((entry) => entry.availableAmount > 0 || entry.appliedToCurrentInvoiceAmount > 0)
+    .sort((a, b) => String(b.creditNoteDate || "").localeCompare(String(a.creditNoteDate || "")));
+}
+
+export function applySelectedCreditNotesToInvoice({
+  country,
+  customerId,
+  invoiceId,
+  invoiceNo,
+  invoiceDate,
+  invoiceAmount,
+  selectedNoteIds,
+  maxApplyAmount,
+  actor
+}: {
+  country: CountryCode;
+  customerId: string;
+  invoiceId: string;
+  invoiceNo: string;
+  invoiceDate: string;
+  invoiceAmount: number;
+  selectedNoteIds: string[];
+  maxApplyAmount?: number;
+  actor: string;
+}) {
+  const allowedIds = new Set(
+    (Array.isArray(selectedNoteIds) ? selectedNoteIds : [])
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean)
+  );
+  if (!allowedIds.size) return [] as CreditNoteRecord[];
+
+  const normalizedCustomerId = String(customerId || "").trim();
+  const normalizedInvoiceId = String(invoiceId || "").trim();
+  const normalizedInvoiceNo = String(invoiceNo || normalizedInvoiceId).trim();
+  const safeInvoiceAmount = Math.max(0, toNumber(invoiceAmount));
+  const safeMaxApplyAmount = Math.max(0, toNumber(maxApplyAmount || safeInvoiceAmount));
+  if (!normalizedCustomerId || !normalizedInvoiceId || safeInvoiceAmount <= 0 || safeMaxApplyAmount <= 0) {
+    return [] as CreditNoteRecord[];
+  }
+
+  const existingAppliedAmount = appliedCreditForInvoice(normalizedInvoiceId);
+  let remainingBalance = Math.max(0, Math.min(safeInvoiceAmount - existingAppliedAmount, safeMaxApplyAmount));
+  if (remainingBalance <= 0) return [] as CreditNoteRecord[];
+
+  const notes = getAllNotes();
+  const updatedNotes: CreditNoteRecord[] = [];
+  const nextNotes = notes.map((entry) => {
+    if (remainingBalance <= 0) return entry;
+    if (!allowedIds.has(String(entry.id || "").trim())) return entry;
+    if (entry.country !== country) return entry;
+    if (entry.status !== "Applied") return entry;
+    if (String(entry.customerId || "") !== normalizedCustomerId) return entry;
+
+    const available = remainingAvailableCreditForNote(entry);
+    if (available <= 0) return entry;
+
+    const applyAmount = Math.min(available, remainingBalance);
+    const nextEntry: CreditNoteRecord = {
+      ...entry,
+      creditApplications: [
+        ...ensureArray(entry.creditApplications),
+        {
+          invoiceId: normalizedInvoiceId,
+          invoiceNo: normalizedInvoiceNo,
+          invoiceDate: invoiceDate || "",
+          applyAmount,
+          appliedAt: nowIso(),
+          actor: actor || "System User"
+        }
+      ],
+      audit: {
+        ...entry.audit,
+        modifiedBy: actor || "System User",
+        modifiedAt: nowIso()
+      }
+    };
+    updatedNotes.push(nextEntry);
+    remainingBalance = Math.max(0, remainingBalance - applyAmount);
+    return nextEntry;
+  });
+
+  if (!updatedNotes.length) return [] as CreditNoteRecord[];
+  setAllNotes(nextNotes);
+  recalculateLocalInvoiceBalance(normalizedInvoiceId);
+  return updatedNotes;
+}
+
 export function applyAvailableCreditToInvoice({
   country,
   customerId,
@@ -1312,10 +1444,9 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
   }
   const creditNoteNo = existing?.creditNoteNo || nextCreditNoteNumber(payload.country);
   const id = existing?.id || `crn_${Date.now().toString(16)}`;
-  const directAppliedAmount =
-    nextStatus === "Applied" ? Math.min(totals.total, authoritativeBalanceBefore) : 0;
+  const directAppliedAmount = 0;
   const availableCreditAmount =
-    nextStatus === "Applied" ? Math.max(0, totals.total - directAppliedAmount) : 0;
+    nextStatus === "Applied" ? Math.max(0, totals.total) : 0;
 
   const note: CreditNoteRecord = {
     id,
@@ -1347,7 +1478,7 @@ export function saveCreditNote(payload: SaveCreditNotePayload): CreditNoteRecord
     partialAmountCap: toNumber(payload.partialAmountCap),
     priceAdjustmentAmount: toNumber(payload.priceAdjustmentAmount),
     invoiceBalanceBefore: authoritativeBalanceBefore,
-    invoiceBalanceAfter: Math.max(0, authoritativeBalanceBefore - directAppliedAmount),
+    invoiceBalanceAfter: authoritativeBalanceBefore,
     appliedToInvoiceAmount: directAppliedAmount,
     availableCreditAmount,
     creditApplications: ensureArray(existing?.creditApplications),

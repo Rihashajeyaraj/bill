@@ -476,8 +476,14 @@ function appliedCreditForInvoice(invoiceId: string, documentType: "invoice" | "p
 
   const premium = (lsGetOrganizationScoped(CREDIT_NOTES_PREMIUM_KEY, []) as any[])
     .filter((entry) => String(entry?.status || "") === "Applied")
-    .filter((entry) => String(entry?.linkedInvoiceId || "") === String(invoiceId))
-    .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.totals?.total)), 0);
+    .reduce(
+      (sum, entry) =>
+        sum +
+        (Array.isArray(entry?.creditApplications) ? entry.creditApplications : [])
+          .filter((line: any) => String(line?.invoiceId || "") === String(invoiceId))
+          .reduce((lineSum: number, line: any) => lineSum + Math.max(0, toNumber(line?.applyAmount)), 0),
+      0
+    );
 
   return legacy + premium;
 }

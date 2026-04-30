@@ -14,6 +14,7 @@ interface CreditNoteEditorProps {
   activeNote: CreditNoteRecord | null;
   customers: CustomerOption[];
   invoices: CreditInvoice[];
+  blockedInvoiceIds?: string[];
   selectedInvoice: CreditInvoice | null;
   totals: {
     detailed: Array<any>;
@@ -109,6 +110,7 @@ export default function CreditNoteEditor({
   activeNote,
   customers,
   invoices,
+  blockedInvoiceIds = [],
   selectedInvoice,
   totals,
   actorName,
@@ -132,6 +134,10 @@ export default function CreditNoteEditor({
   const selectedCustomer = useMemo(
     () => customers.find((customer) => customer.id === selectedCustomerId) || null,
     [customers, selectedCustomerId]
+  );
+  const blockedInvoiceIdSet = useMemo(
+    () => new Set((Array.isArray(blockedInvoiceIds) ? blockedInvoiceIds : []).map((entry) => String(entry || "").trim()).filter(Boolean)),
+    [blockedInvoiceIds]
   );
   const [availableInvoices, setAvailableInvoices] = useState<CreditInvoice[]>([]);
   const [invoiceLoading, setInvoiceLoading] = useState(false);
@@ -167,7 +173,8 @@ export default function CreditNoteEditor({
           invoice.customerId === selectedCustomerId &&
           invoice.country === country &&
           isOpenInvoiceStatus(invoice.status) &&
-          balance > 0
+          balance > 0 &&
+          !blockedInvoiceIdSet.has(String(invoice.id || "").trim())
         );
       });
       setAvailableInvoices(next);
@@ -175,7 +182,7 @@ export default function CreditNoteEditor({
     }, 260);
 
     return () => window.clearTimeout(timer);
-  }, [selectedCustomerId, country, invoices]);
+  }, [selectedCustomerId, country, invoices, blockedInvoiceIdSet]);
 
   useEffect(() => {
     setAvailableInvoices([]);

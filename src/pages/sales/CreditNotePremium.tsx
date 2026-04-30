@@ -254,6 +254,15 @@ export default function CreditNotePremium() {
       availableQty
     };
   }, [form?.linkedInvoiceId, notes, selectedInvoice?.lines]);
+  const blockedInvoiceIds = useMemo(
+    () =>
+      notes
+        .filter((note) => String(note?.status || "") !== "Draft")
+        .filter((note) => String(note?.id || "") !== String(activeNote?.id || ""))
+        .map((note) => String(note?.linkedInvoiceId || "").trim())
+        .filter(Boolean),
+    [notes, activeNote?.id]
+  );
 
   useEffect(() => {
     if (!country) return;
@@ -624,6 +633,19 @@ export default function CreditNotePremium() {
     if (!form.creditNoteDate) errors.creditNoteDate = "Credit note date is required.";
     if (!form.customerId) errors.customerId = "Customer is required.";
     if (!form.linkedInvoiceId) errors.linkedInvoiceId = "Linked invoice is mandatory.";
+    if (
+      !activeNote?.id &&
+      blockedInvoiceIds.includes(String(form.linkedInvoiceId || "").trim())
+    ) {
+      errors.linkedInvoiceId = "A credit note already exists for this invoice.";
+    }
+    if (
+      activeNote?.id &&
+      blockedInvoiceIds.includes(String(form.linkedInvoiceId || "").trim()) &&
+      String(activeNote?.linkedInvoiceId || "").trim() !== String(form.linkedInvoiceId || "").trim()
+    ) {
+      errors.linkedInvoiceId = "A credit note already exists for this invoice.";
+    }
     if ((totals as any).detailed?.some((line: any) => line.validationMessage)) errors.lines = "Credit cannot exceed amount after tax.";
     if (!form.lines.length) errors.lines = "At least one line item is required.";
     if (
@@ -957,7 +979,7 @@ export default function CreditNotePremium() {
             </div>
           ) : form ? (
             <div className="space-y-3">
-              {String(form?.linkedInvoiceId || "").trim() && selectedInvoiceCreditSummary.totalNotes > 0 ? (
+              {String(form?.linkedInvoiceId || "").trim() && selectedInvoiceCreditSummary.totalNotes > 0 && !!activeNote?.id ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                   <p className="font-semibold">
                     This invoice already has credit notes ({selectedInvoiceCreditSummary.totalNotes})
@@ -981,6 +1003,7 @@ export default function CreditNotePremium() {
                   customers={customers}
                   invoices={invoices}
                   selectedInvoice={selectedInvoice}
+                  blockedInvoiceIds={blockedInvoiceIds}
                   totals={totals as any}
                   actorName={actorName}
                   access={access}

@@ -624,6 +624,38 @@ export function getDebitNote(id: string) {
   return normalizeStoredDebitNotes().find((note) => note.id === id) || null;
 }
 
+export function listDebitNotesForPurchaseBill(country: CountryCode, billId: string) {
+  const normalizedBillId = String(billId || "").trim();
+  if (!normalizedBillId) return [] as Array<{
+    id: string;
+    debitNoteNo: string;
+    debitNoteDate: string;
+    linkedPurchaseInvoiceId: string;
+    linkedPurchaseInvoiceNo: string;
+    linkedPurchaseInvoiceDate: string;
+    status: DebitStatus;
+    totalAmount: number;
+    usedOnBill: boolean;
+  }>;
+
+  return normalizeStoredDebitNotes()
+    .filter((entry) => entry.country === country)
+    .filter((entry) => String(entry.linkedPurchaseInvoiceId || "") === normalizedBillId)
+    .filter((entry) => entry.status !== "Draft")
+    .map((entry) => ({
+      id: entry.id,
+      debitNoteNo: entry.debitNoteNo,
+      debitNoteDate: entry.debitNoteDate,
+      linkedPurchaseInvoiceId: entry.linkedPurchaseInvoiceId,
+      linkedPurchaseInvoiceNo: entry.linkedPurchaseInvoiceNo,
+      linkedPurchaseInvoiceDate: entry.linkedPurchaseInvoiceDate,
+      status: entry.status,
+      totalAmount: Math.max(0, toNumber(entry?.totals?.total)),
+      usedOnBill: entry.status === "Applied"
+    }))
+    .sort((a, b) => String(b.debitNoteDate || "").localeCompare(String(a.debitNoteDate || "")));
+}
+
 export function listDebitLedger(country?: CountryCode) {
   const entries = getAllLedgerEntries();
   if (!country) return entries;
