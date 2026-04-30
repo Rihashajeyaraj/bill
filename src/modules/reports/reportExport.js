@@ -31,6 +31,49 @@ function normalizeSections(report) {
   return Array.isArray(report?.sections) ? report.sections : [];
 }
 
+function estimateColumnWeight(label = "", columnCount = 0) {
+  const key = String(label || "").trim().toLowerCase();
+  if (!key) return 1;
+  if (key.includes("customer") || key.includes("supplier") || key.includes("party")) return 1.6;
+  if (key.includes("invoice") || key.includes("reference") || key.includes("bill")) return 1.35;
+  if (key.includes("date")) return 0.95;
+  if (key.includes("status")) return 0.95;
+  if (key.includes("amount") || key.includes("total") || key.includes("paid") || key.includes("unpaid")) return 1.05;
+  return columnCount >= 7 ? 1 : 1.1;
+}
+
+function buildColumnWidths(doc, columns, usableWidth) {
+  const weights = columns.map((column) => estimateColumnWeight(column?.label, columns.length));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0) || columns.length || 1;
+  const widths = weights.map((weight) => (usableWidth * weight) / totalWeight);
+  const minWidth = columns.length >= 7 ? 20 : 24;
+  let deficit = 0;
+
+  const normalized = widths.map((width) => {
+    if (width >= minWidth) return width;
+    deficit += minWidth - width;
+    return minWidth;
+  });
+
+  if (deficit > 0) {
+    const adjustableIndexes = normalized
+      .map((width, index) => ({ width, index }))
+      .filter((entry) => entry.width > minWidth);
+    const adjustableTotal = adjustableIndexes.reduce((sum, entry) => sum + (entry.width - minWidth), 0);
+    if (adjustableTotal > 0) {
+      adjustableIndexes.forEach(({ width, index }) => {
+        const reducible = width - minWidth;
+        const reduction = (reducible / adjustableTotal) * deficit;
+        normalized[index] = Math.max(minWidth, width - reduction);
+      });
+    }
+  }
+
+  const totalWidth = normalized.reduce((sum, width) => sum + width, 0) || usableWidth;
+  if (!totalWidth) return columns.map(() => usableWidth / Math.max(1, columns.length));
+  return normalized.map((width) => (width / totalWidth) * usableWidth);
+}
+
 function toSummaryObject(report) {
   return (Array.isArray(report?.summary) ? report.summary : []).reduce((accumulator, item) => {
     const label = safeText(item?.label, "");
@@ -194,7 +237,15 @@ export function printReport(report) {
 }
 
 export function exportReportPdf(report) {
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const widestColumnCount = normalizeSections(report).reduce((max, section) => {
+    const count = Array.isArray(section?.columns) ? section.columns.length : 0;
+    return Math.max(max, count);
+  }, 0);
+  const doc = new jsPDF({
+    orientation: widestColumnCount >= 7 ? "landscape" : "portrait",
+    unit: "mm",
+    format: "a4"
+  });
   const margins = { left: 12, right: 12, top: 14, bottom: 12 };
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -213,6 +264,40 @@ export function exportReportPdf(report) {
     y += 5;
   }
 
+  function drawTableHeader(columns, columnWidths, usableWidth) {
+    const baseY = y;
+    const headerPaddingX = 1.8;
+    const headerPaddingY = 2.2;
+    const wrappedHeaders = columns.map((column, index) =>
+      doc.splitTextToSize(
+        safeText(column?.label),
+        Math.max(8, columnWidths[index] - headerPaddingX * 2)
+      )
+    );
+    const headerLineCount = wrappedHeaders.reduce(
+      (max, lines) => Math.max(max, Array.isArray(lines) ? lines.length : 1),
+      1
+    );
+    const headerHeight = Math.max(8, headerLineCount * 3.8 + headerPaddingY * 2);
+
+    ensureSpace(headerHeight + 1);
+    doc.setFillColor(241, 245, 249);
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.2);
+    doc.rect(margins.left, baseY - 4.5, usableWidth, headerHeight, "FD");
+
+    let x = margins.left;
+    wrappedHeaders.forEach((lines, index) => {
+      if (index > 0) {
+        doc.line(x, baseY - 4.5, x, baseY - 4.5 + headerHeight);
+      }
+      doc.text(lines, x + headerPaddingX, baseY - 4.5 + headerPaddingY + 3);
+      x += columnWidths[index];
+    });
+
+    y += headerHeight;
+  }
+
   function drawTable(section) {
     const columns = Array.isArray(section?.columns) ? section.columns : [];
     const rows = Array.isArray(section?.rows) ? section.rows : [];
@@ -224,35 +309,43 @@ export function exportReportPdf(report) {
     y += 5;
 
     const usableWidth = pageWidth - margins.left - margins.right;
-    const colWidth = usableWidth / columns.length;
-
-    ensureSpace(8);
+    const columnWidths = buildColumnWidths(doc, columns, usableWidth);
     doc.setFontSize(8.5);
-    doc.setFillColor(241, 245, 249);
-    doc.rect(margins.left, y - 4.5, usableWidth, 7, "F");
-    columns.forEach((column, index) => {
-      const headerText = doc.splitTextToSize(safeText(column?.label), Math.max(8, colWidth - 3));
-      doc.text(headerText, margins.left + index * colWidth + 1.5, y);
-    });
-    y += 6;
+    drawTableHeader(columns, columnWidths, usableWidth);
 
     doc.setFontSize(8);
     rows.forEach((row, rowIndex) => {
-      const wrappedCells = row.map((cell) =>
-        doc.splitTextToSize(safeText(cell, ""), Math.max(8, colWidth - 3))
+      const wrappedCells = columns.map((_, index) =>
+        doc.splitTextToSize(
+          safeText(Array.isArray(row) ? row[index] : "", ""),
+          Math.max(8, columnWidths[index] - 3.6)
+        )
       );
       const maxLines = wrappedCells.reduce(
         (max, lines) => Math.max(max, Array.isArray(lines) ? lines.length : 1),
         1
       );
-      const rowHeight = Math.max(6.5, maxLines * 3.8);
-      ensureSpace(rowHeight + 1);
-      if (rowIndex % 2 === 0) {
-        doc.setFillColor(248, 250, 252);
-        doc.rect(margins.left, y - 4.5, usableWidth, rowHeight, "F");
+      const rowHeight = Math.max(7, maxLines * 3.8 + 3.2);
+      if (y + rowHeight > pageHeight - margins.bottom) {
+        doc.addPage();
+        y = margins.top;
+        doc.setFontSize(8.5);
+        drawTableHeader(columns, columnWidths, usableWidth);
+        doc.setFontSize(8);
       }
+      const rowTop = y - 4.5;
+      doc.setFillColor(rowIndex % 2 === 0 ? 255 : 248, rowIndex % 2 === 0 ? 255 : 250, rowIndex % 2 === 0 ? 255 : 252);
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.2);
+      doc.rect(margins.left, rowTop, usableWidth, rowHeight, "FD");
+
+      let x = margins.left;
       wrappedCells.forEach((lines, index) => {
-        doc.text(lines, margins.left + index * colWidth + 1.5, y);
+        if (index > 0) {
+          doc.line(x, rowTop, x, rowTop + rowHeight);
+        }
+        doc.text(lines, x + 1.8, rowTop + 5);
+        x += columnWidths[index];
       });
       y += rowHeight;
     });

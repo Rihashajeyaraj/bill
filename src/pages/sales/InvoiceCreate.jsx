@@ -1381,8 +1381,10 @@ export default function InvoiceCreate() {
   const dynamicBatchColumnHeader =
     normalizeInvoiceItemType(lineItemMode) === "Service" ? "HSN / SAC" : "Batch";
 
-  function resolveLineItemType(line, sourceItemMap = itemById) {
-    const matchedItem = sourceItemMap.get(String(line?.itemId || ""));
+  function resolveLineItemType(line, sourceItemMap) {
+    const resolvedItemMap =
+      sourceItemMap && typeof sourceItemMap.get === "function" ? sourceItemMap : itemById;
+    const matchedItem = resolvedItemMap.get(String(line?.itemId || ""));
     if (!matchedItem) return normalizeInvoiceItemType(lineItemMode);
     return normalizeInvoiceItemType(matchedItem?.type);
   }

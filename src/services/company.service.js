@@ -120,6 +120,22 @@ function extractDocumentCounter(documentNumber) {
   return Number.isFinite(numeric) && numeric > 0 ? Math.trunc(numeric) : 0;
 }
 
+function createOrganizationId() {
+  const webCrypto = globalThis.crypto;
+  if (typeof webCrypto?.randomUUID === "function") {
+    return webCrypto.randomUUID();
+  }
+  if (typeof webCrypto?.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    webCrypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return `org_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 10)}`;
+}
+
 function normalizeFinancialYearFields(profile = {}) {
   const financialYearDate = normalizeIsoDate(
     profile?.financialYearDate ||
@@ -1127,7 +1143,7 @@ export async function companySaveProfileRemote(profile, options = {}) {
   }
 
   const existingOrgId = forceCreate ? "" : authGetOrganizationId();
-  const targetOrganizationId = existingOrgId || crypto.randomUUID();
+  const targetOrganizationId = existingOrgId || createOrganizationId();
   const warnings = [];
 
   const uploadedLogo = await uploadCompanyLogoToStorage({
@@ -1156,7 +1172,7 @@ export async function companySaveProfileRemote(profile, options = {}) {
     }
     if (error) throw new Error(error.message || "Failed to update organization");
   } else {
-    const generatedOrgId = payload.id || crypto.randomUUID();
+    const generatedOrgId = payload.id || createOrganizationId();
     const { error } = await supabaseClient
       .from("organizations")
       .insert({ ...payload, id: generatedOrgId, created_at: new Date().toISOString() });

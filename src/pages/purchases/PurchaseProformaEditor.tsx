@@ -58,6 +58,12 @@ function queryLooksPhoneLike(value: unknown) {
   return /^[\d\s()+-]+$/.test(text);
 }
 
+function isFourDigitYearDateDraft(value: unknown) {
+  const text = String(value || "").trim();
+  if (!text) return true;
+  return /^\d{2}\/\d{2}\/\d{4}$/.test(text);
+}
+
 function supplierAddressSummary(supplier: any) {
   return [supplier?.address, supplier?.city, supplier?.state, supplier?.country]
     .map((value) => String(value || "").trim())
@@ -201,6 +207,7 @@ export default function PurchaseProformaEditor() {
     proformaNo: "",
     proformaDate: "",
     validTill: "",
+    validTillRaw: "",
     dueDate: "",
     supplierId: "",
     partyName: "",
@@ -601,6 +608,27 @@ export default function PurchaseProformaEditor() {
       toast.warning("Pro Forma Date required", "Enter the Pro Forma Date before saving.");
       return;
     }
+    if (form.validTillRaw && String(form.validTillRaw).trim().length !== 10) {
+      toast.warning(
+        "Invalid Valid Till",
+        "Valid Till year must have 4 digits. Enter the date in DD/MM/YYYY format, for example 30/04/2026."
+      );
+      return;
+    }
+    if (form.validTillRaw && !isFourDigitYearDateDraft(form.validTillRaw)) {
+      toast.warning(
+        "Invalid Valid Till",
+        "Enter Valid Till in DD/MM/YYYY format with a 4-digit year, for example 02/05/2026."
+      );
+      return;
+    }
+    if (form.validTillRaw && !form.validTill) {
+      toast.warning(
+        "Invalid Valid Till",
+        "Enter a valid Valid Till date in DD/MM/YYYY format, for example 02/05/2026."
+      );
+      return;
+    }
     if (form.validTill && form.validTill <= form.proformaDate) {
       toast.warning("Invalid Valid Till", "Valid Till must be after the Pro Forma Date.");
       return;
@@ -731,6 +759,14 @@ export default function PurchaseProformaEditor() {
                   value={form.validTill || ""}
                   disabled={locked}
                   min={nextIsoDate(form.proformaDate)}
+                  requireFourDigitYear
+                  onValidationError={() =>
+                    toast.warning(
+                      "Invalid Valid Till",
+                      "Valid Till year must have 4 digits. Enter the date in DD/MM/YYYY format, for example 30/04/2026."
+                    )
+                  }
+                  onRawChange={(nextRawValue) => updateForm({ validTillRaw: nextRawValue })}
                   onChange={(nextValue) => updateForm({ validTill: nextValue })}
                 />
               </label>

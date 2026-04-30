@@ -8,10 +8,20 @@ function isOutOfRange(iso, minIso, maxIso) {
   return false;
 }
 
-function draftDigitsToIso(digits) {
+function hasFourDigitYearFormat(value) {
+  return /^\d{2}\/\d{2}\/\d{4}$/.test(String(value || "").trim());
+}
+
+function draftDigitsToIso(digits, requireFourDigitYear = false) {
   const text = String(digits || "").replace(/\D/g, "").slice(0, 8);
-  if (text.length !== 6 && text.length !== 8) return "";
-  return parseDateInputToIso(formatDraftDate(text));
+  if (requireFourDigitYear) {
+    if (text.length !== 8) return "";
+  } else if (text.length !== 6 && text.length !== 8) {
+    return "";
+  }
+  const formatted = formatDraftDate(text);
+  if (requireFourDigitYear && !hasFourDigitYearFormat(formatted)) return "";
+  return parseDateInputToIso(formatted);
 }
 
 function formatDraftDate(value) {
@@ -43,7 +53,7 @@ function maxDaysForMonth(month, year = null) {
   return 0;
 }
 
-function isValidPartialDateDigits(digits) {
+function isValidPartialDateDigits(digits, requireFourDigitYear = false) {
   const text = String(digits || "").replace(/\D/g, "").slice(0, 8);
   if (!text) return true;
 
@@ -70,7 +80,7 @@ function isValidPartialDateDigits(digits) {
     if (day > maxDay) return false;
   }
 
-  if (text.length === 6 || text.length === 8) {
+  if ((!requireFourDigitYear && text.length === 6) || text.length === 8) {
     const day = Number(text.slice(0, 2));
     const month = Number(text.slice(2, 4));
     const year =
@@ -86,12 +96,12 @@ function isValidPartialDateDigits(digits) {
   return true;
 }
 
-function sanitizeDraftDigits(value, minIso = "", maxIso = "") {
+function sanitizeDraftDigits(value, minIso = "", maxIso = "", requireFourDigitYear = false) {
   const digits = String(value || "").replace(/\D/g, "").slice(0, 8);
   let accepted = "";
   for (const digit of digits) {
     const candidate = `${accepted}${digit}`;
-    if (!isValidPartialDateDigits(candidate)) continue;
+    if (!isValidPartialDateDigits(candidate, requireFourDigitYear)) continue;
     accepted = candidate;
   }
   return accepted;
@@ -109,7 +119,7 @@ function caretFromDigitCount(count) {
   return Math.min(10, digits + Math.min(2, Math.floor(digits / 2)));
 }
 
-function applyDigitsToSelection(currentValue, selectionStart, selectionEnd, insertedText, minIso = "", maxIso = "") {
+function applyDigitsToSelection(currentValue, selectionStart, selectionEnd, insertedText, minIso = "", maxIso = "", requireFourDigitYear = false) {
   const currentDigits = String(currentValue || "").replace(/\D/g, "");
   const startDigitIndex = digitCountBeforeCaret(currentValue, selectionStart);
   const endDigitIndex = digitCountBeforeCaret(currentValue, selectionEnd);
@@ -117,7 +127,8 @@ function applyDigitsToSelection(currentValue, selectionStart, selectionEnd, inse
   const nextDigits = sanitizeDraftDigits(
     `${currentDigits.slice(0, startDigitIndex)}${insertedDigits}${currentDigits.slice(endDigitIndex)}`,
     minIso,
-    maxIso
+    maxIso,
+    requireFourDigitYear
   );
   const nextDigitCaret = Math.min(startDigitIndex + insertedDigits.length, nextDigits.length);
   return {
@@ -130,11 +141,13 @@ export default function DateInput({
   value,
   onChange,
   onRawChange,
+  onValidationError,
   placeholder = "DD/MM/YYYY",
   className = "",
   disabled = false,
   min = "",
   max = "",
+  requireFourDigitYear = false,
   ...props
 }) {
   const inputRef = useRef(null);
@@ -174,11 +187,21 @@ export default function DateInput({
       return;
     }
 
+    if (requireFourDigitYear && trimmed.length !== 10) {
+      onRawChange?.(trimmed);
+      onChange?.("");
+      setDraftValue("");
+      onValidationError?.("Year must contain 4 digits in DD/MM/YYYY format.");
+      return;
+    }
+
     const iso = parseDateInputToIso(trimmed);
-    if (!iso || isOutOfRange(iso, minIso, maxIso)) {
+    const invalidFourDigitYear = requireFourDigitYear && !hasFourDigitYearFormat(trimmed);
+    if (!iso || invalidFourDigitYear || isOutOfRange(iso, minIso, maxIso)) {
       onRawChange?.(trimmed);
       onChange?.("");
       setDraftValue(trimmed);
+      onValidationError?.("Enter a valid date in DD/MM/YYYY format with a 4-digit year.");
       return;
     }
 
@@ -198,7 +221,7 @@ export default function DateInput({
       disabled={disabled}
       placeholder={placeholder}
       onChange={(event) => {
-        const nextDigits = sanitizeDraftDigits(event.target.value, minIso, maxIso);
+        const nextDigits = sanitizeDraftDigits(event.target.value, minIso, maxIso, requireFourDigitYear);
         const nextValue = formatDraftDate(nextDigits);
         const nextCaret = caretFromDigitCount(
           Math.min(
@@ -213,7 +236,7 @@ export default function DateInput({
           return;
         }
         if (nextDigits.length === 8) {
-          const nextIso = draftDigitsToIso(nextDigits);
+          const nextIso = draftDigitsToIso(nextDigits, requireFourDigitYear);
           if (nextIso && !isOutOfRange(nextIso, minIso, maxIso)) {
             onRawChange?.(nextValue);
             onChange?.(nextIso);
@@ -229,7 +252,8 @@ export default function DateInput({
           event.currentTarget.selectionEnd,
           pasted,
           minIso,
-          maxIso
+          maxIso,
+          requireFourDigitYear
         );
         updateDraft(nextValue, nextCaret);
       }}

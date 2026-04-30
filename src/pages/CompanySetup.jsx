@@ -300,7 +300,17 @@ export default function CompanySetup() {
   async function save() {
     const nextErrors = validate();
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) return;
+    if (Object.keys(nextErrors).length > 0) {
+      setSaveError("Please fill the highlighted required fields before saving.");
+      window.requestAnimationFrame(() => {
+        const firstInvalidField = document.querySelector("input.border-rose-300, textarea.border-rose-300, select.border-rose-300");
+        if (firstInvalidField instanceof HTMLElement) {
+          firstInvalidField.scrollIntoView({ behavior: "smooth", block: "center" });
+          firstInvalidField.focus();
+        }
+      });
+      return;
+    }
     setSaveError("");
     setSaving(true);
 

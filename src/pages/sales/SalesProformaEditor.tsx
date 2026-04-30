@@ -163,18 +163,24 @@ function nextIsoDate(value: unknown) {
   return candidate.toISOString().slice(0, 10);
 }
 
+function isFourDigitYearDateDraft(value: unknown) {
+  const text = String(value || "").trim();
+  if (!text) return true;
+  return /^\d{2}\/\d{2}\/\d{4}$/.test(text);
+}
+
+function isCompleteDateDraft(value: unknown) {
+  return String(value || "").trim().length === 10;
+}
+
 function validateSalesProformaForm(form: any) {
   const errors: any = {};
   const lineErrors: Record<string, { item?: string; qty?: string }> = {};
   let hasBlockingLineError = false;
 
   const proformaDate = String(form?.proformaDate || "").trim();
-  const validTill = String(form?.validTill || "").trim();
   if (!proformaDate) {
     errors.proformaDate = "Pro Forma Date is required.";
-  }
-  if (proformaDate && validTill && validTill <= proformaDate) {
-    errors.validTill = "Valid Till must be after the Pro Forma Date.";
   }
 
   if (!String(form?.partyId || "").trim()) {
@@ -217,7 +223,6 @@ function validateSalesProformaForm(form: any) {
 
   const hasErrors =
     !!errors.proformaDate ||
-    !!errors.validTill ||
     !!errors.partyId ||
     !!errors.lines ||
     (!validLineCount && hasBlockingLineError);
@@ -260,6 +265,7 @@ export default function SalesProformaEditor() {
     proformaNo: "",
     proformaDate: "",
     validTill: "",
+    validTillRaw: "",
     dueDate: "",
     partyId: "",
     partyName: "",
@@ -385,6 +391,7 @@ export default function SalesProformaEditor() {
             proformaNo: found.proformaNo || "",
             proformaDate: nextProformaDate,
             validTill: nextValidTill && nextProformaDate && nextValidTill <= nextProformaDate ? "" : nextValidTill,
+            validTillRaw: "",
             dueDate: found.dueDate || "",
             partyId: found.partyId || "",
             partyName: found.partyName || "",
@@ -719,6 +726,31 @@ export default function SalesProformaEditor() {
 
   async function onSave() {
     if (locked) return;
+    if (form.validTillRaw && !isCompleteDateDraft(form.validTillRaw)) {
+      toast.warning(
+        "Invalid Valid Till",
+        "Valid Till year must have 4 digits. Enter the date in DD/MM/YYYY format, for example 30/04/2026."
+      );
+      return;
+    }
+    if (isCompleteDateDraft(form.validTillRaw) && !isFourDigitYearDateDraft(form.validTillRaw)) {
+      toast.warning(
+        "Invalid Valid Till",
+        "Enter Valid Till in DD/MM/YYYY format with a 4-digit year, for example 02/05/2026."
+      );
+      return;
+    }
+    if (isCompleteDateDraft(form.validTillRaw) && !form.validTill) {
+      toast.warning(
+        "Invalid Valid Till",
+        "Enter a valid Valid Till date in DD/MM/YYYY format, for example 02/05/2026."
+      );
+      return;
+    }
+    if (form.proformaDate && form.validTill && form.validTill <= form.proformaDate) {
+      toast.warning("Invalid Valid Till", "Valid Till must be after the Pro Forma Date.");
+      return;
+    }
     if (validation.hasErrors) {
       toast.warning("Missing required fields", "Fix the highlighted fields before saving.");
       return;
@@ -907,17 +939,20 @@ export default function SalesProformaEditor() {
               <label className="text-sm text-slate-600">
                 Valid Till
                 <DateInput
-                  className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm ${
-                    validation?.validTill ? "border-rose-300" : "border-slate-200"
-                  }`}
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                   value={form.validTill || ""}
                   disabled={locked}
                   min={nextIsoDate(form.proformaDate)}
+                  requireFourDigitYear
+                  onValidationError={() =>
+                    toast.warning(
+                      "Invalid Valid Till",
+                      "Valid Till year must have 4 digits. Enter the date in DD/MM/YYYY format, for example 30/04/2026."
+                    )
+                  }
+                  onRawChange={(nextRawValue) => updateForm({ validTillRaw: nextRawValue })}
                   onChange={(nextValue) => updateForm({ validTill: nextValue })}
                 />
-                {validation?.validTill ? (
-                  <p className="mt-1 text-xs font-medium text-rose-600">{validation.validTill}</p>
-                ) : null}
               </label>
             </div>
 

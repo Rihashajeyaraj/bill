@@ -207,6 +207,10 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
   const isIndiaGST = rawTaxType === "GST";
   const taxType = rawTaxType;
   const formattedInvoiceDate = formatDayMonthYear(invoiceData.invoiceDate);
+  const gstColumnLayout =
+    "grid-cols-[minmax(120px,2.6fr)_minmax(88px,1fr)_minmax(56px,0.6fr)_minmax(132px,1.15fr)_minmax(132px,1.15fr)_minmax(72px,0.7fr)_minmax(148px,1.25fr)]";
+  const gstHeaderCellClass = "min-w-0 px-2 break-words text-left leading-4";
+  const gstNumberCellClass = "min-w-0 px-2 whitespace-nowrap text-left leading-5 tabular-nums";
 
   const seller = invoiceData.seller || {
     name: invoiceData.companyName || "",
@@ -388,41 +392,43 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
 
         <div className={clsx("mt-5", variant.divider)} />
 
-        <div className="mt-4">
-          <div
-            className={clsx(
-              "grid items-start gap-2 text-slate-500",
-              gstColumnLayout,
-              variant.tableHead
-            )}
-          >
-            <span className={gstHeaderCellClass}>Item</span>
-            <span className={gstHeaderCellClass}>HSN/SAC</span>
-            <span className={gstHeaderCellClass}>Qty</span>
-            <span className={gstHeaderCellClass}>Rate</span>
-            <span className={gstHeaderCellClass}>Taxable</span>
-            <span className={gstHeaderCellClass}>GST %</span>
-            <span className={gstHeaderCellClass}>Total</span>
-          </div>
-          <div className="mt-2 space-y-2">
-            {gstLines.map((line) => (
-              <div
-                key={line.id}
-                className={clsx("grid items-start gap-2 text-slate-700", gstColumnLayout)}
-              >
-                <span className={clsx("min-w-0 break-words", variant.value)}>{line.name}</span>
-                <span className={clsx("min-w-0 break-words", variant.value)}>{line.hsn}</span>
-                <span className={clsx(gstNumberCellClass, variant.value)}>{qty(line.qty)}</span>
-                <span className={clsx(gstNumberCellClass, variant.value)}>{money(line.rate, currencySymbol)}</span>
-                <span className={clsx(gstNumberCellClass, variant.value)}>
-                  {money(line.taxableValue, currencySymbol)}
-                </span>
-                <span className={clsx(gstNumberCellClass, variant.value)}>{line.taxRate}%</span>
-                <span className={clsx(gstNumberCellClass, "font-semibold", variant.value)}>
-                  {money(line.total, currencySymbol)}
-                </span>
-              </div>
-            ))}
+        <div className="mt-4 overflow-x-auto">
+          <div className="min-w-[920px]">
+            <div
+              className={clsx(
+                "grid items-start gap-2 text-slate-500",
+                gstColumnLayout,
+                variant.tableHead
+              )}
+            >
+              <span className={gstHeaderCellClass}>Item</span>
+              <span className={gstHeaderCellClass}>HSN/SAC</span>
+              <span className={gstHeaderCellClass}>Qty</span>
+              <span className={gstHeaderCellClass}>Rate</span>
+              <span className={gstHeaderCellClass}>Taxable</span>
+              <span className={gstHeaderCellClass}>GST %</span>
+              <span className={gstHeaderCellClass}>Total</span>
+            </div>
+            <div className="mt-2 space-y-2">
+              {gstLines.map((line) => (
+                <div
+                  key={line.id}
+                  className={clsx("grid items-start gap-2 text-slate-700", gstColumnLayout)}
+                >
+                  <span className={clsx("min-w-0 px-2 break-words", variant.value)}>{line.name}</span>
+                  <span className={clsx("min-w-0 px-2 break-words", variant.value)}>{line.hsn}</span>
+                  <span className={clsx(gstNumberCellClass, variant.value)}>{qty(line.qty)}</span>
+                  <span className={clsx(gstNumberCellClass, variant.value)}>{money(line.rate, currencySymbol)}</span>
+                  <span className={clsx(gstNumberCellClass, variant.value)}>
+                    {money(line.taxableValue, currencySymbol)}
+                  </span>
+                  <span className={clsx(gstNumberCellClass, variant.value)}>{line.taxRate}%</span>
+                  <span className={clsx(gstNumberCellClass, "font-semibold", variant.value)}>
+                    {money(line.total, currencySymbol)}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -493,10 +499,6 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
   const showTaxLine = taxType !== "NONE" && taxValue > 0;
   const taxIdLabel = invoiceData.tax?.idLabel || "Tax ID";
   const taxIdValue = invoiceData.tax?.idValue || "";
-  const gstColumnLayout =
-    "grid-cols-[minmax(0,2.8fr)_minmax(64px,1fr)_minmax(40px,0.55fr)_minmax(72px,0.9fr)_minmax(84px,1fr)_minmax(44px,0.55fr)_minmax(92px,1.05fr)]";
-  const gstHeaderCellClass = "min-w-0 break-words text-center leading-4";
-  const gstNumberCellClass = "min-w-0 break-all text-right leading-5";
 
   return (
     <div

@@ -1308,6 +1308,8 @@ export function buildSaleReport(dataset, filters = {}) {
   const fromDate = toIsoDate(filters.fromDate);
   const toDate = toIsoDate(filters.toDate);
   const partyId = String(filters.partyId || "").trim();
+  const sortKey = filters.sortKey || "date";
+  const sortDirection = filters.sortDirection === "asc" ? "asc" : "desc";
   const indexes = buildPartyIndexes(dataset);
   const paymentsByInvoice = customerPaymentAppliedByInvoice(dataset, toDate);
   const creditByInvoice = customerCreditAppliedByInvoice(dataset, toDate);
@@ -1331,7 +1333,7 @@ export function buildSaleReport(dataset, filters = {}) {
         status: balance <= 0 ? "Paid" : paidAmount > 0 ? "Partial" : "Unpaid"
       };
     })
-    .sort((left, right) => String(left.date || "").localeCompare(String(right.date || "")));
+    .sort((left, right) => compareValues(left?.[sortKey], right?.[sortKey], sortDirection));
 
   const totals = rows.reduce(
     (summary, row) => ({
@@ -1346,6 +1348,8 @@ export function buildSaleReport(dataset, filters = {}) {
     fromDate,
     toDate,
     partyId,
+    sortKey,
+    sortDirection,
     rows,
     totals: {
       ...totals,

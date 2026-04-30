@@ -171,9 +171,9 @@ function MetricCard({ label, value, tone = "default" }) {
         : "border-slate-200 bg-white text-slate-900";
 
   return (
-    <div className={clsx("rounded-3xl border p-4 sm:p-5", toneClasses)}>
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-3 text-2xl font-bold">{value}</p>
+    <div className={clsx("min-w-0 overflow-hidden rounded-3xl border p-4 sm:p-5", toneClasses)}>
+      <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-3 min-w-0 text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl">{value}</p>
     </div>
   );
 }
@@ -191,13 +191,13 @@ function InteractiveMetricCard({ label, value, tone = "default", active = false,
       type="button"
       onClick={onClick}
       className={clsx(
-        "rounded-3xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 sm:p-5",
+        "min-w-0 overflow-hidden rounded-3xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 sm:p-5",
         toneClasses,
         active && "ring-2 ring-slate-900/70 shadow-md"
       )}
     >
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-3 text-2xl font-bold">{value}</p>
+      <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-3 min-w-0 text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl">{value}</p>
     </button>
   );
 }
@@ -476,7 +476,7 @@ function ReportTable({ columns, rows, currency, sortKey, sortDirection, onSort, 
                       className={clsx("inline-flex items-center gap-1", column.align === "right" && "ml-auto")}
                     >
                       {column.label}
-                      {active ? <span className="text-xs">{sortDirection === "asc" ? "^" : "v"}</span> : null}
+                      <span className="text-xs text-slate-400">{active ? (sortDirection === "asc" ? "^" : "v") : "v"}</span>
                     </button>
                   ) : (
                     column.label
@@ -975,7 +975,7 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
           { label: "Invoices", value: data.totals.invoiceCount }
         ],
         columns: [
-          { key: "date", label: "Date", format: "date" },
+          { key: "date", label: "Date", format: "date", sortable: true },
           { key: "reference", label: "Invoice No" },
           { key: "partyName", label: "Customer" },
           { key: "totalAmount", label: "Total", align: "right", format: "money" },
@@ -1418,7 +1418,9 @@ export default function Reports() {
           return buildSaleReport(deferredDataset, {
             fromDate: deferredFilters.fromDate,
             toDate: deferredFilters.toDate,
-            partyId: deferredFilters.partyId
+            partyId: deferredFilters.partyId,
+            sortKey: deferredFilters.sortKey,
+            sortDirection: deferredFilters.sortDirection
           });
         case "purchase-report":
           return buildPurchaseReport(deferredDataset, {
@@ -1863,7 +1865,7 @@ export default function Reports() {
                         currency={currency}
                         sortKey={filters.sortKey}
                         sortDirection={filters.sortDirection}
-                        onSort={activeReport === "all-transactions" ? handleSort : null}
+                        onSort={activeReport === "all-transactions" || activeReport === "sale-report" ? handleSort : null}
                         emptyText={activeReport === "party-statement" ? "Select a party to generate the statement." : "No records found for the selected filters."}
                       />
                     )}
