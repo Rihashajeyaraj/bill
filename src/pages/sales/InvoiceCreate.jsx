@@ -33,8 +33,8 @@ import { getPartyCreditStatus, listParties, syncPartiesFromRemote, upsertPartyRe
 import { computeItemStock, listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
 import {
   applySelectedCreditNotesToInvoice,
-  availableCreditByCustomer,
-  listCreditNotesForCustomer
+  availableCreditByCustomerMatch,
+  listCreditNotesForCustomerMatch
 } from "../../modules/creditNote/store";
 import {
   applyAdvanceWalletToCustomerInvoice,
@@ -1260,16 +1260,16 @@ export default function InvoiceCreate() {
   );
   const customerAdvanceWallet = round2(Number(customerPaymentInsights?.advanceWallet || 0));
   const customerCreditNotes = useMemo(
-    () => listCreditNotesForCustomer(paymentCountryCode, partyId, activeInvoiceId),
-    [activeInvoiceId, partyId, paymentCountryCode]
+    () => listCreditNotesForCustomerMatch(paymentCountryCode, partyId, party?.name || "", activeInvoiceId),
+    [activeInvoiceId, party?.name, partyId, paymentCountryCode]
   );
   const selectedCreditNoteIdSet = useMemo(
     () => new Set((Array.isArray(selectedCreditNoteIds) ? selectedCreditNoteIds : []).map((entry) => String(entry || "").trim()).filter(Boolean)),
     [selectedCreditNoteIds]
   );
   const customerCreditBalance = useMemo(
-    () => round2(availableCreditByCustomer(paymentCountryCode, partyId)),
-    [paymentCountryCode, partyId]
+    () => round2(availableCreditByCustomerMatch(paymentCountryCode, partyId, party?.name || "")),
+    [paymentCountryCode, party?.name, partyId]
   );
   const selectedCreditNoteBalance = useMemo(
     () =>
@@ -3668,32 +3668,6 @@ export default function InvoiceCreate() {
                 <span className="font-semibold text-slate-900">Grand Total</span>
                 <span className="font-semibold text-slate-900">{money(computed.grandTotal)}</span>
               </div>
-              {customerCreditBalance > 0 ? (
-                <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Available Credit Note Balance</span>
-                  <span className="font-semibold text-amber-700">{money(customerCreditBalance)}</span>
-                </div>
-              ) : null}
-              {customerAdvanceWallet > 0 ? (
-                <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Advance Wallet Balance</span>
-                  <span className="font-semibold text-emerald-700">{money(customerAdvanceWallet)}</span>
-                </div>
-              ) : null}
-              {customerAvailableCredit > 0 ? (
-                <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Apply Available Credit</span>
-                  <span className="font-semibold text-slate-900">
-                    {useAvailableAdvance ? "Enabled" : "Disabled"}
-                  </span>
-                </div>
-              ) : null}
-              {advanceAppliedFromWallet > 0 ? (
-                <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Credit Used</span>
-                  <span className="font-semibold text-emerald-700">{money(advanceAppliedFromWallet)}</span>
-                </div>
-              ) : null}
               <div className="mt-2 flex items-center justify-between text-sm">
                 <span className="text-slate-600">Paid Now</span>
                 <span className="font-semibold text-emerald-700">{money(paymentAmount)}</span>
@@ -3708,43 +3682,6 @@ export default function InvoiceCreate() {
                   <span className="font-semibold text-emerald-700">{money(advanceAmount)}</span>
                 </div>
               ) : null}
-              {projectedAvailableCredit > 0 || customerAvailableCredit > 0 || advanceAppliedFromWallet > 0 ? (
-                <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-600">Remaining Credit Balance</span>
-                  <span className="font-semibold text-amber-700">{money(projectedAvailableCredit)}</span>
-                </div>
-              ) : null}
-              {customerCreditBalance > 0 || advanceAppliedFromCreditNotes > 0 ? (
-                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-600">Available Credit Note Balance</span>
-                    <span className="font-semibold text-amber-700">{money(customerCreditBalance)}</span>
-                  </div>
-                  {customerAdvanceWallet > 0 ? (
-                    <div className="mt-2 flex items-center justify-between text-sm">
-                      <span className="text-slate-600">Advance Wallet Balance</span>
-                      <span className="font-semibold text-emerald-700">{money(customerAdvanceWallet)}</span>
-                    </div>
-                  ) : null}
-                  <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="text-slate-600">Credit Used</span>
-                    <span className="font-semibold text-emerald-700">{money(advanceAppliedFromWallet)}</span>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="text-slate-600">Credit Notes Used</span>
-                    <span className="font-semibold text-emerald-700">{money(advanceAppliedFromCreditNotes)}</span>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="text-slate-600">Remaining Credit Balance</span>
-                    <span className="font-semibold text-amber-700">{money(projectedAvailableCredit)}</span>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="text-slate-600">Final Payable Amount</span>
-                    <span className="font-semibold text-rose-700">{money(finalPayableAmount)}</span>
-                  </div>
-                </div>
-              ) : null}
-
               {customerAdvanceHistory.length ? (
                 <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
                   <div className="border-b border-slate-200 px-3 py-2">

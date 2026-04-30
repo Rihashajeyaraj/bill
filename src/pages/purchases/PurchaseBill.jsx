@@ -28,7 +28,11 @@ import {
   paymentInsightsBySupplier,
   savePaymentOut
 } from "../../modules/paymentOut/store";
-import { listDebitNotesForPurchaseBill } from "../../modules/debitNote/store";
+import {
+  listDebitNotes,
+  listDebitNotesForPurchaseBill,
+  listDebitNotesForSupplierMatch
+} from "../../modules/debitNote/store";
 import { canCreateEntries, canEditEntries } from "../../services/roles";
 import { companyPeekDocumentNumber } from "../../services/company.service";
 import {
@@ -286,6 +290,8 @@ export default function PurchaseBill() {
   const [chequeNo, setChequeNo] = useState("");
   const [bankName, setBankName] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
+  const [useAvailableDebitNotes, setUseAvailableDebitNotes] = useState(false);
+  const [selectedDebitNoteIds, setSelectedDebitNoteIds] = useState([]);
   const paymentAmount = useMemo(() => {
     if (!markAsPaid) return 0;
     const parsedAmount = parseFormattedNumber(paidAmount || 0);
@@ -1237,9 +1243,52 @@ export default function PurchaseBill() {
     () => round2(Math.min(supplierAdvanceWallet, Number(computed.finalTotal || 0))),
     [supplierAdvanceWallet, computed.finalTotal]
   );
+  const linkedDebitNotes = useMemo(
+    () => (isEditMode ? listDebitNotesForPurchaseBill(country, editBillId) : []),
+    [country, editBillId, isEditMode]
+  );
+  const supplierDebitNotes = useMemo(
+    () =>
+      !isEditMode && (partyId || party?.name)
+        ? listDebitNotesForSupplierMatch(country, partyId, party?.name || "")
+        : [],
+    [country, isEditMode, partyId, party?.name]
+  );
+  const allDebitNotes = useMemo(
+    () => (!isEditMode ? listDebitNotes(country).filter((entry) => String(entry?.status || "") !== "Draft") : []),
+    [country, isEditMode]
+  );
+  const visibleDebitNotes = isEditMode
+    ? linkedDebitNotes
+    : supplierDebitNotes.length
+      ? supplierDebitNotes
+      : allDebitNotes;
+  const selectedDebitNoteIdSet = useMemo(
+    () => new Set((Array.isArray(selectedDebitNoteIds) ? selectedDebitNoteIds : []).map((entry) => String(entry || "").trim()).filter(Boolean)),
+    [selectedDebitNoteIds]
+  );
+  const selectedDebitNoteBalance = useMemo(
+    () =>
+      round2(
+        visibleDebitNotes.reduce((sum, entry) => {
+          if (!selectedDebitNoteIdSet.has(String(entry.id || "").trim())) return sum;
+          return sum + Math.max(0, Number(entry.totalAmount || 0));
+        }, 0)
+      ),
+    [selectedDebitNoteIdSet, visibleDebitNotes]
+  );
+  const debitNotesUsedAmount = useMemo(
+    () => (useAvailableDebitNotes ? round2(Math.min(selectedDebitNoteBalance, Number(computed.finalTotal || 0))) : 0),
+    [useAvailableDebitNotes, selectedDebitNoteBalance, computed.finalTotal]
+  );
+
+  useEffect(() => {
+    setUseAvailableDebitNotes(false);
+    setSelectedDebitNoteIds([]);
+  }, [partyId, isEditMode]);
   const balanceAfterExistingAdvance = useMemo(
-    () => round2(Math.max(0, Number(computed.finalTotal || 0) - advanceAppliedFromWallet)),
-    [computed.finalTotal, advanceAppliedFromWallet]
+    () => round2(Math.max(0, Number(computed.finalTotal || 0) - advanceAppliedFromWallet - debitNotesUsedAmount)),
+    [computed.finalTotal, advanceAppliedFromWallet, debitNotesUsedAmount]
   );
   const pendingAmount = useMemo(
     () => round2(Math.max(0, balanceAfterExistingAdvance - Number(paymentAmount || 0))),
@@ -1251,10 +1300,6 @@ export default function PurchaseBill() {
   );
   const projectedAdvanceWallet = round2(
     Math.max(0, supplierAdvanceWallet - advanceAppliedFromWallet) + advanceAmount
-  );
-  const linkedDebitNotes = useMemo(
-    () => (isEditMode ? listDebitNotesForPurchaseBill(country, editBillId) : []),
-    [country, editBillId, isEditMode]
   );
 
   async function resolveLinesWithItems(detailedLines) {
@@ -2621,13 +2666,65 @@ export default function PurchaseBill() {
               </div>
             </div>
 
-            {linkedDebitNotes.length ? (
+            {!isEditMode && partyId && !visibleDebitNotes.length ? (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-xs text-slate-600">
+                No debit notes found for this supplier.
+              </div>
+            ) : null}
+            {visibleDebitNotes.length ? (
               <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-                <div className="border-b border-slate-200 px-3 py-2">
-                  <p className="text-xs font-semibold text-slate-700">Debit Notes Against This Bill</p>
-                  <p className="mt-0.5 text-[11px] text-slate-500">
-                    Debit note date, amount, bill no, and whether it is already used on this purchase bill.
-                  </p>
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-3 py-2">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-700">
+                      {isEditMode ? "Debit Notes Against This Bill" : "Supplier Debit Notes"}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      {isEditMode
+                        ? "Debit note date, amount, bill no, and whether it is already used on this purchase bill."
+                        : "Date, amount, bill no, and whether this debit note should be used on this purchase bill."}
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-sky-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-sky-700">
+                    Selected: {money(selectedDebitNoteBalance)}
+                  </span>
+                </div>
+                <div className="border-b border-slate-200 bg-sky-50/60 px-3 py-3">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        {isEditMode ? "Bill Debit Notes" : "Supplier Debit Notes"}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        Available Debit Note Balance: {money(
+                          round2(
+                            visibleDebitNotes.reduce(
+                              (sum, entry) => sum + Math.max(0, Number(entry.totalAmount || 0)),
+                              0
+                            )
+                          )
+                        )}
+                      </p>
+                    </div>
+                    <label className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={useAvailableDebitNotes}
+                        onChange={(event) => setUseAvailableDebitNotes(event.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-sky-500 focus:ring-sky-400"
+                      />
+                      Apply Available Debit Note
+                    </label>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="rounded-2xl border border-sky-200 bg-white px-3 py-2.5 text-xs text-slate-600">
+                      <p>Purchase Total: <span className="font-semibold text-slate-900">{money(computed.finalTotal)}</span></p>
+                      <p className="mt-1">Debit Notes Used: <span className="font-semibold text-sky-700">{money(debitNotesUsedAmount)}</span></p>
+                    </div>
+                    <div className="rounded-2xl border border-sky-200 bg-white px-3 py-2.5 text-xs text-slate-600">
+                      <p>Remaining Debit Balance: <span className="font-semibold text-sky-700">{money(Math.max(0, selectedDebitNoteBalance - debitNotesUsedAmount))}</span></p>
+                      <p className="mt-1">Updated Balance Due: <span className="font-semibold text-rose-700">{money(balanceAfterExistingAdvance)}</span></p>
+                    </div>
+                  </div>
                 </div>
                 <div className="max-h-64 overflow-auto">
                   <table className="w-full min-w-[720px] text-left text-xs">
@@ -2637,31 +2734,52 @@ export default function PurchaseBill() {
                         <th className="px-3 py-2 font-semibold">Date</th>
                         <th className="px-3 py-2 font-semibold">Bill No</th>
                         <th className="px-3 py-2 text-right font-semibold">Amount</th>
+                        <th className="px-3 py-2 text-right font-semibold">Used Here</th>
                         <th className="px-3 py-2 font-semibold">Use</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {linkedDebitNotes.map((entry) => (
-                        <tr key={entry.id} className="border-t border-slate-200 bg-white">
-                          <td className="px-3 py-2 font-semibold text-slate-900">{entry.debitNoteNo || "-"}</td>
-                          <td className="px-3 py-2 text-slate-700">{formatCompactDate(entry.debitNoteDate)}</td>
-                          <td className="px-3 py-2 text-slate-700">{entry.linkedPurchaseInvoiceNo || "-"}</td>
-                          <td className="px-3 py-2 text-right font-semibold text-slate-900">{money(entry.totalAmount)}</td>
-                          <td className="px-3 py-2">
-                            <label className="inline-flex items-center gap-2 text-slate-700">
-                              <input
-                                type="checkbox"
-                                checked={entry.usedOnBill}
-                                disabled
-                                className="h-4 w-4 rounded border-slate-300 text-blue-600"
-                              />
-                              <span className="text-[11px] font-semibold">
-                                {entry.usedOnBill ? "Used" : entry.status}
-                              </span>
-                            </label>
-                          </td>
-                        </tr>
-                      ))}
+                      {visibleDebitNotes.map((entry) => {
+                        const rowChecked = entry.usedOnBill || selectedDebitNoteIdSet.has(String(entry.id || ""));
+                        const rowDisabled = entry.usedOnBill || isEditMode;
+                        return (
+                          <tr key={entry.id} className="border-t border-slate-200 bg-white">
+                            <td className="px-3 py-2 font-semibold text-slate-900">{entry.debitNoteNo || "-"}</td>
+                            <td className="px-3 py-2 text-slate-700">{formatCompactDate(entry.debitNoteDate)}</td>
+                            <td className="px-3 py-2 text-slate-700">{entry.linkedPurchaseInvoiceNo || "-"}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-slate-900">{money(entry.totalAmount)}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-sky-700">
+                              {entry.usedOnBill ? money(entry.totalAmount) : rowChecked && useAvailableDebitNotes ? money(Math.min(Number(entry.totalAmount || 0), Number(computed.finalTotal || 0))) : "-"}
+                            </td>
+                            <td className="px-3 py-2">
+                              <label className="inline-flex items-center gap-2 text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={rowChecked}
+                                  disabled={rowDisabled}
+                                  onChange={(event) => {
+                                    const nextChecked = event.target.checked;
+                                    setSelectedDebitNoteIds((prev) => {
+                                      const next = new Set((Array.isArray(prev) ? prev : []).map((value) => String(value || "")));
+                                      if (nextChecked) {
+                                        next.add(String(entry.id || ""));
+                                      } else {
+                                        next.delete(String(entry.id || ""));
+                                      }
+                                      setUseAvailableDebitNotes(next.size > 0);
+                                      return Array.from(next);
+                                    });
+                                  }}
+                                  className="h-4 w-4 rounded border-slate-300 text-sky-500 focus:ring-sky-400"
+                                />
+                                <span className="text-[11px] font-semibold">
+                                  {entry.usedOnBill ? "Used" : "Use"}
+                                </span>
+                              </label>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

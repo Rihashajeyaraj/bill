@@ -1021,6 +1021,29 @@ export function availableCreditByCustomer(country: CountryCode, customerId: stri
   );
 }
 
+export function availableCreditByCustomerMatch(
+  country: CountryCode,
+  customerId: string,
+  customerName: string
+) {
+  const normalizedCustomerId = String(customerId || "").trim();
+  const normalizedCustomerName = String(customerName || "").trim().toLowerCase();
+  if (!normalizedCustomerId && !normalizedCustomerName) return 0;
+  return round2(
+    getMergedCreditNotes()
+      .filter((entry) => entry.country === country)
+      .filter((entry) => entry.status === "Applied")
+      .filter((entry) => {
+        const entryCustomerId = String(entry.customerId || "").trim();
+        const entryCustomerName = String(entry.customerName || "").trim().toLowerCase();
+        if (normalizedCustomerId && entryCustomerId === normalizedCustomerId) return true;
+        if (normalizedCustomerName && entryCustomerName === normalizedCustomerName) return true;
+        return false;
+      })
+      .reduce((sum, entry) => sum + remainingAvailableCreditForNote(entry), 0)
+  );
+}
+
 export function listCreditNotesForCustomer(country: CountryCode, customerId: string, invoiceId = "") {
   const normalizedCustomerId = String(customerId || "").trim();
   const normalizedInvoiceId = String(invoiceId || "").trim();
@@ -1045,6 +1068,84 @@ export function listCreditNotesForCustomer(country: CountryCode, customerId: str
     .filter((entry) => entry.country === country)
     .filter((entry) => String(entry.customerId || "") === normalizedCustomerId)
     .filter((entry) => entry.status !== "Draft")
+    .map((entry) => {
+      const directlyAppliedAmount = round2(directAppliedAmountForNote(entry));
+      const transferredAppliedAmount = round2(appliedCreditTransfersForNote(entry));
+      const availableAmount = round2(remainingAvailableCreditForNote(entry));
+      const directUsageForCurrentInvoice =
+        normalizedInvoiceId && String(entry.linkedInvoiceId || "") === normalizedInvoiceId
+          ? directlyAppliedAmount
+          : 0;
+      const transferredUsageForCurrentInvoice = round2(
+        ensureArray(entry.creditApplications).reduce((sum, line) => {
+          if (String(line?.invoiceId || "") !== normalizedInvoiceId) return sum;
+          return sum + Math.max(0, toNumber(line?.applyAmount));
+        }, 0)
+      );
+      const appliedToCurrentInvoiceAmount = round2(
+        directUsageForCurrentInvoice + transferredUsageForCurrentInvoice
+      );
+
+      return {
+        id: entry.id,
+        creditNoteNo: entry.creditNoteNo,
+        creditNoteDate: entry.creditNoteDate,
+        linkedInvoiceId: entry.linkedInvoiceId,
+        linkedInvoiceNo: entry.linkedInvoiceNo,
+        linkedInvoiceDate: entry.linkedInvoiceDate,
+        status: entry.status,
+        totalAmount: round2(toNumber(entry?.totals?.total)),
+        directlyAppliedAmount,
+        transferredAppliedAmount,
+        availableAmount,
+        appliedToCurrentInvoiceAmount,
+        isLinkedToCurrentInvoice:
+          !!normalizedInvoiceId && String(entry.linkedInvoiceId || "") === normalizedInvoiceId,
+        canUse: entry.status === "Applied" && availableAmount > 0
+      };
+    })
+    .filter((entry) => entry.availableAmount > 0 || entry.appliedToCurrentInvoiceAmount > 0)
+    .sort((a, b) => String(b.creditNoteDate || "").localeCompare(String(a.creditNoteDate || "")));
+}
+
+export function listCreditNotesForCustomerMatch(
+  country: CountryCode,
+  customerId: string,
+  customerName: string,
+  invoiceId = ""
+) {
+  const normalizedCustomerId = String(customerId || "").trim();
+  const normalizedCustomerName = String(customerName || "").trim().toLowerCase();
+  const normalizedInvoiceId = String(invoiceId || "").trim();
+  if (!normalizedCustomerId && !normalizedCustomerName) {
+    return [] as Array<{
+      id: string;
+      creditNoteNo: string;
+      creditNoteDate: string;
+      linkedInvoiceId: string;
+      linkedInvoiceNo: string;
+      linkedInvoiceDate: string;
+      status: CreditStatus;
+      totalAmount: number;
+      directlyAppliedAmount: number;
+      transferredAppliedAmount: number;
+      availableAmount: number;
+      appliedToCurrentInvoiceAmount: number;
+      isLinkedToCurrentInvoice: boolean;
+      canUse: boolean;
+    }>;
+  }
+
+  return getMergedCreditNotes()
+    .filter((entry) => entry.country === country)
+    .filter((entry) => entry.status !== "Draft")
+    .filter((entry) => {
+      const entryCustomerId = String(entry.customerId || "").trim();
+      const entryCustomerName = String(entry.customerName || "").trim().toLowerCase();
+      if (normalizedCustomerId && entryCustomerId === normalizedCustomerId) return true;
+      if (normalizedCustomerName && entryCustomerName === normalizedCustomerName) return true;
+      return false;
+    })
     .map((entry) => {
       const directlyAppliedAmount = round2(directAppliedAmountForNote(entry));
       const transferredAppliedAmount = round2(appliedCreditTransfersForNote(entry));

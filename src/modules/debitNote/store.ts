@@ -228,6 +228,13 @@ function toNumber(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function normalizePartyName(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 function appliedPaymentOutForBill(billId: string) {
   if (!billId) return 0;
   const legacy = (lsGetOrganizationScoped(LS_KEYS.payments, []) as any[])
@@ -642,6 +649,57 @@ export function listDebitNotesForPurchaseBill(country: CountryCode, billId: stri
     .filter((entry) => entry.country === country)
     .filter((entry) => String(entry.linkedPurchaseInvoiceId || "") === normalizedBillId)
     .filter((entry) => entry.status !== "Draft")
+    .map((entry) => ({
+      id: entry.id,
+      debitNoteNo: entry.debitNoteNo,
+      debitNoteDate: entry.debitNoteDate,
+      linkedPurchaseInvoiceId: entry.linkedPurchaseInvoiceId,
+      linkedPurchaseInvoiceNo: entry.linkedPurchaseInvoiceNo,
+      linkedPurchaseInvoiceDate: entry.linkedPurchaseInvoiceDate,
+      status: entry.status,
+      totalAmount: Math.max(0, toNumber(entry?.totals?.total)),
+      usedOnBill: entry.status === "Applied"
+    }))
+    .sort((a, b) => String(b.debitNoteDate || "").localeCompare(String(a.debitNoteDate || "")));
+}
+
+export function listDebitNotesForSupplierMatch(
+  country: CountryCode,
+  supplierId: string,
+  supplierName: string
+) {
+  const normalizedSupplierId = String(supplierId || "").trim();
+  const normalizedSupplierName = normalizePartyName(supplierName);
+  if (!normalizedSupplierId && !normalizedSupplierName) {
+    return [] as Array<{
+      id: string;
+      debitNoteNo: string;
+      debitNoteDate: string;
+      linkedPurchaseInvoiceId: string;
+      linkedPurchaseInvoiceNo: string;
+      linkedPurchaseInvoiceDate: string;
+      status: DebitStatus;
+      totalAmount: number;
+      usedOnBill: boolean;
+    }>;
+  }
+
+  return normalizeStoredDebitNotes()
+    .filter((entry) => entry.country === country)
+    .filter((entry) => entry.status !== "Draft")
+    .filter((entry) => {
+      const entrySupplierId = String(entry.supplierId || "").trim();
+      const entrySupplierName = normalizePartyName(entry.supplierName);
+      if (normalizedSupplierId && entrySupplierId === normalizedSupplierId) return true;
+      if (normalizedSupplierName && entrySupplierName === normalizedSupplierName) return true;
+      if (normalizedSupplierName && entrySupplierName) {
+        return (
+          entrySupplierName.includes(normalizedSupplierName) ||
+          normalizedSupplierName.includes(entrySupplierName)
+        );
+      }
+      return false;
+    })
     .map((entry) => ({
       id: entry.id,
       debitNoteNo: entry.debitNoteNo,
