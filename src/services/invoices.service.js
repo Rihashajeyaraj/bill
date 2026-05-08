@@ -9,6 +9,8 @@ import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
 import { triggerLowStockNotifications } from "../modules/items/store";
+import { listCreditNotes as listPremiumCreditNotes } from "../modules/creditNote/store";
+import { listPaymentIn, paymentInAllocationSettledAmount } from "../modules/paymentIn/store";
 import { companyPeekDocumentNumber, companySyncDocumentCounter } from "./company.service";
 import {
   annotateWithFinancialYear,
@@ -74,6 +76,43 @@ function applyInvoiceStockAdjustment(lines, direction = 1) {
 function parseNumber(value) {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
+}
+
+function runInvoicePostSaveNotifications() {
+  void Promise.allSettled([triggerCreditLimitNotifications(), triggerLowStockNotifications()]).catch(() => {});
+}
+
+function buildLocalPaymentAppliedMap() {
+  const paymentMap = new Map();
+  listPaymentIn().forEach((entry) => {
+    if (String(entry?.status || "").toLowerCase() === "draft") return;
+    const allocations = Array.isArray(entry?.allocations) ? entry.allocations : [];
+    allocations.forEach((line) => {
+      if (String(line?.documentType || "invoice").toLowerCase() !== "invoice") return;
+      const invoiceId = String(line?.invoiceId || "").trim();
+      if (!invoiceId) return;
+      const settledAmount = Math.max(0, parseNumber(paymentInAllocationSettledAmount(entry, line)));
+      if (!settledAmount) return;
+      paymentMap.set(invoiceId, (paymentMap.get(invoiceId) || 0) + settledAmount);
+    });
+  });
+  return paymentMap;
+}
+
+function buildLocalCreditAppliedMap() {
+  const creditMap = new Map();
+  listPremiumCreditNotes().forEach((entry) => {
+    if (String(entry?.status || "").toLowerCase() !== "applied") return;
+    const applications = Array.isArray(entry?.creditApplications) ? entry.creditApplications : [];
+    applications.forEach((line) => {
+      const invoiceId = String(line?.invoiceId || "").trim();
+      if (!invoiceId) return;
+      const applyAmount = Math.max(0, parseNumber(line?.applyAmount));
+      if (!applyAmount) return;
+      creditMap.set(invoiceId, (creditMap.get(invoiceId) || 0) + applyAmount);
+    });
+  });
+  return creditMap;
 }
 
 function looksLikeUuid(value) {
@@ -538,11 +577,16 @@ export async function invoicesSyncFromRemote(range) {
     );
   });
 
+  const localPaymentMap = buildLocalPaymentAppliedMap();
+  const localCreditMap = buildLocalCreditAppliedMap();
+
   const mapped = (Array.isArray(invoiceRows) ? invoiceRows : []).map((row) =>
     mapRemoteInvoiceRow(
       row,
       lineMap.get(row.id) || [],
-      parseNumber(row?.grand_total) - (paymentMap.get(row.id) || 0) - (creditMap.get(row.id) || 0)
+      parseNumber(row?.grand_total) -
+        Math.max(paymentMap.get(row.id) || 0, localPaymentMap.get(row.id) || 0) -
+        Math.max(creditMap.get(row.id) || 0, localCreditMap.get(row.id) || 0)
     )
   );
 
@@ -788,8 +832,7 @@ export async function invoicesCreate(invoice) {
     invoiceNo,
     partyId: next?.partyId || null
   });
-  await triggerCreditLimitNotifications();
-  await triggerLowStockNotifications();
+  runInvoicePostSaveNotifications();
   return id;
 }
 
@@ -975,7 +1018,6 @@ export async function invoicesUpdate(invoiceId, invoice) {
   companySyncDocumentCounter("invoice", requestedInvoiceNo, { dateValue: invoiceDate });
   applyInvoiceStockAdjustment(existing?.lines || [], -1);
   applyInvoiceStockAdjustment(lines, 1);
-  await triggerCreditLimitNotifications();
-  await triggerLowStockNotifications();
+  runInvoicePostSaveNotifications();
   return existingId;
 }

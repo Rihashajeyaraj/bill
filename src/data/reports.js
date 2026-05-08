@@ -1,72 +1,72 @@
 export const reportSections = [
   {
     id: "transaction-reports",
-    title: "Transaction Reports",
-    description: "Core sales, purchases, and movement reports for daily operations.",
+    title: "Transactions",
+    description: "Sales and movement.",
     items: [
       {
         id: "sale-report",
-        label: "Sale Report",
-        description: "Invoice-wise sales with paid and unpaid visibility."
+        label: "Sales",
+        description: "Paid and unpaid sales."
       },
       {
         id: "purchase-report",
-        label: "Purchase Report",
-        description: "Supplier bills with paid and pending analysis."
+        label: "Purchases",
+        description: "Paid and pending bills."
       },
       {
         id: "cash-flow",
         label: "Cash Flow",
-        description: "Cash received, cash spent, and net flow across the selected period."
+        description: "Cash in and out."
       },
       {
         id: "all-transactions",
-        label: "All Transactions",
-        description: "Global transaction ledger with search, sorting, and pagination."
+        label: "All Entries",
+        description: "Full transaction list."
       }
     ]
   },
   {
     id: "party-reports",
-    title: "Party Reports",
-    description: "Receivable and payable visibility across customers and suppliers.",
+    title: "Parties",
+    description: "Customer and supplier dues.",
     items: [
       {
         id: "party-statement",
-        label: "Party Statement",
-        description: "Opening balance, running balance, and closing balance for a selected party."
+        label: "Statement",
+        description: "Opening to closing balance."
       },
       {
         id: "aging-report",
-        label: "Aging Report",
-        description: "Outstanding invoices grouped into aging buckets."
+        label: "Aging",
+        description: "Dues by age."
       },
       {
         id: "all-parties",
         label: "All Parties",
-        description: "Master party list with balances and recent activity."
+        description: "Party list and balance."
       }
     ]
   },
   {
     id: "finance",
     title: "Finance",
-    description: "High-level financial performance without accounting clutter.",
+    description: "Profit and tax view.",
     items: [
       {
         id: "profit-loss",
-        label: "Profit & Loss",
-        description: "Simple sales, expenses, and net profit summary."
+        label: "P&L",
+        description: "Sales, expense, profit."
       },
       {
         id: "gst-report",
         label: "GST Report",
-        description: "Sales and purchase GST summary with CGST, SGST, and IGST split."
+        description: "GST summary."
       },
       {
         id: "tds-report",
         label: "TDS Report",
-        description: "Customer and supplier TDS deductions captured from Payment In and Payment Out entries."
+        description: "TDS summary."
       }
     ]
   }

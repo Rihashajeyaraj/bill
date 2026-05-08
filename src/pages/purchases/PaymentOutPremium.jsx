@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  Eye,
   FileDown,
+  FilePenLine,
   FileSpreadsheet,
   Mail,
   Plus,
   Search,
   Save,
+  Trash2,
   X
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -23,7 +26,7 @@ import { useOrganization } from "../../context/OrganizationContext";
 import { purchasesSyncFromRemote } from "../../services/purchases.service";
 import { deletePaymentOutRemote, paymentsSyncFromRemote, syncPaymentOutRemote } from "../../services/payments.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
-import { LS_KEYS, lsGetOrganizationScoped } from "../../services/storage";
+import { isOrganizationScopedStorageEventKey, LS_KEYS, lsGetOrganizationScoped } from "../../services/storage";
 import {
   buildPaymentOutPayload,
   defaultPaymentForm,
@@ -52,7 +55,8 @@ import { formatInputNumberByPreference, normalizeFormattedNumberInput } from "..
 
 const PAYMENT_MODES = ["Cash", "Net Banking", "Cheque", "Card", "UPI"];
 const STATUSES = ["Draft", "Paid", "Applied"];
-const FORM_STEPS = ["Supplier & Country", "Payment Details", "Review & Confirm"];
+const FORM_STEPS = ["Supplier", "Details", "Review"];
+const DEBIT_NOTE_PREMIUM_KEY = "debitNotesPremiumV1";
 
 const ACTION_BAR_BASE =
   "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold";
@@ -393,6 +397,42 @@ export default function PaymentOutPremium() {
     syncReferenceData();
     return () => {
       mounted = false;
+    };
+  }, [country]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const refreshReferences = async () => {
+      try {
+        await Promise.allSettled([syncPartiesFromRemote(), purchasesSyncFromRemote(), paymentsSyncFromRemote()]);
+      } finally {
+        if (!disposed) setRefreshKey((prev) => prev + 1);
+      }
+    };
+
+    const onStorage = (event) => {
+      const key = event?.key || "";
+      if (
+        isOrganizationScopedStorageEventKey(LS_KEYS.parties, key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.purchases, key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.payments, key) ||
+        isOrganizationScopedStorageEventKey(DEBIT_NOTE_PREMIUM_KEY, key)
+      ) {
+        setRefreshKey((prev) => prev + 1);
+      }
+    };
+
+    const onFocus = () => {
+      void refreshReferences();
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      disposed = true;
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
     };
   }, [country]);
 
@@ -1119,36 +1159,44 @@ export default function PaymentOutPremium() {
                             <Badge tone={statusBadge(entry.status)}>{entry.status}</Badge>
                           </td>
                           <td className="px-3 py-3">
-                            <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex flex-nowrap items-center gap-2 whitespace-nowrap">
                               <button
                                 type="button"
                                 onClick={() => openRecord(entry, "view")}
-                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                title="View"
+                                aria-label="View"
+                                className="rounded-xl border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-50"
                               >
-                                View
+                                <Eye className="h-4 w-4" />
                               </button>
                               <button
                                 type="button"
                                 onClick={() => openRecord(entry, "edit")}
                                 disabled={!canEditPayment}
-                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                title="Edit"
+                                aria-label="Edit"
+                                className="rounded-xl border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
-                                Edit
+                                <FilePenLine className="h-4 w-4" />
                               </button>
                               <button
                                 type="button"
                                 onClick={() => removeRecord(entry)}
                                 disabled={!canDeletePayment || entry.status === "Applied"}
-                                className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                title="Delete"
+                                aria-label="Delete"
+                                className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                               >
-                                Delete
+                                <Trash2 className="h-4 w-4" />
                               </button>
                               <button
                                 type="button"
                                 onClick={() => exportPaymentOutPdf(entry)}
-                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                title="Download PDF"
+                                aria-label="Download PDF"
+                                className="rounded-xl border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-50"
                               >
-                                PDF
+                                <FileDown className="h-4 w-4" />
                               </button>
                             </div>
                           </td>

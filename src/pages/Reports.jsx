@@ -394,13 +394,13 @@ function SearchablePartySelect({ label, options, value, onChange, placeholder = 
 
 function ReportSidebar({ sections, activeReport, onSelect }) {
   return (
-    <div className="space-y-2">
+    <div className="grid gap-2 xl:grid-cols-3">
       {sections.map((section) => (
-        <Card key={section.id} className="p-2.5 sm:p-3">
-          <div className="mb-1.5">
-            <p className="text-[13px] font-semibold text-slate-900">{section.title}</p>
+        <Card key={section.id} className="h-full p-2 sm:p-2.5">
+          <div className="mb-1">
+            <p className="text-xs font-semibold text-slate-900">{section.title}</p>
             <p
-              className="mt-0.5 text-[10px] leading-4 text-slate-500"
+              className="mt-0.5 text-[9px] leading-3.5 text-slate-500"
               style={{
                 display: "-webkit-box",
                 WebkitLineClamp: 1,
@@ -423,20 +423,20 @@ function ReportSidebar({ sections, activeReport, onSelect }) {
                   type="button"
                   onClick={() => onSelect(item.id)}
                   className={clsx(
-                    "w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transform-gpu transition-all duration-200 ease-out will-change-transform md:hover:-translate-y-0.5 md:hover:scale-[1.02] md:hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
+                    "w-full cursor-pointer rounded-xl border px-2 py-1.5 text-left transform-gpu transition-all duration-200 ease-out will-change-transform md:hover:-translate-y-0.5 md:hover:scale-[1.02] md:hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
                     isActive
                       ? meta.activeAccent
                       : "border-slate-200 bg-white md:hover:border-slate-300 md:hover:bg-slate-50"
                   )}
                 >
-                  <div className="flex items-start gap-2">
+                  <div className="flex items-start gap-1.5">
                     <div className={clsx("rounded-lg border p-1", meta.accent)}>
-                      <Icon className="h-3 w-3" />
+                      <Icon className="h-2.5 w-2.5" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[12px] font-semibold leading-4">{item.label}</p>
+                      <p className="text-[11px] font-semibold leading-4">{item.label}</p>
                       <p
-                        className={clsx("mt-0.5 text-[10px] leading-4", isActive ? "text-slate-600" : "text-slate-500")}
+                        className={clsx("mt-0.5 text-[9px] leading-3.5", isActive ? "text-slate-600" : "text-slate-500")}
                         style={{
                           display: "-webkit-box",
                           WebkitLineClamp: 1,
@@ -1260,7 +1260,9 @@ export default function Reports() {
   const { currency = "USD", profile: organizationProfile = {} } = useOrganization();
   const { years, selectedYear, selectFinancialYear, activeRange } = useFinancialYears();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [filters, setFilters] = useState(() => getDefaultReportFilters());
+  const [filters, setFilters] = useState(() =>
+    applyFinancialYearRange(getDefaultReportFilters(), selectedYear)
+  );
   const [dataset, setDataset] = useState(() => getReportsDataset(activeRange));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -1726,31 +1728,13 @@ export default function Reports() {
         <Card className="border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{reportResult.error}</Card>
       ) : null}
 
-      <div
-        className="grid gap-4 xl:grid-cols-[minmax(260px,var(--reports-sidebar-width))_14px_minmax(0,1fr)] xl:gap-0"
-        style={{ "--reports-sidebar-width": `${sidebarWidth}px` }}
-      >
-        <div className="min-w-0">
-          <ReportSidebar
-            sections={visibleReportSections}
-            activeReport={activeReport}
-            onSelect={(reportId) => setSearchParams({ report: reportId })}
-          />
-        </div>
+      <ReportSidebar
+        sections={visibleReportSections}
+        activeReport={activeReport}
+        onSelect={(reportId) => setSearchParams({ report: reportId })}
+      />
 
-        <div className="relative hidden xl:flex items-stretch justify-center">
-          <div className="w-px bg-slate-200" />
-          <button
-            type="button"
-            aria-label="Resize reports panel"
-            onMouseDown={handleSidebarResizeStart}
-            className="absolute inset-y-0 left-1/2 flex w-3 -translate-x-1/2 cursor-col-resize items-center justify-center group"
-          >
-            <span className="h-20 w-1 rounded-full bg-slate-300 transition group-hover:bg-slate-500 group-active:bg-slate-700" />
-          </button>
-        </div>
-
-        <div className="min-w-0 space-y-4">
+      <div className="min-w-0 space-y-4">
           {renderFilters()}
 
           {viewModel ? (
@@ -1880,7 +1864,6 @@ export default function Reports() {
               Select a report to begin.
             </Card>
           )}
-        </div>
       </div>
 
       {activeReport === "profit-loss" ? (

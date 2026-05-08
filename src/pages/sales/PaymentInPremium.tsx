@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, FileDown, FileSpreadsheet, Mail, Plus, Save, Search, X } from "lucide-react";
+import { ArrowLeft, Eye, FileDown, FilePenLine, FileSpreadsheet, Mail, Plus, Save, Search, Trash2, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import DateInput from "../../components/DateInput";
 import FieldLabelText from "../../components/FieldLabelText";
@@ -46,10 +46,12 @@ import type { PaymentInFormState } from "../../modules/paymentIn/types";
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { canCreateEntries, canDeleteEntries, canEditEntries, roleTypeLabel } from "../../services/roles";
 import { useOrganization } from "../../context/OrganizationContext";
+import { creditNotesSyncFromRemote } from "../../services/creditNotes.service";
 import { invoicesSyncFromRemote } from "../../services/invoices.service";
 import { deletePaymentInRemote, paymentsSyncFromRemote, syncPaymentInRemote } from "../../services/payments.service";
 import { salesProformasSyncFromRemote } from "../../services/proformas.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
+import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
 import { formatInputNumberByPreference, normalizeFormattedNumberInput } from "../../lib/formatPreferences";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
@@ -58,8 +60,9 @@ import PaymentInSkeleton from "../../modules/paymentIn/PaymentInSkeleton";
 import AuditDrawer from "../../modules/paymentIn/AuditDrawer";
 import { useGlobalLoadingBridge } from "../../hooks/useGlobalLoadingBridge";
 
-const STEPS = ["Customer & Country", "Payment Details", "Review & Confirm"];
+const STEPS = ["Customer", "Details", "Review"];
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
+const CREDIT_NOTE_PREMIUM_KEY = "creditNotesPremiumV1";
 
 type PanelMode = "feed" | "flow";
 type FlowMode = "create" | "edit" | "view";
@@ -575,7 +578,8 @@ export default function PaymentInPremium() {
           syncPartiesFromRemote(),
           invoicesSyncFromRemote(),
           salesProformasSyncFromRemote(),
-          paymentsSyncFromRemote()
+          paymentsSyncFromRemote(),
+          creditNotesSyncFromRemote()
         ]);
       } catch {
         // Continue with local cache.
@@ -586,6 +590,50 @@ export default function PaymentInPremium() {
     syncReferenceData();
     return () => {
       mounted = false;
+    };
+  }, [country]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const refreshReferences = async () => {
+      try {
+        await Promise.allSettled([
+          syncPartiesFromRemote(),
+          invoicesSyncFromRemote(),
+          salesProformasSyncFromRemote(),
+          paymentsSyncFromRemote(),
+          creditNotesSyncFromRemote()
+        ]);
+      } finally {
+        if (!disposed) setRefreshKey((prev) => prev + 1);
+      }
+    };
+
+    const onStorage = (event: StorageEvent) => {
+      const key = event?.key || "";
+      if (
+        isOrganizationScopedStorageEventKey(LS_KEYS.parties, key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.invoices, key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.sales_proformas, key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.payments, key) ||
+        isOrganizationScopedStorageEventKey(LS_KEYS.creditNotes, key) ||
+        isOrganizationScopedStorageEventKey(CREDIT_NOTE_PREMIUM_KEY, key)
+      ) {
+        setRefreshKey((prev) => prev + 1);
+      }
+    };
+
+    const onFocus = () => {
+      void refreshReferences();
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      disposed = true;
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
     };
   }, [country]);
 
@@ -1410,36 +1458,44 @@ export default function PaymentInPremium() {
                               </span>
                             </td>
                             <td className="px-3 py-3">
-                              <div className="flex flex-wrap gap-2">
+                              <div className="flex flex-nowrap items-center gap-2 whitespace-nowrap">
                                 <button
                                   type="button"
                                   onClick={() => openFlow(record, "view")}
-                                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                  title="View"
+                                  aria-label="View"
+                                  className="rounded-xl border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-50"
                                 >
-                                  View
+                                  <Eye className="h-4 w-4" />
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => openFlow(record, "edit")}
                                   disabled={!canEditPayment || (record.status === "Applied" && !canReopenWithinWindow(record))}
-                                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                  title="Edit"
+                                  aria-label="Edit"
+                                  className="rounded-xl border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
-                                  Edit
+                                  <FilePenLine className="h-4 w-4" />
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => exportSinglePaymentInPdf(record)}
-                                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                  title="Download PDF"
+                                  aria-label="Download PDF"
+                                  className="rounded-xl border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-50"
                                 >
-                                  PDF
+                                  <FileDown className="h-4 w-4" />
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => removeRecord(record)}
                                   disabled={!canDeletePayment || record.status === "Applied"}
-                                  className="rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                  title="Delete"
+                                  aria-label="Delete"
+                                  className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
-                                  Delete
+                                  <Trash2 className="h-4 w-4" />
                                 </button>
                               </div>
                             </td>

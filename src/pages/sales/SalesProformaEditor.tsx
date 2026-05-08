@@ -944,12 +944,6 @@ export default function SalesProformaEditor() {
                   disabled={locked}
                   min={nextIsoDate(form.proformaDate)}
                   requireFourDigitYear
-                  onValidationError={() =>
-                    toast.warning(
-                      "Invalid Valid Till",
-                      "Valid Till year must have 4 digits. Enter the date in DD/MM/YYYY format, for example 30/04/2026."
-                    )
-                  }
                   onRawChange={(nextRawValue) => updateForm({ validTillRaw: nextRawValue })}
                   onChange={(nextValue) => updateForm({ validTill: nextValue })}
                 />

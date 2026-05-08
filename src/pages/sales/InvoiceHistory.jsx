@@ -26,12 +26,13 @@ function qtyFromInvoice(invoice) {
 
 function resolveStatus(invoice) {
   const rawStatus = String(invoice?.status || "").trim().toLowerCase();
-  if (rawStatus) return rawStatus;
+  if (rawStatus === "cancelled" || rawStatus === "draft") return rawStatus;
   const grandTotal = Number(invoice?.totals?.grandTotal || 0);
   const balance = Number(invoice?.remainingBalance ?? invoice?.totals?.balance ?? grandTotal);
   if (grandTotal <= 0) return "draft";
   if (balance <= 0) return "paid";
   if (balance < grandTotal) return "partial";
+  if (rawStatus) return rawStatus;
   return "issued";
 }
 

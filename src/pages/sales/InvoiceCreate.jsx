@@ -284,6 +284,7 @@ export default function InvoiceCreate() {
   const [loadedInvoiceId, setLoadedInvoiceId] = useState("");
   const [loadedInvoiceRecord, setLoadedInvoiceRecord] = useState(null);
   const [loadingExistingInvoice, setLoadingExistingInvoice] = useState(false);
+  const [savingInvoice, setSavingInvoice] = useState(false);
   const [lastSavedInvoiceId, setLastSavedInvoiceId] = useState("");
   const [printInvoiceData, setPrintInvoiceData] = useState(null);
   const [printQueued, setPrintQueued] = useState(false);
@@ -298,6 +299,7 @@ export default function InvoiceCreate() {
   const printContainerRef = useRef(null);
   const pendingPrintWindowRef = useRef(null);
   const previewAutoOpenedRef = useRef(false);
+  const savingInvoiceRef = useRef(false);
   const [markAsPaid, setMarkAsPaid] = useState(false);
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [paymentDate, setPaymentDate] = useState("");
@@ -2040,91 +2042,97 @@ export default function InvoiceCreate() {
   }
 
   async function saveInvoice({ silent = false } = {}) {
-    if (isEditMode ? !canEditInvoice : !canCreateInvoice) {
-      alert(isEditMode ? "You do not have permission to edit invoices." : "You do not have permission to create invoices.");
-      return null;
-    }
+    if (savingInvoiceRef.current) return null;
+    savingInvoiceRef.current = true;
+    setSavingInvoice(true);
 
-    const suggestedInvoiceNo = String(
-      companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }) || ""
-    ).trim();
-    const normalizedInvoiceNo = String(invoiceNo || "").trim() || suggestedInvoiceNo;
-    const isManualInvoiceNo = !!String(invoiceNo || "").trim() && String(invoiceNo || "").trim() !== suggestedInvoiceNo;
-    const nextErrors = {};
-    if (!partyId) nextErrors.customer = "This field is required";
-    if (!normalizedInvoiceNo) nextErrors.invoiceNo = "This field is required";
-    if (normalizedInvoiceNo && isManualInvoiceNo) {
-      const duplicateExists = invoicesList().some(
-        (entry) =>
-          String(entry?.id || "").trim() !== String(activeInvoiceId || "").trim() &&
-          String(entry?.invoiceNo || "").trim().toLowerCase() === normalizedInvoiceNo.toLowerCase()
-      );
-      if (duplicateExists) nextErrors.invoiceNo = "Invoice number already exists";
-    }
-    if (!String(invoiceDate || "").trim()) nextErrors.invoiceDate = "This field is required";
-    if (markAsPaid && paymentAmount <= 0) nextErrors.paidAmount = "This field is required";
-    if (markAsPaid && !paymentDate) nextErrors.paymentDate = "This field is required";
-    if (markAsPaid && paymentMode === "Cheque" && !String(chequeNo || "").trim()) {
-      nextErrors.chequeNo = "This field is required";
-    }
-    if (markAsPaid && paymentMode === "Bank Transfer") {
-      if (!String(bankName || "").trim()) {
-        nextErrors.bankName = "This field is required";
-      }
-      if (!String(bankAccount || "").trim()) {
-        nextErrors.bankAccount = "This field is required";
-      }
-    }
-    if (
-      markAsPaid &&
-      (paymentMode === "Bank Transfer" ||
-        paymentMode === "Card" ||
-        paymentMode === "UPI" ||
-        paymentMode === "Online Gateway") &&
-      !String(transactionId || "").trim()
-    ) {
-      nextErrors.transactionId = "This field is required";
-    }
-    if (Object.keys(nextErrors).length) {
-      setFormErrors(nextErrors);
-      return null;
-    }
-    setFormErrors({});
-
-    let effectiveLines = lines;
-    let effectiveItems = items;
     try {
-      const resolved = await resolveInvoiceLinesWithItems(lines);
-      effectiveLines = resolved.lines;
-      effectiveItems = resolved.items;
-      if (resolved.didCreateService) {
-        setItems(effectiveItems);
+      if (isEditMode ? !canEditInvoice : !canCreateInvoice) {
+        alert(isEditMode ? "You do not have permission to edit invoices." : "You do not have permission to create invoices.");
+        return null;
       }
-      setLines(effectiveLines);
-    } catch (resolveError) {
-      alert(resolveError?.message || "Failed to resolve invoice items.");
-      return null;
-    }
-    const effectiveComputed = computeInvoiceSummary(effectiveLines, effectiveItems);
-    const validComputedLines = effectiveComputed.enriched.filter((line) => line?.itemId);
-    if (!validComputedLines.length) {
-      setFormErrors((prev) => ({ ...prev, lines: "This field is required" }));
-      return null;
-    }
-    clearFormError("lines");
-    const effectiveStockByItemId = buildStockMap(effectiveItems);
-    const effectiveStockIssues = collectStockValidationIssues(
-      effectiveComputed.enriched,
-      effectiveLines,
-      effectiveStockByItemId
-    );
-    const productLineItems = validComputedLines
-      .map((line) => ({
-        line,
-        item: effectiveItems.find((entry) => String(entry?.id || "") === String(line?.itemId || ""))
-      }))
-      .filter((entry) => entry?.item?.type === "Product" && entry?.item?.trackInventory);
-    const effectiveBatchMap = { ...itemBatchMap };
+
+      const suggestedInvoiceNo = String(
+        companyPeekDocumentNumber("invoice", { dateValue: invoiceDate }) || ""
+      ).trim();
+      const normalizedInvoiceNo = String(invoiceNo || "").trim() || suggestedInvoiceNo;
+      const isManualInvoiceNo =
+        !!String(invoiceNo || "").trim() && String(invoiceNo || "").trim() !== suggestedInvoiceNo;
+      const nextErrors = {};
+      if (!partyId) nextErrors.customer = "This field is required";
+      if (!normalizedInvoiceNo) nextErrors.invoiceNo = "This field is required";
+      if (normalizedInvoiceNo && isManualInvoiceNo) {
+        const duplicateExists = invoicesList().some(
+          (entry) =>
+            String(entry?.id || "").trim() !== String(activeInvoiceId || "").trim() &&
+            String(entry?.invoiceNo || "").trim().toLowerCase() === normalizedInvoiceNo.toLowerCase()
+        );
+        if (duplicateExists) nextErrors.invoiceNo = "Invoice number already exists";
+      }
+      if (!String(invoiceDate || "").trim()) nextErrors.invoiceDate = "This field is required";
+      if (markAsPaid && paymentAmount <= 0) nextErrors.paidAmount = "This field is required";
+      if (markAsPaid && !paymentDate) nextErrors.paymentDate = "This field is required";
+      if (markAsPaid && paymentMode === "Cheque" && !String(chequeNo || "").trim()) {
+        nextErrors.chequeNo = "This field is required";
+      }
+      if (markAsPaid && paymentMode === "Bank Transfer") {
+        if (!String(bankName || "").trim()) {
+          nextErrors.bankName = "This field is required";
+        }
+        if (!String(bankAccount || "").trim()) {
+          nextErrors.bankAccount = "This field is required";
+        }
+      }
+      if (
+        markAsPaid &&
+        (paymentMode === "Bank Transfer" ||
+          paymentMode === "Card" ||
+          paymentMode === "UPI" ||
+          paymentMode === "Online Gateway") &&
+        !String(transactionId || "").trim()
+      ) {
+        nextErrors.transactionId = "This field is required";
+      }
+      if (Object.keys(nextErrors).length) {
+        setFormErrors(nextErrors);
+        return null;
+      }
+      setFormErrors({});
+
+      let effectiveLines = lines;
+      let effectiveItems = items;
+      try {
+        const resolved = await resolveInvoiceLinesWithItems(lines);
+        effectiveLines = resolved.lines;
+        effectiveItems = resolved.items;
+        if (resolved.didCreateService) {
+          setItems(effectiveItems);
+        }
+        setLines(effectiveLines);
+      } catch (resolveError) {
+        alert(resolveError?.message || "Failed to resolve invoice items.");
+        return null;
+      }
+      const effectiveComputed = computeInvoiceSummary(effectiveLines, effectiveItems);
+      const validComputedLines = effectiveComputed.enriched.filter((line) => line?.itemId);
+      if (!validComputedLines.length) {
+        setFormErrors((prev) => ({ ...prev, lines: "This field is required" }));
+        return null;
+      }
+      clearFormError("lines");
+      const effectiveStockByItemId = buildStockMap(effectiveItems);
+      const effectiveStockIssues = collectStockValidationIssues(
+        effectiveComputed.enriched,
+        effectiveLines,
+        effectiveStockByItemId
+      );
+      const productLineItems = validComputedLines
+        .map((line) => ({
+          line,
+          item: effectiveItems.find((entry) => String(entry?.id || "") === String(line?.itemId || ""))
+        }))
+        .filter((entry) => entry?.item?.type === "Product" && entry?.item?.trackInventory);
+      const effectiveBatchMap = { ...itemBatchMap };
 
     if (productLineItems.length) {
       const missingBatchIds = Array.from(
@@ -2232,7 +2240,6 @@ export default function InvoiceCreate() {
       taxMode: effectiveComputed.tax.taxMode,
       supplyType: effectiveComputed.tax.supplyType || null
     };
-    try {
       const savedInvoiceId = isEditMode
         ? await invoicesUpdate(activeInvoiceId, payload)
         : await invoicesCreate(payload);
@@ -2378,7 +2385,7 @@ export default function InvoiceCreate() {
       setBankAccount("");
       setPaymentNotes("");
       setFormErrors({});
-      await invoicesSyncFromRemote();
+      void invoicesSyncFromRemote().catch(() => {});
       if (isEditMode) {
         setInvoiceNo(normalizedInvoiceNo);
         setLoadedInvoiceId(String(savedInvoiceId || activeInvoiceId || "").trim());
@@ -2417,6 +2424,9 @@ export default function InvoiceCreate() {
         });
       }
       return null;
+    } finally {
+      savingInvoiceRef.current = false;
+      setSavingInvoice(false);
     }
   }
 
@@ -2493,11 +2503,16 @@ export default function InvoiceCreate() {
               </button>
               <GradientButton
                 onClick={saveInvoice}
-                disabled={(isEditMode ? !canEditInvoice : !canCreateInvoice) || hasStockErrors || loadingExistingInvoice}
+                disabled={
+                  (isEditMode ? !canEditInvoice : !canCreateInvoice) ||
+                  hasStockErrors ||
+                  loadingExistingInvoice ||
+                  savingInvoice
+                }
                 className="h-11 w-full justify-center disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 <Save className="h-4 w-4" />
-                {isEditMode ? "Save Changes" : "Save"}
+                {savingInvoice ? "Saving..." : isEditMode ? "Save Changes" : "Save"}
               </GradientButton>
             </div>
           }
