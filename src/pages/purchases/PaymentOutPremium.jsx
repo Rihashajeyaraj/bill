@@ -1427,7 +1427,7 @@ export default function PaymentOutPremium() {
                           >
                             {TDS_CATEGORY_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>
-                                {option.label} ({option.rate}%)
+                                {option.value === "none" ? "None (0%)" : option.label}
                               </option>
                             ))}
                             <option value="custom">Custom</option>

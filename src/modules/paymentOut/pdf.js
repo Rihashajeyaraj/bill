@@ -23,7 +23,7 @@ function pdfMoney(value, currency = "") {
 }
 
 function drawSummaryRow(doc, label, value, x, y, width, height, emphasized = false) {
-  const valueFontSize = emphasized ? 10 : 9;
+  let valueFontSize = emphasized ? 10 : 9;
   let labelFontSize = 8;
   let valueWidth = Math.max(26, doc.getTextWidth(value) + 8);
   valueWidth = Math.min(width * 0.48, valueWidth);
@@ -38,11 +38,18 @@ function drawSummaryRow(doc, label, value, x, y, width, height, emphasized = fal
     doc.setFontSize(labelFontSize);
   }
 
+  doc.setFontSize(valueFontSize);
+  while (valueFontSize > 7 && doc.getTextWidth(value) > x + width - dividerX - 6) {
+    valueFontSize -= 0.5;
+    doc.setFontSize(valueFontSize);
+  }
+
   doc.roundedRect(x, y, width, height, 2, 2);
   doc.line(dividerX, y, dividerX, y + height);
-  doc.text(label, x + 3, y + height / 2 + 1);
+  doc.setFontSize(labelFontSize);
+  doc.text(label, x + 3, y + height / 2 + 1.2, { baseline: "middle" });
   doc.setFontSize(valueFontSize);
-  doc.text(value, x + width - 3, y + height / 2 + 1, { align: "right" });
+  doc.text(value, x + width - 3, y + height / 2 + 1.2, { align: "right", baseline: "middle" });
 }
 
 function ensurePdfSpace(doc, y, requiredHeight, margin = 14) {
@@ -291,25 +298,83 @@ export function exportPaymentOutPdf(record) {
     y += 2;
     doc.line(margin, y, contentRight, y);
     y += 6;
-    y = ensurePdfSpace(doc, y, 26);
-    drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, 42, 9);
-    drawSummaryRow(doc, "Cash Paid", pdfMoney(totalPaid, record.currency), margin + 46, y, 42, 9);
-    drawSummaryRow(doc, "TDS", pdfMoney(totalTds, record.currency), margin + 92, y, 42, 9);
-    drawSummaryRow(doc, "Balance", pdfMoney(totalBalance, record.currency), margin + 138, y, 44, 9, true);
+    const summaryGap = 10;
+    const summaryWidth = (contentWidth - summaryGap) / 2;
+    y = ensurePdfSpace(doc, y, 36);
+    drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, summaryWidth, 9);
+    drawSummaryRow(
+      doc,
+      "Cash Paid",
+      pdfMoney(totalPaid, record.currency),
+      margin + summaryWidth + summaryGap,
+      y,
+      summaryWidth,
+      9
+    );
     y += 12;
-    drawSummaryRow(doc, "Total Settled", pdfMoney(record?.totals?.totalSettled, record.currency), margin + 92, y, 90, 9, true);
+    drawSummaryRow(doc, "TDS", pdfMoney(totalTds, record.currency), margin, y, summaryWidth, 9);
+    drawSummaryRow(
+      doc,
+      "Balance",
+      pdfMoney(totalBalance, record.currency),
+      margin + summaryWidth + summaryGap,
+      y,
+      summaryWidth,
+      9,
+      true
+    );
+    y += 12;
+    drawSummaryRow(
+      doc,
+      "Total Settled",
+      pdfMoney(record?.totals?.totalSettled, record.currency),
+      margin + summaryWidth + summaryGap,
+      y,
+      summaryWidth,
+      9,
+      true
+    );
     y += 14;
   } else {
-    y = ensurePdfSpace(doc, y, 28);
+    const summaryGap = 10;
+    const summaryWidth = (contentWidth - summaryGap) / 2;
+    y = ensurePdfSpace(doc, y, 36);
     const totalAmount = parseNumber(record?.totals?.amountPaid);
     const totalPaid = parseNumber(record?.totals?.amountApplied);
     const totalBalance = parseNumber(record?.totals?.unappliedAmount);
-    drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, 42, 9);
-    drawSummaryRow(doc, "Cash Paid", pdfMoney(totalPaid, record.currency), margin + 46, y, 42, 9);
-    drawSummaryRow(doc, "Cash Advance", pdfMoney(totalBalance, record.currency), margin + 92, y, 90, 9, true);
+    drawSummaryRow(doc, "Total Amount", pdfMoney(totalAmount, record.currency), margin, y, summaryWidth, 9);
+    drawSummaryRow(
+      doc,
+      "Cash Paid",
+      pdfMoney(totalPaid, record.currency),
+      margin + summaryWidth + summaryGap,
+      y,
+      summaryWidth,
+      9
+    );
     y += 12;
-    drawSummaryRow(doc, "TDS Deducted", pdfMoney(record?.totals?.tdsAmount, record.currency), margin, y, 86, 9);
-    drawSummaryRow(doc, "Total Settled", pdfMoney(record?.totals?.totalSettled, record.currency), margin + 96, y, 86, 9, true);
+    drawSummaryRow(doc, "TDS Deducted", pdfMoney(record?.totals?.tdsAmount, record.currency), margin, y, summaryWidth, 9);
+    drawSummaryRow(
+      doc,
+      "Total Settled",
+      pdfMoney(record?.totals?.totalSettled, record.currency),
+      margin + summaryWidth + summaryGap,
+      y,
+      summaryWidth,
+      9,
+      true
+    );
+    y += 12;
+    drawSummaryRow(
+      doc,
+      "Cash Advance",
+      pdfMoney(totalBalance, record.currency),
+      margin + summaryWidth + summaryGap,
+      y,
+      summaryWidth,
+      9,
+      true
+    );
     y += 14;
   }
 

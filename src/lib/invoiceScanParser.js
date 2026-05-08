@@ -10,6 +10,33 @@ function normalizeKey(value) {
   return cleanLine(value).toLowerCase();
 }
 
+const MONTH_INDEX = {
+  jan: 1,
+  january: 1,
+  feb: 2,
+  february: 2,
+  mar: 3,
+  march: 3,
+  apr: 4,
+  april: 4,
+  may: 5,
+  jun: 6,
+  june: 6,
+  jul: 7,
+  july: 7,
+  aug: 8,
+  august: 8,
+  sep: 9,
+  sept: 9,
+  september: 9,
+  oct: 10,
+  october: 10,
+  nov: 11,
+  november: 11,
+  dec: 12,
+  december: 12
+};
+
 const INVALID_INVOICE_TOKENS = new Set([
   "date",
   "invoice",
@@ -104,6 +131,13 @@ function toDisplayDate(day, month, year) {
   return `${String(dd).padStart(2, "0")}-${String(mm).padStart(2, "0")}-${String(yyyy).padStart(4, "0")}`;
 }
 
+function toDisplayDateFromMonthName(day, monthName, year) {
+  const normalizedMonth = String(monthName || "").trim().toLowerCase();
+  const month = MONTH_INDEX[normalizedMonth];
+  if (!month) return "";
+  return toDisplayDate(day, month, year);
+}
+
 function isValidDateString(value) {
   const match = String(value || "").match(/^(\d{2})-(\d{2})-(\d{4})$/);
   if (!match) return false;
@@ -164,6 +198,7 @@ function extractInvoiceNumber(lines, rawText) {
 function extractDate(lines, rawText) {
   const preferredPatterns = [
     /\b(?:invoice\s*date|bill\s*date|date)\s*[:#-]?\s*(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\b/i,
+    /\b(?:invoice\s*date|bill\s*date|statement\s*dt|statement\s*date|due\s*date|date)\s*[:#-]?\s*(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})\b/i,
     /\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\b/
   ];
 
@@ -171,14 +206,23 @@ function extractDate(lines, rawText) {
     for (const pattern of preferredPatterns) {
       const match = line.match(pattern);
       if (!match) continue;
-      const formatted = toDisplayDate(match[1], match[2], match[3]);
+      const formatted =
+        /^[A-Za-z]{3,9}$/.test(match[2] || "")
+          ? toDisplayDateFromMonthName(match[1], match[2], match[3])
+          : toDisplayDate(match[1], match[2], match[3]);
       if (formatted && isValidDateString(formatted)) return formatted;
     }
   }
 
-  const fallback = String(rawText || "").match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\b/);
-  if (!fallback) return "";
-  const formatted = toDisplayDate(fallback[1], fallback[2], fallback[3]);
+  const fallbackNumeric = String(rawText || "").match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\b/);
+  if (fallbackNumeric) {
+    const formatted = toDisplayDate(fallbackNumeric[1], fallbackNumeric[2], fallbackNumeric[3]);
+    if (isValidDateString(formatted)) return formatted;
+  }
+
+  const fallbackNamed = String(rawText || "").match(/\b(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})\b/);
+  if (!fallbackNamed) return "";
+  const formatted = toDisplayDateFromMonthName(fallbackNamed[1], fallbackNamed[2], fallbackNamed[3]);
   return isValidDateString(formatted) ? formatted : "";
 }
 
@@ -409,11 +453,195 @@ function parseHuesGranites(lines) {
   };
 }
 
+function extractAirtelStatementReference(lines, fallbackDate) {
+  const patterns = [
+    /\b(?:account\s*(?:no|number)|customer\s*(?:id|no|number)|relationship\s*(?:no|number)|bill\s*(?:no|number))\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{5,})\b/i,
+    /\b(?:your\s*number\s*of\s*connections|service\s*id)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{5,})\b/i
+  ];
+  const text = lines.join("\n");
+  for (const pattern of patterns) {
+    const direct = sanitizeInvoiceNumber(text.match(pattern)?.[1] || "");
+    if (direct) return direct;
+  }
+
+  const parsedDate = cleanLine(fallbackDate || "");
+  if (/^\d{2}-\d{2}-\d{4}$/.test(parsedDate)) {
+    const [dd, mm, yyyy] = parsedDate.split("-");
+    return `AIRTEL-${yyyy}${mm}${dd}`;
+  }
+  return "AIRTEL-STATEMENT";
+}
+
+function extractAirtelStatementTotal(lines) {
+  const priorityPatterns = [
+    /\bthis month'?s charges\b.*?(\d{1,3}(?:,\d{2,3})*(?:\.\d{2})|\d+\.\d{2})\b/i,
+    /\btotal\s*\(incl\.?\s*taxes\)\b.*?(\d{1,3}(?:,\d{2,3})*(?:\.\d{2})|\d+\.\d{2})\b/i,
+    /\bplan change\b.*?(\d{1,3}(?:,\d{2,3})*(?:\.\d{2})|\d+\.\d{2})\b/i,
+    /\bamount payable\b.*?(\d{1,3}(?:,\d{2,3})*(?:\.\d{2})|\d+\.\d{2})\b/i
+  ];
+
+  for (const line of lines) {
+    for (const pattern of priorityPatterns) {
+      const amount = parseNumber(line.match(pattern)?.[1] || "");
+      if (amount !== null && amount > 0) return formatAmount(amount);
+    }
+  }
+
+  return extractTotal(lines);
+}
+
+function parseAirtelStatementItems(lines) {
+  const items = [];
+  let inChargesSection = false;
+  const skipAirtelItemLine = (value) =>
+    /^(services|service|no\. of connections|plan\/pack charges|other charges|total)$/i.test(value) ||
+    /^(taxes\s*\(gst\)|this month'?s charges|last bill amount|total\s*\(incl\.?\s*taxes\)|check invoices for more details)$/i.test(value);
+  const isLikelyAirtelServiceDescription = (value) =>
+    /\bfiber\b|\bbroadband\b|\bwifi\b|\bwi-fi\b|\bconnection\b|\bairtel black\b/i.test(value);
+
+  for (const line of lines) {
+    if (/^this month'?s charges summary\b/i.test(normalizeKey(line))) {
+      inChargesSection = true;
+      continue;
+    }
+    if (!inChargesSection) continue;
+    if (/^changes this month\b/i.test(normalizeKey(line))) break;
+    if (skipAirtelItemLine(cleanLine(line))) {
+      continue;
+    }
+
+    const match = line.match(
+      /^(.+?)\s+(\d+)\s+(\d{1,3}(?:,\d{2,3})*(?:\.\d{2})|\d+\.\d{2})\s+(\d{1,3}(?:,\d{2,3})*(?:\.\d{2})|\d+\.\d{2})\s+(\d{1,3}(?:,\d{2,3})*(?:\.\d{2})|\d+\.\d{2})$/i
+    );
+    if (!match) continue;
+
+    const description = cleanLine(match[1]);
+    const qty = parseNumber(match[2]) || 1;
+    const rate = parseNumber(match[3]) || parseNumber(match[5]) || 0;
+    const amount = parseNumber(match[5]) || 0;
+    if (!description || amount <= 0 || !isLikelyAirtelServiceDescription(description)) continue;
+
+    items.push({
+      description,
+      qty: round3(qty),
+      unit: "service",
+      rate: round2(rate),
+      amount: round2(amount),
+      tax: 0
+    });
+  }
+
+  if (items.length) {
+    return dedupeItems(items);
+  }
+
+  for (const line of lines) {
+    if (/^this month'?s charges summary\b/i.test(normalizeKey(line))) {
+      inChargesSection = true;
+      continue;
+    }
+    if (!inChargesSection) continue;
+    if (/^changes this month\b/i.test(normalizeKey(line))) break;
+
+    const normalized = cleanLine(line);
+    if (!normalized) continue;
+    if (skipAirtelItemLine(normalized)) {
+      continue;
+    }
+
+    if (isLikelyAirtelServiceDescription(normalized)) {
+      const amounts = extractAmountCandidates(normalized);
+      const amount = amounts.length ? amounts[amounts.length - 1] : 0;
+      const description = cleanLine(
+        normalized.replace(/\s+\d+(?:\.\d+)?(?:\s+\d+(?:,\d{2,3})*(?:\.\d{2})?){1,4}\s*$/i, "")
+      );
+      if (!description) continue;
+      items.push({
+        description,
+        qty: 1,
+        unit: "service",
+        rate: round2(amount || 0),
+        amount: round2(amount || 0),
+        tax: 0
+      });
+    }
+  }
+
+  if (items.length) {
+    return dedupeItems(items).slice(0, 1);
+  }
+
+  return [
+    {
+      description: "Fiber Monthly Statement",
+      qty: 1,
+      unit: "service",
+      rate: round2(extractAirtelServiceCharge(lines) || parseNumber(extractAirtelStatementTotal(lines)) || 0),
+      amount: round2(extractAirtelServiceCharge(lines) || parseNumber(extractAirtelStatementTotal(lines)) || 0),
+      tax: 0
+    }
+  ];
+}
+
+function extractAirtelServiceCharge(lines) {
+  const preferredLine = lines.find((line) => {
+    const normalized = cleanLine(line);
+    return /\bfiber\b|\bwifi\b|\bwi-fi\b|\bbroadband\b/i.test(normalized) && !/plan change/i.test(normalized);
+  });
+
+  if (preferredLine) {
+    const amounts = extractAmountCandidates(preferredLine).filter((amount) => amount > 0);
+    if (amounts.length) {
+      return amounts[amounts.length - 1];
+    }
+  }
+
+  const planChangeLine = lines.find((line) => /plan change/i.test(cleanLine(line)));
+  if (planChangeLine) {
+    const amounts = extractAmountCandidates(planChangeLine).filter((amount) => amount > 0);
+    if (amounts.length) {
+      return amounts[amounts.length - 1];
+    }
+  }
+
+  const changeDetailLine = lines.find((line) => /advance rental plan activated/i.test(cleanLine(line)));
+  if (changeDetailLine) {
+    const amounts = extractAmountCandidates(changeDetailLine).filter((amount) => amount > 0);
+    if (amounts.length) {
+      return amounts[amounts.length - 1];
+    }
+  }
+
+  return 0;
+}
+
+function parseAirtelStatement(lines) {
+  const text = lines.join("\n");
+  const date = extractDate(lines, text);
+  return {
+    supplier: "Airtel",
+    invoiceNumber: extractAirtelStatementReference(lines, date),
+    date,
+    total: extractAirtelStatementTotal(lines),
+    supplierPhone: "",
+    items: parseAirtelStatementItems(lines),
+    city: "",
+    state: "",
+    address: "",
+    country: "India"
+  };
+}
+
 const VENDOR_PARSERS = [
   {
     id: "hues_granites",
     match: (text) => /hues\s+granites/i.test(text),
     parse: parseHuesGranites
+  },
+  {
+    id: "airtel_statement",
+    match: (text) => /\bairtel\b/i.test(text) && /\bfiber monthly statement\b/i.test(text),
+    parse: parseAirtelStatement
   }
 ];
 
