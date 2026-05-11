@@ -306,7 +306,7 @@ export default function PaymentOutPremium() {
   const amountApplied = form.allocations.reduce((sum, line) => sum + parseNumber(line.applyAmount), 0);
   const unappliedAmount = Math.max(0, amountPaid - amountApplied);
   const totalSettled = amountPaid + tdsAmount;
-  const outstandingAfter = supplierOutstandingBefore - totalSettled;
+  const outstandingAfter = Math.max(0, supplierOutstandingBefore - totalSettled);
 
   const filteredPayments = useMemo(() => {
     const query = normalizeText(search);

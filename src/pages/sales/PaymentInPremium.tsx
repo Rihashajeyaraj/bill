@@ -51,7 +51,7 @@ import { invoicesSyncFromRemote } from "../../services/invoices.service";
 import { deletePaymentInRemote, paymentsSyncFromRemote, syncPaymentInRemote } from "../../services/payments.service";
 import { salesProformasSyncFromRemote } from "../../services/proformas.service";
 import { syncPartiesFromRemote } from "../../modules/parties/store";
-import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/storage";
+import { isOrganizationScopedStorageEventKey, LS_KEYS, lsGetOrganizationScoped } from "../../services/storage";
 import { formatInputNumberByPreference, normalizeFormattedNumberInput } from "../../lib/formatPreferences";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
@@ -109,6 +109,13 @@ function normalizePhoneForLookup(value: unknown) {
   return digits || "0";
 }
 
+function normalizeIdentityName(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 function customerAddressSummary(customer: any) {
   return [customer?.address, customer?.state, customer?.country]
     .map((value) => String(value || "").trim())
@@ -124,6 +131,22 @@ function numberInputValue(value: unknown) {
 
 function documentTypeLabel(documentType: "invoice" | "proforma") {
   return documentType === "proforma" ? "Proforma" : "Invoice";
+}
+
+function paymentLinkedDocumentSummary(record: Pick<PaymentInRecord, "allocations">) {
+  const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
+  if (!allocations.length) return "-";
+
+  const labels = allocations
+    .map((line) => {
+      const invoiceNo = String(line?.invoiceNo || "").trim();
+      if (!invoiceNo) return "";
+      return `${documentTypeLabel((line?.documentType || "invoice") as "invoice" | "proforma")} ${invoiceNo}`;
+    })
+    .filter(Boolean);
+
+  if (!labels.length) return "-";
+  return labels.join(", ");
 }
 
 function formatTdsPercent(value: unknown) {
@@ -231,6 +254,97 @@ function buildDocumentGstLines({
   }
 
   return [{ label: "IGST", value: totalTax }];
+}
+
+function fallbackOpenInvoiceFromStorage(
+  country: CountryCode,
+  invoiceId: string,
+  customers: Array<{ id: string; name?: string; phone?: string; state?: string }>
+): CustomerOpenInvoice | null {
+  const invoices = lsGetOrganizationScoped(LS_KEYS.invoices, []);
+  const source = Array.isArray(invoices) ? invoices : [];
+  const invoice = source.find((entry: any) => String(entry?.id || entry?.invoiceId || entry?.invoice_id || "").trim() === invoiceId);
+  if (!invoice) return null;
+
+  const total = Math.max(
+    0,
+    parseNumber(
+      invoice?.totals?.grandTotal ??
+        invoice?.totals?.finalTotal ??
+        invoice?.totals?.total ??
+        invoice?.grandTotal ??
+        invoice?.finalTotal ??
+        invoice?.total ??
+        invoice?.amount
+    )
+  );
+  const storedBalance = Math.max(
+    0,
+    parseNumber(invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoice?.balanceAmount ?? total)
+  );
+  if (storedBalance <= 0) return null;
+
+  const rawCustomerId = String(
+    invoice?.partyId || invoice?.party_id || invoice?.customerId || invoice?.customer_id || invoice?.buyer?.id || ""
+  ).trim();
+  const rawCustomerName = String(
+    invoice?.partyName || invoice?.party_name || invoice?.customerName || invoice?.customer_name || invoice?.buyer?.name || "Customer"
+  ).trim();
+  const rawCustomerPhone = normalizePhoneForLookup(
+    invoice?.phone ||
+      invoice?.partyPhone ||
+      invoice?.party_phone ||
+      invoice?.customerPhone ||
+      invoice?.customer_phone ||
+      invoice?.buyer?.phone ||
+      ""
+  );
+
+  const matchedCustomer =
+    customers.find((entry) => rawCustomerId && String(entry?.id || "").trim() === rawCustomerId) ||
+    customers.find((entry) => {
+      if (normalizeIdentityName(entry?.name) !== normalizeIdentityName(rawCustomerName)) return false;
+      const customerPhone = normalizePhoneForLookup(entry?.phone || "");
+      if (rawCustomerPhone && customerPhone) return rawCustomerPhone === customerPhone;
+      return true;
+    }) ||
+    null;
+
+  return {
+    id: invoiceId,
+    invoiceNo: String(invoice?.invoiceNo || invoice?.invoice_no || invoiceId).trim(),
+    country,
+    customerId: String(matchedCustomer?.id || rawCustomerId || rawCustomerName || "unknown_customer").trim(),
+    customerName: String(matchedCustomer?.name || rawCustomerName || "Customer").trim(),
+    customerState: String(invoice?.buyer?.state || invoice?.partyState || invoice?.party_state || invoice?.customerState || matchedCustomer?.state || "").trim(),
+    invoiceDate: String(invoice?.invoiceDate || invoice?.invoice_date || invoice?.date || "").trim(),
+    invoiceAmount: total,
+    discountAmount: Math.max(
+      0,
+      parseNumber(invoice?.totals?.discountTotal ?? invoice?.totals?.discount ?? invoice?.discountTotal ?? 0)
+    ),
+    taxableAmount: Math.max(
+      0,
+      parseNumber(invoice?.totals?.subTotal ?? invoice?.totals?.taxableTotal ?? invoice?.taxableTotal ?? total)
+    ),
+    taxAmount: Math.max(
+      0,
+      parseNumber(invoice?.totals?.taxTotal ?? invoice?.totals?.taxAmount ?? invoice?.taxTotal ?? 0)
+    ),
+    taxBreakup:
+      invoice?.totals?.taxBreakup && typeof invoice.totals.taxBreakup === "object"
+        ? invoice.totals.taxBreakup
+        : invoice?.taxBreakup && typeof invoice.taxBreakup === "object"
+          ? invoice.taxBreakup
+          : null,
+    supplyType:
+      invoice?.supplyType ||
+      invoice?.totals?.tax?.supplyType ||
+      invoice?.totals?.taxBreakup?.supplyType ||
+      null,
+    balanceDue: storedBalance,
+    documentType: "invoice"
+  };
 }
 
 export default function PaymentInPremium() {
@@ -490,7 +604,19 @@ export default function PaymentInPremium() {
     return Math.max(0, baseBalance);
   }, [documentBalanceAfterAdvance, form?.allocationMode, selectedCustomerDocument, useAdvanceWallet]);
   const filteredPayments = useMemo(() => payments.filter((entry) => {
-    const haystack = `${entry.customerName} ${entry.receiptNo} ${entry.referenceNo || ""} ${entry.transactionId || ""}`.toLowerCase();
+    const allocationText = (Array.isArray(entry.allocations) ? entry.allocations : [])
+      .map((allocation) =>
+        [
+          allocation?.invoiceNo,
+          allocation?.invoiceId,
+          allocation?.documentType
+        ]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+          .join(" ")
+      )
+      .join(" ");
+    const haystack = `${entry.customerName} ${entry.receiptNo} ${entry.referenceNo || ""} ${entry.transactionId || ""} ${allocationText}`.toLowerCase();
     const q = search.trim().toLowerCase();
     const matchFrom = fromDate ? entry.paymentDate >= fromDate : true;
     const matchTo = toDate ? entry.paymentDate <= toDate : true;
@@ -566,6 +692,13 @@ export default function PaymentInPremium() {
   const allowed = access.allowedCountries.includes(country);
   const readOnly = flowMode === "view";
   const prefillInvoiceId = searchParams.get("invoiceId") || "";
+  const prefillInvoice = useMemo(() => {
+    if (!prefillInvoiceId) return null;
+    return (
+      openInvoices.find((entry) => entry.id === prefillInvoiceId) ||
+      fallbackOpenInvoiceFromStorage(country, prefillInvoiceId, customers)
+    );
+  }, [country, customers, openInvoices, prefillInvoiceId]);
   useEffect(() => {
     setSelectedPaymentCountry(country);
   }, [country]);
@@ -655,7 +788,7 @@ export default function PaymentInPremium() {
 
   useEffect(() => {
     if (!prefillInvoiceId) return;
-    const invoice = openInvoices.find((entry) => entry.id === prefillInvoiceId);
+    const invoice = prefillInvoice;
     if (!invoice) return;
 
     setForm((prev) => {
@@ -677,7 +810,7 @@ export default function PaymentInPremium() {
     const next = new URLSearchParams(searchParams);
     next.delete("invoiceId");
     setSearchParams(next, { replace: true });
-  }, [prefillInvoiceId, openInvoices, country, company, searchParams, setSearchParams]);
+  }, [prefillInvoice, prefillInvoiceId, country, company, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!form || form.allocationMode !== "linked" || !form.selectedDocumentId) return;
@@ -1415,6 +1548,7 @@ export default function PaymentInPremium() {
                     <thead className="bg-slate-50 text-slate-600">
                       <tr>
                         <th className="px-3 py-3 font-semibold">Receipt No</th>
+                        <th className="px-3 py-3 font-semibold">Invoice No</th>
                         <th className="px-3 py-3 font-semibold">Date</th>
                         <th className="px-3 py-3 font-semibold">Customer</th>
                         <th className="px-3 py-3 font-semibold">Mode</th>
@@ -1429,7 +1563,7 @@ export default function PaymentInPremium() {
                     <tbody>
                       {!filteredPayments.length ? (
                         <tr className="border-t border-slate-100">
-                          <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
+                          <td className="px-3 py-6 text-center text-slate-500" colSpan={11}>
                             No payments found. Create a new payment to get started.
                           </td>
                         </tr>
@@ -1437,6 +1571,7 @@ export default function PaymentInPremium() {
                         filteredPayments.map((record) => (
                           <tr key={record.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                             <td className="px-3 py-3 font-semibold text-slate-900">{record.receiptNo}</td>
+                            <td className="px-3 py-3 text-slate-700">{paymentLinkedDocumentSummary(record)}</td>
                             <td className="px-3 py-3 text-slate-600">{record.paymentDate || "-"}</td>
                             <td className="px-3 py-3 text-slate-700">{record.customerName || "-"}</td>
                             <td className="px-3 py-3 text-slate-600">{formatPaymentModeLabel(record.paymentMode)}</td>

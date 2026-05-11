@@ -208,6 +208,27 @@ function mergeRemotePremiumRecords(storageKey, remoteRecords) {
   lsSetOrganizationScoped(storageKey, [...remoteRecords, ...preservedDrafts]);
 }
 
+function replaceLocalPaymentOutNumber(recordId, nextPaymentNo) {
+  const normalizedId = String(recordId || "").trim();
+  const normalizedPaymentNo = String(nextPaymentNo || "").trim();
+  if (!normalizedId || !normalizedPaymentNo) return;
+  const current = lsGetOrganizationScoped(PAYMENT_OUT_PREMIUM_KEY, []);
+  if (!Array.isArray(current) || !current.length) return;
+  lsSetOrganizationScoped(
+    PAYMENT_OUT_PREMIUM_KEY,
+    current.map((entry) =>
+      String(entry?.id || "").trim() === normalizedId ? { ...entry, paymentNo: normalizedPaymentNo } : entry
+    )
+  );
+}
+
+function buildRetryPaymentNo(basePaymentNo = "", country = "") {
+  const base = String(basePaymentNo || "").trim();
+  if (base) return `${base}-R${Date.now().toString().slice(-6)}`;
+  const code = normalizeCountryCode(country, "IN");
+  return `PO-${code}-${Date.now().toString().slice(-8)}`;
+}
+
 function hydratePremiumPaymentStores(remoteRows) {
   const rows = Array.isArray(remoteRows) ? remoteRows : [];
   const partyLookup = buildPartyLookup();
@@ -797,92 +818,99 @@ export async function syncPaymentOutRemote(record) {
   const sourcePrefix = `PO:${record.id}:`;
   const shouldApply = String(record?.status || "").toLowerCase() === "applied";
   const shouldPost = String(record?.status || "").toLowerCase() !== "draft";
-  const rows = [];
+  let workingRecord = record;
+  let rows = [];
   const partyId = record?.supplierId || null;
   const paymentDate = record?.paymentDate || "";
   const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
   const tdsAmount = Math.max(0, parseNumber(record?.totals?.tdsAmount ?? record?.tdsAmount));
   const tdsRate = Math.max(0, parseNumber(record?.tdsRate));
 
-  if (shouldPost && shouldApply) {
-    for (let index = 0; index < allocations.length; index += 1) {
-      const line = allocations[index];
-      const amount = Math.max(0, parseNumber(line?.applyAmount));
-      if (!amount) continue;
-      let billId = looksLikeUuid(line?.billId) ? line.billId : null;
-      if (!billId && line?.billNo && organizationId) {
-        billId = await findBillIdByNumber(organizationId, line.billNo);
+  async function buildRows(activeRecord) {
+    const nextRows = [];
+    if (shouldPost && shouldApply) {
+      for (let index = 0; index < allocations.length; index += 1) {
+        const line = allocations[index];
+        const amount = Math.max(0, parseNumber(line?.applyAmount));
+        if (!amount) continue;
+        let billId = looksLikeUuid(line?.billId) ? line.billId : null;
+        if (!billId && line?.billNo && organizationId) {
+          billId = await findBillIdByNumber(organizationId, line.billNo);
+        }
+        nextRows.push({
+          payment_no: buildRemotePaymentNo(activeRecord?.paymentNo || `PAY-${Date.now()}`, `${index + 1}`),
+          payment_date: normalizePaymentDateOrNull(paymentDate),
+          direction: "out",
+          party_id: partyId,
+          bill_id: billId || line?.billId || null,
+          amount,
+          tds_amount: index === 0 ? tdsAmount : 0,
+          tds_rate: index === 0 ? tdsRate : 0,
+          is_manual: index === 0 ? !!activeRecord?.isManual : false,
+          payment_mode: activeRecord?.paymentMode || null,
+          reference_no: `${sourcePrefix}${index + 1}`,
+          notes:
+            [
+              activeRecord?.internalNotes || `Payment out ${activeRecord?.status || "paid"}`,
+              index === 0 && tdsAmount > 0 ? `TDS ${tdsAmount.toFixed(2)}` : ""
+            ]
+              .filter(Boolean)
+              .join(" | "),
+          status: "posted"
+        });
       }
-      rows.push({
-        payment_no: buildRemotePaymentNo(record?.paymentNo || `PAY-${Date.now()}`, `${index + 1}`),
-        payment_date: normalizePaymentDateOrNull(paymentDate),
-        direction: "out",
-        party_id: partyId,
-        bill_id: billId || line?.billId || null,
-        amount,
-        tds_amount: index === 0 ? tdsAmount : 0,
-        tds_rate: index === 0 ? tdsRate : 0,
-        is_manual: index === 0 ? !!record?.isManual : false,
-        payment_mode: record?.paymentMode || null,
-        reference_no: `${sourcePrefix}${index + 1}`,
-        notes:
-          [
-            record?.internalNotes || `Payment out ${record?.status || "paid"}`,
-            index === 0 && tdsAmount > 0 ? `TDS ${tdsAmount.toFixed(2)}` : ""
-          ]
-            .filter(Boolean)
-            .join(" | "),
-        status: "posted"
-      });
-    }
 
-    const unappliedAmount = Math.max(0, parseNumber(record?.totals?.unappliedAmount));
-    if (unappliedAmount > 0) {
-      rows.push({
-        payment_no: buildRemotePaymentNo(record?.paymentNo || `PAY-${Date.now()}`, "UNAPPLIED"),
-        payment_date: normalizePaymentDateOrNull(paymentDate),
-        direction: "out",
-        party_id: partyId,
-        bill_id: null,
-        amount: unappliedAmount,
-        tds_amount: rows.length ? 0 : tdsAmount,
-        tds_rate: rows.length ? 0 : tdsRate,
-        is_manual: rows.length ? false : !!record?.isManual,
-        payment_mode: record?.paymentMode || null,
-        reference_no: `${sourcePrefix}UNAPPLIED`,
-        notes:
-          [
-            record?.internalNotes || `Unapplied payment out ${record?.status || "paid"}`,
-            !rows.length && tdsAmount > 0 ? `TDS ${tdsAmount.toFixed(2)}` : ""
-          ]
-            .filter(Boolean)
-            .join(" | "),
-        status: "posted"
-      });
+      const unappliedAmount = Math.max(0, parseNumber(activeRecord?.totals?.unappliedAmount));
+      if (unappliedAmount > 0) {
+        nextRows.push({
+          payment_no: buildRemotePaymentNo(activeRecord?.paymentNo || `PAY-${Date.now()}`, "UNAPPLIED"),
+          payment_date: normalizePaymentDateOrNull(paymentDate),
+          direction: "out",
+          party_id: partyId,
+          bill_id: null,
+          amount: unappliedAmount,
+          tds_amount: nextRows.length ? 0 : tdsAmount,
+          tds_rate: nextRows.length ? 0 : tdsRate,
+          is_manual: nextRows.length ? false : !!activeRecord?.isManual,
+          payment_mode: activeRecord?.paymentMode || null,
+          reference_no: `${sourcePrefix}UNAPPLIED`,
+          notes:
+            [
+              activeRecord?.internalNotes || `Unapplied payment out ${activeRecord?.status || "paid"}`,
+              !nextRows.length && tdsAmount > 0 ? `TDS ${tdsAmount.toFixed(2)}` : ""
+            ]
+              .filter(Boolean)
+              .join(" | "),
+          status: "posted"
+        });
+      }
+    } else if (shouldPost) {
+      const amountPaid = Math.max(0, parseNumber(activeRecord?.totals?.amountPaid ?? activeRecord?.amountPaid));
+      if (amountPaid > 0) {
+        nextRows.push({
+          payment_no: buildRemotePaymentNo(activeRecord?.paymentNo || `PAY-${Date.now()}`, "PAID"),
+          payment_date: normalizePaymentDateOrNull(paymentDate),
+          direction: "out",
+          party_id: partyId,
+          bill_id: null,
+          amount: amountPaid,
+          tds_amount: tdsAmount,
+          tds_rate: tdsRate,
+          is_manual: !!activeRecord?.isManual,
+          payment_mode: activeRecord?.paymentMode || null,
+          reference_no: `${sourcePrefix}PAID`,
+          notes:
+            [activeRecord?.internalNotes || `Payment out ${activeRecord?.status || "paid"}`, tdsAmount > 0 ? `TDS ${tdsAmount.toFixed(2)}` : ""]
+              .filter(Boolean)
+              .join(" | "),
+          status: "posted"
+        });
+      }
     }
-  } else if (shouldPost) {
-    const amountPaid = Math.max(0, parseNumber(record?.totals?.amountPaid ?? record?.amountPaid));
-    if (amountPaid > 0) {
-      rows.push({
-        payment_no: buildRemotePaymentNo(record?.paymentNo || `PAY-${Date.now()}`, "PAID"),
-        payment_date: normalizePaymentDateOrNull(paymentDate),
-        direction: "out",
-        party_id: partyId,
-        bill_id: null,
-        amount: amountPaid,
-        tds_amount: tdsAmount,
-        tds_rate: tdsRate,
-        is_manual: !!record?.isManual,
-        payment_mode: record?.paymentMode || null,
-        reference_no: `${sourcePrefix}PAID`,
-        notes:
-          [record?.internalNotes || `Payment out ${record?.status || "paid"}`, tdsAmount > 0 ? `TDS ${tdsAmount.toFixed(2)}` : ""]
-            .filter(Boolean)
-            .join(" | "),
-        status: "posted"
-      });
-    }
+    return nextRows;
   }
+
+  rows = await buildRows(workingRecord);
 
   if (isSupabaseConfigured && supabase && organizationId) {
     const { error: cancelError } = await supabase
@@ -899,7 +927,7 @@ export async function syncPaymentOutRemote(record) {
     }
 
     if (rows.length) {
-      const remoteRows = rows.map((row) => ({
+      let remoteRows = rows.map((row) => ({
         ...row,
         organization_id: organizationId,
         party_id: looksLikeUuid(row?.party_id) ? row.party_id : null,
@@ -907,7 +935,22 @@ export async function syncPaymentOutRemote(record) {
         bill_id: looksLikeUuid(row?.bill_id) ? row.bill_id : null,
         created_by: actorUserId
       }));
-      const { error: insertError } = await supabase.from("payments").insert(remoteRows);
+      let { error: insertError } = await supabase.from("payments").insert(remoteRows);
+      if (insertError && isUniqueConstraintError(insertError)) {
+        const nextPaymentNo = buildRetryPaymentNo(workingRecord?.paymentNo, workingRecord?.country);
+        replaceLocalPaymentOutNumber(workingRecord?.id, nextPaymentNo);
+        workingRecord = { ...workingRecord, paymentNo: nextPaymentNo };
+        rows = await buildRows(workingRecord);
+        remoteRows = rows.map((row) => ({
+          ...row,
+          organization_id: organizationId,
+          party_id: looksLikeUuid(row?.party_id) ? row.party_id : null,
+          invoice_id: looksLikeUuid(row?.invoice_id) ? row.invoice_id : null,
+          bill_id: looksLikeUuid(row?.bill_id) ? row.bill_id : null,
+          created_by: actorUserId
+        }));
+        ({ error: insertError } = await supabase.from("payments").insert(remoteRows));
+      }
       if (insertError) {
         throw new Error(normalizeSupabaseError(insertError, "Failed to save payment-out rows"));
       }

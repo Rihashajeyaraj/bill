@@ -119,34 +119,43 @@ export function exportPaymentInCsv(records: PaymentInRecord[], country: CountryC
 export function exportPaymentInSummaryPdf(records: PaymentInRecord[], country: CountryCode) {
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const cfg = COUNTRY_CONFIG[country];
+  const colX = {
+    receipt: 14,
+    date: 48,
+    customer: 74,
+    status: 136,
+    received: 174,
+    tds: 194
+  };
   let y = 14;
+  doc.setFont("helvetica", "normal");
   doc.setFontSize(16);
-  doc.text(`${cfg.receiptLabel} Summary`, 14, y);
+  doc.text(safeText(`${cfg.receiptLabel} Summary`), 14, y);
   y += 7;
   doc.setFontSize(10);
-  doc.text(`Country: ${cfg.name}`, 14, y);
+  doc.text(`Country: ${safeText(cfg.name)}`, 14, y);
   y += 5;
-  doc.text(`Generated: ${formatDateTimeByPreference(new Date())}`, 14, y);
+  doc.text(`Generated: ${safeText(formatDateTimeByPreference(new Date()))}`, 14, y);
   y += 8;
 
   doc.setFontSize(9);
-  doc.text("Receipt", 14, y);
-  doc.text("Date", 48, y);
-  doc.text("Customer", 74, y);
-  doc.text("Status", 140, y);
-  doc.text("Received", 170, y, { align: "right" });
-  doc.text("TDS", 192, y, { align: "right" });
+  doc.text("Receipt", colX.receipt, y);
+  doc.text("Date", colX.date, y);
+  doc.text("Customer", colX.customer, y);
+  doc.text("Status", colX.status, y);
+  doc.text("Received", colX.received, y, { align: "right" });
+  doc.text("TDS", colX.tds, y, { align: "right" });
   y += 4;
   doc.line(14, y, 196, y);
   y += 5;
 
   records.slice(0, 28).forEach((entry) => {
-    doc.text(entry.receiptNo, 14, y);
-    doc.text(entry.paymentDate, 48, y);
-    doc.text(entry.customerName.slice(0, 30), 74, y);
-    doc.text(entry.status, 140, y);
-    doc.text(money(entry.totals.amountReceived, country), 170, y, { align: "right" });
-    doc.text(money(entry.totals.tdsAmount, country), 192, y, { align: "right" });
+    doc.text(safeText(entry.receiptNo), colX.receipt, y);
+    doc.text(safeText(entry.paymentDate), colX.date, y);
+    doc.text(safeText(entry.customerName, "").slice(0, 28) || "-", colX.customer, y);
+    doc.text(safeText(entry.status), colX.status, y);
+    doc.text(money(entry.totals.amountReceived, country), colX.received, y, { align: "right" });
+    doc.text(money(entry.totals.tdsAmount, country), colX.tds, y, { align: "right" });
     y += 6;
   });
 

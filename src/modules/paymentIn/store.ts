@@ -343,6 +343,74 @@ function normalizedDocumentType(value: unknown): "invoice" | "proforma" {
   return String(value || "").trim().toLowerCase() === "proforma" ? "proforma" : "invoice";
 }
 
+function normalizeIdentityText(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function normalizeIdentityPhone(value: unknown) {
+  let digits = String(value || "").replace(/\D/g, "");
+  if (digits.length > 10) digits = digits.slice(-10);
+  digits = digits.replace(/^0+/, "");
+  return digits;
+}
+
+function resolveCustomerIdentity(record: any, fallbackCountry: CountryCode) {
+  const parties = lsGetOrganizationScoped(LS_KEYS.parties, []);
+  const partyList = Array.isArray(parties) ? parties : [];
+  const candidateId = String(
+    record?.partyId ||
+      record?.party_id ||
+      record?.customerId ||
+      record?.customer_id ||
+      record?.buyer?.id ||
+      ""
+  ).trim();
+  const candidateName = String(
+    record?.partyName ||
+      record?.party_name ||
+      record?.customerName ||
+      record?.customer_name ||
+      record?.buyer?.name ||
+      "Customer"
+  ).trim();
+  const candidatePhone = normalizeIdentityPhone(
+    record?.phone ||
+      record?.partyPhone ||
+      record?.party_phone ||
+      record?.customerPhone ||
+      record?.customer_phone ||
+      record?.buyer?.phone ||
+      ""
+  );
+
+  const matchedParty = partyList.find((party: any) => {
+    if (String(party?.type || "").toLowerCase() !== "customer") return false;
+    const partyCountry = normalizeCountryCode(party?.country) || fallbackCountry;
+    if (partyCountry !== fallbackCountry) return false;
+
+    const partyId = String(party?.id || "").trim();
+    if (candidateId && partyId && partyId === candidateId) return true;
+
+    const partyName = normalizeIdentityText(party?.name);
+    const normalizedCandidateName = normalizeIdentityText(candidateName);
+    if (!normalizedCandidateName || !partyName || partyName !== normalizedCandidateName) return false;
+
+    const partyPhone = normalizeIdentityPhone(party?.phone);
+    if (candidatePhone && partyPhone) {
+      return partyPhone === candidatePhone;
+    }
+    return true;
+  });
+
+  return {
+    customerId: String(matchedParty?.id || candidateId || candidateName || "unknown_customer").trim(),
+    customerName: String(matchedParty?.name || candidateName || "Customer").trim()
+  };
+}
+
 function invoiceLikeTotal(record: any) {
   return Math.max(
     0,
@@ -732,6 +800,7 @@ function mapOpenInvoicesByCountryInternal(
       if (mappedCountry && mappedCountry !== country) return null;
       const invoiceId = String(invoice?.id || invoice?.invoiceId || invoice?.invoice_id || "").trim();
       if (!invoiceId) return null;
+      const customerIdentity = resolveCustomerIdentity(invoice, country);
       const invoiceTotal = invoiceLikeTotal(invoice);
       const taxableAmount = Math.max(
         0,
@@ -760,17 +829,8 @@ function mapOpenInvoicesByCountryInternal(
         id: invoiceId,
         invoiceNo: invoice.invoiceNo || invoice?.invoice_no || invoiceId,
         country,
-        customerId:
-          invoice.partyId ||
-          invoice.party_id ||
-          invoice.customerId ||
-          invoice.customer_id ||
-          invoice.buyer?.id ||
-          invoice.partyName ||
-          invoice.customerName ||
-          "unknown_customer",
-        customerName:
-          invoice.partyName || invoice.party_name || invoice.customerName || invoice.customer_name || invoice.buyer?.name || "Customer",
+        customerId: customerIdentity.customerId,
+        customerName: customerIdentity.customerName,
         customerState: invoice?.buyer?.state || invoice?.partyState || invoice?.party_state || invoice?.customerState || "",
         invoiceDate: invoice.invoiceDate || invoice.invoice_date || invoice.date || "",
         invoiceAmount: invoiceTotal,
@@ -802,6 +862,7 @@ function mapOpenInvoicesByCountryInternal(
       if (status === "CONVERTED" || status === "EXPIRED") return null;
       const proformaId = String(proforma?.id || proforma?.proformaId || proforma?.proforma_id || "").trim();
       if (!proformaId) return null;
+      const customerIdentity = resolveCustomerIdentity(proforma, country);
       const invoiceAmount = invoiceLikeTotal(proforma);
       const taxableAmount = Math.max(
         0,
@@ -822,17 +883,8 @@ function mapOpenInvoicesByCountryInternal(
         id: proformaId,
         invoiceNo: proforma?.proformaNo || proforma?.proforma_no || proformaId,
         country,
-        customerId:
-          proforma?.partyId ||
-          proforma?.party_id ||
-          proforma?.customerId ||
-          proforma?.customer_id ||
-          proforma?.buyer?.id ||
-          proforma?.partyName ||
-          proforma?.customerName ||
-          "unknown_customer",
-        customerName:
-          proforma?.partyName || proforma?.party_name || proforma?.customerName || proforma?.customer_name || proforma?.buyer?.name || "Customer",
+        customerId: customerIdentity.customerId,
+        customerName: customerIdentity.customerName,
         customerState: proforma?.buyer?.state || proforma?.partyState || proforma?.party_state || proforma?.customerState || "",
         invoiceDate: proforma?.proformaDate || proforma?.proforma_date || proforma?.date || "",
         invoiceAmount,

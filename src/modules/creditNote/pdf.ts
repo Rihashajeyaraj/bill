@@ -2,12 +2,31 @@ import { jsPDF } from "jspdf";
 import { COUNTRY_CONFIG } from "./countryConfig";
 import type { CountryCode } from "./countryConfig";
 import type { CreditNoteRecord } from "./store";
-import { formatCurrencyByPreference, formatDateTimeByPreference } from "../../lib/formatPreferences";
+import { formatDateTimeByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
 import { drawPdfPartyDetails } from "../reports/pdfPartyDetails";
 
 function money(value: number, country: CountryCode) {
-  const currency = COUNTRY_CONFIG[country].currency;
-  return formatCurrencyByPreference(Number(value || 0), currency, { maximumFractionDigits: 2 });
+  const currency = pdfSafeText(COUNTRY_CONFIG[country].currency, "").slice(0, 8);
+  const amount = formatNumberByPreference(Number(value || 0), {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  return currency ? `${currency} ${amount}` : amount;
+}
+
+function pdfSafeText(value: unknown, fallback = "-") {
+  const normalized = String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[^\x20-\x7E]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || fallback;
+}
+
+function drawWrappedText(doc: jsPDF, text: string, x: number, y: number, maxWidth: number, lineHeight = 4.5) {
+  const lines = doc.splitTextToSize(pdfSafeText(text), maxWidth);
+  doc.text(lines, x, y);
+  return y + lines.length * lineHeight;
 }
 
 function downloadBlob(content: Blob, filename: string) {
@@ -63,13 +82,14 @@ export function exportCreditNoteSummaryPdf(notes: CreditNoteRecord[], country: C
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const cfg = COUNTRY_CONFIG[country];
   let y = 14;
+  doc.setFont("helvetica", "normal");
   doc.setFontSize(16);
-  doc.text(`${cfg.label} Summary`, 14, y);
+  doc.text(pdfSafeText(`${cfg.label} Summary`), 14, y);
   y += 7;
   doc.setFontSize(10);
-  doc.text(`Country: ${cfg.name}`, 14, y);
+  doc.text(`Country: ${pdfSafeText(cfg.name)}`, 14, y);
   y += 5;
-  doc.text(`Generated: ${formatDateTimeByPreference(new Date())}`, 14, y);
+  doc.text(`Generated: ${pdfSafeText(formatDateTimeByPreference(new Date()))}`, 14, y);
   y += 8;
 
   doc.setFontSize(9);
@@ -83,10 +103,10 @@ export function exportCreditNoteSummaryPdf(notes: CreditNoteRecord[], country: C
   y += 5;
 
   notes.slice(0, 28).forEach((note) => {
-    doc.text(note.creditNoteNo, 14, y);
-    doc.text(note.creditNoteDate, 48, y);
-    doc.text(note.customerName.slice(0, 30), 74, y);
-    doc.text(note.status, 140, y);
+    doc.text(pdfSafeText(note.creditNoteNo), 14, y);
+    doc.text(pdfSafeText(note.creditNoteDate), 48, y);
+    doc.text(pdfSafeText(note.customerName, "").slice(0, 30) || "-", 74, y);
+    doc.text(pdfSafeText(note.status), 140, y);
     doc.text(money(note.totals.total, country), 170, y, { align: "right" });
     y += 6;
   });
@@ -105,13 +125,14 @@ export function exportSingleCreditNotePdf(note: CreditNoteRecord) {
   const cfg = COUNTRY_CONFIG[note.country];
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   let y = 14;
+  doc.setFont("helvetica", "normal");
 
   doc.setFontSize(15);
-  doc.text(cfg.label, 14, y);
+  doc.text(pdfSafeText(cfg.label), 14, y);
   doc.setFontSize(10);
   y += 7;
-  doc.text(`Credit Note No: ${note.creditNoteNo}`, 14, y);
-  doc.text(`Date: ${note.creditNoteDate}`, 110, y);
+  doc.text(`Credit Note No: ${pdfSafeText(note.creditNoteNo)}`, 14, y);
+  doc.text(`Date: ${pdfSafeText(note.creditNoteDate)}`, 110, y);
   y += 6;
   const partyBlockBottom = drawPdfPartyDetails(
     doc,
@@ -130,13 +151,13 @@ export function exportSingleCreditNotePdf(note: CreditNoteRecord) {
       nameLabel: "Name"
     }
   );
-  doc.text(`Invoice: ${note.linkedInvoiceNo}`, 110, y);
+  doc.text(`Invoice: ${pdfSafeText(note.linkedInvoiceNo)}`, 110, y);
   y = Math.max(partyBlockBottom, y + 6);
-  doc.text(`${cfg.taxLabel} Reg: ${note.registrationNumber || "-"}`, 14, y);
-  doc.text(`Status: ${note.status}`, 110, y);
+  doc.text(`${pdfSafeText(cfg.taxLabel)} Reg: ${pdfSafeText(note.registrationNumber || "-")}`, 14, y);
+  doc.text(`Status: ${pdfSafeText(note.status)}`, 110, y);
   y += 6;
-  doc.text(`Legal: ${cfg.legalWording}`, 14, y);
-  y += 8;
+  y = drawWrappedText(doc, `Legal: ${cfg.legalWording}`, 14, y, 182);
+  y += 3;
 
   doc.setFontSize(9);
   doc.text("Item", 14, y);
@@ -149,7 +170,7 @@ export function exportSingleCreditNotePdf(note: CreditNoteRecord) {
   y += 5;
 
   note.lines.slice(0, 16).forEach((line) => {
-    doc.text(line.itemName.slice(0, 35), 14, y);
+    doc.text(pdfSafeText(line.itemName, "").slice(0, 35) || "-", 14, y);
     doc.text(String(line.quantity), 88, y);
     doc.text(line.rate.toFixed(2), 106, y);
     doc.text(line.taxRate.toFixed(2), 132, y);
@@ -172,9 +193,9 @@ export function exportSingleCreditNotePdf(note: CreditNoteRecord) {
 
   y += 10;
   doc.setFontSize(9);
-  doc.text(cfg.legalFooter, 14, y);
-  y += 5;
-  doc.text(`Customer Note: ${note.customerNotes || "-"}`, 14, y);
+  y = drawWrappedText(doc, cfg.legalFooter, 14, y, 182);
+  y += 1;
+  drawWrappedText(doc, `Customer Note: ${note.customerNotes || "-"}`, 14, y, 182);
 
   doc.save(`${note.creditNoteNo}.pdf`);
 }
