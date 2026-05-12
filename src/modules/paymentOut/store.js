@@ -758,6 +758,32 @@ export function listSupplierAdvanceWalletHistory(country, supplierId) {
     });
 }
 
+export function listSupplierAdvanceWalletEntries(country, supplierId) {
+  const normalizedSupplierId = String(supplierId || "").trim();
+  if (!normalizedSupplierId) return [];
+
+  return listPaymentOut(country)
+    .filter((entry) => String(entry?.status || "") !== "Draft")
+    .filter((entry) => String(entry?.supplierId || "") === normalizedSupplierId)
+    .map((entry) => ({
+      id: `advance_${entry.id}`,
+      paymentId: String(entry.id || ""),
+      paymentNo: entry.paymentNo || entry.id,
+      paymentDate: entry.paymentDate || "",
+      billNo: String(entry?.allocations?.[0]?.billNo || ""),
+      amountPaid: round2(entry?.totals?.amountPaid),
+      availableAmount: round2(entry?.totals?.unappliedAmount),
+      status: entry.status
+    }))
+    .filter((entry) => entry.availableAmount > 0)
+    .sort((a, b) => {
+      const leftDate = String(a?.paymentDate || "");
+      const rightDate = String(b?.paymentDate || "");
+      if (leftDate !== rightDate) return rightDate.localeCompare(leftDate);
+      return String(b?.paymentNo || "").localeCompare(String(a?.paymentNo || ""));
+    });
+}
+
 export function savePaymentOut(payload) {
   assertPaymentOutWritePermission({ isEdit: !!payload?.id });
   const list = getAllPayments();
@@ -904,6 +930,115 @@ export function applyAdvanceWalletToSupplierBill({
         applyAmount,
         appliedFromAdvance: true,
         appliedAt: billDate || "",
+        sourcePaymentNo: record?.paymentNo || "",
+        sourcePaymentId: record?.id || ""
+      }
+    ];
+
+    const updated = savePaymentOut({
+      id: record.id,
+      country: record.country || country,
+      paymentDate: record.paymentDate,
+      supplierId: record.supplierId,
+      supplierName: record.supplierName,
+      currency: record.currency || "",
+      paymentMode: record.paymentMode,
+      referenceNo: record.referenceNo || "",
+      chequeNo: record.chequeNo || "",
+      bankName: record.bankName || "",
+      transactionId: record.transactionId || "",
+      paymentReference: record.paymentReference || "",
+      internalNotes: record.internalNotes || "",
+      attachment: record.attachment || null,
+      desiredStatus: "Applied",
+      amountPaid: record?.totals?.amountPaid ?? record?.amountPaid ?? 0,
+      tdsAmount: record?.totals?.tdsAmount ?? record?.tdsAmount ?? 0,
+      tdsCategory: record?.tdsCategory || "",
+      tdsRate: record?.tdsRate ?? 0,
+      isManual: !!record?.isManual,
+      allocations: nextAllocations,
+      supplierOutstandingBefore: record?.totals?.supplierOutstandingBefore ?? safeBillAmount,
+      actor: actor || "System User"
+    });
+
+    updatedRecords.push(updated);
+    remainingBalance = Math.max(0, remainingBalance - applyAmount);
+  });
+
+  return updatedRecords;
+}
+
+export function applySelectedAdvanceWalletEntriesToSupplierBill({
+  country,
+  supplierId,
+  billId,
+  billNo,
+  billDate,
+  billAmount,
+  selectedPaymentIds,
+  maxApplyAmount,
+  actor
+}) {
+  const allowedIds = new Set(
+    (Array.isArray(selectedPaymentIds) ? selectedPaymentIds : [])
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean)
+  );
+  if (!allowedIds.size) return [];
+
+  const normalizedSupplierId = String(supplierId || "").trim();
+  const normalizedBillId = String(billId || "").trim();
+  const normalizedBillNo = String(billNo || normalizedBillId).trim();
+  const safeBillAmount = Math.max(0, parseNumber(billAmount));
+  const safeMaxApplyAmount = Math.max(0, parseNumber(maxApplyAmount || safeBillAmount));
+
+  if (!normalizedSupplierId || !normalizedBillId || safeBillAmount <= 0 || safeMaxApplyAmount <= 0) {
+    return [];
+  }
+
+  const existingAppliedAmount = listPaymentOut(country)
+    .filter((entry) => String(entry?.status || "") !== "Draft")
+    .reduce(
+      (sum, entry) =>
+        sum +
+        ensureArray(entry?.allocations)
+          .filter((line) => String(line?.billId || "") === normalizedBillId)
+          .reduce((lineSum, line) => lineSum + Math.max(0, parseNumber(line?.applyAmount)), 0),
+      0
+    );
+  let remainingBalance = Math.max(0, Math.min(safeBillAmount - existingAppliedAmount, safeMaxApplyAmount));
+  if (remainingBalance <= 0) return [];
+
+  const records = listPaymentOut(country)
+    .filter((entry) => String(entry?.supplierId || "") === normalizedSupplierId)
+    .filter((entry) => String(entry?.status || "") !== "Draft")
+    .filter((entry) => allowedIds.has(String(entry?.id || "").trim()))
+    .filter((entry) => Math.max(0, parseNumber(entry?.totals?.unappliedAmount)) > 0)
+    .sort((left, right) => {
+      const leftDate = String(left?.paymentDate || "");
+      const rightDate = String(right?.paymentDate || "");
+      if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+      return String(left?.paymentNo || "").localeCompare(String(right?.paymentNo || ""));
+    });
+
+  const updatedRecords = [];
+  records.forEach((record) => {
+    if (remainingBalance <= 0) return;
+    const availableAdvance = Math.max(0, parseNumber(record?.totals?.unappliedAmount));
+    if (availableAdvance <= 0) return;
+
+    const applyAmount = Math.min(availableAdvance, remainingBalance);
+    const nextAllocations = [
+      ...ensureArray(record?.allocations),
+      {
+        billId: normalizedBillId,
+        billNo: normalizedBillNo,
+        billDate: billDate || "",
+        billAmount: safeBillAmount,
+        balanceDue: remainingBalance,
+        applyAmount,
+        appliedFromAdvance: true,
+        appliedAt: nowIso(),
         sourcePaymentNo: record?.paymentNo || "",
         sourcePaymentId: record?.id || ""
       }

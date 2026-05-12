@@ -1092,6 +1092,166 @@ export function listCustomerAdvanceWalletHistory(country: CountryCode, customerI
     });
 }
 
+export function listCustomerAdvanceWalletEntries(country: CountryCode, customerId: string) {
+  const safeCustomerId = String(customerId || "").trim();
+  if (!safeCustomerId) {
+    return [] as Array<{
+      id: string;
+      paymentId: string;
+      receiptNo: string;
+      paymentDate: string;
+      invoiceNo: string;
+      amountReceived: number;
+      availableAmount: number;
+      status: PaymentStatus;
+    }>;
+  }
+
+  return listPaymentIn(country)
+    .filter((entry) => entry.status !== "Draft")
+    .filter((entry) => String(entry?.customerId || "") === safeCustomerId)
+    .map((entry) => ({
+      id: `advance_${entry.id}`,
+      paymentId: String(entry.id || ""),
+      receiptNo: entry.receiptNo || entry.id,
+      paymentDate: entry.paymentDate || "",
+      invoiceNo: String(entry?.allocations?.[0]?.invoiceNo || ""),
+      amountReceived: round2(entry?.totals?.amountReceived),
+      availableAmount: round2(entry?.totals?.unappliedAmount),
+      status: entry.status
+    }))
+    .filter((entry) => entry.availableAmount > 0)
+    .sort((a, b) => {
+      const leftDate = String(a?.paymentDate || "");
+      const rightDate = String(b?.paymentDate || "");
+      if (leftDate !== rightDate) return rightDate.localeCompare(leftDate);
+      return String(b?.receiptNo || "").localeCompare(String(a?.receiptNo || ""));
+    });
+}
+
+export function applySelectedAdvanceWalletEntriesToCustomerInvoice({
+  country,
+  customerId,
+  invoiceId,
+  invoiceNo,
+  invoiceDate,
+  invoiceAmount,
+  selectedPaymentIds,
+  maxApplyAmount,
+  actor
+}: {
+  country: CountryCode;
+  customerId: string;
+  invoiceId: string;
+  invoiceNo: string;
+  invoiceDate: string;
+  invoiceAmount: number;
+  selectedPaymentIds: string[];
+  maxApplyAmount?: number;
+  actor: string;
+}) {
+  const allowedIds = new Set(
+    (Array.isArray(selectedPaymentIds) ? selectedPaymentIds : [])
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean)
+  );
+  if (!allowedIds.size) return [] as PaymentInRecord[];
+
+  const normalizedCustomerId = String(customerId || "").trim();
+  const normalizedInvoiceId = String(invoiceId || "").trim();
+  const normalizedInvoiceNo = String(invoiceNo || normalizedInvoiceId).trim();
+  const safeInvoiceAmount = Math.max(0, toNumber(invoiceAmount));
+  const safeMaxApplyAmount = Math.max(0, toNumber(maxApplyAmount || safeInvoiceAmount));
+
+  if (!normalizedCustomerId || !normalizedInvoiceId || safeInvoiceAmount <= 0 || safeMaxApplyAmount <= 0) {
+    return [] as PaymentInRecord[];
+  }
+
+  const existingAppliedAmount = listPaymentIn(country)
+    .filter((entry) => String(entry?.status || "") !== "Draft")
+    .reduce(
+      (sum, entry) =>
+        sum +
+        ensureArray(entry?.allocations)
+          .filter((line) => String(line?.invoiceId || "") === normalizedInvoiceId)
+          .reduce((lineSum, line) => lineSum + Math.max(0, toNumber(line?.applyAmount)), 0),
+      0
+    );
+  let remainingBalance = Math.max(0, Math.min(safeInvoiceAmount - existingAppliedAmount, safeMaxApplyAmount));
+  if (remainingBalance <= 0) return [] as PaymentInRecord[];
+
+  const records = listPaymentIn(country)
+    .filter((entry) => String(entry?.customerId || "") === normalizedCustomerId)
+    .filter((entry) => String(entry?.status || "") !== "Draft")
+    .filter((entry) => allowedIds.has(String(entry?.id || "").trim()))
+    .filter((entry) => Math.max(0, toNumber(entry?.totals?.unappliedAmount)) > 0)
+    .sort((left, right) => {
+      const leftDate = String(left?.paymentDate || "");
+      const rightDate = String(right?.paymentDate || "");
+      if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+      return String(left?.receiptNo || "").localeCompare(String(right?.receiptNo || ""));
+    });
+
+  const updatedRecords: PaymentInRecord[] = [];
+  records.forEach((record) => {
+    if (remainingBalance <= 0) return;
+    const availableAdvance = Math.max(0, toNumber(record?.totals?.unappliedAmount));
+    if (availableAdvance <= 0) return;
+
+    const applyAmount = Math.min(availableAdvance, remainingBalance);
+    const nextAllocations = [
+      ...ensureArray(record?.allocations),
+      {
+        invoiceId: normalizedInvoiceId,
+        invoiceNo: normalizedInvoiceNo,
+        invoiceDate: invoiceDate || "",
+        invoiceAmount: safeInvoiceAmount,
+        balanceDue: remainingBalance,
+        applyAmount,
+        appliedFromAdvance: true,
+        appliedAt: nowIso(),
+        actor: actor || "System User",
+        sourceReceiptNo: record?.receiptNo || "",
+        sourcePaymentId: record?.id || ""
+      }
+    ];
+
+    const updated = savePaymentIn({
+      id: record.id,
+      country: record.country || country,
+      paymentDate: record.paymentDate,
+      customerId: record.customerId,
+      customerName: record.customerName,
+      currency: record.currency || "",
+      paymentMode: record.paymentMode,
+      referenceNo: record.referenceNo || "",
+      chequeNo: record.chequeNo || "",
+      bankName: record.bankName || "",
+      bankAccount: record.bankAccount || "",
+      transactionId: record.transactionId || "",
+      paymentReference: record.paymentReference || "",
+      registrationNumber: record.registrationNumber || "",
+      internalNotes: record.internalNotes || "",
+      customerNotes: record.customerNotes || "",
+      attachment: record.attachment || null,
+      desiredStatus: "Applied",
+      amountReceived: record?.totals?.amountReceived ?? record?.amountReceived ?? 0,
+      tdsAmount: record?.totals?.tdsAmount ?? record?.tdsAmount ?? 0,
+      tdsCategory: record?.tdsCategory || "",
+      tdsRate: record?.tdsRate ?? 0,
+      isManual: !!record?.isManual,
+      allocations: nextAllocations,
+      customerOutstandingBefore: record?.totals?.customerOutstandingBefore ?? safeInvoiceAmount,
+      actor: actor || "System User"
+    });
+
+    updatedRecords.push(updated);
+    remainingBalance = Math.max(0, remainingBalance - applyAmount);
+  });
+
+  return updatedRecords;
+}
+
 export function applyAdvanceWalletToCustomerInvoice({
   country,
   customerId,

@@ -12,6 +12,7 @@ import Badge from "../../components/Badge";
 import Modal from "../../components/Modal";
 import InvoicePreview from "../../components/InvoicePreview";
 import DateInput from "../../components/DateInput";
+import AllocationSelectionCard from "../../components/AllocationSelectionCard";
 
 import { useOrganization } from "../../context/OrganizationContext";
 import {
@@ -37,8 +38,9 @@ import {
   listCreditNotesForCustomerMatch
 } from "../../modules/creditNote/store";
 import {
-  applyAdvanceWalletToCustomerInvoice,
+  applySelectedAdvanceWalletEntriesToCustomerInvoice,
   listCustomerAdvanceWalletHistory,
+  listCustomerAdvanceWalletEntries,
   outstandingByCustomer,
   paymentInsightsByCustomer,
   savePaymentIn
@@ -311,7 +313,10 @@ export default function InvoiceCreate() {
   const [bankAccount, setBankAccount] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
   const [useAvailableAdvance, setUseAvailableAdvance] = useState(false);
+  const [selectedAdvancePaymentIds, setSelectedAdvancePaymentIds] = useState([]);
   const [selectedCreditNoteIds, setSelectedCreditNoteIds] = useState([]);
+  const [advanceWalletPickerOpen, setAdvanceWalletPickerOpen] = useState(false);
+  const [creditNotePickerOpen, setCreditNotePickerOpen] = useState(false);
 
   const companyCountry = String(country || company?.country || company?.address?.country || "").trim();
   const customerCountry = String(party?.country || "").trim();
@@ -1261,6 +1266,14 @@ export default function InvoiceCreate() {
     [partyId, paymentCountryCode]
   );
   const customerAdvanceWallet = round2(Number(customerPaymentInsights?.advanceWallet || 0));
+  const customerAdvanceEntries = useMemo(
+    () => listCustomerAdvanceWalletEntries(country, partyId),
+    [country, partyId, customerPaymentInsights?.advanceWallet]
+  );
+  const selectedAdvancePaymentIdSet = useMemo(
+    () => new Set((Array.isArray(selectedAdvancePaymentIds) ? selectedAdvancePaymentIds : []).map((entry) => String(entry || "").trim()).filter(Boolean)),
+    [selectedAdvancePaymentIds]
+  );
   const customerCreditNotes = useMemo(
     () => listCreditNotesForCustomerMatch(paymentCountryCode, partyId, party?.name || "", activeInvoiceId),
     [activeInvoiceId, party?.name, partyId, paymentCountryCode]
@@ -1284,9 +1297,19 @@ export default function InvoiceCreate() {
     [customerCreditNotes, selectedCreditNoteIdSet]
   );
   const customerAvailableCredit = round2(customerAdvanceWallet + customerCreditBalance);
+  const selectedAdvancePaymentBalance = useMemo(
+    () =>
+      round2(
+        customerAdvanceEntries.reduce((sum, entry) => {
+          if (!selectedAdvancePaymentIdSet.has(String(entry.paymentId || "").trim())) return sum;
+          return sum + Math.max(0, Number(entry.availableAmount || 0));
+        }, 0)
+      ),
+    [customerAdvanceEntries, selectedAdvancePaymentIdSet]
+  );
   const advanceAppliedFromPayments = useMemo(
-    () => (useAvailableAdvance ? round2(Math.min(customerAdvanceWallet, Number(computed.grandTotal || 0))) : 0),
-    [useAvailableAdvance, customerAdvanceWallet, computed.grandTotal]
+    () => (useAvailableAdvance ? round2(Math.min(selectedAdvancePaymentBalance, Number(computed.grandTotal || 0))) : 0),
+    [useAvailableAdvance, selectedAdvancePaymentBalance, computed.grandTotal]
   );
   const remainingAfterPaymentWallet = useMemo(
     () => round2(Math.max(0, Number(computed.grandTotal || 0) - advanceAppliedFromPayments)),
@@ -1327,6 +1350,7 @@ export default function InvoiceCreate() {
   );
 
   useEffect(() => {
+    setSelectedAdvancePaymentIds([]);
     setUseAvailableAdvance(false);
     setSelectedCreditNoteIds([]);
   }, [partyId]);
@@ -1336,6 +1360,13 @@ export default function InvoiceCreate() {
       setUseAvailableAdvance(false);
     }
   }, [customerAvailableCredit]);
+
+  useEffect(() => {
+    setUseAvailableAdvance(
+      (Array.isArray(selectedAdvancePaymentIds) ? selectedAdvancePaymentIds.length : 0) > 0 ||
+      (Array.isArray(selectedCreditNoteIds) ? selectedCreditNoteIds.length : 0) > 0
+    );
+  }, [selectedAdvancePaymentIds, selectedCreditNoteIds]);
 
   useEffect(() => {
     setSelectedCreditNoteIds(
@@ -2246,14 +2277,18 @@ export default function InvoiceCreate() {
       setLastSavedInvoiceId(savedInvoiceId || "");
       if (savedInvoiceId && partyId && advanceAppliedFromWallet > 0) {
         const actor = authGetUser()?.name || authGetUser()?.email || "System User";
+        const selectedNoteIds = customerCreditNotes
+          .filter((entry) => selectedCreditNoteIdSet.has(String(entry.id || "").trim()))
+          .map((entry) => String(entry.id || "").trim());
         if (advanceAppliedFromPayments > 0) {
-          applyAdvanceWalletToCustomerInvoice({
+          applySelectedAdvanceWalletEntriesToCustomerInvoice({
             country: paymentCountryCode,
             customerId: partyId,
             invoiceId: savedInvoiceId,
             invoiceNo: normalizedInvoiceNo,
             invoiceDate,
             invoiceAmount: Number(effectiveComputed.grandTotal || 0),
+            selectedPaymentIds: selectedAdvancePaymentIds,
             maxApplyAmount: advanceAppliedFromPayments,
             actor
           });
@@ -3521,6 +3556,122 @@ export default function InvoiceCreate() {
                   </div>
                 ) : (
                   <>
+                    {customerAdvanceEntries.length ? (
+                      <AllocationSelectionCard
+                        accent="amber"
+                        title="Customer Advance Wallet"
+                        subtitle="Choose which advance receipts should reduce this invoice."
+                        countLabel="Selected"
+                        countValue={money(selectedAdvancePaymentBalance)}
+                        availableLabel="Available Advance Balance"
+                        availableAmount={money(customerAdvanceWallet)}
+                        selectedAmount={money(selectedAdvancePaymentBalance)}
+                        appliedAmount={money(advanceAppliedFromPayments)}
+                        remainingAmount={money(Math.max(0, selectedAdvancePaymentBalance - advanceAppliedFromPayments))}
+                        updatedTotal={money(balanceAfterExistingAdvance)}
+                        updatedTotalLabel="Updated Balance Due"
+                        buttonLabel="Select Advance Entries"
+                        modalTitle="Customer Advance Wallet"
+                        modalSubtitle="Pick the exact advance receipts to use on this invoice."
+                        rows={customerAdvanceEntries}
+                        open={advanceWalletPickerOpen}
+                        onOpen={() => setAdvanceWalletPickerOpen(true)}
+                        onClose={() => setAdvanceWalletPickerOpen(false)}
+                        columns={[
+                          { key: "receiptNo", label: "Receipt" },
+                          { key: "paymentDate", label: "Date" },
+                          { key: "invoiceNo", label: "Source Invoice" },
+                          { key: "amountReceived", label: "Receipt Amount", align: "right", render: (row) => money(row.amountReceived) },
+                          { key: "availableAmount", label: "Available", align: "right", render: (row) => money(row.availableAmount) }
+                        ]}
+                        renderRowCheckbox={(row, checkboxClass) => {
+                          const rowChecked = selectedAdvancePaymentIdSet.has(String(row.paymentId || ""));
+                          return (
+                            <label className="inline-flex items-center gap-2 text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={rowChecked}
+                                onChange={(event) => {
+                                  const nextChecked = event.target.checked;
+                                  setSelectedAdvancePaymentIds((prev) => {
+                                    const next = new Set((Array.isArray(prev) ? prev : []).map((value) => String(value || "")));
+                                    if (nextChecked) next.add(String(row.paymentId || ""));
+                                    else next.delete(String(row.paymentId || ""));
+                                    return Array.from(next);
+                                  });
+                                }}
+                                className={`h-4 w-4 rounded border-slate-300 ${checkboxClass}`}
+                              />
+                              <span className="text-[11px] font-semibold">{rowChecked ? "Selected" : "Select"}</span>
+                            </label>
+                          );
+                        }}
+                      />
+                    ) : null}
+                    {customerCreditNotes.length ? (
+                      <div className="mt-4">
+                        <AllocationSelectionCard
+                          accent="amber"
+                          title="Customer Credit Notes"
+                          subtitle="Choose which credit notes should reduce this invoice."
+                          countLabel="Selected"
+                          countValue={money(selectedCreditNoteBalance)}
+                          availableLabel="Available Credit Note Balance"
+                          availableAmount={money(customerCreditBalance)}
+                          selectedAmount={money(selectedCreditNoteBalance)}
+                          appliedAmount={money(advanceAppliedFromCreditNotes)}
+                          remainingAmount={money(Math.max(0, selectedCreditNoteBalance - advanceAppliedFromCreditNotes))}
+                          updatedTotal={money(finalPayableAmount)}
+                          updatedTotalLabel="Updated Balance Due"
+                          buttonLabel="Select Credit Notes"
+                          modalTitle="Customer Credit Notes"
+                          modalSubtitle="Pick the exact credit notes to apply on this invoice."
+                          rows={customerCreditNotes}
+                          open={creditNotePickerOpen}
+                          onOpen={() => setCreditNotePickerOpen(true)}
+                          onClose={() => setCreditNotePickerOpen(false)}
+                          columns={[
+                            { key: "creditNoteNo", label: "Credit Note" },
+                            { key: "creditNoteDate", label: "Date" },
+                            { key: "linkedInvoiceNo", label: "Against Invoice" },
+                            { key: "totalAmount", label: "Amount", align: "right", render: (row) => money(row.totalAmount) },
+                            { key: "availableAmount", label: "Available", align: "right", render: (row) => money(row.availableAmount) }
+                          ]}
+                          renderRowCheckbox={(row, checkboxClass) => {
+                            const rowChecked =
+                              Number(row.appliedToCurrentInvoiceAmount || 0) > 0 ||
+                              selectedCreditNoteIdSet.has(String(row.id || ""));
+                            const rowDisabled =
+                              Number(row.appliedToCurrentInvoiceAmount || 0) > 0 ||
+                              !row.canUse ||
+                              isEditMode ||
+                              isPrintMode;
+                            return (
+                              <label className="inline-flex items-center gap-2 text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={rowChecked}
+                                  disabled={rowDisabled}
+                                  onChange={(event) => {
+                                    const nextChecked = event.target.checked;
+                                    setSelectedCreditNoteIds((prev) => {
+                                      const next = new Set((Array.isArray(prev) ? prev : []).map((value) => String(value || "")));
+                                      if (nextChecked) next.add(String(row.id || ""));
+                                      else next.delete(String(row.id || ""));
+                                      return Array.from(next);
+                                    });
+                                  }}
+                                  className={`h-4 w-4 rounded border-slate-300 ${checkboxClass}`}
+                                />
+                                <span className="text-[11px] font-semibold">
+                                  {Number(row.appliedToCurrentInvoiceAmount || 0) > 0 ? "Used" : row.canUse ? "Use" : row.status}
+                                </span>
+                              </label>
+                            );
+                          }}
+                        />
+                      </div>
+                    ) : null}
                     {customerCreditNotes.length ? (
                       <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
                         <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-3 py-2">

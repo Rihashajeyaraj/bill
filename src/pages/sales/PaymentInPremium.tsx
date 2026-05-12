@@ -3,6 +3,7 @@ import { ArrowLeft, Eye, FileDown, FilePenLine, FileSpreadsheet, Mail, Plus, Sav
 import { useSearchParams } from "react-router-dom";
 import DateInput from "../../components/DateInput";
 import FieldLabelText from "../../components/FieldLabelText";
+import AllocationSelectionCard from "../../components/AllocationSelectionCard";
 import {
   COUNTRY_CONFIG,
   COUNTRY_NAME_TO_CODE,
@@ -14,8 +15,9 @@ import {
   type PaymentStatus
 } from "../../modules/paymentIn/countryConfig";
 import {
-  applyAdvanceWalletToCustomerInvoice,
+  applySelectedAdvanceWalletEntriesToCustomerInvoice,
   getSelectedPaymentCountry,
+  listCustomerAdvanceWalletEntries,
   listCustomerAdvanceWalletHistory,
   listPaymentIn,
   mapCustomersByCountry,
@@ -30,6 +32,10 @@ import {
   type CustomerOpenInvoice,
   type PaymentInRecord
 } from "../../modules/paymentIn/store";
+import {
+  applySelectedCreditNotesToInvoice,
+  listCreditNotesForCustomerMatch
+} from "../../modules/creditNote/store";
 import {
   calculateTdsAmount,
   computeEditorTotals,
@@ -385,6 +391,10 @@ export default function PaymentInPremium() {
   const [customerLookupQuery, setCustomerLookupQuery] = useState("");
   const [customerSearchError, setCustomerSearchError] = useState("");
   const [useAdvanceWallet, setUseAdvanceWallet] = useState(false);
+  const [selectedAdvancePaymentIds, setSelectedAdvancePaymentIds] = useState<string[]>([]);
+  const [selectedCreditNoteIds, setSelectedCreditNoteIds] = useState<string[]>([]);
+  const [advanceWalletPickerOpen, setAdvanceWalletPickerOpen] = useState(false);
+  const [creditNotePickerOpen, setCreditNotePickerOpen] = useState(false);
   const savingRef = useRef(false);
   useGlobalLoadingBridge(loading || saving, "payment-in");
 
@@ -398,6 +408,26 @@ export default function PaymentInPremium() {
   const customerAdvanceHistory = useMemo(
     () => (form?.customerId ? listCustomerAdvanceWalletHistory(country, form.customerId) : []),
     [country, form?.customerId, refreshKey]
+  );
+  const customerAdvanceEntries = useMemo(
+    () => (form?.customerId ? listCustomerAdvanceWalletEntries(country, form.customerId) : []),
+    [country, form?.customerId, refreshKey]
+  );
+  const customerCreditNotes = useMemo(
+    () => (
+      form?.customerId || form?.customerInput
+        ? listCreditNotesForCustomerMatch(country, form?.customerId || "", selectedCustomer?.name || form?.customerInput || "", form?.selectedDocumentId || "")
+        : []
+    ),
+    [country, form?.customerId, form?.customerInput, form?.selectedDocumentId, selectedCustomer?.name, refreshKey]
+  );
+  const selectedAdvancePaymentIdSet = useMemo(
+    () => new Set(selectedAdvancePaymentIds.map((entry) => String(entry || "").trim()).filter(Boolean)),
+    [selectedAdvancePaymentIds]
+  );
+  const selectedCreditNoteIdSet = useMemo(
+    () => new Set(selectedCreditNoteIds.map((entry) => String(entry || "").trim()).filter(Boolean)),
+    [selectedCreditNoteIds]
   );
   const customerTdsHistory = useMemo(
     () =>
@@ -445,6 +475,22 @@ export default function PaymentInPremium() {
   );
   const selectedCustomer = useMemo(() => customers.find((entry) => entry.id === form?.customerId) || null, [customers, form?.customerId]);
   const availableAdvanceBalance = useMemo(() => Math.max(0, Number(customerInsights.advanceWallet || 0)), [customerInsights.advanceWallet]);
+  const selectedAdvancePaymentBalance = useMemo(
+    () =>
+      customerAdvanceEntries.reduce((sum, entry) => {
+        if (!selectedAdvancePaymentIdSet.has(String(entry.paymentId || "").trim())) return sum;
+        return sum + Math.max(0, Number(entry.availableAmount || 0));
+      }, 0),
+    [customerAdvanceEntries, selectedAdvancePaymentIdSet]
+  );
+  const selectedCreditNoteBalance = useMemo(
+    () =>
+      customerCreditNotes.reduce((sum, entry: any) => {
+        if (!selectedCreditNoteIdSet.has(String(entry.id || "").trim())) return sum;
+        return sum + Math.max(0, Number(entry.availableAmount || 0));
+      }, 0),
+    [customerCreditNotes, selectedCreditNoteIdSet]
+  );
   const customerDocuments = useMemo(
     () =>
       openInvoices.filter(
@@ -568,16 +614,27 @@ export default function PaymentInPremium() {
   const advanceWalletUsable = useMemo(() => {
     if (!useAdvanceWallet) return 0;
     if (!selectedCustomerDocument || selectedCustomerDocument.documentType !== "invoice") return 0;
-    return Math.max(0, Math.min(availableAdvanceBalance, Number(selectedCustomerDocument.balanceDue || 0)));
-  }, [availableAdvanceBalance, selectedCustomerDocument, useAdvanceWallet]);
+    return Math.max(0, Math.min(selectedAdvancePaymentBalance, Number(selectedCustomerDocument.balanceDue || 0)));
+  }, [selectedAdvancePaymentBalance, selectedCustomerDocument, useAdvanceWallet]);
+  const creditNoteUsable = useMemo(() => {
+    if (!selectedCustomerDocument || selectedCustomerDocument.documentType !== "invoice") return 0;
+    return Math.max(0, Math.min(selectedCreditNoteBalance, Math.max(0, Number(selectedCustomerDocument.balanceDue || 0) - advanceWalletUsable)));
+  }, [advanceWalletUsable, selectedCreditNoteBalance, selectedCustomerDocument]);
   const documentBalanceAfterAdvance = useMemo(() => {
     if (!selectedCustomerDocument) return 0;
-    return Math.max(0, Number(selectedCustomerDocument.balanceDue || 0) - advanceWalletUsable);
-  }, [advanceWalletUsable, selectedCustomerDocument]);
+    return Math.max(0, Number(selectedCustomerDocument.balanceDue || 0) - advanceWalletUsable - creditNoteUsable);
+  }, [advanceWalletUsable, creditNoteUsable, selectedCustomerDocument]);
   const remainingWalletBalance = useMemo(
-    () => Math.max(0, availableAdvanceBalance - advanceWalletUsable),
-    [availableAdvanceBalance, advanceWalletUsable]
+    () => Math.max(0, selectedAdvancePaymentBalance - advanceWalletUsable),
+    [selectedAdvancePaymentBalance, advanceWalletUsable]
   );
+  useEffect(() => {
+    setUseAdvanceWallet(selectedAdvancePaymentIds.length > 0);
+  }, [selectedAdvancePaymentIds]);
+  useEffect(() => {
+    setSelectedAdvancePaymentIds([]);
+    setSelectedCreditNoteIds([]);
+  }, [form?.customerId, form?.selectedDocumentId]);
   const editableInvoiceAmount = useMemo(() => {
     const allocationInvoiceAmount = form?.allocations?.[0]?.invoiceAmount;
     if (allocationInvoiceAmount !== undefined && allocationInvoiceAmount !== null && allocationInvoiceAmount !== "") {
@@ -1399,14 +1456,29 @@ export default function PaymentInPremium() {
       selectedCustomerDocument.documentType === "invoice" &&
       advanceWalletUsable > 0
     ) {
-      applyAdvanceWalletToCustomerInvoice({
+      applySelectedAdvanceWalletEntriesToCustomerInvoice({
         country,
         customerId: form.customerId,
         invoiceId: selectedCustomerDocument.id,
         invoiceNo: selectedCustomerDocument.invoiceNo,
         invoiceDate: selectedCustomerDocument.invoiceDate,
         invoiceAmount: selectedCustomerDocument.invoiceAmount,
+        selectedPaymentIds: selectedAdvancePaymentIds,
         maxApplyAmount: advanceWalletUsable,
+        actor: actorName
+      });
+      setRefreshKey((prev) => prev + 1);
+    }
+    if (selectedCustomerDocument && creditNoteUsable > 0) {
+      applySelectedCreditNotesToInvoice({
+        country,
+        customerId: form.customerId,
+        invoiceId: selectedCustomerDocument.id,
+        invoiceNo: selectedCustomerDocument.invoiceNo,
+        invoiceDate: selectedCustomerDocument.invoiceDate,
+        invoiceAmount: selectedCustomerDocument.invoiceAmount,
+        selectedNoteIds: selectedCreditNoteIds,
+        maxApplyAmount: creditNoteUsable,
         actor: actorName
       });
       setRefreshKey((prev) => prev + 1);
@@ -1968,6 +2040,116 @@ export default function PaymentInPremium() {
                           </div>
                         </div>
                       </div>
+                      {selectedCustomerDocument?.documentType === "invoice" && (customerAdvanceEntries.length || customerCreditNotes.length) ? (
+                        <div className="space-y-3">
+                          {customerAdvanceEntries.length ? (
+                            <AllocationSelectionCard
+                              accent="amber"
+                              title="Customer Advance Wallet"
+                              subtitle="Choose which advance receipts should reduce this invoice."
+                              countLabel="Selected"
+                              countValue={formatMoney(selectedAdvancePaymentBalance, country)}
+                              availableLabel="Available Advance Balance"
+                              availableAmount={formatMoney(availableAdvanceBalance, country)}
+                              selectedAmount={formatMoney(selectedAdvancePaymentBalance, country)}
+                              appliedAmount={formatMoney(advanceWalletUsable, country)}
+                              remainingAmount={formatMoney(remainingWalletBalance, country)}
+                              updatedTotal={formatMoney(documentBalanceAfterAdvance, country)}
+                              updatedTotalLabel="Updated Receivable"
+                              buttonLabel="Select Advance Entries"
+                              modalTitle="Customer Advance Wallet"
+                              modalSubtitle="Pick the exact advance receipts to use on this payment."
+                              rows={customerAdvanceEntries}
+                              open={advanceWalletPickerOpen}
+                              onOpen={() => setAdvanceWalletPickerOpen(true)}
+                              onClose={() => setAdvanceWalletPickerOpen(false)}
+                              columns={[
+                                { key: "receiptNo", label: "Receipt" },
+                                { key: "paymentDate", label: "Date" },
+                                { key: "invoiceNo", label: "Source Invoice" },
+                                { key: "amountReceived", label: "Receipt Amount", align: "right", render: (row: any) => formatMoney(row.amountReceived, country) },
+                                { key: "availableAmount", label: "Available", align: "right", render: (row: any) => formatMoney(row.availableAmount, country) }
+                              ]}
+                              renderRowCheckbox={(row: any, checkboxClass: string) => {
+                                const rowChecked = selectedAdvancePaymentIdSet.has(String(row.paymentId || ""));
+                                return (
+                                  <label className="inline-flex items-center gap-2 text-slate-700">
+                                    <input
+                                      type="checkbox"
+                                      checked={rowChecked}
+                                      onChange={(event) => {
+                                        const nextChecked = event.target.checked;
+                                        setSelectedAdvancePaymentIds((prev) => {
+                                          const next = new Set(prev.map((value) => String(value || "")));
+                                          if (nextChecked) next.add(String(row.paymentId || ""));
+                                          else next.delete(String(row.paymentId || ""));
+                                          return Array.from(next);
+                                        });
+                                      }}
+                                      className={`h-4 w-4 rounded border-slate-300 ${checkboxClass}`}
+                                    />
+                                    <span className="text-[11px] font-semibold">{rowChecked ? "Selected" : "Select"}</span>
+                                  </label>
+                                );
+                              }}
+                            />
+                          ) : null}
+                          {customerCreditNotes.length ? (
+                            <AllocationSelectionCard
+                              accent="amber"
+                              title="Customer Credit Notes"
+                              subtitle="Choose which credit notes should reduce this invoice."
+                              countLabel="Selected"
+                              countValue={formatMoney(selectedCreditNoteBalance, country)}
+                              availableLabel="Available Credit Note Balance"
+                              availableAmount={formatMoney(customerCreditNotes.reduce((sum: number, row: any) => sum + Math.max(0, Number(row.availableAmount || 0)), 0), country)}
+                              selectedAmount={formatMoney(selectedCreditNoteBalance, country)}
+                              appliedAmount={formatMoney(creditNoteUsable, country)}
+                              remainingAmount={formatMoney(Math.max(0, selectedCreditNoteBalance - creditNoteUsable), country)}
+                              updatedTotal={formatMoney(documentBalanceAfterAdvance, country)}
+                              updatedTotalLabel="Updated Receivable"
+                              buttonLabel="Select Credit Notes"
+                              modalTitle="Customer Credit Notes"
+                              modalSubtitle="Pick the exact credit notes to use on this payment."
+                              rows={customerCreditNotes as any[]}
+                              open={creditNotePickerOpen}
+                              onOpen={() => setCreditNotePickerOpen(true)}
+                              onClose={() => setCreditNotePickerOpen(false)}
+                              columns={[
+                                { key: "creditNoteNo", label: "Credit Note" },
+                                { key: "creditNoteDate", label: "Date" },
+                                { key: "linkedInvoiceNo", label: "Against Invoice" },
+                                { key: "totalAmount", label: "Amount", align: "right", render: (row: any) => formatMoney(row.totalAmount, country) },
+                                { key: "availableAmount", label: "Available", align: "right", render: (row: any) => formatMoney(row.availableAmount, country) }
+                              ]}
+                              renderRowCheckbox={(row: any, checkboxClass: string) => {
+                                const rowChecked = selectedCreditNoteIdSet.has(String(row.id || ""));
+                                const rowDisabled = !row.canUse;
+                                return (
+                                  <label className="inline-flex items-center gap-2 text-slate-700">
+                                    <input
+                                      type="checkbox"
+                                      checked={rowChecked}
+                                      disabled={rowDisabled}
+                                      onChange={(event) => {
+                                        const nextChecked = event.target.checked;
+                                        setSelectedCreditNoteIds((prev) => {
+                                          const next = new Set(prev.map((value) => String(value || "")));
+                                          if (nextChecked) next.add(String(row.id || ""));
+                                          else next.delete(String(row.id || ""));
+                                          return Array.from(next);
+                                        });
+                                      }}
+                                      className={`h-4 w-4 rounded border-slate-300 ${checkboxClass}`}
+                                    />
+                                    <span className="text-[11px] font-semibold">{rowDisabled ? row.status : rowChecked ? "Selected" : "Select"}</span>
+                                  </label>
+                                );
+                              }}
+                            />
+                          ) : null}
+                        </div>
+                      ) : null}
                       {selectedCustomerDocument?.documentType === "invoice" && availableAdvanceBalance > 0 ? (
                         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

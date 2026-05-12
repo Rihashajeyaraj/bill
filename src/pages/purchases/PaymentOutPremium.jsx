@@ -16,6 +16,7 @@ import { useSearchParams } from "react-router-dom";
 import Badge from "../../components/Badge";
 import DateInput from "../../components/DateInput";
 import EmptyState from "../../components/EmptyState";
+import AllocationSelectionCard from "../../components/AllocationSelectionCard";
 import FlowCard from "../../modules/paymentIn/FlowCard";
 import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
 import PaymentModePicker from "../../modules/paymentIn/PaymentModePicker";
@@ -30,6 +31,7 @@ import { isOrganizationScopedStorageEventKey, LS_KEYS, lsGetOrganizationScoped }
 import {
   buildPaymentOutPayload,
   defaultPaymentForm,
+  listSupplierAdvanceWalletEntries,
   mapBillsByCountryForSelection,
   listSupplierAdvanceWalletHistory,
   listPaymentOut,
@@ -37,10 +39,12 @@ import {
   mapSuppliersByCountry,
   outstandingBySupplier,
   paymentInsightsBySupplier,
+  applySelectedAdvanceWalletEntriesToSupplierBill,
   removePaymentOut,
   savePaymentOut,
   summarizePaymentOut
 } from "../../modules/paymentOut/store";
+import { applySelectedDebitNotesToPurchaseBill, listDebitNotesForSupplierMatch } from "../../modules/debitNote/store";
 import { exportPaymentOutCsv, exportPaymentOutPdf, exportPaymentOutSummaryPdf } from "../../modules/paymentOut/pdf";
 import {
   calculateTdsAmount,
@@ -233,6 +237,10 @@ export default function PaymentOutPremium() {
   const [saving, setSaving] = useState(false);
   const [saveSuccessPopup, setSaveSuccessPopup] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [selectedAdvancePaymentIds, setSelectedAdvancePaymentIds] = useState([]);
+  const [selectedDebitNoteIds, setSelectedDebitNoteIds] = useState([]);
+  const [advanceWalletPickerOpen, setAdvanceWalletPickerOpen] = useState(false);
+  const [debitNotePickerOpen, setDebitNotePickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -360,6 +368,49 @@ export default function PaymentOutPremium() {
   const supplierAdvanceHistory = useMemo(
     () => (form.supplierId ? listSupplierAdvanceWalletHistory(fixedCountry, form.supplierId).slice(0, 12) : []),
     [fixedCountry, form.supplierId, payments]
+  );
+  const supplierAdvanceEntries = useMemo(
+    () => (form.supplierId ? listSupplierAdvanceWalletEntries(fixedCountry, form.supplierId) : []),
+    [fixedCountry, form.supplierId, payments]
+  );
+  const supplierDebitNotes = useMemo(
+    () => (form.supplierId || form.supplierName ? listDebitNotesForSupplierMatch(fixedCountry, form.supplierId, form.supplierName) : []),
+    [fixedCountry, form.supplierId, form.supplierName, refreshKey]
+  );
+  const selectedAdvancePaymentIdSet = useMemo(
+    () => new Set((Array.isArray(selectedAdvancePaymentIds) ? selectedAdvancePaymentIds : []).map((entry) => String(entry || "").trim()).filter(Boolean)),
+    [selectedAdvancePaymentIds]
+  );
+  const selectedDebitNoteIdSet = useMemo(
+    () => new Set((Array.isArray(selectedDebitNoteIds) ? selectedDebitNoteIds : []).map((entry) => String(entry || "").trim()).filter(Boolean)),
+    [selectedDebitNoteIds]
+  );
+  const selectedAdvancePaymentBalance = useMemo(
+    () =>
+      supplierAdvanceEntries.reduce((sum, entry) => {
+        if (!selectedAdvancePaymentIdSet.has(String(entry.paymentId || "").trim())) return sum;
+        return sum + Math.max(0, parseNumber(entry.availableAmount));
+      }, 0),
+    [selectedAdvancePaymentIdSet, supplierAdvanceEntries]
+  );
+  const selectedDebitNoteBalance = useMemo(
+    () =>
+      supplierDebitNotes.reduce((sum, entry) => {
+        if (!selectedDebitNoteIdSet.has(String(entry.id || "").trim())) return sum;
+        return sum + Math.max(0, parseNumber(entry.availableAmount ?? entry.totalAmount));
+      }, 0),
+    [selectedDebitNoteIdSet, supplierDebitNotes]
+  );
+  const advanceWalletUsable = useMemo(
+    () => (selectedBill ? Math.max(0, Math.min(selectedAdvancePaymentBalance, parseNumber(selectedBill.balanceDue))) : 0),
+    [selectedAdvancePaymentBalance, selectedBill]
+  );
+  const debitNoteUsable = useMemo(
+    () =>
+      selectedBill
+        ? Math.max(0, Math.min(selectedDebitNoteBalance, Math.max(0, parseNumber(selectedBill.balanceDue) - advanceWalletUsable)))
+        : 0,
+    [advanceWalletUsable, selectedBill, selectedDebitNoteBalance]
   );
   const autoCalculatedTdsAmount = useMemo(
     () => calculateTdsAmount(autoTdsBaseAmount(selectedBill, form.allocationMode, form.amountPaid), form.tdsRate),
@@ -896,11 +947,48 @@ export default function PaymentOutPremium() {
       return;
     }
     try {
+      if (form.allocationMode === "linked" && selectedBill && advanceWalletUsable > 0) {
+        applySelectedAdvanceWalletEntriesToSupplierBill({
+          country: fixedCountry,
+          supplierId: form.supplierId,
+          billId: selectedBill.id,
+          billNo: selectedBill.billNo,
+          billDate: selectedBill.billDate,
+          billAmount: selectedBill.billAmount,
+          selectedPaymentIds: selectedAdvancePaymentIds,
+          maxApplyAmount: advanceWalletUsable,
+          actor: actorName
+        });
+      }
+      if (form.allocationMode === "linked" && selectedBill && debitNoteUsable > 0) {
+        applySelectedDebitNotesToPurchaseBill({
+          country: fixedCountry,
+          supplierId: form.supplierId,
+          billId: selectedBill.id,
+          billNo: selectedBill.billNo,
+          billDate: selectedBill.billDate,
+          billAmount: selectedBill.billAmount,
+          selectedNoteIds: selectedDebitNoteIds,
+          maxApplyAmount: debitNoteUsable,
+          actor: actorName
+        });
+      }
+      const effectiveBill =
+        form.allocationMode === "linked" && selectedBill
+          ? {
+              ...selectedBill,
+              balanceDue: Math.max(0, parseNumber(selectedBill.balanceDue) - advanceWalletUsable - debitNoteUsable)
+            }
+          : selectedBill;
       const payload = buildPaymentOutPayload(
         {
           ...form,
+          allocations:
+            form.allocationMode === "linked" && effectiveBill
+              ? buildBillAllocation(effectiveBill, form.amountPaid, form.tdsAmount)
+              : form.allocations,
           desiredStatus:
-            form.allocationMode === "linked" && form.allocations.length ? "Applied" : status,
+            form.allocationMode === "linked" && (form.allocations.length || effectiveBill) ? "Applied" : status,
           supplierName: selectedSupplier?.name || form.supplierName
         },
         supplierOutstandingBefore,
@@ -1631,6 +1719,112 @@ export default function PaymentOutPremium() {
                       Amount paid {formatMoney(amountPaid, effectiveCurrency)} + TDS {formatMoney(tdsAmount, effectiveCurrency)}
                     </p>
                   </div>
+                  {selectedBill && supplierAdvanceEntries.length ? (
+                    <AllocationSelectionCard
+                      accent="sky"
+                      title="Supplier Advance Wallet"
+                      subtitle="Choose which advance payments should reduce this bill."
+                      countLabel="Selected"
+                      countValue={formatMoney(selectedAdvancePaymentBalance, effectiveCurrency)}
+                      availableLabel="Available Advance Balance"
+                      availableAmount={formatMoney(supplierAdvanceWallet, effectiveCurrency)}
+                      selectedAmount={formatMoney(selectedAdvancePaymentBalance, effectiveCurrency)}
+                      appliedAmount={formatMoney(advanceWalletUsable, effectiveCurrency)}
+                      remainingAmount={formatMoney(Math.max(0, selectedAdvancePaymentBalance - advanceWalletUsable), effectiveCurrency)}
+                      updatedTotal={formatMoney(Math.max(0, parseNumber(selectedBill.balanceDue) - advanceWalletUsable - debitNoteUsable), effectiveCurrency)}
+                      updatedTotalLabel="Updated Payable"
+                      buttonLabel="Select Advance Entries"
+                      modalTitle="Supplier Advance Wallet"
+                      modalSubtitle="Pick the exact advance entries to use on this payment."
+                      rows={supplierAdvanceEntries}
+                      open={advanceWalletPickerOpen}
+                      onOpen={() => setAdvanceWalletPickerOpen(true)}
+                      onClose={() => setAdvanceWalletPickerOpen(false)}
+                      columns={[
+                        { key: "paymentNo", label: "Payment" },
+                        { key: "paymentDate", label: "Date" },
+                        { key: "billNo", label: "Source Bill" },
+                        { key: "amountPaid", label: "Payment Amount", align: "right", render: (row) => formatMoney(row.amountPaid, effectiveCurrency) },
+                        { key: "availableAmount", label: "Available", align: "right", render: (row) => formatMoney(row.availableAmount, effectiveCurrency) }
+                      ]}
+                      renderRowCheckbox={(row, checkboxClass) => {
+                        const rowChecked = selectedAdvancePaymentIdSet.has(String(row.paymentId || ""));
+                        return (
+                          <label className="inline-flex items-center gap-2 text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={rowChecked}
+                              onChange={(event) => {
+                                const nextChecked = event.target.checked;
+                                setSelectedAdvancePaymentIds((prev) => {
+                                  const next = new Set((Array.isArray(prev) ? prev : []).map((value) => String(value || "")));
+                                  if (nextChecked) next.add(String(row.paymentId || ""));
+                                  else next.delete(String(row.paymentId || ""));
+                                  return Array.from(next);
+                                });
+                              }}
+                              className={`h-4 w-4 rounded border-slate-300 ${checkboxClass}`}
+                            />
+                            <span className="text-[11px] font-semibold">{rowChecked ? "Selected" : "Select"}</span>
+                          </label>
+                        );
+                      }}
+                    />
+                  ) : null}
+                  {selectedBill && supplierDebitNotes.length ? (
+                    <AllocationSelectionCard
+                      accent="sky"
+                      title="Supplier Debit Notes"
+                      subtitle="Choose which debit notes should reduce this bill."
+                      countLabel="Selected"
+                      countValue={formatMoney(selectedDebitNoteBalance, effectiveCurrency)}
+                      availableLabel="Available Debit Note Balance"
+                      availableAmount={formatMoney(supplierDebitNotes.reduce((sum, row) => sum + Math.max(0, parseNumber(row.availableAmount ?? row.totalAmount)), 0), effectiveCurrency)}
+                      selectedAmount={formatMoney(selectedDebitNoteBalance, effectiveCurrency)}
+                      appliedAmount={formatMoney(debitNoteUsable, effectiveCurrency)}
+                      remainingAmount={formatMoney(Math.max(0, selectedDebitNoteBalance - debitNoteUsable), effectiveCurrency)}
+                      updatedTotal={formatMoney(Math.max(0, parseNumber(selectedBill.balanceDue) - advanceWalletUsable - debitNoteUsable), effectiveCurrency)}
+                      updatedTotalLabel="Updated Payable"
+                      buttonLabel="Select Debit Notes"
+                      modalTitle="Supplier Debit Notes"
+                      modalSubtitle="Pick the exact debit notes to use on this payment."
+                      rows={supplierDebitNotes}
+                      open={debitNotePickerOpen}
+                      onOpen={() => setDebitNotePickerOpen(true)}
+                      onClose={() => setDebitNotePickerOpen(false)}
+                      columns={[
+                        { key: "debitNoteNo", label: "Debit Note" },
+                        { key: "debitNoteDate", label: "Date" },
+                        { key: "linkedPurchaseInvoiceNo", label: "Source Bill" },
+                        { key: "totalAmount", label: "Amount", align: "right", render: (row) => formatMoney(row.totalAmount, effectiveCurrency) },
+                        { key: "availableAmount", label: "Available", align: "right", render: (row) => formatMoney(row.availableAmount ?? row.totalAmount, effectiveCurrency) }
+                      ]}
+                      renderRowCheckbox={(row, checkboxClass) => {
+                        const rowChecked = selectedDebitNoteIdSet.has(String(row.id || "")) || row.usedOnBill;
+                        const rowDisabled = row.usedOnBill;
+                        return (
+                          <label className="inline-flex items-center gap-2 text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={rowChecked}
+                              disabled={rowDisabled}
+                              onChange={(event) => {
+                                const nextChecked = event.target.checked;
+                                setSelectedDebitNoteIds((prev) => {
+                                  const next = new Set((Array.isArray(prev) ? prev : []).map((value) => String(value || "")));
+                                  if (nextChecked) next.add(String(row.id || ""));
+                                  else next.delete(String(row.id || ""));
+                                  return Array.from(next);
+                                });
+                              }}
+                              className={`h-4 w-4 rounded border-slate-300 ${checkboxClass}`}
+                            />
+                            <span className="text-[11px] font-semibold">{rowDisabled ? "Used" : rowChecked ? "Selected" : "Select"}</span>
+                          </label>
+                        );
+                      }}
+                    />
+                  ) : null}
                   {!form.supplierId ? (
                     <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
                       Select a supplier to continue.

@@ -129,6 +129,14 @@ export interface DebitNoteRecord {
   taxAdjustmentAmount?: number;
   payableBalanceBefore: number;
   payableBalanceAfter: number;
+  debitApplications?: Array<{
+    billId: string;
+    billNo: string;
+    billDate: string;
+    applyAmount: number;
+    appliedAt: string;
+    actor: string;
+  }>;
   lines: DebitLineComputed[];
   totals: DebitTotals;
   audit: {
@@ -261,8 +269,33 @@ function appliedDebitForBill(billId: string) {
   if (!billId) return 0;
   return getAllNotes()
     .filter((entry) => entry.status === "Applied")
-    .filter((entry) => String(entry.linkedPurchaseInvoiceId || "") === String(billId))
-    .reduce((sum, entry) => sum + Math.max(0, toNumber(entry?.totals?.total)), 0);
+    .reduce((sum, entry) => {
+      const directApplied =
+        !Array.isArray(entry?.debitApplications) || !entry.debitApplications.length
+          ? (String(entry.linkedPurchaseInvoiceId || "") === String(billId)
+              ? Math.max(0, toNumber(entry?.totals?.total))
+              : 0)
+          : 0;
+      const transferredApplied = (Array.isArray(entry?.debitApplications) ? entry.debitApplications : [])
+        .filter((line) => String(line?.billId || "") === String(billId))
+        .reduce((lineSum, line) => lineSum + Math.max(0, toNumber(line?.applyAmount)), 0);
+      return sum + directApplied + transferredApplied;
+    }, 0);
+}
+
+function appliedDebitTransfersForNote(note: DebitNoteRecord) {
+  return (Array.isArray(note?.debitApplications) ? note.debitApplications : []).reduce(
+    (sum, line) => sum + Math.max(0, toNumber(line?.applyAmount)),
+    0
+  );
+}
+
+function remainingAvailableDebitForNote(note: DebitNoteRecord) {
+  const total = Math.max(0, toNumber(note?.totals?.total));
+  if (note?.status === "Applied" && (!Array.isArray(note?.debitApplications) || !note.debitApplications.length)) {
+    return 0;
+  }
+  return Math.max(0, total - appliedDebitTransfersForNote(note));
 }
 
 function getAllNotes(): DebitNoteRecord[] {
@@ -658,7 +691,11 @@ export function listDebitNotesForPurchaseBill(country: CountryCode, billId: stri
       linkedPurchaseInvoiceDate: entry.linkedPurchaseInvoiceDate,
       status: entry.status,
       totalAmount: Math.max(0, toNumber(entry?.totals?.total)),
-      usedOnBill: entry.status === "Applied"
+      usedOnBill:
+        (entry.status === "Applied" && String(entry.linkedPurchaseInvoiceId || "") === normalizedBillId) ||
+        (Array.isArray(entry?.debitApplications)
+          ? entry.debitApplications.some((line) => String(line?.billId || "") === normalizedBillId)
+          : false)
     }))
     .sort((a, b) => String(b.debitNoteDate || "").localeCompare(String(a.debitNoteDate || "")));
 }
@@ -680,6 +717,7 @@ export function listDebitNotesForSupplierMatch(
       linkedPurchaseInvoiceDate: string;
       status: DebitStatus;
       totalAmount: number;
+      availableAmount: number;
       usedOnBill: boolean;
     }>;
   }
@@ -709,9 +747,101 @@ export function listDebitNotesForSupplierMatch(
       linkedPurchaseInvoiceDate: entry.linkedPurchaseInvoiceDate,
       status: entry.status,
       totalAmount: Math.max(0, toNumber(entry?.totals?.total)),
-      usedOnBill: entry.status === "Applied"
+      availableAmount: remainingAvailableDebitForNote(entry),
+      usedOnBill: entry.status === "Applied" && remainingAvailableDebitForNote(entry) <= 0
     }))
+    .filter((entry) => entry.availableAmount > 0 || entry.usedOnBill)
     .sort((a, b) => String(b.debitNoteDate || "").localeCompare(String(a.debitNoteDate || "")));
+}
+
+export function applySelectedDebitNotesToPurchaseBill({
+  country,
+  supplierId,
+  billId,
+  billNo,
+  billDate,
+  billAmount,
+  selectedNoteIds,
+  maxApplyAmount,
+  actor
+}: {
+  country: CountryCode;
+  supplierId: string;
+  billId: string;
+  billNo: string;
+  billDate: string;
+  billAmount: number;
+  selectedNoteIds: string[];
+  maxApplyAmount?: number;
+  actor: string;
+}) {
+  const allowedIds = new Set(
+    (Array.isArray(selectedNoteIds) ? selectedNoteIds : [])
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean)
+  );
+  if (!allowedIds.size) return [] as DebitNoteRecord[];
+
+  const normalizedSupplierId = String(supplierId || "").trim();
+  const normalizedBillId = String(billId || "").trim();
+  const safeBillAmount = Math.max(0, toNumber(billAmount));
+  const safeMaxApplyAmount = Math.max(0, toNumber(maxApplyAmount || safeBillAmount));
+  if (!normalizedSupplierId || !normalizedBillId || safeBillAmount <= 0 || safeMaxApplyAmount <= 0) {
+    return [] as DebitNoteRecord[];
+  }
+
+  const existingAppliedAmount = appliedDebitForBill(normalizedBillId);
+  let remainingBalance = Math.max(0, Math.min(safeBillAmount - existingAppliedAmount, safeMaxApplyAmount));
+  if (remainingBalance <= 0) return [] as DebitNoteRecord[];
+
+  const notes = getAllNotes();
+  const updatedNotes: DebitNoteRecord[] = [];
+  const now = nowIso();
+  const nextNotes = notes.map((entry) => {
+    if (remainingBalance <= 0) return entry;
+    if (!allowedIds.has(String(entry?.id || "").trim())) return entry;
+    if (entry.country !== country) return entry;
+    if (String(entry.supplierId || "") !== normalizedSupplierId) return entry;
+    if (entry.status === "Draft") return entry;
+
+    const available = remainingAvailableDebitForNote(entry);
+    if (available <= 0) return entry;
+
+    const applyAmount = Math.min(available, remainingBalance);
+    const nextEntry: DebitNoteRecord = {
+      ...entry,
+      status: "Applied",
+      payableBalanceAfter: Math.max(0, toNumber(entry.payableBalanceBefore) - Math.max(0, toNumber(entry.totals?.total))),
+      totals: {
+        ...entry.totals,
+        pendingAmount: 0
+      },
+      debitApplications: [
+        ...(Array.isArray(entry.debitApplications) ? entry.debitApplications : []),
+        {
+          billId: normalizedBillId,
+          billNo: String(billNo || normalizedBillId).trim(),
+          billDate: billDate || "",
+          applyAmount,
+          appliedAt: now,
+          actor: actor || "System User"
+        }
+      ],
+      audit: {
+        ...entry.audit,
+        modifiedBy: actor || "System User",
+        modifiedAt: now
+      },
+      history: buildHistory(entry, "Applied", actor || "System User", now)
+    };
+    updatedNotes.push(nextEntry);
+    remainingBalance = Math.max(0, remainingBalance - applyAmount);
+    return nextEntry;
+  });
+
+  if (!updatedNotes.length) return [] as DebitNoteRecord[];
+  setAllNotes(nextNotes);
+  return updatedNotes;
 }
 
 export function listDebitLedger(country?: CountryCode) {
