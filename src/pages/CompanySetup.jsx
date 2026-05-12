@@ -6,6 +6,7 @@ import GradientButton from "../components/GradientButton";
 import FormField from "../components/FormField";
 import FileUpload from "../components/FileUpload";
 import CurrencyMultiInput from "../components/CurrencyMultiInput";
+import DateInput from "../components/DateInput";
 import { authGetOrganizationId, authGetRole, authGetUser } from "../services/auth.service";
 import { canAccessSettings } from "../services/roles";
 import {
@@ -684,11 +685,9 @@ export default function CompanySetup() {
 
             <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
               <FormField label="Financial Year Date" required error={errors.financialYearDate}>
-                <input
-                  type="date"
+                <DateInput
                   value={profile.financialYearDate || ""}
-                  onChange={(e) => {
-                    const nextDate = e.target.value;
+                  onChange={(nextDate) => {
                     setProfile((p) => ({
                       ...p,
                       financialYearDate: nextDate,

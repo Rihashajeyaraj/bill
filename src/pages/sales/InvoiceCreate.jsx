@@ -2549,7 +2549,7 @@ export default function InvoiceCreate() {
           </div>
 
           <div className="mt-4">
-            <FormField label="Customer Search" required error={formErrors.customer}>
+            <FormField label="Customer Search" required={!partyId} error={formErrors.customer}>
               <div className="flex flex-wrap gap-2">
                 <input
                   value={customerLookupQuery}

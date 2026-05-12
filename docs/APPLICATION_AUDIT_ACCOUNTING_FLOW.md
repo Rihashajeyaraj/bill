@@ -1,6 +1,6 @@
 # Billing App Audit And Accounting Flow
 
-Last reviewed: 2026-05-07
+Last reviewed: 2026-05-11
 
 ## 1. Executive summary
 
@@ -471,6 +471,12 @@ Observations:
 
 - `sale-report` now initializes with the selected financial year range instead of defaulting to current month
 - invoice history status resolution was hardened so paid and partial statuses reflect live balance more reliably
+- shared `DateInput` styling and icon/text layout were standardized so date fields render with normal input sizing across the app
+- `Company Setup`, `Company Settings`, and purchase proforma date fields were aligned to use the corrected shared date-input behavior
+- purchase supplier creation now falls back to the typed supplier search text, preventing false `Supplier name is required` errors after entering a name
+- sales invoice customer search no longer triggers the browser `Please fill Customer Search` validation popup after a customer is already selected
+- purchase bill `Not Paid` flow no longer auto-applies supplier advance wallet by default
+- payment-out bill selection now shows advance-covered bills instead of hiding them, with clear `Covered by Advance` labeling for non-payable entries
 
 ## 8. Suggested next actions
 

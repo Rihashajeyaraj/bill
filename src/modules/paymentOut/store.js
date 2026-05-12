@@ -521,7 +521,7 @@ function rawAdvanceWalletBySupplier(country, supplierId) {
     .reduce((sum, entry) => sum + parseNumber(entry?.totals?.unappliedAmount), 0);
 }
 
-function mapOpenBillsByCountryInternal(country, { applyAdvance = true } = {}) {
+function mapOpenBillsByCountryInternal(country, { applyAdvance = true, includeCoveredByAdvance = false } = {}) {
   const target = normalizeCountry(country);
   const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
 
@@ -619,10 +619,14 @@ function mapOpenBillsByCountryInternal(country, { applyAdvance = true } = {}) {
       const adjustedBalance = Math.max(0, baseBalance - remainingAdvance);
       const consumedAdvance = Math.min(baseBalance, remainingAdvance);
       remainingAdvance = Math.max(0, remainingAdvance - consumedAdvance);
-      if (adjustedBalance <= 0) return;
+      if (adjustedBalance <= 0 && !includeCoveredByAdvance) return;
       adjustedBills.push({
         ...bill,
-        balanceDue: adjustedBalance
+        originalBalanceDue: baseBalance,
+        balanceDue: adjustedBalance,
+        advanceConsumed: consumedAdvance,
+        coveredByAdvance: consumedAdvance > 0,
+        fullyCoveredByAdvance: adjustedBalance <= 0
       });
     });
   });
@@ -632,6 +636,13 @@ function mapOpenBillsByCountryInternal(country, { applyAdvance = true } = {}) {
 
 export function mapOpenBillsByCountry(country) {
   return mapOpenBillsByCountryInternal(country, { applyAdvance: true });
+}
+
+export function mapBillsByCountryForSelection(country) {
+  return mapOpenBillsByCountryInternal(country, {
+    applyAdvance: true,
+    includeCoveredByAdvance: true
+  });
 }
 
 export function outstandingBySupplier(country, supplierId) {

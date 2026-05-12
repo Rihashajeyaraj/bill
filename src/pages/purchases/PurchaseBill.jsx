@@ -925,7 +925,10 @@ export default function PurchaseBill() {
   }
 
   async function handleCreateSupplier() {
-    const name = String(supplierCreateDraft.name || "").trim();
+    const fallbackLookupName = queryLooksPhoneLike(supplierLookupQuery)
+      ? ""
+      : String(supplierLookupQuery || "").trim();
+    const name = String(supplierCreateDraft.name || fallbackLookupName || "").trim();
     const phone = extractTenDigitPhone(supplierCreateDraft.phone);
     const draftCountry = String(supplierCreateDraft.country || country || "").trim();
     const draftState = String(supplierCreateDraft.state || "").trim();
@@ -1239,9 +1242,13 @@ export default function PurchaseBill() {
     [country, partyId]
   );
   const supplierAdvanceWallet = round2(Number(supplierPaymentInsights?.advanceWallet || 0));
+  const shouldAutoApplySupplierAdvance = !isEditMode && markAsPaid;
   const advanceAppliedFromWallet = useMemo(
-    () => round2(Math.min(supplierAdvanceWallet, Number(computed.finalTotal || 0))),
-    [supplierAdvanceWallet, computed.finalTotal]
+    () =>
+      shouldAutoApplySupplierAdvance
+        ? round2(Math.min(supplierAdvanceWallet, Number(computed.finalTotal || 0)))
+        : 0,
+    [supplierAdvanceWallet, computed.finalTotal, shouldAutoApplySupplierAdvance]
   );
   const linkedDebitNotes = useMemo(
     () => (isEditMode ? listDebitNotesForPurchaseBill(country, editBillId) : []),
@@ -1581,7 +1588,7 @@ export default function PurchaseBill() {
             }
           });
 
-      if (!isEditMode) {
+      if (shouldAutoApplySupplierAdvance) {
         const autoAppliedAdvanceRecords = applyAdvanceWalletToSupplierBill({
           country,
           supplierId: partyId,

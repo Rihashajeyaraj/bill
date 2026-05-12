@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { CalendarDays } from "lucide-react";
 import { isValidDateParts, parseDateInputToIso } from "../lib/dateUtils";
 
 function isOutOfRange(iso, minIso, maxIso) {
@@ -148,9 +149,11 @@ export default function DateInput({
   min = "",
   max = "",
   requireFourDigitYear = false,
+  style,
   ...props
 }) {
   const inputRef = useRef(null);
+  const pickerInputRef = useRef(null);
   const nextCaretRef = useRef(null);
   const displayValue = useMemo(() => formatIsoDateToInputDisplay(value, ""), [value]);
   const minIso = useMemo(() => parseDateInputToIso(min), [min]);
@@ -210,102 +213,153 @@ export default function DateInput({
     setDraftValue(formatIsoDateToInputDisplay(iso, trimmed));
   }
 
+  function openPicker() {
+    if (disabled) return;
+    const picker = pickerInputRef.current;
+    if (!picker) return;
+    if (typeof picker.showPicker === "function") {
+      picker.showPicker();
+      return;
+    }
+    picker.focus();
+    picker.click();
+  }
+
   return (
-    <input
-      ref={inputRef}
-      type="text"
-      inputMode="numeric"
-      autoComplete="off"
-      maxLength={10}
-      value={draftValue}
-      disabled={disabled}
-      placeholder={placeholder}
-      onChange={(event) => {
-        const nextDigits = sanitizeDraftDigits(event.target.value, minIso, maxIso, requireFourDigitYear);
-        const nextValue = formatDraftDate(nextDigits);
-        const nextCaret = caretFromDigitCount(
-          Math.min(
-            digitCountBeforeCaret(event.target.value, event.target.selectionStart),
-            nextDigits.length
-          )
-        );
-        updateDraft(nextValue, nextCaret);
-        if (!nextDigits.length) {
-          onRawChange?.("");
-          onChange?.("");
-          return;
-        }
-        if (nextDigits.length === 8) {
-          const nextIso = draftDigitsToIso(nextDigits, requireFourDigitYear);
-          if (nextIso && !isOutOfRange(nextIso, minIso, maxIso)) {
-            onRawChange?.(nextValue);
-            onChange?.(nextIso);
-          }
-        }
-      }}
-      onPaste={(event) => {
-        event.preventDefault();
-        const pasted = event.clipboardData?.getData("text") || "";
-        const { nextValue, nextCaret } = applyDigitsToSelection(
-          draftValue,
-          event.currentTarget.selectionStart,
-          event.currentTarget.selectionEnd,
-          pasted,
-          minIso,
-          maxIso,
-          requireFourDigitYear
-        );
-        updateDraft(nextValue, nextCaret);
-      }}
-      onBlur={(event) => commitValue(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          commitValue(event.currentTarget.value);
-          event.currentTarget.blur();
-          return;
-        }
-
-        if (event.ctrlKey || event.metaKey || event.altKey) return;
-
-        const allowedKeys = [
-          "Backspace",
-          "Delete",
-          "Tab",
-          "ArrowLeft",
-          "ArrowRight",
-          "Home",
-          "End"
-        ];
-        if (allowedKeys.includes(event.key)) {
-          const input = event.currentTarget;
-          const start = input.selectionStart ?? 0;
-          const end = input.selectionEnd ?? 0;
-          if (start !== end) return;
-
-          if (event.key === "Backspace" && start > 0 && draftValue[start - 1] === "/") {
+    <div className="relative">
+      <div
+        className={`flex h-[42px] w-full items-center overflow-hidden rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 ${className} ${
+          disabled ? "cursor-not-allowed opacity-60" : ""
+        }`}
+        style={style}
+      >
+        <button
+          type="button"
+          onClick={openPicker}
+          disabled={disabled}
+          aria-label="Open calendar"
+          className={`relative z-10 flex h-full shrink-0 items-center justify-center pl-3 pr-2 text-amber-500 transition ${
+            disabled ? "cursor-not-allowed opacity-60" : "hover:text-amber-600"
+          }`}
+        >
+          <CalendarDays className="h-4 w-4" />
+        </button>
+        <input
+          ref={inputRef}
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          maxLength={10}
+          value={draftValue}
+          disabled={disabled}
+          placeholder={placeholder}
+          onChange={(event) => {
+            const nextDigits = sanitizeDraftDigits(event.target.value, minIso, maxIso, requireFourDigitYear);
+            const nextValue = formatDraftDate(nextDigits);
+            const nextCaret = caretFromDigitCount(
+              Math.min(
+                digitCountBeforeCaret(event.target.value, event.target.selectionStart),
+                nextDigits.length
+              )
+            );
+            updateDraft(nextValue, nextCaret);
+            if (!nextDigits.length) {
+              onRawChange?.("");
+              onChange?.("");
+              return;
+            }
+            if (nextDigits.length === 8) {
+              const nextIso = draftDigitsToIso(nextDigits, requireFourDigitYear);
+              if (nextIso && !isOutOfRange(nextIso, minIso, maxIso)) {
+                onRawChange?.(nextValue);
+                onChange?.(nextIso);
+              }
+            }
+          }}
+          onPaste={(event) => {
             event.preventDefault();
-            const digits = draftValue.replace(/\D/g, "");
-            const digitIndex = digitCountBeforeCaret(draftValue, start) - 1;
-            if (digitIndex < 0) return;
-            const nextDigits = `${digits.slice(0, digitIndex)}${digits.slice(digitIndex + 1)}`;
-            updateDraft(formatDraftDate(nextDigits), caretFromDigitCount(digitIndex));
-          } else if (event.key === "Delete" && draftValue[start] === "/") {
-            event.preventDefault();
-            const digits = draftValue.replace(/\D/g, "");
-            const digitIndex = digitCountBeforeCaret(draftValue, start);
-            const nextDigits = `${digits.slice(0, digitIndex)}${digits.slice(digitIndex + 1)}`;
-            updateDraft(formatDraftDate(nextDigits), caretFromDigitCount(digitIndex));
-          }
-          return;
-        }
+            const pasted = event.clipboardData?.getData("text") || "";
+            const { nextValue, nextCaret } = applyDigitsToSelection(
+              draftValue,
+              event.currentTarget.selectionStart,
+              event.currentTarget.selectionEnd,
+              pasted,
+              minIso,
+              maxIso,
+              requireFourDigitYear
+            );
+            updateDraft(nextValue, nextCaret);
+          }}
+          onBlur={(event) => commitValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commitValue(event.currentTarget.value);
+              event.currentTarget.blur();
+              return;
+            }
 
-        if (!/^\d$/.test(event.key)) {
-          event.preventDefault();
-        }
-      }}
-      className={`text-slate-700 placeholder:text-slate-400 ${className} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
-      {...props}
-    />
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+            const allowedKeys = [
+              "Backspace",
+              "Delete",
+              "Tab",
+              "ArrowLeft",
+              "ArrowRight",
+              "Home",
+              "End"
+            ];
+            if (allowedKeys.includes(event.key)) {
+              const input = event.currentTarget;
+              const start = input.selectionStart ?? 0;
+              const end = input.selectionEnd ?? 0;
+              if (start !== end) return;
+
+              if (event.key === "Backspace" && start > 0 && draftValue[start - 1] === "/") {
+                event.preventDefault();
+                const digits = draftValue.replace(/\D/g, "");
+                const digitIndex = digitCountBeforeCaret(draftValue, start) - 1;
+                if (digitIndex < 0) return;
+                const nextDigits = `${digits.slice(0, digitIndex)}${digits.slice(digitIndex + 1)}`;
+                updateDraft(formatDraftDate(nextDigits), caretFromDigitCount(digitIndex));
+              } else if (event.key === "Delete" && draftValue[start] === "/") {
+                event.preventDefault();
+                const digits = draftValue.replace(/\D/g, "");
+                const digitIndex = digitCountBeforeCaret(draftValue, start);
+                const nextDigits = `${digits.slice(0, digitIndex)}${digits.slice(digitIndex + 1)}`;
+                updateDraft(formatDraftDate(nextDigits), caretFromDigitCount(digitIndex));
+              }
+              return;
+            }
+
+            if (!/^\d$/.test(event.key)) {
+              event.preventDefault();
+            }
+          }}
+          className={`h-full min-w-0 flex-1 appearance-none border-0 bg-transparent py-0 pl-1 pr-0 text-slate-700 placeholder:text-slate-400 focus:outline-none ${
+            disabled ? "cursor-not-allowed opacity-60" : ""
+          }`}
+          {...props}
+        />
+      </div>
+      <input
+        ref={pickerInputRef}
+        type="date"
+        tabIndex={-1}
+        aria-hidden="true"
+        value={parseDateInputToIso(value) || ""}
+        min={minIso || undefined}
+        max={maxIso || undefined}
+        onChange={(event) => {
+          const nextIso = event.target.value || "";
+          const nextDisplay = formatIsoDateToInputDisplay(nextIso, "");
+          onRawChange?.(nextDisplay);
+          onChange?.(nextIso);
+          setDraftValue(nextDisplay);
+        }}
+        className="pointer-events-none absolute bottom-0 left-0 h-px w-px opacity-0"
+      />
+    </div>
   );
 }

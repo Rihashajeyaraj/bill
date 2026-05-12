@@ -30,6 +30,7 @@ import { isOrganizationScopedStorageEventKey, LS_KEYS, lsGetOrganizationScoped }
 import {
   buildPaymentOutPayload,
   defaultPaymentForm,
+  mapBillsByCountryForSelection,
   listSupplierAdvanceWalletHistory,
   listPaymentOut,
   mapOpenBillsByCountry,
@@ -246,6 +247,10 @@ export default function PaymentOutPremium() {
   const payments = useMemo(() => listPaymentOut(fixedCountry), [fixedCountry, refreshKey]);
   const suppliers = useMemo(() => mapSuppliersByCountry(fixedCountry), [fixedCountry, refreshKey]);
   const bills = useMemo(() => mapOpenBillsByCountry(fixedCountry), [fixedCountry, refreshKey]);
+  const billSelectionOptions = useMemo(
+    () => mapBillsByCountryForSelection(fixedCountry),
+    [fixedCountry, refreshKey]
+  );
   const summary = useMemo(() => summarizePaymentOut(fixedCountry), [fixedCountry, refreshKey]);
 
   const selectedSupplier = useMemo(
@@ -254,12 +259,8 @@ export default function PaymentOutPremium() {
   );
   const supplierBills = useMemo(
     () =>
-      bills.filter(
-        (entry) =>
-          String(entry.supplierId) === String(form.supplierId) &&
-          Math.max(0, parseNumber(entry?.balanceDue)) > 0
-      ),
-    [bills, form.supplierId]
+      billSelectionOptions.filter((entry) => String(entry.supplierId) === String(form.supplierId)),
+    [billSelectionOptions, form.supplierId]
   );
   const selectedBill = useMemo(() => {
     const liveBill = supplierBills.find((entry) => String(entry.id) === String(form.selectedBillId));
@@ -1498,11 +1499,17 @@ export default function PaymentOutPremium() {
                         <option value="">
                           {supplierBills.length
                             ? "Select purchase invoice"
-                            : "No pending purchase invoices for this supplier"}
+                            : "No purchase invoices for this supplier"}
                         </option>
                         {supplierBills.map((bill) => (
-                          <option key={bill.id} value={bill.id}>
-                            {`Invoice - ${bill.billNo} | ${bill.billDate || "-"} | Pending: ${formatMoney(bill.balanceDue, effectiveCurrency)}`}
+                          <option
+                            key={bill.id}
+                            value={bill.id}
+                            disabled={Math.max(0, parseNumber(bill.balanceDue)) <= 0}
+                          >
+                            {bill.fullyCoveredByAdvance
+                              ? `Invoice - ${bill.billNo} | ${bill.billDate || "-"} | Covered by Advance`
+                              : `Invoice - ${bill.billNo} | ${bill.billDate || "-"} | Pending: ${formatMoney(bill.balanceDue, effectiveCurrency)}`}
                           </option>
                         ))}
                       </select>

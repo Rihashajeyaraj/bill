@@ -21,6 +21,7 @@ import FileUpload from "../components/FileUpload";
 import GradientButton from "../components/GradientButton";
 import Badge from "../components/Badge";
 import CurrencyMultiInput from "../components/CurrencyMultiInput";
+import DateInput from "../components/DateInput";
 import ThemeModal from "../components/theme/ThemeModal";
 import {
   THEME_PRESETS,
@@ -1766,15 +1767,14 @@ export default function CompanySettings() {
                       required
                       error={sectionErrors.financialYearDate}
                     >
-                      <input
-                        type="date"
+                      <DateInput
                         value={settings.profile.financialYearDate || ""}
-                        onChange={(event) =>
+                        onChange={(nextDate) =>
                           updateSection("profile", {
-                            financialYearDate: event.target.value,
-                            financialYearStartDate: event.target.value,
-                            financialYearEndDate: event.target.value
-                              ? buildFinancialYearEndDate(event.target.value)
+                            financialYearDate: nextDate,
+                            financialYearStartDate: nextDate,
+                            financialYearEndDate: nextDate
+                              ? buildFinancialYearEndDate(nextDate)
                               : ""
                           })
                         }

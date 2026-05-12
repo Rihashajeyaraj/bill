@@ -472,7 +472,10 @@ export default function PurchaseProformaEditor() {
   }
 
   async function handleCreateSupplier() {
-    const name = String(supplierCreateDraft.name || "").trim();
+    const fallbackLookupName = queryLooksPhoneLike(supplierLookupQuery)
+      ? ""
+      : String(supplierLookupQuery || "").trim();
+    const name = String(supplierCreateDraft.name || fallbackLookupName || "").trim();
     const phone = extractTenDigitPhone(supplierCreateDraft.phone);
     const draftCountry = String(supplierCreateDraft.country || form.country || "").trim();
     const draftState = String(supplierCreateDraft.state || "").trim();
@@ -746,7 +749,7 @@ export default function PurchaseProformaEditor() {
                   Pro Forma Date
                 </FieldLabelText>
                 <DateInput
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  className="mt-1 h-[42px] w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-600"
                   value={form.proformaDate || ""}
                   disabled={locked}
                   onChange={(nextValue) => updateForm({ proformaDate: nextValue })}
@@ -755,7 +758,7 @@ export default function PurchaseProformaEditor() {
               <label className="text-sm text-slate-600">
                 Valid Till
                 <DateInput
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  className="mt-1 h-[42px] w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-600"
                   value={form.validTill || ""}
                   disabled={locked}
                   min={nextIsoDate(form.proformaDate)}
