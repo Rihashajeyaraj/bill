@@ -413,6 +413,7 @@ export default function PaymentInPremium() {
     () => (form?.customerId ? listCustomerAdvanceWalletEntries(country, form.customerId) : []),
     [country, form?.customerId, refreshKey]
   );
+  const selectedCustomer = useMemo(() => customers.find((entry) => entry.id === form?.customerId) || null, [customers, form?.customerId]);
   const customerCreditNotes = useMemo(
     () => (
       form?.customerId || form?.customerInput
@@ -473,7 +474,6 @@ export default function PaymentInPremium() {
         : { amountReceived: 0, tdsAmount: 0, totalSettled: 0, amountApplied: 0, unappliedAmount: 0, outstandingAfter: 0 },
     [form, customerOutstandingBefore]
   );
-  const selectedCustomer = useMemo(() => customers.find((entry) => entry.id === form?.customerId) || null, [customers, form?.customerId]);
   const availableAdvanceBalance = useMemo(() => Math.max(0, Number(customerInsights.advanceWallet || 0)), [customerInsights.advanceWallet]);
   const selectedAdvancePaymentBalance = useMemo(
     () =>

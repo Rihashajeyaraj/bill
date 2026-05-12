@@ -665,13 +665,12 @@ export function paymentInsightsBySupplier(country, supplierId) {
   const records = listPaymentOut(country).filter((entry) => String(entry?.supplierId || "") === String(supplierId));
   const sorted = [...records].sort((a, b) => (a.paymentDate < b.paymentDate ? 1 : -1));
   const rawAdvanceWallet = rawAdvanceWalletBySupplier(country, supplierId);
-  const rawOutstandingBeforeAdvance = mapOpenBillsByCountryInternal(country, { applyAdvance: false })
-    .filter((bill) => String(bill.supplierId || "") === String(supplierId))
-    .reduce((sum, bill) => sum + parseNumber(bill.balanceDue), 0);
 
   return {
     lastPaymentDate: sorted[0]?.paymentDate || "",
-    advanceWallet: Math.max(0, rawAdvanceWallet - rawOutstandingBeforeAdvance),
+    // Keep this as the true unapplied supplier wallet balance.
+    // Open purchase bills are handled separately in bill selection / payable calculations.
+    advanceWallet: Math.max(0, rawAdvanceWallet),
     totalPaid: records
       .filter((entry) => String(entry?.status || "") !== "Draft")
       .reduce((sum, entry) => sum + parseNumber(entry?.totals?.amountPaid), 0),
