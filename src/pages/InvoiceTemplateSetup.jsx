@@ -284,7 +284,7 @@ export default function InvoiceTemplateSetup() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-6">
+    <div className="mx-auto max-w-7xl px-4 py-5 sm:px-5 sm:py-6">
       <PageHeader
         title="Invoice Template Setup"
         subtitle="Choose a template and brand colors before accessing the dashboard."
@@ -295,8 +295,8 @@ export default function InvoiceTemplateSetup() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-5">
-        <Card className="p-5">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)] xl:gap-5">
+        <Card className="p-4 sm:p-5">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-semibold text-slate-900">Set up your invoices</p>
@@ -339,15 +339,15 @@ export default function InvoiceTemplateSetup() {
                     type="button"
                     onClick={() => updateConfig({ templateId: option.id })}
                     className={clsx(
-                      "rounded-2xl border p-3 text-left transition shadow-soft bg-white",
+                      "rounded-2xl border bg-white p-3 text-left transition shadow-soft",
                       selected ? "border-slate-400" : "border-slate-100 hover:border-slate-200"
                     )}
                   >
                     <div className="flex items-center justify-between">
-                      <p className="text-xs font-semibold text-slate-700">{option.label}</p>
+                      <p className="text-[13px] font-semibold text-slate-700">{option.label}</p>
                       {selected ? <CheckCircle className="h-4 w-4 text-emerald-500" /> : null}
                     </div>
-                    <div className="mt-2 h-14 rounded-xl border border-slate-100 bg-slate-50 p-2 text-[9px] text-slate-500 leading-tight">
+                    <div className="mt-2 h-14 rounded-xl border border-slate-100 bg-slate-50 p-2 text-[9px] leading-tight text-slate-500">
                       <p className="font-semibold text-slate-600">{hint}</p>
                       <p>Bill To: —</p>
                       <p>Item: —</p>
@@ -472,7 +472,7 @@ export default function InvoiceTemplateSetup() {
           </div>
         </Card>
 
-        <Card className="p-5">
+        <Card className="p-4 sm:p-5">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-semibold text-slate-900">Live Preview</p>
@@ -605,17 +605,19 @@ export default function InvoiceTemplateSetup() {
             </div>
           ) : null}
           <div className="mt-4">
-            <InvoicePreview
-              templateId={config.templateId}
-              styleConfig={{
-                primaryColor: config.primaryColor,
-                bgColor: config.bgColor,
-                fontFamily: config.fontFamily,
-                logoUrl: config.logoUrl,
-                logoPosition: config.logoPosition
-              }}
-              invoiceData={demoInvoice}
-            />
+            <div className="mx-auto w-full max-w-[780px] xl:max-w-[740px]">
+              <InvoicePreview
+                templateId={config.templateId}
+                styleConfig={{
+                  primaryColor: config.primaryColor,
+                  bgColor: config.bgColor,
+                  fontFamily: config.fontFamily,
+                  logoUrl: config.logoUrl,
+                  logoPosition: config.logoPosition
+                }}
+                invoiceData={demoInvoice}
+              />
+            </div>
           </div>
         </Card>
       </div>
