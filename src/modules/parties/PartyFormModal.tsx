@@ -42,6 +42,7 @@ function createDraft(type: PartyType): PartyDraft {
     phone: "",
     email: "",
     country: "",
+    city: "",
     state: "",
     address: "",
     taxId: "",
@@ -289,6 +290,7 @@ export default function PartyFormModal({
       phone: phoneValidation.fullNumber,
       email: form.email?.trim() || "",
       country: form.country?.trim() || "",
+      city: form.city?.trim() || "",
       state: form.state?.trim() || "",
       address: form.address?.trim() || "",
       taxId: form.taxId?.trim() || "",
@@ -594,6 +596,15 @@ export default function PartyFormModal({
                       </div>
                     ) : null}
                   </div>
+                </FormField>
+
+                <FormField label="City" className="w-full">
+                  <input
+                    value={form.city || ""}
+                    onChange={(event) => updateField("city", event.target.value)}
+                    className={inputClassName}
+                    placeholder="Type city name"
+                  />
                 </FormField>
 
                 {showGSTINField ? (

@@ -58,7 +58,7 @@ function ensureInvoiceFontLink(fontFamily) {
   }
 }
 
-function applyInvoiceTemplateFont(config = {}) {
+export function applyInvoiceTemplateFont(config = {}) {
   if (typeof document === "undefined") return;
   const safeFont = resolveAppFont(config.fontFamily || DEFAULT_TEMPLATE_CONFIG.fontFamily);
   document.documentElement.style.setProperty("--invoice-font-family", toAppFontStack(safeFont));

@@ -55,6 +55,17 @@ function isOpenInvoiceStatus(status: unknown) {
   return normalized === "issued" || normalized === "partially paid";
 }
 
+function invoiceHasReturnableQty(invoice: CreditInvoice | null | undefined) {
+  const lines = Array.isArray(invoice?.lines) ? invoice.lines : [];
+  return lines.some((line) => {
+    const availableQty =
+      line?.availableReturnQty !== undefined && line?.availableReturnQty !== null
+        ? parseNumber(line.availableReturnQty)
+        : Math.max(0, parseNumber(line?.quantity) - parseNumber(line?.creditedQty));
+    return availableQty > 0;
+  });
+}
+
 function normalizePhoneForLookup(value: unknown) {
   let digits = String(value || "").replace(/\D/g, "");
   if (!digits) return "";
@@ -169,12 +180,15 @@ export default function CreditNoteEditor({
     const timer = window.setTimeout(() => {
       const next = invoices.filter((invoice) => {
         const balance = parseNumber(invoice.balanceAmount ?? invoice.remainingBalance);
+        const invoiceId = String(invoice.id || "").trim();
+        const isCurrentSelection = invoiceId && invoiceId === String(selectedInvoiceId || "").trim();
         return (
           invoice.customerId === selectedCustomerId &&
           invoice.country === country &&
           isOpenInvoiceStatus(invoice.status) &&
           balance > 0 &&
-          !blockedInvoiceIdSet.has(String(invoice.id || "").trim())
+          (isCurrentSelection || !blockedInvoiceIdSet.has(invoiceId)) &&
+          (isCurrentSelection || invoiceHasReturnableQty(invoice))
         );
       });
       setAvailableInvoices(next);
@@ -182,7 +196,7 @@ export default function CreditNoteEditor({
     }, 260);
 
     return () => window.clearTimeout(timer);
-  }, [selectedCustomerId, country, invoices, blockedInvoiceIdSet]);
+  }, [selectedCustomerId, selectedInvoiceId, country, invoices, blockedInvoiceIdSet]);
 
   useEffect(() => {
     setAvailableInvoices([]);
@@ -393,7 +407,7 @@ export default function CreditNoteEditor({
                   {!selectedCustomerId ? <option value="">Select customer first</option> : null}
                   {selectedCustomerId && invoiceLoading ? <option value="">Loading invoices...</option> : null}
                   {selectedCustomerId && !invoiceLoading && !availableInvoices.length ? (
-                    <option value="">No open invoices for this customer</option>
+                    <option value="">No eligible invoices for this customer</option>
                   ) : null}
                   {selectedCustomerId && !invoiceLoading && availableInvoices.length ? <option value="">Select invoice</option> : null}
                   {availableInvoices.map((invoice) => (
@@ -404,7 +418,7 @@ export default function CreditNoteEditor({
                 </select>
                 {fieldErrors.linkedInvoiceId ? <span className="mt-1 block text-xs text-rose-600">{fieldErrors.linkedInvoiceId}</span> : null}
                 {selectedCustomerId && !invoiceLoading && !availableInvoices.length ? (
-                  <span className="mt-1 block text-xs text-slate-500">No open invoices for this customer</span>
+                  <span className="mt-1 block text-xs text-slate-500">No eligible invoices with returnable quantity for this customer</span>
                 ) : null}
               </label>
             </div>

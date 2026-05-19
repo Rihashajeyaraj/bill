@@ -10,6 +10,7 @@ export const LS_KEYS = {
   theme_config: "theme_config",
   app_font_family: "app_font_family",
   company_profile: "company_profile",
+  deleted_organization_ids: "deleted_organization_ids",
   companyProfileCompleted: "companyProfileCompleted",
   financial_years: "financial_years",
   selected_financial_year_id: "selected_financial_year_id",

@@ -198,7 +198,9 @@ export default function PurchaseProformaEditor() {
     name: "",
     phone: "",
     country: "",
-    state: ""
+    state: "",
+    city: "",
+    address: ""
   });
   const [supplierCountryMenuOpen, setSupplierCountryMenuOpen] = useState(false);
   const [supplierStateMenuOpen, setSupplierStateMenuOpen] = useState(false);
@@ -298,6 +300,7 @@ export default function PurchaseProformaEditor() {
           supplier?.name,
           supplier?.email,
           supplier?.address,
+          supplier?.city,
           supplier?.state,
           supplier?.country
         ]
@@ -479,6 +482,8 @@ export default function PurchaseProformaEditor() {
     const phone = extractTenDigitPhone(supplierCreateDraft.phone);
     const draftCountry = String(supplierCreateDraft.country || form.country || "").trim();
     const draftState = String(supplierCreateDraft.state || "").trim();
+    const draftCity = String(supplierCreateDraft.city || "").trim();
+    const draftAddress = String(supplierCreateDraft.address || "").trim();
 
     if (!name) {
       setSupplierSearchError("Supplier name is required.");
@@ -501,7 +506,8 @@ export default function PurchaseProformaEditor() {
         email: "",
         country: draftCountry,
         state: draftState,
-        address: "",
+        city: draftCity,
+        address: draftAddress,
         taxId: "",
         notes: "",
         openingBalance: 0,
@@ -522,7 +528,9 @@ export default function PurchaseProformaEditor() {
         name: "",
         phone: "",
         country: form.country || "",
-        state: ""
+        state: "",
+        city: "",
+        address: ""
       });
       setSupplierCountryMenuOpen(false);
       setSupplierStateMenuOpen(false);
@@ -957,9 +965,27 @@ export default function PurchaseProformaEditor() {
                                 <p className="px-3 py-2 text-xs text-slate-500">No matching states/regions</p>
                               )}
                             </div>
-                          ) : null}
+                            ) : null}
+                          </div>
+                          <input
+                            value={supplierCreateDraft.city}
+                            onChange={(event) =>
+                              setSupplierCreateDraft((prev) => ({ ...prev, city: event.target.value }))
+                            }
+                            disabled={locked}
+                            placeholder="City"
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+                          />
+                          <input
+                            value={supplierCreateDraft.address}
+                            onChange={(event) =>
+                              setSupplierCreateDraft((prev) => ({ ...prev, address: event.target.value }))
+                            }
+                            disabled={locked}
+                            placeholder="Address"
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-100 sm:col-span-2"
+                          />
                         </div>
-                      </div>
                       <button
                         type="button"
                         onClick={() => {

@@ -27,17 +27,26 @@ export default function OrganizationSelect() {
     organizations,
     organizationsLoading,
     switchingOrganizationId,
+    refreshOrganization,
     refreshOrganizations,
     switchOrganization
   } = useOrganization();
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [deletingId, setDeletingId] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [hiddenOrganizationIds, setHiddenOrganizationIds] = useState([]);
+
+  const visibleOrganizations = organizations.filter(
+    (organization) =>
+      !hiddenOrganizationIds.includes(String(organization?.organizationId || "").trim())
+  );
 
   useEffect(() => {
     let mounted = true;
     async function loadOrganizations() {
       setError("");
+      setSuccess("");
       try {
         await refreshOrganizations();
       } catch (loadError) {
@@ -55,6 +64,7 @@ export default function OrganizationSelect() {
   async function handleSelectOrganization(organizationId) {
     if (!organizationId) return;
     setError("");
+    setSuccess("");
     try {
       const selected = await switchOrganization(organizationId);
       navigate(pathForNext(selected?.next), { replace: true });
@@ -74,13 +84,20 @@ export default function OrganizationSelect() {
 
   async function handleDeleteOrganization() {
     const targetId = String(deleteTarget?.organizationId || "").trim();
+    const targetName = String(deleteTarget?.companyName || "Company").trim();
     if (!targetId) return;
     setDeletingId(targetId);
     setError("");
+    setSuccess("");
     try {
       await authDeleteOrganization(targetId);
+      refreshOrganization();
       await refreshOrganizations();
+      setHiddenOrganizationIds((prev) =>
+        prev.includes(targetId) ? prev : [...prev, targetId]
+      );
       setDeleteTarget(null);
+      setSuccess(`${targetName} deleted successfully.`);
     } catch (deleteError) {
       setError(deleteError?.message || "Unable to delete selected organization.");
     } finally {
@@ -118,11 +135,17 @@ export default function OrganizationSelect() {
         </div>
       ) : null}
 
+      {success ? (
+        <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          {success}
+        </div>
+      ) : null}
+
       {organizationsLoading ? (
         <Card className="p-6 text-sm text-slate-500">Loading organizations...</Card>
       ) : null}
 
-      {!organizationsLoading && !organizations.length ? (
+      {!organizationsLoading && !visibleOrganizations.length ? (
         <Card className="p-6">
           <p className="text-sm font-semibold text-slate-900">No company found</p>
           <p className="mt-1 text-sm text-slate-500">
@@ -139,9 +162,9 @@ export default function OrganizationSelect() {
         </Card>
       ) : null}
 
-      {!organizationsLoading && organizations.length ? (
+      {!organizationsLoading && visibleOrganizations.length ? (
         <div className="grid grid-cols-1 gap-3">
-          {organizations.map((organization) => (
+          {visibleOrganizations.map((organization) => (
             <Card key={organization.organizationId} className="p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">

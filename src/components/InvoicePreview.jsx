@@ -30,8 +30,8 @@ const VARIANTS = {
     value: "text-sm",
     tableHead: "text-[11px] uppercase tracking-wider",
     total: "text-lg",
-    header: "",
-    divider: "border-t-2 border-slate-300"
+    header: "rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4",
+    divider: "border-t-2 border-emerald-200"
   },
   india_igst_sample: {
     padding: "p-7",
@@ -40,8 +40,8 @@ const VARIANTS = {
     value: "text-sm",
     tableHead: "text-xs uppercase tracking-widest",
     total: "text-lg",
-    header: "rounded-2xl border border-slate-200 p-4",
-    divider: "border-t-2 border-slate-300"
+    header: "rounded-2xl border border-amber-200 bg-amber-50/70 p-4",
+    divider: "border-t-2 border-amber-200"
   },
   compact: {
     padding: "p-4",
@@ -205,6 +205,8 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
       (invoiceData.country === "India" ? "GST" : "NORMAL")
   ).toUpperCase();
   const isIndiaGST = rawTaxType === "GST";
+  const isGstSampleTemplate = templateId === "india_gst_sample";
+  const isIgstSampleTemplate = templateId === "india_igst_sample";
   const taxType = rawTaxType;
   const formattedInvoiceDate = formatDayMonthYear(invoiceData.invoiceDate);
   const gstColumnLayout =
@@ -306,6 +308,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
         className={clsx("invoice-template-scope app-invoice-preview rounded-3xl border shadow-soft", variant.padding)}
         style={{
           backgroundColor: bgColor || "var(--card)",
+          fontFamily: font,
           "--invoice-font-family": font
         }}
       >
@@ -364,6 +367,38 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
         </div>
 
         <div className={clsx("mt-4", variant.divider)} />
+
+        {isGstSampleTemplate ? (
+          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className={clsx("font-semibold text-slate-900", variant.value)}>Intra-state GST Format</p>
+                <p className={clsx("text-slate-500", variant.label)}>
+                  Local supply with CGST and SGST split equally.
+                </p>
+              </div>
+              <span className="rounded-full border border-emerald-300 bg-white px-3 py-1 text-[11px] font-semibold text-emerald-700">
+                CGST + SGST
+              </span>
+            </div>
+          </div>
+        ) : null}
+
+        {isIgstSampleTemplate ? (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className={clsx("font-semibold text-slate-900", variant.value)}>Inter-state IGST Format</p>
+                <p className={clsx("text-slate-500", variant.label)}>
+                  Interstate supply with full tax shown under IGST.
+                </p>
+              </div>
+              <span className="rounded-full border border-amber-300 bg-white px-3 py-1 text-[11px] font-semibold text-amber-700">
+                IGST ONLY
+              </span>
+            </div>
+          </div>
+        ) : null}
 
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
           <div>
@@ -505,6 +540,7 @@ export default function InvoicePreview({ templateId, styleConfig, invoiceData })
       className={clsx("invoice-template-scope app-invoice-preview rounded-3xl border shadow-soft", variant.padding)}
       style={{
         backgroundColor: bgColor || "var(--card)",
+        fontFamily: font,
         "--invoice-font-family": font
       }}
     >

@@ -157,15 +157,27 @@ function normalizePasswordResetFunctionError(error, fallbackMessage) {
   return message || fallbackMessage;
 }
 
+function normalizeOrganizationSettings(settings) {
+  if (settings && typeof settings === "object") return settings;
+  if (typeof settings === "string") {
+    try {
+      const parsed = JSON.parse(settings);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
 function isOrganizationSoftDeleted(organization) {
-  const settings = organization?.settings;
-  if (!settings || typeof settings !== "object") return false;
+  const settings = normalizeOrganizationSettings(organization?.settings);
   return !!settings.is_deleted;
 }
 
 function filterActiveMemberships(memberships) {
   return (Array.isArray(memberships) ? memberships : []).filter(
-    (entry) => entry?.organization_id && !isOrganizationSoftDeleted(entry?.organization)
+    (entry) => entry?.organization_id && entry?.organization && !isOrganizationSoftDeleted(entry?.organization)
   );
 }
 
@@ -175,6 +187,38 @@ function clearOrganizationScopedCache(organizationId) {
   ORGANIZATION_SCOPED_KEYS_TO_CLEAR.forEach((key) => {
     lsRemoveOrganizationScoped(key, safeOrganizationId);
   });
+}
+
+function listDeletedOrganizationIds(userId = "") {
+  const raw = lsGetUserScoped(LS_KEYS.deleted_organization_ids, [], userId);
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean);
+}
+
+function isOrganizationDeletedLocally(organizationId, userId = "") {
+  const safeOrganizationId = String(organizationId || "").trim();
+  if (!safeOrganizationId) return false;
+  return listDeletedOrganizationIds(userId).includes(safeOrganizationId);
+}
+
+function rememberDeletedOrganizationId(organizationId, userId = "") {
+  const safeOrganizationId = String(organizationId || "").trim();
+  if (!safeOrganizationId) return;
+  const next = Array.from(new Set([...listDeletedOrganizationIds(userId), safeOrganizationId]));
+  lsSetUserScopedSafe(
+    LS_KEYS.deleted_organization_ids,
+    next,
+    userId,
+    "deleted_organization_ids(remember)"
+  );
+}
+
+function filterDeletedMembershipsLocal(memberships = [], userId = "") {
+  return (Array.isArray(memberships) ? memberships : []).filter(
+    (entry) => !isOrganizationDeletedLocally(entry?.organization_id, userId)
+  );
 }
 
 function getStoredUsers() {
@@ -360,7 +404,7 @@ async function fetchOwnerOrganizations(userId) {
     .order("created_at", { ascending: true });
   if (ownerError || !Array.isArray(ownerRows) || !ownerRows.length) return [];
   return ownerRows
-    .filter((row) => !!row?.id)
+    .filter((row) => !!row?.id && !isOrganizationSoftDeleted(row))
     .map((row) => ({
       organization_id: row.id,
       role: ROLE_LABELS.owner,
@@ -707,7 +751,10 @@ export async function authEnsureOrganizationAccess(preferredOrganizationId = "")
   const sessionUser = session?.user || authGetUser();
   if (!sessionUser?.id) return requestedOrgId;
 
-  const memberships = filterActiveMemberships(await fetchAllMemberships(sessionUser.id));
+  const memberships = filterDeletedMembershipsLocal(
+    filterActiveMemberships(await fetchAllMemberships(sessionUser.id)),
+    sessionUser.id
+  );
   const selectedMembership =
     memberships.find((entry) => String(entry?.organization_id || "") === requestedOrgId) ||
     memberships[0] ||
@@ -732,9 +779,10 @@ export async function authEnsureOrganizationAccess(preferredOrganizationId = "")
 }
 
 export async function authListOrganizations() {
+  const currentUserId = String(authGetUser()?.id || "").trim();
   if (!isSupabaseConfigured || !supabase) {
     const organizationId = authGetOrganizationId();
-    if (!organizationId) return [];
+    if (!organizationId || isOrganizationDeletedLocally(organizationId, currentUserId)) return [];
     return [
       {
         organizationId,
@@ -751,8 +799,14 @@ export async function authListOrganizations() {
     data: { user }
   } = await supabase.auth.getUser();
   if (!user?.id) return [];
-  const memberships = filterActiveMemberships(await fetchAllMemberships(user.id));
-  return memberships.map(mapMembershipSummary);
+  const memberships = filterDeletedMembershipsLocal(
+    filterActiveMemberships(await fetchAllMemberships(user.id)),
+    user.id
+  );
+  const summaries = memberships.map(mapMembershipSummary);
+  return summaries.filter(
+    (entry) => !entry?.deleted && !isOrganizationDeletedLocally(entry?.organizationId, user.id)
+  );
 }
 
 export async function authSelectOrganization(organizationId) {
@@ -789,8 +843,14 @@ export async function authSelectOrganization(organizationId) {
   } = await supabase.auth.getSession();
   const sessionUser = session?.user || currentUser;
   if (!sessionUser?.id) throw new Error("Login required.");
+  if (isOrganizationDeletedLocally(safeOrganizationId, sessionUser.id)) {
+    throw new Error("Selected company is no longer available.");
+  }
 
-  const memberships = filterActiveMemberships(await fetchAllMemberships(sessionUser.id));
+  const memberships = filterDeletedMembershipsLocal(
+    filterActiveMemberships(await fetchAllMemberships(sessionUser.id)),
+    sessionUser.id
+  );
   const selected = memberships.find(
     (entry) => String(entry?.organization_id || "") === safeOrganizationId
   );
@@ -846,7 +906,10 @@ export async function authBootstrapSession() {
   const fallbackRole = normalizeRoleLabel(
     session.user.user_metadata?.default_role || ROLE_LABELS.owner
   );
-  const memberships = filterActiveMemberships(await fetchAllMemberships(session.user.id));
+  const memberships = filterDeletedMembershipsLocal(
+    filterActiveMemberships(await fetchAllMemberships(session.user.id)),
+    session.user.id
+  );
   const storedOrganizationId =
     ssGet(LS_KEYS.organization_id, "") || lsGetUserScoped(LS_KEYS.organization_id, "", session.user.id);
   const selectedMembership =
@@ -885,7 +948,10 @@ export async function authLogin({ email, password }) {
 
   await upsertProfileRow(user);
   const fallbackRole = normalizeRoleLabel(user.user_metadata?.default_role || ROLE_LABELS.owner);
-  const memberships = filterActiveMemberships(await fetchAllMemberships(user.id));
+  const memberships = filterDeletedMembershipsLocal(
+    filterActiveMemberships(await fetchAllMemberships(user.id)),
+    user.id
+  );
 
   let selectedMembership = null;
   if (memberships.length === 1) {
@@ -1079,6 +1145,7 @@ export async function authDeleteOrganization(organizationId) {
 
   if (!isSupabaseConfigured || !supabase) {
     clearOrganizationScopedCache(safeOrganizationId);
+    rememberDeletedOrganizationId(safeOrganizationId, currentUserId);
     clearSelectionIfNeeded();
     return { deleted: true, mode: "local" };
   }
@@ -1113,7 +1180,7 @@ export async function authDeleteOrganization(organizationId) {
   let mode = "hard";
   if (hardDeleteError) {
     const nextSettings = {
-      ...(organization?.settings && typeof organization.settings === "object" ? organization.settings : {}),
+      ...normalizeOrganizationSettings(organization?.settings),
       is_deleted: true,
       deleted_at: new Date().toISOString(),
       deleted_by: user.id
@@ -1132,6 +1199,7 @@ export async function authDeleteOrganization(organizationId) {
   }
 
   clearOrganizationScopedCache(safeOrganizationId);
+  rememberDeletedOrganizationId(safeOrganizationId, user.id);
   clearSelectionIfNeeded();
   return { deleted: true, mode };
 }

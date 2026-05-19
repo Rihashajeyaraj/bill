@@ -25,6 +25,10 @@ function parseNumber(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 function normalizeSupabaseError(error, fallback) {
   if (error?.code === "42501") {
     return `${fallback}. Supabase RLS denied access. Verify organization membership and policies.`;
@@ -239,6 +243,135 @@ function setAll(list) {
   lsSetOrganizationScoped(LS_KEYS.purchases, list);
 }
 
+function paymentOutAllocationTdsShare(record, line) {
+  const totalTdsAmount = Math.max(0, parseNumber(record?.totals?.tdsAmount));
+  if (totalTdsAmount <= 0) return 0;
+
+  const allocations = ensureArray(record?.allocations);
+  const positiveAllocations = allocations.filter((entry) => Math.max(0, parseNumber(entry?.applyAmount)) > 0);
+  if (!positiveAllocations.length) return 0;
+
+  const totalApplied = positiveAllocations.reduce(
+    (sum, entry) => sum + Math.max(0, parseNumber(entry?.applyAmount)),
+    0
+  );
+  const lineBillId = String(line?.billId || "").trim();
+  const positiveIndex = positiveAllocations.findIndex(
+    (entry) => String(entry?.billId || "").trim() === lineBillId
+  );
+  if (positiveIndex < 0) return 0;
+
+  const appliedAmount = Math.max(0, parseNumber(line?.applyAmount));
+  if (appliedAmount <= 0 || totalApplied <= 0) return 0;
+
+  if (positiveAllocations.length === 1) {
+    return totalTdsAmount;
+  }
+
+  const rawShare = (appliedAmount / totalApplied) * totalTdsAmount;
+  if (positiveIndex === positiveAllocations.length - 1) {
+    const allocatedBefore = positiveAllocations
+      .slice(0, positiveIndex)
+      .reduce((sum, entry) => sum + paymentOutAllocationTdsShare(record, entry), 0);
+    return Math.max(0, totalTdsAmount - allocatedBefore);
+  }
+
+  return Math.max(0, Number(rawShare.toFixed(2)));
+}
+
+function appliedPaymentOutForBillLocal(billId) {
+  const normalizedBillId = String(billId || "").trim();
+  if (!normalizedBillId) return 0;
+
+  const legacy = ensureArray(lsGetOrganizationScoped(LS_KEYS.payments, []))
+    .filter((entry) => String(entry?.direction || "").toUpperCase() === "OUT")
+    .filter((entry) => !String(entry?.referenceNo || entry?.reference_no || "").startsWith("PO:"))
+    .filter((entry) => String(entry?.billId || entry?.bill_id || "").trim() === normalizedBillId)
+    .reduce(
+      (sum, entry) =>
+        sum +
+        Math.max(0, parseNumber(entry?.amount)) +
+        Math.max(0, parseNumber(entry?.tdsAmount || entry?.tds_amount)),
+      0
+    );
+
+  const premium = ensureArray(lsGetOrganizationScoped("paymentOutPremiumV1", []))
+    .filter((entry) => String(entry?.status || "") === "Applied")
+    .reduce(
+      (sum, entry) =>
+        sum +
+        ensureArray(entry?.allocations)
+          .filter((line) => String(line?.billId || "").trim() === normalizedBillId)
+          .reduce(
+            (lineSum, line) =>
+              lineSum +
+              Math.max(0, parseNumber(line?.applyAmount)) +
+              paymentOutAllocationTdsShare(entry, line),
+            0
+          ),
+      0
+    );
+
+  return legacy + premium;
+}
+
+function appliedDebitForBillLocal(billId) {
+  const normalizedBillId = String(billId || "").trim();
+  if (!normalizedBillId) return 0;
+
+  return ensureArray(lsGetOrganizationScoped("debitNotesPremiumV1", []))
+    .filter((entry) => String(entry?.status || "") === "Applied")
+    .reduce((sum, entry) => {
+      const applications = ensureArray(entry?.debitApplications);
+      const hasTransferredApplications = applications.length > 0;
+      const directApplied =
+        !hasTransferredApplications &&
+        String(entry?.linkedPurchaseInvoiceId || "").trim() === normalizedBillId
+          ? Math.max(0, parseNumber(entry?.totals?.total))
+          : 0;
+      const transferredApplied = applications
+        .filter((line) => String(line?.billId || "").trim() === normalizedBillId)
+        .reduce((lineSum, line) => lineSum + Math.max(0, parseNumber(line?.applyAmount)), 0);
+      return sum + directApplied + transferredApplied;
+    }, 0);
+}
+
+function recalculatePurchaseBalance(entry) {
+  const grandTotal = Math.max(
+    0,
+    parseNumber(
+      entry?.totals?.grandTotal ??
+        entry?.totals?.finalTotal ??
+        entry?.totals?.total ??
+        entry?.grandTotal
+    )
+  );
+  const paymentApplied = appliedPaymentOutForBillLocal(entry?.id);
+  const debitApplied = appliedDebitForBillLocal(entry?.id);
+  const storedBalance = Math.max(
+    0,
+    parseNumber(entry?.remainingBalance ?? entry?.totals?.balance ?? grandTotal)
+  );
+  const hasLinkedActivity = paymentApplied > 0 || debitApplied > 0;
+  const effectiveBalance = Math.max(
+    0,
+    hasLinkedActivity ? grandTotal - paymentApplied - debitApplied : storedBalance
+  );
+
+  return {
+    ...entry,
+    remainingBalance: effectiveBalance,
+    totals: {
+      ...(entry?.totals || {}),
+      balance: effectiveBalance
+    },
+    status:
+      String(entry?.status || "").toLowerCase() === "cancelled"
+        ? "cancelled"
+        : deriveBillStatus(grandTotal, effectiveBalance)
+  };
+}
+
 function applyPurchaseStockDelta(lines, direction = 1) {
   const itemLines = Array.isArray(lines) ? lines : [];
   if (!itemLines.length) return;
@@ -285,7 +418,8 @@ function applyPurchaseStockDelta(lines, direction = 1) {
 export function purchasesGetById(purchaseId) {
   const normalizedId = String(purchaseId || "").trim();
   if (!normalizedId) return null;
-  return getAll().find((entry) => String(entry?.id || "").trim() === normalizedId) || null;
+  const matched = getAll().find((entry) => String(entry?.id || "").trim() === normalizedId) || null;
+  return matched ? recalculatePurchaseBalance(matched) : null;
 }
 
 function calculatePurchaseSummary(lines, totalsInput = {}) {
@@ -354,7 +488,7 @@ function purchaseDateForFilter(entry) {
 }
 
 export function purchasesList(range) {
-  const rows = getAll();
+  const rows = getAll().map((entry) => recalculatePurchaseBalance(entry));
   const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
   if (!fromDate && !toDate) return rows;
   return rows.filter((entry) => matchesFinancialYearFilter(purchaseDateForFilter(entry), { fromDate, toDate }));

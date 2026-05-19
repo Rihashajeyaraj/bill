@@ -438,8 +438,19 @@ function appliedDebitForBill(billId) {
   if (!billId) return 0;
   return ensureArray(lsGetOrganizationScoped(DEBIT_NOTES_PREMIUM_KEY, []))
     .filter((entry) => String(entry?.status || "") === "Applied")
-    .filter((entry) => String(entry?.linkedPurchaseInvoiceId || "") === String(billId))
-    .reduce((sum, entry) => sum + Math.max(0, parseNumber(entry?.totals?.total)), 0);
+    .reduce((sum, entry) => {
+      const applications = ensureArray(entry?.debitApplications);
+      const hasTransferredApplications = applications.length > 0;
+      const directApplied =
+        !hasTransferredApplications &&
+        String(entry?.linkedPurchaseInvoiceId || "") === String(billId)
+          ? Math.max(0, parseNumber(entry?.totals?.total))
+          : 0;
+      const transferredApplied = applications
+        .filter((line) => String(line?.billId || "") === String(billId))
+        .reduce((lineSum, line) => lineSum + Math.max(0, parseNumber(line?.applyAmount)), 0);
+      return sum + directApplied + transferredApplied;
+    }, 0);
 }
 
 function postLedgerEntry(note, actor) {

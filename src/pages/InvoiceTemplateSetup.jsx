@@ -12,6 +12,7 @@ import DateInput from "../components/DateInput";
 import { computeIndiaGST, computeVAT } from "../services/tax";
 import {
   DEFAULT_TEMPLATE_CONFIG,
+  applyInvoiceTemplateFont,
   getInvoiceTemplateConfig,
   setInvoiceTemplateConfig,
   setInvoiceTemplateCompleted
@@ -156,6 +157,82 @@ function computePreviewTotals(preview) {
   };
 }
 
+function applyTemplatePreviewDefaults(preview, templateId, companyName) {
+  const basePreview = preview && typeof preview === "object" ? preview : {};
+  const nextItems =
+    Array.isArray(basePreview.items) && basePreview.items.length
+      ? basePreview.items
+      : [
+          {
+            id: `demo_${templateId}`,
+            name: templateId === "india_igst_sample" ? "Interstate Supply Item" : "Local GST Item",
+            hsn: "9983",
+            qty: 2,
+            rate: templateId === "india_igst_sample" ? 1800 : 1250
+          }
+        ];
+
+  if (templateId === "india_gst_sample") {
+    return {
+      ...basePreview,
+      companyName: basePreview.companyName || companyName,
+      invoiceNo: basePreview.invoiceNo || "GST-001",
+      invoiceDate: basePreview.invoiceDate || new Date().toISOString().slice(0, 10),
+      placeOfSupply: basePreview.placeOfSupply || "Tamil Nadu",
+      seller: {
+        ...basePreview.seller,
+        name: basePreview.seller?.name || companyName,
+        state: basePreview.seller?.state || "Tamil Nadu",
+        gstin: basePreview.seller?.gstin || "33ABCDE1234F1Z5"
+      },
+      customer: {
+        ...basePreview.customer,
+        name: basePreview.customer?.name || "Chennai Retail Buyer",
+        address: basePreview.customer?.address || "14 Market Road, Chennai",
+        state: basePreview.customer?.state || "Tamil Nadu",
+        gstin: basePreview.customer?.gstin || "33AACCC1206D1ZT"
+      },
+      tax: {
+        ...(basePreview.tax || {}),
+        type: "GST",
+        supplyType: "INTRA"
+      },
+      items: nextItems
+    };
+  }
+
+  if (templateId === "india_igst_sample") {
+    return {
+      ...basePreview,
+      companyName: basePreview.companyName || companyName,
+      invoiceNo: basePreview.invoiceNo || "IGST-001",
+      invoiceDate: basePreview.invoiceDate || new Date().toISOString().slice(0, 10),
+      placeOfSupply: basePreview.placeOfSupply || "Karnataka",
+      seller: {
+        ...basePreview.seller,
+        name: basePreview.seller?.name || companyName,
+        state: basePreview.seller?.state || "Tamil Nadu",
+        gstin: basePreview.seller?.gstin || "33ABCDE1234F1Z5"
+      },
+      customer: {
+        ...basePreview.customer,
+        name: basePreview.customer?.name || "Bengaluru Wholesale Buyer",
+        address: basePreview.customer?.address || "22 Residency Road, Bengaluru",
+        state: basePreview.customer?.state || "Karnataka",
+        gstin: basePreview.customer?.gstin || "29AACCC1206D1ZT"
+      },
+      tax: {
+        ...(basePreview.tax || {}),
+        type: "GST",
+        supplyType: "INTER"
+      },
+      items: nextItems
+    };
+  }
+
+  return basePreview;
+}
+
 export default function InvoiceTemplateSetup() {
   const nav = useNavigate();
   const { profile: organizationProfile = {}, country = "India" } = useOrganization();
@@ -227,7 +304,14 @@ export default function InvoiceTemplateSetup() {
     }
   }, [countryTemplates, config.templateId]);
 
-  const demoInvoice = useMemo(() => computePreviewTotals(preview), [preview]);
+  useEffect(() => {
+    applyInvoiceTemplateFont({ fontFamily: config.fontFamily });
+  }, [config.fontFamily]);
+
+  const demoInvoice = useMemo(
+    () => computePreviewTotals(applyTemplatePreviewDefaults(preview, config.templateId, companyName)),
+    [companyName, config.templateId, preview]
+  );
 
   function updateConfig(patch) {
     setConfig((prev) => ({ ...prev, ...patch }));
@@ -295,7 +379,7 @@ export default function InvoiceTemplateSetup() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)] xl:gap-5">
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)] xl:gap-5">
         <Card className="p-4 sm:p-5">
           <div className="flex items-center justify-between">
             <div>
@@ -472,7 +556,7 @@ export default function InvoiceTemplateSetup() {
           </div>
         </Card>
 
-        <Card className="p-4 sm:p-5">
+        <Card className="p-4 sm:p-5 xl:sticky xl:top-5">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-semibold text-slate-900">Live Preview</p>
@@ -604,7 +688,7 @@ export default function InvoiceTemplateSetup() {
               </div>
             </div>
           ) : null}
-          <div className="mt-4">
+          <div className="mt-4 xl:max-h-[calc(100vh-10rem)] xl:overflow-y-auto xl:pr-2">
             <div className="mx-auto w-full max-w-[780px] xl:max-w-[740px]">
               <InvoicePreview
                 templateId={config.templateId}
