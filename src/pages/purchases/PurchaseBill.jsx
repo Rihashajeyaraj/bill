@@ -51,6 +51,7 @@ import {
   normalizeFormattedNumberInput,
   parseFormattedNumber
 } from "../../lib/formatPreferences";
+import { parseDateInputToIso } from "../../lib/dateUtils";
 
 const UNIT_OPTIONS = ["pcs", "kg", "box", "pack", "ltr", "hours", "days", "months", "service"];
 
@@ -1039,6 +1040,23 @@ export default function PurchaseBill() {
     setSupplierStateMenuOpen(false);
   }
 
+  function clearScannedInvoice(options = {}) {
+    const resetAutofill = options?.resetAutofill !== false;
+    setInvoiceScanMeta(null);
+    setScannedInvoiceTotal("");
+    if (!resetAutofill) return;
+
+    resetSupplier();
+    clearFormError("billNumber");
+    clearFormError("billDate");
+    setBillNumberManuallyEdited(false);
+    setBillNumber(String(companyPeekDocumentNumber("purchase", { dateValue: new Date() }) || ""));
+    setBillDate("");
+    setPaymentDate("");
+    setLines([createLine(defaultLineTaxRate)]);
+    clearFormError("lines");
+  }
+
   function applyImportedLines(importedItems) {
     if (!Array.isArray(importedItems) || !importedItems.length) return;
     setLines(
@@ -1128,16 +1146,17 @@ export default function PurchaseBill() {
 
   async function applyScannedInvoice(parsed, fileName) {
     const supplierResult = await applyImportedSupplier(parsed);
+    const scannedDateIso = parseDateInputToIso(parsed?.date || "");
 
     if (parsed?.invoiceNumber) {
       clearFormError("billNumber");
       setBillNumberManuallyEdited(true);
       setBillNumber(parsed.invoiceNumber);
     }
-    if (parsed?.date) {
+    if (scannedDateIso) {
       clearFormError("billDate");
-      setBillDate(parsed.date);
-      setPaymentDate(parsed.date);
+      setBillDate(scannedDateIso);
+      setPaymentDate(scannedDateIso);
     }
     if (parsed?.total) {
       setScannedInvoiceTotal(parsed.total);
@@ -1151,7 +1170,7 @@ export default function PurchaseBill() {
       supplierName: parsed?.supplier || "",
       matchedSupplierName: supplierResult.matchedSupplierName,
       invoiceNumber: parsed?.invoiceNumber || "",
-      date: parsed?.date || "",
+      date: scannedDateIso || parsed?.date || "",
       total: parsed?.total || "",
       itemCount: Array.isArray(parsed?.items) ? parsed.items.length : 0,
       confidence: Number(parsed?.confidence || 0),
@@ -1185,7 +1204,7 @@ export default function PurchaseBill() {
         toast.error("Scan needs manual review", "No reliable values were detected. Enter the bill manually.");
       }
     } catch (error) {
-      setInvoiceScanMeta(null);
+      clearScannedInvoice({ resetAutofill: false });
       toast.error("Invoice scan failed", error?.message || "Could not read the selected file.");
     } finally {
       setInvoiceScanning(false);
@@ -1263,7 +1282,8 @@ export default function PurchaseBill() {
     () => new Set((Array.isArray(selectedAdvancePaymentIds) ? selectedAdvancePaymentIds : []).map((entry) => String(entry || "").trim()).filter(Boolean)),
     [selectedAdvancePaymentIds]
   );
-  const shouldAutoApplySupplierAdvance = !isEditMode && markAsPaid;
+  const shouldAutoApplySupplierAdvance =
+    !isEditMode && (Array.isArray(selectedAdvancePaymentIds) ? selectedAdvancePaymentIds.length : 0) > 0;
   const selectedAdvancePaymentBalance = useMemo(
     () =>
       round2(
@@ -1346,6 +1366,58 @@ export default function PurchaseBill() {
   const projectedAdvanceWallet = round2(
     Math.max(0, supplierAdvanceWallet - advanceAppliedFromWallet) + advanceAmount
   );
+  const supplierAdvancePreviewRows = useMemo(() => {
+    const actualApplyOrder = [...supplierAdvanceEntries].sort((left, right) => {
+      const leftDate = String(left?.paymentDate || "");
+      const rightDate = String(right?.paymentDate || "");
+      if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+      return String(left?.paymentNo || "").localeCompare(String(right?.paymentNo || ""));
+    });
+    const previewByPaymentId = new Map();
+    let remainingBillBalance = round2(Number(computed.finalTotal || 0));
+
+    actualApplyOrder.forEach((entry) => {
+      const paymentId = String(entry?.paymentId || "").trim();
+      const availableAmount = round2(Number(entry?.availableAmount || 0));
+      const isSelected = selectedAdvancePaymentIdSet.has(paymentId);
+      const billBalanceBefore = remainingBillBalance;
+      const appliedToBill =
+        shouldAutoApplySupplierAdvance && isSelected
+          ? round2(Math.min(availableAmount, remainingBillBalance))
+          : 0;
+      remainingBillBalance = round2(Math.max(0, remainingBillBalance - appliedToBill));
+      const billBalanceAfter = remainingBillBalance;
+
+      let settlementStatus = "Available";
+      if (isSelected && !shouldAutoApplySupplierAdvance) settlementStatus = "Selected";
+      if (appliedToBill > 0) settlementStatus = billBalanceAfter <= 0 ? "Fully Settled" : "Applied";
+
+      previewByPaymentId.set(paymentId, {
+        ...entry,
+        isSelected,
+        appliedToBill,
+        entryBalanceAfter: round2(Math.max(0, availableAmount - appliedToBill)),
+        billBalanceBefore,
+        billBalanceAfter,
+        settlementStatus
+      });
+    });
+
+    return supplierAdvanceEntries.map((entry) => {
+      const paymentId = String(entry?.paymentId || "").trim();
+      return (
+        previewByPaymentId.get(paymentId) || {
+          ...entry,
+          isSelected: false,
+          appliedToBill: 0,
+          entryBalanceAfter: round2(Number(entry?.availableAmount || 0)),
+          billBalanceBefore: round2(Number(computed.finalTotal || 0)),
+          billBalanceAfter: round2(Number(computed.finalTotal || 0)),
+          settlementStatus: "Available"
+        }
+      );
+    });
+  }, [supplierAdvanceEntries, computed.finalTotal, selectedAdvancePaymentIdSet, shouldAutoApplySupplierAdvance]);
 
   async function resolveLinesWithItems(detailedLines) {
     const nextLines = [];
@@ -1866,7 +1938,16 @@ export default function PurchaseBill() {
           </div>
           {invoiceScanMeta ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-700 md:max-w-sm">
-              <p className="font-semibold text-slate-900">{invoiceScanMeta.fileName}</p>
+              <div className="flex items-start justify-between gap-3">
+                <p className="font-semibold text-slate-900">{invoiceScanMeta.fileName}</p>
+                <button
+                  type="button"
+                  onClick={() => clearScannedInvoice()}
+                  className="inline-flex shrink-0 items-center rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  Remove Scan
+                </button>
+              </div>
               <p className="mt-1">Mode: {invoiceScanMeta.extractionMethod || "free-scan"}</p>
               <p className="mt-1">Confidence: {wholeNumber(invoiceScanMeta.confidence)}%</p>
               <p className="mt-1">Items: {wholeNumber(invoiceScanMeta.itemCount || 0)}</p>
@@ -2778,19 +2859,53 @@ export default function PurchaseBill() {
                   remainingAmount={money(Math.max(0, selectedAdvancePaymentBalance - advanceAppliedFromWallet))}
                   updatedTotal={money(balanceAfterExistingAdvance)}
                   updatedTotalLabel="Updated Balance Due"
+                  statusLabel="Bill Status"
+                  statusValue={balanceAfterExistingAdvance <= 0 ? "Fully Settled" : "Balance Pending"}
+                  statusTone={balanceAfterExistingAdvance <= 0 ? "success" : "warning"}
                   buttonLabel="Select Advance Entries"
                   modalTitle="Supplier Advance Wallet"
                   modalSubtitle="Pick the exact payment entries to use on this bill."
-                  rows={supplierAdvanceEntries}
+                  rows={supplierAdvancePreviewRows}
                   open={advanceWalletPickerOpen}
                   onOpen={() => setAdvanceWalletPickerOpen(true)}
                   onClose={() => setAdvanceWalletPickerOpen(false)}
                   columns={[
                     { key: "paymentNo", label: "Payment" },
                     { key: "paymentDate", label: "Date" },
-                    { key: "billNo", label: "Source Bill" },
                     { key: "amountPaid", label: "Payment Amount", align: "right", render: (row) => money(row.amountPaid) },
-                    { key: "availableAmount", label: "Available", align: "right", render: (row) => money(row.availableAmount) }
+                    {
+                      key: "availableAmount",
+                      label: "Available",
+                      align: "right",
+                      render: (row) => (
+                        <div className="text-right">
+                          <p className="font-semibold text-slate-900">{money(row.availableAmount)}</p>
+                          {row.billNo ? <p className="text-[10px] text-slate-500">From {row.billNo}</p> : null}
+                        </div>
+                      )
+                    },
+                    { key: "appliedToBill", label: "Applied to Bill", align: "right", render: (row) => money(row.appliedToBill) },
+                    { key: "entryBalanceAfter", label: "Balance Left", align: "right", render: (row) => money(row.entryBalanceAfter) },
+                    { key: "billBalanceAfter", label: "Bill Due After", align: "right", render: (row) => money(row.billBalanceAfter) },
+                    {
+                      key: "settlementStatus",
+                      label: "Status",
+                      render: (row) => (
+                        <span
+                          className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${
+                            row.settlementStatus === "Fully Settled"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : row.settlementStatus === "Applied"
+                                ? "bg-sky-50 text-sky-700"
+                                : row.isSelected
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          {row.settlementStatus}
+                        </span>
+                      )
+                    }
                   ]}
                   renderRowCheckbox={(row, checkboxClass) => {
                     const rowChecked = selectedAdvancePaymentIdSet.has(String(row.paymentId || ""));

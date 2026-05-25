@@ -1,6 +1,7 @@
 import React from "react";
 import { Download, Eye, FilePenLine } from "lucide-react";
 import type { PaymentInRecord } from "./store";
+import { paymentStatusLabel } from "./countryConfig";
 import { formatCurrencyByPreference } from "../../lib/formatPreferences";
 
 interface PaymentInListTableProps {
@@ -76,7 +77,7 @@ export default function PaymentInListTable({
                   </td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(entry.status)}`}>
-                      {entry.status}
+                      {paymentStatusLabel(entry.status)}
                     </span>
                   </td>
                   <td className="px-4 py-3">

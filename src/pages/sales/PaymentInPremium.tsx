@@ -3,13 +3,13 @@ import { ArrowLeft, Eye, FileDown, FilePenLine, FileSpreadsheet, Mail, Plus, Sav
 import { useSearchParams } from "react-router-dom";
 import DateInput from "../../components/DateInput";
 import FieldLabelText from "../../components/FieldLabelText";
-import AllocationSelectionCard from "../../components/AllocationSelectionCard";
 import {
   COUNTRY_CONFIG,
   COUNTRY_NAME_TO_CODE,
   COUNTRY_OPTIONS,
   formatPaymentModeLabel,
   normalizePaymentMode,
+  paymentStatusLabel,
   type CountryCode,
   type PaymentMode,
   type PaymentStatus
@@ -624,6 +624,21 @@ export default function PaymentInPremium() {
     if (!selectedCustomerDocument) return 0;
     return Math.max(0, Number(selectedCustomerDocument.balanceDue || 0) - advanceWalletUsable - creditNoteUsable);
   }, [advanceWalletUsable, creditNoteUsable, selectedCustomerDocument]);
+  const totalAvailableCreditNoteBalance = useMemo(
+    () =>
+      customerCreditNotes.reduce(
+        (sum: number, row: any) => sum + Math.max(0, Number(row.availableAmount || 0)),
+        0
+      ),
+    [customerCreditNotes]
+  );
+  const effectiveSelectedDocumentBalance = useMemo(() => {
+    if (!selectedCustomerDocument) return 0;
+    if (selectedCustomerDocument.documentType !== "invoice") {
+      return Math.max(0, Number(selectedCustomerDocument.balanceDue || 0));
+    }
+    return documentBalanceAfterAdvance;
+  }, [documentBalanceAfterAdvance, selectedCustomerDocument]);
   const remainingWalletBalance = useMemo(
     () => Math.max(0, selectedAdvancePaymentBalance - advanceWalletUsable),
     [selectedAdvancePaymentBalance, advanceWalletUsable]
@@ -644,22 +659,18 @@ export default function PaymentInPremium() {
   }, [form?.allocations, selectedCustomerDocument?.invoiceAmount]);
   const displayedInvoiceAmount = useMemo(() => {
     if (form?.allocationMode === "linked" && selectedCustomerDocument) {
-      return parseNumber(selectedCustomerDocument.balanceDue as any);
+      return effectiveSelectedDocumentBalance;
     }
     return editableInvoiceAmount;
-  }, [editableInvoiceAmount, form?.allocationMode, selectedCustomerDocument]);
+  }, [editableInvoiceAmount, effectiveSelectedDocumentBalance, form?.allocationMode, selectedCustomerDocument]);
   const remainingPayableAfterPayment = useMemo(
     () => Math.max(0, documentBalanceAfterAdvance - totals.totalSettled),
     [documentBalanceAfterAdvance, totals.totalSettled]
   );
   const maxReceivableAmount = useMemo(() => {
     if (form?.allocationMode !== "linked" || !selectedCustomerDocument) return null;
-    const baseBalance =
-      useAdvanceWallet && selectedCustomerDocument.documentType === "invoice"
-        ? documentBalanceAfterAdvance
-        : Math.max(0, Number(selectedCustomerDocument.balanceDue || 0));
-    return Math.max(0, baseBalance);
-  }, [documentBalanceAfterAdvance, form?.allocationMode, selectedCustomerDocument, useAdvanceWallet]);
+    return Math.max(0, effectiveSelectedDocumentBalance);
+  }, [effectiveSelectedDocumentBalance, form?.allocationMode, selectedCustomerDocument]);
   const filteredPayments = useMemo(() => payments.filter((entry) => {
     const allocationText = (Array.isArray(entry.allocations) ? entry.allocations : [])
       .map((allocation) =>
@@ -880,13 +891,13 @@ export default function PaymentInPremium() {
         allocations: buildAllocation(
           withAdjustedDocumentBalance(
             linkedDocument,
-            useAdvanceWallet && linkedDocument?.documentType === "invoice" ? advanceWalletUsable : 0
+            linkedDocument?.documentType === "invoice" ? advanceWalletUsable + creditNoteUsable : 0
           ),
           prev.amountReceived
         )
       };
     });
-  }, [advanceWalletUsable, customerDocuments, form?.allocationMode, form?.amountReceived, form?.selectedDocumentId, useAdvanceWallet]);
+  }, [advanceWalletUsable, creditNoteUsable, customerDocuments, form?.allocationMode, form?.amountReceived, form?.selectedDocumentId]);
 
   function clearMessages() {
     setErrorMessage("");
@@ -963,7 +974,11 @@ export default function PaymentInPremium() {
           openInvoices.find(
             (entry) => entry.id === next.selectedDocumentId && entry.customerId === next.customerId
           ) || null;
-        const effectiveBalance = Math.max(0, Number(linkedDocument?.balanceDue || 0) - (useAdvanceWallet && linkedDocument?.documentType === "invoice" ? advanceWalletUsable : 0));
+        const effectiveBalance = Math.max(
+          0,
+          Number(linkedDocument?.balanceDue || 0) -
+            (linkedDocument?.documentType === "invoice" ? advanceWalletUsable + creditNoteUsable : 0)
+        );
         next.allocations = linkedDocument
           ? [
               {
@@ -998,7 +1013,7 @@ export default function PaymentInPremium() {
               Math.max(
                 0,
                 Number(linkedDocument.balanceDue || 0) -
-                  (useAdvanceWallet && linkedDocument?.documentType === "invoice" ? advanceWalletUsable : 0)
+                  (linkedDocument?.documentType === "invoice" ? advanceWalletUsable + creditNoteUsable : 0)
               )
             )
           : Math.max(0, parseNumber(value as any));
@@ -1013,7 +1028,7 @@ export default function PaymentInPremium() {
         next.allocations = buildAllocation(
           withAdjustedDocumentBalance(
             linkedDocument,
-            useAdvanceWallet && linkedDocument?.documentType === "invoice" ? advanceWalletUsable : 0
+            linkedDocument?.documentType === "invoice" ? advanceWalletUsable + creditNoteUsable : 0
           ),
           nextAmountReceived
         );
@@ -1435,7 +1450,7 @@ export default function PaymentInPremium() {
   async function handleApply() {
     if (!form) return;
     if (!activePayment || activePayment.status !== "Confirmed") {
-      setErrorMessage("Save this payment as Confirmed before applying it.");
+      setErrorMessage("Save this payment as Received before applying it.");
       setSuccessMessage("");
       return;
     }
@@ -1602,7 +1617,7 @@ export default function PaymentInPremium() {
                   <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search customer, receipt, reference" className="search-field-input h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
                   <select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Customers</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select>
                   <select value={modeFilter} onChange={(event) => setModeFilter(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Modes</option>{COUNTRY_CONFIG[country].paymentModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select>
-                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PaymentStatus | "")} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Status</option><option value="Draft">Draft</option><option value="Confirmed">Confirmed</option><option value="Applied">Applied</option></select>
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PaymentStatus | "")} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Status</option><option value="Draft">Draft</option><option value="Confirmed">Received</option><option value="Applied">Applied</option></select>
                   <DateInput value={fromDate} onChange={(nextValue) => setFromDate(nextValue)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
                   <DateInput value={toDate} onChange={(nextValue) => setToDate(nextValue)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
                 </div>
@@ -1661,7 +1676,7 @@ export default function PaymentInPremium() {
                             </td>
                             <td className="px-3 py-3">
                               <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(record.status)}`}>
-                                {record.status}
+                                {paymentStatusLabel(record.status)}
                               </span>
                             </td>
                             <td className="px-3 py-3">
@@ -2040,117 +2055,7 @@ export default function PaymentInPremium() {
                           </div>
                         </div>
                       </div>
-                      {selectedCustomerDocument?.documentType === "invoice" && (customerAdvanceEntries.length || customerCreditNotes.length) ? (
-                        <div className="space-y-3">
-                          {customerAdvanceEntries.length ? (
-                            <AllocationSelectionCard
-                              accent="amber"
-                              title="Customer Advance Wallet"
-                              subtitle="Choose which advance receipts should reduce this invoice."
-                              countLabel="Selected"
-                              countValue={formatMoney(selectedAdvancePaymentBalance, country)}
-                              availableLabel="Available Advance Balance"
-                              availableAmount={formatMoney(availableAdvanceBalance, country)}
-                              selectedAmount={formatMoney(selectedAdvancePaymentBalance, country)}
-                              appliedAmount={formatMoney(advanceWalletUsable, country)}
-                              remainingAmount={formatMoney(remainingWalletBalance, country)}
-                              updatedTotal={formatMoney(documentBalanceAfterAdvance, country)}
-                              updatedTotalLabel="Updated Receivable"
-                              buttonLabel="Select Advance Entries"
-                              modalTitle="Customer Advance Wallet"
-                              modalSubtitle="Pick the exact advance receipts to use on this payment."
-                              rows={customerAdvanceEntries}
-                              open={advanceWalletPickerOpen}
-                              onOpen={() => setAdvanceWalletPickerOpen(true)}
-                              onClose={() => setAdvanceWalletPickerOpen(false)}
-                              columns={[
-                                { key: "receiptNo", label: "Receipt" },
-                                { key: "paymentDate", label: "Date" },
-                                { key: "invoiceNo", label: "Source Invoice" },
-                                { key: "amountReceived", label: "Receipt Amount", align: "right", render: (row: any) => formatMoney(row.amountReceived, country) },
-                                { key: "availableAmount", label: "Available", align: "right", render: (row: any) => formatMoney(row.availableAmount, country) }
-                              ]}
-                              renderRowCheckbox={(row: any, checkboxClass: string) => {
-                                const rowChecked = selectedAdvancePaymentIdSet.has(String(row.paymentId || ""));
-                                return (
-                                  <label className="inline-flex items-center gap-2 text-slate-700">
-                                    <input
-                                      type="checkbox"
-                                      checked={rowChecked}
-                                      onChange={(event) => {
-                                        const nextChecked = event.target.checked;
-                                        setSelectedAdvancePaymentIds((prev) => {
-                                          const next = new Set(prev.map((value) => String(value || "")));
-                                          if (nextChecked) next.add(String(row.paymentId || ""));
-                                          else next.delete(String(row.paymentId || ""));
-                                          return Array.from(next);
-                                        });
-                                      }}
-                                      className={`h-4 w-4 rounded border-slate-300 ${checkboxClass}`}
-                                    />
-                                    <span className="text-[11px] font-semibold">{rowChecked ? "Selected" : "Select"}</span>
-                                  </label>
-                                );
-                              }}
-                            />
-                          ) : null}
-                          {customerCreditNotes.length ? (
-                            <AllocationSelectionCard
-                              accent="amber"
-                              title="Customer Credit Notes"
-                              subtitle="Choose which credit notes should reduce this invoice."
-                              countLabel="Selected"
-                              countValue={formatMoney(selectedCreditNoteBalance, country)}
-                              availableLabel="Available Credit Note Balance"
-                              availableAmount={formatMoney(customerCreditNotes.reduce((sum: number, row: any) => sum + Math.max(0, Number(row.availableAmount || 0)), 0), country)}
-                              selectedAmount={formatMoney(selectedCreditNoteBalance, country)}
-                              appliedAmount={formatMoney(creditNoteUsable, country)}
-                              remainingAmount={formatMoney(Math.max(0, selectedCreditNoteBalance - creditNoteUsable), country)}
-                              updatedTotal={formatMoney(documentBalanceAfterAdvance, country)}
-                              updatedTotalLabel="Updated Receivable"
-                              buttonLabel="Select Credit Notes"
-                              modalTitle="Customer Credit Notes"
-                              modalSubtitle="Pick the exact credit notes to use on this payment."
-                              rows={customerCreditNotes as any[]}
-                              open={creditNotePickerOpen}
-                              onOpen={() => setCreditNotePickerOpen(true)}
-                              onClose={() => setCreditNotePickerOpen(false)}
-                              columns={[
-                                { key: "creditNoteNo", label: "Credit Note" },
-                                { key: "creditNoteDate", label: "Date" },
-                                { key: "linkedInvoiceNo", label: "Against Invoice" },
-                                { key: "totalAmount", label: "Amount", align: "right", render: (row: any) => formatMoney(row.totalAmount, country) },
-                                { key: "availableAmount", label: "Available", align: "right", render: (row: any) => formatMoney(row.availableAmount, country) }
-                              ]}
-                              renderRowCheckbox={(row: any, checkboxClass: string) => {
-                                const rowChecked = selectedCreditNoteIdSet.has(String(row.id || ""));
-                                const rowDisabled = !row.canUse;
-                                return (
-                                  <label className="inline-flex items-center gap-2 text-slate-700">
-                                    <input
-                                      type="checkbox"
-                                      checked={rowChecked}
-                                      disabled={rowDisabled}
-                                      onChange={(event) => {
-                                        const nextChecked = event.target.checked;
-                                        setSelectedCreditNoteIds((prev) => {
-                                          const next = new Set(prev.map((value) => String(value || "")));
-                                          if (nextChecked) next.add(String(row.id || ""));
-                                          else next.delete(String(row.id || ""));
-                                          return Array.from(next);
-                                        });
-                                      }}
-                                      className={`h-4 w-4 rounded border-slate-300 ${checkboxClass}`}
-                                    />
-                                    <span className="text-[11px] font-semibold">{rowDisabled ? row.status : rowChecked ? "Selected" : "Select"}</span>
-                                  </label>
-                                );
-                              }}
-                            />
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {selectedCustomerDocument?.documentType === "invoice" && availableAdvanceBalance > 0 ? (
+                      {selectedCustomerDocument?.documentType === "invoice" && availableAdvanceBalance > 0 && !customerAdvanceEntries.length ? (
                         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div>
@@ -2251,7 +2156,7 @@ export default function PaymentInPremium() {
                             {documentTypeLabel(selectedCustomerDocument.documentType)} - {selectedCustomerDocument.invoiceNo}
                           </p>
                           <p className="mt-1">
-                            Date: {selectedCustomerDocument.invoiceDate || "-"} | Pending: {formatMoney(selectedCustomerDocument.balanceDue, country)}
+                            Date: {selectedCustomerDocument.invoiceDate || "-"} | Pending: {formatMoney(effectiveSelectedDocumentBalance, country)}
                           </p>
                           <p className="mt-1">
                             Taxable Amount: {formatMoney(selectedCustomerDocument.taxableAmount || 0, country)}
@@ -2453,7 +2358,7 @@ export default function PaymentInPremium() {
                           </p>
                           <p className="mt-1 text-[11px] text-slate-500">
                             {selectedCustomerDocument
-                              ? `Pending ${formatMoney(selectedCustomerDocument.balanceDue, country)} | Settled ${formatMoney(totals.totalSettled, country)}`
+                              ? `Pending ${formatMoney(effectiveSelectedDocumentBalance, country)} | Settled ${formatMoney(totals.totalSettled, country)}`
                               : "Saved without linking to any invoice or proforma invoice."}
                           </p>
                         </div>
@@ -2542,7 +2447,7 @@ export default function PaymentInPremium() {
             className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Save className="h-3.5 w-3.5" />
-            {saving ? "Saving..." : saveStatus === "Draft" ? "Save Draft" : "Save Confirmed"}
+            {saving ? "Saving..." : saveStatus === "Draft" ? "Save Draft" : "Save Received"}
           </button>
           <button
             type="button"

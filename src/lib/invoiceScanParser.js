@@ -148,7 +148,7 @@ function isValidDateString(value) {
 
 function extractInvoiceNumber(lines, rawText) {
   const strictGlobalPatterns = [
-    /\bINVOICE\s*#\s*([A-Z0-9][A-Z0-9/_-]{0,})\b/i,
+    /\bINVOICE\s*#\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{0,})\b/i,
     /\bINVOICE\s*(?:NO|NUMBER)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{0,})\b/i,
     /\bBILL\s*(?:NO|NUMBER)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{0,})\b/i
   ];
@@ -632,6 +632,112 @@ function parseAirtelStatement(lines) {
   };
 }
 
+function isZohoItemRow(line) {
+  return /^[A-Z0-9]+(?:[A-Z])?\s+\d+(?:,\d{2,3})*(?:\.\d+)?\s+\d+(?:,\d{2,3})*(?:\.\d+)?\s+\d+(?:\.\d+)?%\s+\d+(?:,\d{2,3})*(?:\.\d+)?\s+\d+(?:\.\d+)?%\s+\d+(?:,\d{2,3})*(?:\.\d+)?\s+\d+(?:,\d{2,3})*(?:\.\d+)?$/i.test(
+    cleanLine(line)
+  );
+}
+
+function parseZohoInvoice(lines) {
+  const joinedText = lines.join("\n");
+  const labeledDateText = cleanLine(
+    joinedText.match(/\bDATE\s*:\s*(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\b/i)?.[1] || ""
+  );
+  const invoiceNumber =
+    cleanLine(
+      joinedText.match(/\bINVOICE#\s*:\s*([A-Z0-9][A-Z0-9/_-]*)\b/i)?.[1] ||
+        joinedText.match(/\bINVOICE\s*(?:NO|NUMBER)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]*)\b/i)?.[1] ||
+        ""
+    ) || extractInvoiceNumber(lines, joinedText);
+  const date = labeledDateText
+    ? toDisplayDateFromMonthName(
+        labeledDateText.match(/^(\d{1,2})\s+/i)?.[1] || "",
+        labeledDateText.match(/^\d{1,2}\s+([A-Za-z]{3,9})\s+/i)?.[1] || "",
+        labeledDateText.match(/(\d{4})$/)?.[1] || ""
+      )
+    : extractDate(lines, joinedText);
+
+  const supplier = lines.find((line) => /zoho\s+corporation\s+private\s+limited/i.test(line)) || "ZOHO Corporation Private Limited";
+  const supplierPhone = cleanLine(joinedText.match(/\bPhone\s*:\s*([+\d\s-]{8,})/i)?.[1] || extractPhone(joinedText));
+
+  const supplierBlockStart = lines.findIndex((line) => /zoho\s+corporation\s+private\s+limited/i.test(line));
+  const supplierBlockEnd = lines.findIndex((line) => /\bphone\s*:/i.test(line));
+  const supplierAddress =
+    supplierBlockStart >= 0 && supplierBlockEnd > supplierBlockStart
+      ? cleanLine(lines.slice(supplierBlockStart + 1, supplierBlockEnd).join(", "))
+      : "";
+
+  const items = [];
+  const tableHeaderIndex = lines.findIndex((line) => /item\s*&\s*description/i.test(line) && /\bqty\b/i.test(line));
+  const summaryIndex = lines.findIndex((line, index) => index > tableHeaderIndex && /\bsub total\b/i.test(line));
+  if (tableHeaderIndex >= 0) {
+    let index = tableHeaderIndex + 1;
+    while (index < lines.length && (summaryIndex < 0 || index < summaryIndex)) {
+      const line = cleanLine(lines[index]);
+      if (!isZohoItemRow(line)) {
+        index += 1;
+        continue;
+      }
+
+      const rowMatch = line.match(
+        /^([A-Z0-9]+(?:[A-Z])?)\s+(\d+(?:,\d{2,3})*(?:\.\d+)?)\s+(\d+(?:,\d{2,3})*(?:\.\d+)?)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:,\d{2,3})*(?:\.\d+)?)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:,\d{2,3})*(?:\.\d+)?)\s+(\d+(?:,\d{2,3})*(?:\.\d+)?)$/i
+      );
+      if (!rowMatch) {
+        index += 1;
+        continue;
+      }
+
+      const descriptionLines = [];
+      let nextIndex = index + 1;
+      while (nextIndex < lines.length) {
+        const nextLine = cleanLine(lines[nextIndex]);
+        if (!nextLine) {
+          nextIndex += 1;
+          continue;
+        }
+        if (isZohoItemRow(nextLine) || /\bsub total\b/i.test(nextLine)) break;
+        if (/^sac\s*:/i.test(nextLine)) {
+          nextIndex += 1;
+          continue;
+        }
+        if (/^start\s+\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}\s+end\s+\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}$/i.test(nextLine)) {
+          nextIndex += 1;
+          continue;
+        }
+        descriptionLines.push(nextLine);
+        nextIndex += 1;
+      }
+
+      const description = cleanLine(descriptionLines.join(" "));
+      items.push({
+        description: description || rowMatch[1],
+        qty: round3(parseNumber(rowMatch[2]) || 0),
+        unit: "pcs",
+        rate: round2(parseNumber(rowMatch[3]) || 0),
+        amount: round2(parseNumber(rowMatch[8]) || 0),
+        tax: round2(parseNumber(rowMatch[4]) || 0),
+        metadata: {
+          itemCode: rowMatch[1]
+        }
+      });
+      index = nextIndex;
+    }
+  }
+
+  return {
+    supplier: cleanLine(supplier),
+    invoiceNumber,
+    date,
+    total: extractTotal(lines),
+    supplierPhone,
+    items: dedupeItems(items),
+    city: "Chennai",
+    state: "Tamil Nadu",
+    address: supplierAddress,
+    country: "India"
+  };
+}
+
 const VENDOR_PARSERS = [
   {
     id: "hues_granites",
@@ -642,6 +748,11 @@ const VENDOR_PARSERS = [
     id: "airtel_statement",
     match: (text) => /\bairtel\b/i.test(text) && /\bfiber monthly statement\b/i.test(text),
     parse: parseAirtelStatement
+  },
+  {
+    id: "zoho_invoice",
+    match: (text) => /\bzoho\s+corporation\s+private\s+limited\b/i.test(text) && /\btax\s+invoice\b/i.test(text),
+    parse: parseZohoInvoice
   }
 ];
 

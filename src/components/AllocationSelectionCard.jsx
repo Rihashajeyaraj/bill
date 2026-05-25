@@ -40,6 +40,9 @@ export default function AllocationSelectionCard({
   appliedAmountLabel = "Applied Amount",
   remainingAmountLabel = "Remaining Balance",
   selectedAmountLabel = "Selected Amount",
+  statusLabel = "",
+  statusValue = "",
+  statusTone = "default",
   buttonLabel = "Select Entries",
   emptyMessage = "No entries available.",
   modalTitle,
@@ -53,6 +56,14 @@ export default function AllocationSelectionCard({
   disabled = false
 }) {
   const styles = ACCENT_STYLES[accent] || ACCENT_STYLES.amber;
+  const statusClass =
+    statusTone === "success"
+      ? "text-emerald-700"
+      : statusTone === "warning"
+        ? "text-amber-700"
+        : statusTone === "danger"
+          ? "text-rose-700"
+          : "text-slate-900";
 
   return (
     <>
@@ -101,6 +112,11 @@ export default function AllocationSelectionCard({
               <p className="mt-1">
                 {updatedTotalLabel}: <span className="font-semibold text-rose-700">{updatedTotal}</span>
               </p>
+              {statusLabel && statusValue ? (
+                <p className="mt-1">
+                  {statusLabel}: <span className={`font-semibold ${statusClass}`}>{statusValue}</span>
+                </p>
+              ) : null}
             </div>
           </div>
         </div>

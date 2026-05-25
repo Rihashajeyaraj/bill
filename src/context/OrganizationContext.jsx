@@ -78,7 +78,26 @@ function buildOrganizationState(profile = null) {
   };
 }
 
-const OrganizationContext = createContext(null);
+const ORGANIZATION_FALLBACK = {
+  organizationId: "",
+  profile: {},
+  country: "",
+  countryCode: "",
+  countryLabel: "",
+  currency: "INR",
+  currencySymbol: "",
+  currentOrganization: null,
+  organizations: [],
+  organizationsLoading: false,
+  switchingOrganizationId: "",
+  refreshOrganization: () => {},
+  refreshOrganizations: async () => [],
+  switchOrganization: async (nextOrganizationId) => ({
+    organizationId: String(nextOrganizationId || "").trim()
+  })
+};
+
+const OrganizationContext = createContext(ORGANIZATION_FALLBACK);
 
 export function OrganizationProvider({ children }) {
   const [organization, setOrganization] = useState(() => buildOrganizationState());
@@ -205,6 +224,11 @@ export function OrganizationProvider({ children }) {
 
 export function useOrganization() {
   const context = useContext(OrganizationContext);
-  if (!context) throw new Error("useOrganization must be used within OrganizationProvider");
+  if (!context) {
+    if (typeof console !== "undefined") {
+      console.warn("OrganizationProvider missing; using fallback organization context.");
+    }
+    return ORGANIZATION_FALLBACK;
+  }
   return context;
 }

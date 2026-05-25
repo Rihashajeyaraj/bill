@@ -25,6 +25,16 @@ function formatDate(value) {
   return formatDateByPreference(value, String(value || "-"));
 }
 
+function formatBillStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "-";
+  if (normalized === "paid") return "Paid";
+  if (normalized === "partial") return "Partially Paid";
+  if (normalized === "issued") return "Unpaid";
+  if (normalized === "cancelled") return "Cancelled";
+  return String(value || "").trim();
+}
+
 function barcodeValueOf(entry) {
   return String(entry?.barcode_value || entry?.barcodeValue || "").trim();
 }
@@ -423,7 +433,7 @@ export default function PurchaseHistory() {
                 <th className="px-3 py-3 font-semibold text-right">Qty</th>
                 <th className="px-3 py-3 font-semibold text-right">Amount</th>
                 <th className="px-3 py-3 font-semibold">TDS</th>
-                <th className="px-3 py-3 font-semibold">Payment</th>
+                <th className="px-3 py-3 font-semibold">Status</th>
                 <th className="px-3 py-3 font-semibold">Barcodes</th>
                 <th className="px-3 py-3 font-semibold min-w-[260px]">Actions</th>
               </tr>
@@ -479,7 +489,7 @@ export default function PurchaseHistory() {
                         <span className="text-xs text-slate-400">No TDS</span>
                       )}
                     </td>
-                    <td className="px-3 py-3 text-slate-600">{bill.paymentType || "-"}</td>
+                    <td className="px-3 py-3 text-slate-600">{formatBillStatus(bill.status)}</td>
                     <td className="px-3 py-3">
                       {hasBarcodes ? (
                         <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
@@ -666,6 +676,10 @@ export default function PurchaseHistory() {
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                 <p className="text-xs text-slate-500">Phone</p>
                 <p className="font-semibold text-slate-900">{selectedBill.phone || "-"}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs text-slate-500">Status</p>
+                <p className="font-semibold text-slate-900">{formatBillStatus(selectedBill.status)}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                 <p className="text-xs text-slate-500">Payment Type</p>

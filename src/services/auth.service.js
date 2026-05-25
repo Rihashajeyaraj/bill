@@ -1171,31 +1171,39 @@ export async function authDeleteOrganization(organizationId) {
     throw new Error("Only owner can delete this company.");
   }
 
-  const { error: hardDeleteError } = await supabase
+  // Always soft-delete first (via UPDATE which is granted by RLS).
+  // Hard DELETE is not granted on the organizations table, so attempting it
+  // first would silently succeed with 0 rows deleted and skip soft-delete,
+  // causing the company to reappear after page refresh.
+  const nextSettings = {
+    ...normalizeOrganizationSettings(organization?.settings),
+    is_deleted: true,
+    deleted_at: new Date().toISOString(),
+    deleted_by: user.id
+  };
+  const { error: softDeleteError } = await supabase
     .from("organizations")
-    .delete()
+    .update({ settings: nextSettings, updated_at: new Date().toISOString() })
     .eq("id", safeOrganizationId)
     .eq("owner_user_id", user.id);
+  if (softDeleteError) {
+    throw new Error(softDeleteError?.message || "Failed to delete company.");
+  }
 
-  let mode = "hard";
-  if (hardDeleteError) {
-    const nextSettings = {
-      ...normalizeOrganizationSettings(organization?.settings),
-      is_deleted: true,
-      deleted_at: new Date().toISOString(),
-      deleted_by: user.id
-    };
-    const { error: softDeleteError } = await supabase
+  // Attempt hard delete as optional cleanup - if it fails, soft delete already
+  // ensures the organization is hidden from all queries.
+  let mode = "soft";
+  try {
+    const { error: hardDeleteError } = await supabase
       .from("organizations")
-      .update({ settings: nextSettings, updated_at: new Date().toISOString() })
+      .delete()
       .eq("id", safeOrganizationId)
       .eq("owner_user_id", user.id);
-    if (softDeleteError) {
-      throw new Error(
-        softDeleteError?.message || hardDeleteError?.message || "Failed to delete company."
-      );
+    if (!hardDeleteError) {
+      mode = "hard";
     }
-    mode = "soft";
+  } catch {
+    // Hard delete not available - soft delete is sufficient.
   }
 
   clearOrganizationScopedCache(safeOrganizationId);

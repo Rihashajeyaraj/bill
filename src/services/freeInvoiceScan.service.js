@@ -18,6 +18,52 @@ function cleanLine(value) {
   return String(value || "").replace(/[|]/g, " ").replace(/\t/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function mergeScanResult(primary, fallback, extractionMethod, localValidation) {
+  const remote = primary && typeof primary === "object" ? primary : {};
+  const local = fallback && typeof fallback === "object" ? fallback : {};
+  const remoteValidation = remote?.validation && typeof remote.validation === "object" ? remote.validation : null;
+
+  const remoteInvoiceNumber = String(remote?.invoiceNumber || "").trim();
+  const localInvoiceNumber = String(local?.invoiceNumber || "").trim();
+  const remoteDate = String(remote?.date || "").trim();
+  const localDate = String(local?.date || "").trim();
+  const remoteSupplier = String(remote?.supplier || "").trim();
+  const localSupplier = String(local?.supplier || "").trim();
+  const remoteItems = Array.isArray(remote?.items) ? remote.items : [];
+  const localItems = Array.isArray(local?.items) ? local.items : [];
+
+  const useLocalInvoiceNumber =
+    !!localInvoiceNumber &&
+    (!remoteInvoiceNumber || remoteInvoiceNumber.length < localInvoiceNumber.length || remoteInvoiceNumber.toLowerCase() === "on");
+  const useLocalDate = !!localDate && (!remoteDate || !(remoteValidation?.valid) || remoteDate.length !== 10);
+  const useLocalSupplier = !!localSupplier && (!remoteSupplier || remoteSupplier.length < localSupplier.length);
+  const useLocalItems = localItems.length > remoteItems.length;
+
+  return {
+    ...remote,
+    invoiceNumber: useLocalInvoiceNumber ? localInvoiceNumber : remoteInvoiceNumber,
+    date: useLocalDate ? localDate : remoteDate,
+    supplier: useLocalSupplier ? localSupplier : remoteSupplier,
+    supplierPhone: String(remote?.supplierPhone || "").trim() || String(local?.supplierPhone || "").trim(),
+    city: String(remote?.city || "").trim() || String(local?.city || "").trim(),
+    state: String(remote?.state || "").trim() || String(local?.state || "").trim(),
+    address: String(remote?.address || "").trim() || String(local?.address || "").trim(),
+    country: String(remote?.country || "").trim() || String(local?.country || "").trim(),
+    items: useLocalItems ? localItems : remoteItems,
+    total: String(remote?.total || "").trim() || String(local?.total || "").trim(),
+    confidence: Math.max(Number(remote?.confidence || 0), Number(local?.confidence || 0)),
+    warnings: Array.from(
+      new Set([...(Array.isArray(remote?.warnings) ? remote.warnings : []), ...(Array.isArray(local?.warnings) ? local.warnings : [])].filter(Boolean))
+    ),
+    validation: remoteValidation?.valid ? remoteValidation : localValidation,
+    meta: {
+      ...(remote?.meta && typeof remote.meta === "object" ? remote.meta : {}),
+      extractionMethod,
+      localVendorParser: String(local?.vendorParser || "").trim()
+    }
+  };
+}
+
 function rebuildPageLines(textContent) {
   const rawItems = Array.isArray(textContent?.items) ? textContent.items : [];
   const positioned = rawItems
@@ -226,7 +272,7 @@ export async function scanInvoiceFree(file) {
       }
     });
 
-    return response?.data || {};
+    return mergeScanResult(response?.data || {}, localParsed, extractionMethod, localValidation);
   } catch (error) {
     const status = Number(error?.response?.status || 0);
     const shouldFallback =

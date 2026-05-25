@@ -1,6 +1,7 @@
 import React from "react";
 import { Eye, FileDown, Pencil, RotateCcw } from "lucide-react";
 import type { PaymentInRecord } from "./store";
+import { paymentStatusLabel } from "./countryConfig";
 import { formatCurrencyByPreference } from "../../lib/formatPreferences";
 
 interface ReceiptFeedCardProps {
@@ -40,7 +41,7 @@ export default function ReceiptFeedCard({
           <p className="text-xs text-slate-500">{record.paymentDate}</p>
         </div>
         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClass(record.status)}`}>
-          {record.status}
+          {paymentStatusLabel(record.status)}
         </span>
       </div>
 

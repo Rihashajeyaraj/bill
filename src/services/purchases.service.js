@@ -685,12 +685,13 @@ export async function purchasesSyncFromRemote(range) {
       lines: lineMap.get(entry.id) || []
     };
   });
+  const recalculated = mapped.map((entry) => recalculatePurchaseBalance(entry));
   if (!fromDate && !toDate) {
-    setAll(mapped);
+    setAll(recalculated);
   }
   await triggerCreditLimitNotifications();
   await triggerLowStockNotifications();
-  return mapped;
+  return recalculated;
 }
 
 export async function purchasesCreate(bill) {

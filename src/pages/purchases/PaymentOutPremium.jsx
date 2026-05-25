@@ -104,6 +104,18 @@ function buildBillAllocation(bill, amountPaid, tdsAmount = 0) {
   ];
 }
 
+function matchesBillPrefillToken(bill, token) {
+  const normalizedToken = String(token || "").trim().toLowerCase();
+  if (!normalizedToken || !bill) return false;
+  return [
+    bill?.id,
+    bill?.billId,
+    bill?.billNo,
+    bill?.billNumber,
+    bill?.invoiceNo
+  ].some((value) => String(value || "").trim().toLowerCase() === normalizedToken);
+}
+
 function calculatedTdsInputValue(amountPaid, tdsRate) {
   const calculated = calculateTdsAmount(amountPaid, tdsRate);
   return calculated > 0 ? String(calculated) : "";
@@ -273,21 +285,23 @@ export default function PaymentOutPremium() {
   const selectedBill = useMemo(() => {
     const liveBill = supplierBills.find((entry) => String(entry.id) === String(form.selectedBillId));
     if (liveBill) return liveBill;
-    const savedBill =
-      activePayment?.id && String(activePayment?.supplierId || "") === String(form.supplierId || "")
-        ? form?.allocations?.[0]
-        : null;
-    if (!savedBill) return null;
+    const fallbackAllocation = form?.allocations?.[0] || null;
+    const canReuseAllocation =
+      fallbackAllocation &&
+      String(fallbackAllocation?.billId || "") === String(form.selectedBillId || "") &&
+      String(form.supplierId || "").trim() &&
+      (!activePayment?.id || String(activePayment?.supplierId || "") === String(form.supplierId || ""));
+    if (!canReuseAllocation) return null;
     return {
-      id: savedBill.billId,
-      billNo: savedBill.billNo,
-      billDate: savedBill.billDate,
+      id: fallbackAllocation.billId,
+      billNo: fallbackAllocation.billNo,
+      billDate: fallbackAllocation.billDate,
       supplierId: form.supplierId,
       supplierName: form.supplierName,
-      billAmount: savedBill.billAmount,
-      balanceDue: savedBill.balanceDue,
-      taxableAmount: savedBill.taxableAmount || 0,
-      taxAmount: savedBill.taxAmount || 0
+      billAmount: fallbackAllocation.billAmount,
+      balanceDue: fallbackAllocation.balanceDue,
+      taxableAmount: fallbackAllocation.taxableAmount || 0,
+      taxAmount: fallbackAllocation.taxAmount || 0
     };
   }, [activePayment?.id, activePayment?.supplierId, form.allocations, form.selectedBillId, form.supplierId, form.supplierName, supplierBills]);
   const supplierOutstandingBefore = useMemo(
@@ -320,7 +334,24 @@ export default function PaymentOutPremium() {
   const filteredPayments = useMemo(() => {
     const query = normalizeText(search);
     return payments.filter((entry) => {
-      const haystack = `${entry.supplierName} ${entry.paymentNo} ${entry.referenceNo || ""}`.toLowerCase();
+      const allocationSearchText = Array.isArray(entry?.allocations)
+        ? entry.allocations
+            .map((line) => `${line?.billNo || ""} ${line?.billId || ""}`)
+            .join(" ")
+        : "";
+      const haystack = normalizeText(
+        [
+          entry?.supplierName,
+          entry?.paymentNo,
+          entry?.referenceNo,
+          entry?.paymentReference,
+          entry?.transactionId,
+          entry?.chequeNo,
+          allocationSearchText
+        ]
+          .filter(Boolean)
+          .join(" ")
+      );
       const matchQuery = !query || haystack.includes(query);
       const matchSupplier = !supplierFilter || entry.supplierId === supplierFilter;
       const matchStatus = !statusFilter || entry.status === statusFilter;
@@ -504,8 +535,8 @@ export default function PaymentOutPremium() {
       (entry) => String(entry.id) === String(form.selectedBillId) && String(entry.supplierId) === String(form.supplierId)
     );
     const canKeepSavedBill =
-      !!activePayment?.id &&
-      String(activePayment?.supplierId || "") === String(form.supplierId || "") &&
+      String(form.supplierId || "").trim() &&
+      (!activePayment?.id || String(activePayment?.supplierId || "") === String(form.supplierId || "")) &&
       String(form?.allocations?.[0]?.billId || "") === String(form.selectedBillId || "");
     if (billMatchesSupplier || canKeepSavedBill) return;
     setForm((prev) => ({
@@ -518,11 +549,11 @@ export default function PaymentOutPremium() {
 
   useEffect(() => {
     if (!prefillBillId) return;
-    let bill = bills.find((entry) => entry.id === prefillBillId) || null;
+    let bill = bills.find((entry) => matchesBillPrefillToken(entry, prefillBillId)) || null;
     if (!bill) {
       const cached = lsGetOrganizationScoped(LS_KEYS.purchases, []);
       const rawBills = Array.isArray(cached) ? cached : [];
-      const rawBill = rawBills.find((entry) => String(entry?.id) === String(prefillBillId));
+      const rawBill = rawBills.find((entry) => matchesBillPrefillToken(entry, prefillBillId));
       if (rawBill) {
         bill = {
           id: rawBill.id,
@@ -530,6 +561,7 @@ export default function PaymentOutPremium() {
           billDate: rawBill.billDate || rawBill.invoiceDate || rawBill.date || "",
           supplierId: rawBill.partyId || rawBill.supplierId || rawBill.vendorId || "",
           supplierName: rawBill.partyName || rawBill.supplierName || "Supplier",
+          supplierState: rawBill?.partyState || rawBill?.vendorState || rawBill?.supplierState || "",
           billAmount: Math.max(
             0,
             parseNumber(
@@ -539,6 +571,25 @@ export default function PaymentOutPremium() {
                 rawBill?.totals?.subTotal
             )
           ),
+          taxableAmount: Math.max(
+            0,
+            parseNumber(rawBill?.totals?.subTotal ?? rawBill?.totals?.taxableTotal)
+          ),
+          taxAmount: Math.max(
+            0,
+            parseNumber(rawBill?.totals?.taxTotal ?? rawBill?.totals?.taxAmount)
+          ),
+          taxBreakup:
+            rawBill?.totals?.taxBreakup && typeof rawBill.totals.taxBreakup === "object"
+              ? rawBill.totals.taxBreakup
+              : rawBill?.taxBreakup && typeof rawBill.taxBreakup === "object"
+                ? rawBill.taxBreakup
+                : null,
+          supplyType:
+            rawBill?.supplyType ||
+            rawBill?.totals?.tax?.supplyType ||
+            rawBill?.totals?.taxBreakup?.supplyType ||
+            null,
           balanceDue: Math.max(
             0,
             parseNumber(
@@ -1130,7 +1181,7 @@ export default function PaymentOutPremium() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search supplier, payment number, reference"
+                  placeholder="Search supplier, payment no, bill no, reference"
                   className="search-field-input h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 />
                 <select

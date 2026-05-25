@@ -166,6 +166,10 @@ export function normalizePaymentStatus(value: unknown): PaymentStatus {
   return "Draft";
 }
 
+export function paymentStatusLabel(status: PaymentStatus | string) {
+  return String(status || "") === "Confirmed" ? "Received" : String(status || "Draft");
+}
+
 export function normalizePaymentMode(value: unknown): PaymentMode {
   const raw = String(value || "").trim() as LegacyPaymentMode;
   if (raw === "Bank Transfer") return "Net Banking";
