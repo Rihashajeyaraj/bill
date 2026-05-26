@@ -286,7 +286,8 @@ function getLegacyPayments(): PaymentInRecord[] {
           tdsAmount,
           totalSettled,
           amountApplied: applyAmount,
-          unappliedAmount: Math.max(0, totalSettled - applyAmount),
+          // Only extra cash received should remain as customer advance; TDS does not become wallet credit.
+          unappliedAmount: Math.max(0, amountReceived - applyAmount),
           customerOutstandingBefore: 0,
           customerOutstandingAfter: 0
         },

@@ -16,10 +16,29 @@ interface DebitNoteListTableProps {
   canDelete?: boolean;
 }
 
-function statusClass(status: DebitNoteRecord["status"]) {
-  if (status === "Applied") return "bg-emerald-50 text-emerald-700 border-emerald-200";
-  if (status === "Issued") return "bg-amber-50 text-amber-700 border-amber-200";
-  return "bg-slate-100 text-slate-700 border-slate-200";
+function noteRemainingBalance(note: DebitNoteRecord) {
+  const total = Math.max(0, Number(note?.totals?.total || 0));
+  const pendingAmount = Math.max(0, Number(note?.totals?.pendingAmount || 0));
+  const transferredApplied = Array.isArray((note as any)?.debitApplications)
+    ? (note as any).debitApplications.reduce(
+        (sum: number, line: any) => sum + Math.max(0, Number(line?.applyAmount || 0)),
+        0
+      )
+    : 0;
+  if (note.status === "Applied") return Math.max(0, total - transferredApplied);
+  return pendingAmount > 0 ? pendingAmount : total;
+}
+
+function displayStatus(note: DebitNoteRecord) {
+  const remaining = noteRemainingBalance(note);
+  const total = Math.max(0, Number(note?.totals?.total || 0));
+  return remaining > 0 && remaining + 0.009 < total ? "Partial" : "Issued";
+}
+
+function displayStatusClass(note: DebitNoteRecord) {
+  return displayStatus(note) === "Partial"
+    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+    : "bg-amber-50 text-amber-700 border-amber-200";
 }
 
 export default function DebitNoteListTable({
@@ -80,7 +99,8 @@ export default function DebitNoteListTable({
             <col style={{ width: "18%" }} />
             <col style={{ width: "14%" }} />
             <col style={{ width: "20%" }} />
-            <col style={{ width: "12%" }} />
+            <col style={{ width: "11%" }} />
+            <col style={{ width: "11%" }} />
             <col style={{ width: "7%" }} />
             <col style={{ width: "5%" }} />
           </colgroup>
@@ -92,6 +112,7 @@ export default function DebitNoteListTable({
               <th className="px-4 py-3 align-middle font-semibold text-slate-700">Linked Purchase Invoice</th>
               <th className="px-4 py-3 align-middle font-semibold text-slate-700">Reason</th>
               <th className="px-4 py-3 align-middle text-right font-semibold text-slate-700">Debit Amount</th>
+              <th className="px-4 py-3 align-middle text-right font-semibold text-slate-700">Available Debit</th>
               <th className="px-4 py-3 align-middle font-semibold text-slate-700">Status</th>
               <th className="px-4 py-3 align-middle font-semibold text-slate-700">Actions</th>
             </tr>
@@ -108,9 +129,12 @@ export default function DebitNoteListTable({
                   <td className="px-4 py-3 align-middle text-right font-semibold text-slate-900">
                     {note.currency} {note.totals.total.toFixed(2)}
                   </td>
+                  <td className="px-4 py-3 align-middle text-right font-semibold text-slate-900">
+                    {note.currency} {noteRemainingBalance(note).toFixed(2)}
+                  </td>
                   <td className="px-4 py-3 align-middle">
-                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(note.status)}`}>
-                      {note.status}
+                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${displayStatusClass(note)}`}>
+                      {displayStatus(note)}
                     </span>
                   </td>
                   <td className="px-4 py-3 align-middle">
@@ -153,7 +177,7 @@ export default function DebitNoteListTable({
               ))
             ) : (
               <tr>
-                <td colSpan={8} className="px-4 py-20 text-center text-slate-500">
+                <td colSpan={9} className="px-4 py-20 text-center text-slate-500">
                   No debit notes found for the selected filters.
                 </td>
               </tr>

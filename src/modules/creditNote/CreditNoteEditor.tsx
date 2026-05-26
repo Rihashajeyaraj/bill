@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Loader2, Save, Search, X } from "lucide-react";
+import { ArrowLeft, FileDown, Loader2, Save, Search, X } from "lucide-react";
 import { COUNTRY_CONFIG, type CountryCode, type CreditStatus } from "./countryConfig";
 import DateInput from "../../components/DateInput";
 import FieldLabelText from "../../components/FieldLabelText";
@@ -40,6 +40,7 @@ interface CreditNoteEditorProps {
   onUpdateLine: (id: string, patch: any) => void;
   onAddLine: () => void;
   onRemoveLine: (id: string) => void;
+  onDownloadPdf: () => void;
   onPersist: (targetStatus: CreditStatus, options?: { email?: boolean; download?: boolean }) => void;
 }
 
@@ -52,7 +53,7 @@ function normalizeInvoiceStatus(status: unknown) {
 
 function isOpenInvoiceStatus(status: unknown) {
   const normalized = normalizeInvoiceStatus(status);
-  return normalized === "issued" || normalized === "partially paid";
+  return normalized === "issued" || normalized === "partial" || normalized === "partially paid";
 }
 
 function invoiceHasReturnableQty(invoice: CreditInvoice | null | undefined) {
@@ -136,6 +137,7 @@ export default function CreditNoteEditor({
   onUpdateLine,
   onAddLine,
   onRemoveLine,
+  onDownloadPdf,
   onPersist
 }: CreditNoteEditorProps) {
   const cfg = COUNTRY_CONFIG[country];
@@ -755,32 +757,20 @@ export default function CreditNoteEditor({
             {!isReadOnly ? (
               <>
                 <button
-                  onClick={() => onPersist("Draft")}
+                  onClick={() => onPersist("Issued")}
                   disabled={!!savingStatus}
                   className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {savingStatus === "Draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  {savingStatus === "Draft" ? "Saving..." : "Save Draft"}
+                  {savingStatus === "Issued" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {savingStatus === "Issued" ? "Saving..." : "Save"}
                 </button>
                 <button
-                  onClick={() => onPersist("Issued")}
-                  disabled={!!savingStatus || activeNote?.status === "Applied"}
-                  className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={onDownloadPdf}
+                  disabled={!!savingStatus || !activeNote}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {savingStatus === "Issued" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  {savingStatus === "Issued" ? "Issuing..." : "Issue"}
-                </button>
-                <button
-                  onClick={() => onPersist("Applied")}
-                  disabled={
-                    !!savingStatus ||
-                    !access.canApply ||
-                    ((activeNote?.status || "Draft") !== "Issued" && (activeNote?.status || "Draft") !== "Applied")
-                  }
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {savingStatus === "Applied" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  {savingStatus === "Applied" ? "Applying..." : "Apply"}
+                  <FileDown className="h-4 w-4" />
+                  Download PDF
                 </button>
               </>
             ) : null}

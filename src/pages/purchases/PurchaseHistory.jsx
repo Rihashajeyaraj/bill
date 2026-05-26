@@ -35,6 +35,18 @@ function formatBillStatus(value) {
   return String(value || "").trim();
 }
 
+function totalFromBill(bill) {
+  return Number(bill?.totals?.grandTotal || 0);
+}
+
+function balanceFromBill(bill) {
+  return Number(bill?.remainingBalance ?? bill?.totals?.balance ?? totalFromBill(bill));
+}
+
+function paidFromBill(bill) {
+  return Math.max(0, totalFromBill(bill) - balanceFromBill(bill));
+}
+
 function barcodeValueOf(entry) {
   return String(entry?.barcode_value || entry?.barcodeValue || "").trim();
 }
@@ -423,7 +435,7 @@ export default function PurchaseHistory() {
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">
-          <table className="min-w-[920px] w-full text-left text-sm">
+          <table className="min-w-[1160px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-3 py-3 font-semibold">Bill No</th>
@@ -431,7 +443,9 @@ export default function PurchaseHistory() {
                 <th className="px-3 py-3 font-semibold">Supplier</th>
                 <th className="px-3 py-3 font-semibold">Phone</th>
                 <th className="px-3 py-3 font-semibold text-right">Qty</th>
-                <th className="px-3 py-3 font-semibold text-right">Amount</th>
+                <th className="px-3 py-3 font-semibold text-right">Total</th>
+                <th className="px-3 py-3 font-semibold text-right">Paid</th>
+                <th className="px-3 py-3 font-semibold text-right">Balance</th>
                 <th className="px-3 py-3 font-semibold">TDS</th>
                 <th className="px-3 py-3 font-semibold">Status</th>
                 <th className="px-3 py-3 font-semibold">Barcodes</th>
@@ -441,13 +455,13 @@ export default function PurchaseHistory() {
             <tbody>
               {loading ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={12}>
                     Loading purchase history...
                   </td>
                 </tr>
               ) : filteredBills.length === 0 ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={12}>
                     {searchQuery ? "No matching purchase bills found." : "No purchase bills yet."}
                   </td>
                 </tr>
@@ -456,6 +470,9 @@ export default function PurchaseHistory() {
                   const rowBarcodes = barcodesByPurchaseId[String(bill?.id || "").trim()] || [];
                   const hasBarcodes = rowBarcodes.length > 0;
                   const billTdsSummary = tdsSummaryByBill[String(bill?.id || "").trim()] || null;
+                  const totalAmount = totalFromBill(bill);
+                  const paidAmount = paidFromBill(bill);
+                  const balanceAmount = balanceFromBill(bill);
                   return (
                   <tr
                     key={bill.id}
@@ -477,7 +494,13 @@ export default function PurchaseHistory() {
                     <td className="px-3 py-3 text-slate-600">{bill.phone || "-"}</td>
                     <td className="px-3 py-3 text-right text-slate-700">{money(bill?.totals?.totalQty)}</td>
                     <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                      {money(bill?.totals?.grandTotal)}
+                      {money(totalAmount)}
+                    </td>
+                    <td className="px-3 py-3 text-right font-semibold text-emerald-700">
+                      {money(paidAmount)}
+                    </td>
+                    <td className="px-3 py-3 text-right font-semibold text-amber-700">
+                      {money(balanceAmount)}
                     </td>
                     <td className="px-3 py-3">
                       {billTdsSummary ? (

@@ -32,10 +32,10 @@ import {
   buildPaymentOutPayload,
   defaultPaymentForm,
   listSupplierAdvanceWalletEntries,
-  mapBillsByCountryForSelection,
   listSupplierAdvanceWalletHistory,
   listPaymentOut,
   mapOpenBillsByCountry,
+  mapBillsByCountryForSelection,
   mapSuppliersByCountry,
   outstandingBySupplier,
   paymentInsightsBySupplier,
@@ -59,17 +59,42 @@ import {
 import { formatInputNumberByPreference, normalizeFormattedNumberInput } from "../../lib/formatPreferences";
 
 const PAYMENT_MODES = ["Cash", "Net Banking", "Cheque", "Card", "UPI"];
-const STATUSES = ["Draft", "Paid", "Applied"];
+const DISPLAY_STATUSES = ["Paid", "Partial"];
 const FORM_STEPS = ["Supplier", "Details", "Review"];
 const DEBIT_NOTE_PREMIUM_KEY = "debitNotesPremiumV1";
 
 const ACTION_BAR_BASE =
   "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold";
 
-function statusBadge(status) {
-  if (status === "Applied") return "success";
-  if (status === "Paid") return "warning";
-  return "neutral";
+function paymentDisplayStatus(record) {
+  const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
+  const hasPartialAllocation = allocations.some((line) => {
+    const applyAmount = Math.max(0, parseNumber(line?.applyAmount));
+    const balanceDue = Math.max(0, parseNumber(line?.balanceDue));
+    return applyAmount > 0 && applyAmount + 0.009 < balanceDue;
+  });
+  return hasPartialAllocation ? "Partial" : "Paid";
+}
+
+function paymentDisplayBadge(status) {
+  return status === "Partial" ? "success" : "warning";
+}
+
+function paymentRemainingBalance(record) {
+  const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
+  const linkedRemaining = allocations.reduce((sum, line) => {
+    const balanceDue = Math.max(0, parseNumber(line?.balanceDue));
+    const applyAmount = Math.max(0, parseNumber(line?.applyAmount));
+    return sum + Math.max(0, balanceDue - applyAmount);
+  }, 0);
+  if (linkedRemaining > 0) return linkedRemaining;
+  return Math.max(0, parseNumber(record?.totals?.unappliedAmount));
+}
+
+function paymentAppliedToBills(record) {
+  const totalSettled = Math.max(0, parseNumber(record?.totals?.totalSettled));
+  const unappliedAmount = Math.max(0, parseNumber(record?.totals?.unappliedAmount));
+  return Math.max(0, totalSettled - unappliedAmount);
 }
 
 function normalizePhoneForLookup(value) {
@@ -279,7 +304,9 @@ export default function PaymentOutPremium() {
   );
   const supplierBills = useMemo(
     () =>
-      billSelectionOptions.filter((entry) => String(entry.supplierId) === String(form.supplierId)),
+      billSelectionOptions.filter(
+        (entry) => String(entry.supplierId) === String(form.supplierId)
+      ),
     [billSelectionOptions, form.supplierId]
   );
   const selectedBill = useMemo(() => {
@@ -330,10 +357,14 @@ export default function PaymentOutPremium() {
   const unappliedAmount = Math.max(0, amountPaid - amountApplied);
   const totalSettled = amountPaid + tdsAmount;
   const outstandingAfter = Math.max(0, supplierOutstandingBefore - totalSettled);
+  const selectedBillRemainingAfter = selectedBill
+    ? Math.max(0, parseNumber(selectedBill.balanceDue) - totalSettled)
+    : 0;
 
   const filteredPayments = useMemo(() => {
     const query = normalizeText(search);
     return payments.filter((entry) => {
+      if (String(entry?.status || "") === "Draft") return false;
       const allocationSearchText = Array.isArray(entry?.allocations)
         ? entry.allocations
             .map((line) => `${line?.billNo || ""} ${line?.billId || ""}`)
@@ -354,7 +385,7 @@ export default function PaymentOutPremium() {
       );
       const matchQuery = !query || haystack.includes(query);
       const matchSupplier = !supplierFilter || entry.supplierId === supplierFilter;
-      const matchStatus = !statusFilter || entry.status === statusFilter;
+      const matchStatus = !statusFilter || paymentDisplayStatus(entry) === statusFilter;
       const matchMode =
         !modeFilter || normalizePaymentMode(entry.paymentMode) === normalizePaymentMode(modeFilter);
       const matchFrom = fromDate ? entry.paymentDate >= fromDate : true;
@@ -1214,7 +1245,7 @@ export default function PaymentOutPremium() {
                   className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"
                 >
                   <option value="">All Status</option>
-                  {STATUSES.map((status) => (
+                  {DISPLAY_STATUSES.map((status) => (
                     <option key={status} value={status}>
                       {status}
                     </option>
@@ -1264,8 +1295,8 @@ export default function PaymentOutPremium() {
                     <th className="px-3 py-3 font-semibold">Reference</th>
                     <th className="px-3 py-3 font-semibold text-right">Amount Paid</th>
                     <th className="px-3 py-3 font-semibold text-right">TDS</th>
-                    <th className="px-3 py-3 font-semibold text-right">Total Settled</th>
-                    <th className="px-3 py-3 font-semibold text-right">Advance Balance</th>
+                    <th className="px-3 py-3 font-semibold text-right">Applied to Bills</th>
+                    <th className="px-3 py-3 font-semibold text-right">Unapplied Cash</th>
                     <th className="px-3 py-3 font-semibold">Status</th>
                     <th className="px-3 py-3 font-semibold">Actions</th>
                   </tr>
@@ -1273,9 +1304,10 @@ export default function PaymentOutPremium() {
                 <tbody>
                   {filteredPayments.length ? (
                     filteredPayments.map((entry) => {
-                      const advance = Math.max(0, parseNumber(entry?.totals?.unappliedAmount));
+                      const remainingBalance = paymentRemainingBalance(entry);
                       const entryTds = Math.max(0, parseNumber(entry?.totals?.tdsAmount));
-                      const entryTotalSettled = Math.max(0, parseNumber(entry?.totals?.totalSettled));
+                      const entryAppliedToBills = paymentAppliedToBills(entry);
+                      const displayStatus = paymentDisplayStatus(entry);
                       return (
                         <tr key={entry.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                           <td className="px-3 py-3 font-semibold text-slate-900">{entry.paymentNo}</td>
@@ -1290,13 +1322,13 @@ export default function PaymentOutPremium() {
                             {formatMoney(entryTds, effectiveCurrency)}
                           </td>
                           <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                            {formatMoney(entryTotalSettled, effectiveCurrency)}
+                            {formatMoney(entryAppliedToBills, effectiveCurrency)}
                           </td>
-                          <td className={`px-3 py-3 text-right font-semibold ${advance ? "text-emerald-700" : "text-slate-700"}`}>
-                            {advance ? formatMoney(advance, effectiveCurrency) : "-"}
+                          <td className={`px-3 py-3 text-right font-semibold ${remainingBalance ? "text-emerald-700" : "text-slate-700"}`}>
+                            {remainingBalance ? formatMoney(remainingBalance, effectiveCurrency) : "-"}
                           </td>
                           <td className="px-3 py-3">
-                            <Badge tone={statusBadge(entry.status)}>{entry.status}</Badge>
+                            <Badge tone={paymentDisplayBadge(displayStatus)}>{displayStatus}</Badge>
                           </td>
                           <td className="px-3 py-3">
                             <div className="flex flex-nowrap items-center gap-2 whitespace-nowrap">
@@ -1644,11 +1676,8 @@ export default function PaymentOutPremium() {
                           <option
                             key={bill.id}
                             value={bill.id}
-                            disabled={Math.max(0, parseNumber(bill.balanceDue)) <= 0}
                           >
-                            {bill.fullyCoveredByAdvance
-                              ? `Invoice - ${bill.billNo} | ${bill.billDate || "-"} | Covered by Advance`
-                              : `Invoice - ${bill.billNo} | ${bill.billDate || "-"} | Pending: ${formatMoney(bill.balanceDue, effectiveCurrency)}`}
+                            {`Invoice - ${bill.billNo} | ${bill.billDate || "-"} | Pending: ${formatMoney(bill.balanceDue, effectiveCurrency)}`}
                           </option>
                         ))}
                       </select>
@@ -1930,7 +1959,7 @@ export default function PaymentOutPremium() {
                       </p>
                       <p className="mt-1 text-[11px] text-slate-500">
                         {selectedBill
-                          ? `Pending ${formatMoney(selectedBill.balanceDue, effectiveCurrency)} | Settled ${formatMoney(totalSettled, effectiveCurrency)}`
+                          ? `Pending Before ${formatMoney(selectedBill.balanceDue, effectiveCurrency)} | Remaining After ${formatMoney(selectedBillRemainingAfter, effectiveCurrency)}`
                           : "Saved without linking to any purchase invoice."}
                       </p>
                     </div>

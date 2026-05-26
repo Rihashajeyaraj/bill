@@ -115,6 +115,48 @@ function buildLocalCreditAppliedMap() {
   return creditMap;
 }
 
+function recalculateInvoiceBalance(entry, paymentMap = null, creditMap = null) {
+  const invoiceId = String(entry?.id || "").trim();
+  const grandTotal = Math.max(
+    0,
+    parseNumber(
+      entry?.totals?.grandTotal ??
+        entry?.totals?.finalTotal ??
+        entry?.totals?.total ??
+        entry?.grandTotal
+    )
+  );
+  const linkedPaymentMap = paymentMap instanceof Map ? paymentMap : buildLocalPaymentAppliedMap();
+  const linkedCreditMap = creditMap instanceof Map ? creditMap : buildLocalCreditAppliedMap();
+  const paymentApplied = invoiceId ? Math.max(0, parseNumber(linkedPaymentMap.get(invoiceId) || 0)) : 0;
+  const creditApplied = invoiceId ? Math.max(0, parseNumber(linkedCreditMap.get(invoiceId) || 0)) : 0;
+  const storedBalance = Math.max(
+    0,
+    parseNumber(entry?.remainingBalance ?? entry?.totals?.balance ?? entry?.balanceAmount ?? grandTotal)
+  );
+  const hasLinkedActivity = paymentApplied > 0 || creditApplied > 0;
+  const effectiveBalance = Math.max(
+    0,
+    hasLinkedActivity ? grandTotal - paymentApplied - creditApplied : storedBalance
+  );
+  const nextStatus =
+    String(entry?.status || "").toLowerCase() === "cancelled"
+      ? "cancelled"
+      : deriveInvoiceStatus(grandTotal, effectiveBalance);
+
+  return {
+    ...entry,
+    totals: {
+      ...(entry?.totals || {}),
+      balance: effectiveBalance
+    },
+    remainingBalance: effectiveBalance,
+    balanceAmount: effectiveBalance,
+    status: nextStatus,
+    paymentStatus: nextStatus
+  };
+}
+
 function looksLikeUuid(value) {
   return UUID_PATTERN.test(String(value || ""));
 }
@@ -476,7 +518,9 @@ function invoiceDateForFilter(entry) {
 }
 
 export function invoicesList(range) {
-  const rows = getAll();
+  const paymentMap = buildLocalPaymentAppliedMap();
+  const creditMap = buildLocalCreditAppliedMap();
+  const rows = getAll().map((entry) => recalculateInvoiceBalance(entry, paymentMap, creditMap));
   const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
   if (!fromDate && !toDate) return rows;
   return rows.filter((entry) => matchesFinancialYearFilter(invoiceDateForFilter(entry), { fromDate, toDate }));
@@ -581,12 +625,16 @@ export async function invoicesSyncFromRemote(range) {
   const localCreditMap = buildLocalCreditAppliedMap();
 
   const mapped = (Array.isArray(invoiceRows) ? invoiceRows : []).map((row) =>
-    mapRemoteInvoiceRow(
-      row,
-      lineMap.get(row.id) || [],
-      parseNumber(row?.grand_total) -
-        Math.max(paymentMap.get(row.id) || 0, localPaymentMap.get(row.id) || 0) -
-        Math.max(creditMap.get(row.id) || 0, localCreditMap.get(row.id) || 0)
+    recalculateInvoiceBalance(
+      mapRemoteInvoiceRow(
+        row,
+        lineMap.get(row.id) || [],
+        parseNumber(row?.grand_total) -
+          Math.max(paymentMap.get(row.id) || 0, localPaymentMap.get(row.id) || 0) -
+          Math.max(creditMap.get(row.id) || 0, localCreditMap.get(row.id) || 0)
+      ),
+      localPaymentMap,
+      localCreditMap
     )
   );
 

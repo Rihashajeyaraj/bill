@@ -42,6 +42,7 @@ import { UI } from "../../theme/tokens";
 import { useGlobalLoadingBridge } from "../../hooks/useGlobalLoadingBridge";
 
 type ViewMode = "list" | "create" | "edit" | "view";
+type DebitDisplayStatus = "Issued" | "Partial";
 
 function roleAccess(role: string, user: any) {
   const canApply = canApplyApprovals(role);
@@ -54,6 +55,25 @@ function roleAccess(role: string, user: any) {
     canOverride: canApply,
     allowedCountries: canApply ? COUNTRY_OPTIONS.map((country) => country.code) : configured.length ? configured : (["IN", "SL", "AE"] as CountryCode[])
   };
+}
+
+function debitNoteRemainingBalance(note: DebitNoteRecord) {
+  const total = Math.max(0, Number(note?.totals?.total || 0));
+  const pendingAmount = Math.max(0, Number(note?.totals?.pendingAmount || 0));
+  const transferredApplied = Array.isArray((note as any)?.debitApplications)
+    ? (note as any).debitApplications.reduce(
+        (sum: number, line: any) => sum + Math.max(0, Number(line?.applyAmount || 0)),
+        0
+      )
+    : 0;
+  if (String(note?.status || "") === "Applied") return Math.max(0, total - transferredApplied);
+  return pendingAmount > 0 ? pendingAmount : total;
+}
+
+function debitNoteDisplayStatus(note: DebitNoteRecord): DebitDisplayStatus {
+  const remaining = debitNoteRemainingBalance(note);
+  const total = Math.max(0, Number(note?.totals?.total || 0));
+  return remaining > 0 && remaining + 0.009 < total ? "Partial" : "Issued";
 }
 
 export default function DebitNotePremium() {
@@ -111,6 +131,7 @@ export default function DebitNotePremium() {
   const [linkedReturnRef, setLinkedReturnRef] = useState("");
 
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<DebitDisplayStatus | "">("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [page, setPage] = useState(1);
@@ -337,6 +358,7 @@ export default function DebitNotePremium() {
   const filteredNotes = useMemo(
     () =>
       notes.filter((note) => {
+        if (String(note?.status || "") === "Draft") return false;
         const matchedSupplier = supplierLookupById.get(String(note?.supplierId || ""));
         const haystack = [
           note?.supplierName,
@@ -352,9 +374,10 @@ export default function DebitNotePremium() {
         const matchSearch = search.trim() ? haystack.includes(search.trim().toLowerCase()) : true;
         const matchFrom = fromDate ? note.debitNoteDate >= fromDate : true;
         const matchTo = toDate ? note.debitNoteDate <= toDate : true;
-        return matchSearch && matchFrom && matchTo;
+        const matchStatus = !statusFilter || debitNoteDisplayStatus(note) === statusFilter;
+        return matchSearch && matchStatus && matchFrom && matchTo;
       }),
-    [notes, supplierLookupById, search, fromDate, toDate]
+    [notes, supplierLookupById, search, statusFilter, fromDate, toDate]
   );
 
   function onCountryChange(next: CountryCode) {
@@ -815,6 +838,18 @@ export default function DebitNotePremium() {
                         onChange={(nextValue) => setFromDate(nextValue)}
                         className={filterInputClassName}
                       />
+                    </label>
+                    <label className={filterLabelClassName}>
+                      Status
+                      <select
+                        value={statusFilter}
+                        onChange={(event) => setStatusFilter(event.target.value as DebitDisplayStatus | "")}
+                        className={filterInputClassName}
+                      >
+                        <option value="">All Status</option>
+                        <option value="Issued">Issued</option>
+                        <option value="Partial">Partial</option>
+                      </select>
                     </label>
                     <label className={filterLabelClassName}>
                       To date

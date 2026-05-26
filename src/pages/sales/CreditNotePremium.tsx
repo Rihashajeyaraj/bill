@@ -43,6 +43,7 @@ import { useGlobalLoadingBridge } from "../../hooks/useGlobalLoadingBridge";
 import { parseDateInputToIso } from "../../lib/dateUtils";
 
 type ViewMode = "list" | "create" | "edit" | "view";
+type CreditDisplayStatus = "Issued" | "Partial";
 
 function roleAccess(role: string, user: any) {
   const canApply = canApplyApprovals(role);
@@ -79,6 +80,20 @@ function computePurchaseRateFromAllocations(allocations: any[], qty: number) {
 
 function resolveCreditLineKey(line: any, index: number) {
   return String(line?.id || line?.sourceInvoiceItemId || `line_${index + 1}`);
+}
+
+function creditNoteRemainingBalance(note: CreditNoteRecord) {
+  const total = Math.max(0, Number(note?.totals?.total || 0));
+  const pendingAmount = Math.max(0, Number(note?.totals?.pendingAmount || 0));
+  const availableAmount = Math.max(0, Number((note as any)?.availableCreditAmount || 0));
+  if (String(note?.status || "") === "Applied") return availableAmount;
+  return pendingAmount > 0 ? pendingAmount : total;
+}
+
+function creditNoteDisplayStatus(note: CreditNoteRecord): CreditDisplayStatus {
+  const remaining = creditNoteRemainingBalance(note);
+  const total = Math.max(0, Number(note?.totals?.total || 0));
+  return remaining > 0 && remaining + 0.009 < total ? "Partial" : "Issued";
 }
 
 export default function CreditNotePremium() {
@@ -137,6 +152,7 @@ export default function CreditNotePremium() {
   const [allocationsLoading, setAllocationsLoading] = useState(false);
 
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<CreditDisplayStatus | "">("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [page, setPage] = useState(1);
@@ -395,14 +411,16 @@ export default function CreditNotePremium() {
   const filteredNotes = useMemo(
     () =>
       notes.filter((note) => {
+        if (String(note?.status || "") === "Draft") return false;
         const haystack = `${note.customerName} ${note.linkedInvoiceNo} ${note.creditNoteNo}`.toLowerCase();
         const matchSearch = search.trim() ? haystack.includes(search.trim().toLowerCase()) : true;
         const noteDateIso = parseDateInputToIso(note.creditNoteDate);
         const matchFrom = fromDate ? (!!noteDateIso && noteDateIso >= fromDate) : true;
         const matchTo = toDate ? (!!noteDateIso && noteDateIso <= toDate) : true;
-        return matchSearch && matchFrom && matchTo;
+        const matchStatus = !statusFilter || creditNoteDisplayStatus(note) === statusFilter;
+        return matchSearch && matchStatus && matchFrom && matchTo;
       }),
-    [notes, search, fromDate, toDate]
+    [notes, search, statusFilter, fromDate, toDate]
   );
 
   function onCountryChange(next: CountryCode) {
@@ -922,6 +940,18 @@ export default function CreditNotePremium() {
                       />
                     </label>
                     <label className={filterLabelClassName}>
+                      Status
+                      <select
+                        value={statusFilter}
+                        onChange={(event) => setStatusFilter(event.target.value as CreditDisplayStatus | "")}
+                        className={filterInputClassName}
+                      >
+                        <option value="">All Status</option>
+                        <option value="Issued">Issued</option>
+                        <option value="Partial">Partial</option>
+                      </select>
+                    </label>
+                    <label className={filterLabelClassName}>
                       To date
                       <DateInput
                         value={toDate}
@@ -1017,6 +1047,9 @@ export default function CreditNotePremium() {
                   onUpdateLine={updateLine}
                   onAddLine={addLine}
                   onRemoveLine={removeLine}
+                  onDownloadPdf={() => {
+                    if (activeNote) exportSingleCreditNotePdf(activeNote);
+                  }}
                   onPersist={persist}
                 />
               )}

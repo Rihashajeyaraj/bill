@@ -24,11 +24,23 @@ function qtyFromInvoice(invoice) {
   return lines.reduce((sum, line) => sum + Number(line?.qty || 0), 0);
 }
 
+function totalFromInvoice(invoice) {
+  return Number(invoice?.totals?.grandTotal || 0);
+}
+
+function balanceFromInvoice(invoice) {
+  return Number(invoice?.remainingBalance ?? invoice?.totals?.balance ?? totalFromInvoice(invoice));
+}
+
+function paidFromInvoice(invoice) {
+  return Math.max(0, totalFromInvoice(invoice) - balanceFromInvoice(invoice));
+}
+
 function resolveStatus(invoice) {
   const rawStatus = String(invoice?.status || "").trim().toLowerCase();
   if (rawStatus === "cancelled" || rawStatus === "draft") return rawStatus;
-  const grandTotal = Number(invoice?.totals?.grandTotal || 0);
-  const balance = Number(invoice?.remainingBalance ?? invoice?.totals?.balance ?? grandTotal);
+  const grandTotal = totalFromInvoice(invoice);
+  const balance = balanceFromInvoice(invoice);
   if (grandTotal <= 0) return "draft";
   if (balance <= 0) return "paid";
   if (balance < grandTotal) return "partial";
@@ -261,7 +273,7 @@ export default function InvoiceHistory() {
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-100">
-          <table className="min-w-[1180px] w-full text-left text-sm">
+          <table className="min-w-[1320px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-3 py-3 font-semibold">Invoice No</th>
@@ -269,7 +281,9 @@ export default function InvoiceHistory() {
                 <th className="px-3 py-3 font-semibold">Customer</th>
                 <th className="px-3 py-3 font-semibold">Phone</th>
                 <th className="px-3 py-3 font-semibold text-right">Qty</th>
-                <th className="px-3 py-3 font-semibold text-right">Amount</th>
+                <th className="px-3 py-3 font-semibold text-right">Total</th>
+                <th className="px-3 py-3 font-semibold text-right">Paid</th>
+                <th className="px-3 py-3 font-semibold text-right">Balance</th>
                 <th className="px-3 py-3 font-semibold">Status</th>
                 <th className="px-3 py-3 font-semibold min-w-[320px]">Actions</th>
               </tr>
@@ -277,19 +291,22 @@ export default function InvoiceHistory() {
             <tbody>
               {loading ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
                     Loading invoice history...
                   </td>
                 </tr>
               ) : filteredInvoices.length === 0 ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={8}>
+                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
                     {searchQuery ? "No matching invoices found." : "No invoices yet."}
                   </td>
                 </tr>
               ) : (
                 filteredInvoices.map((invoice) => {
                   const status = resolveStatus(invoice);
+                  const totalAmount = totalFromInvoice(invoice);
+                  const paidAmount = paidFromInvoice(invoice);
+                  const balanceAmount = balanceFromInvoice(invoice);
                   return (
                     <React.Fragment key={invoice.id}>
                       <tr className="border-t border-slate-100 hover:bg-slate-50/60">
@@ -299,7 +316,13 @@ export default function InvoiceHistory() {
                         <td className="px-3 py-3 text-slate-600">{invoice?.buyer?.phone || "-"}</td>
                         <td className="px-3 py-3 text-right text-slate-700">{money(qtyFromInvoice(invoice))}</td>
                         <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                          {money(invoice?.totals?.grandTotal)}
+                          {money(totalAmount)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-semibold text-emerald-700">
+                          {money(paidAmount)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-semibold text-amber-700">
+                          {money(balanceAmount)}
                         </td>
                         <td className="px-3 py-3">
                           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${statusBadgeClass(status)}`}>

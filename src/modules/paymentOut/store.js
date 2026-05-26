@@ -73,6 +73,36 @@ function ensureArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function normalizeStoredPaymentOut(entry) {
+  const amountPaid = Math.max(0, parseNumber(entry?.totals?.amountPaid ?? entry?.amountPaid ?? entry?.amount));
+  const tdsAmount = Math.max(0, parseNumber(entry?.totals?.tdsAmount ?? entry?.tdsAmount ?? entry?.tds_amount));
+  const allocations = ensureArray(entry?.allocations).map((line) => ({
+    ...line,
+    billAmount: Math.max(0, parseNumber(line?.billAmount)),
+    balanceDue: Math.max(0, parseNumber(line?.balanceDue)),
+    applyAmount: Math.max(0, parseNumber(line?.applyAmount))
+  }));
+  const amountApplied = Math.max(
+    0,
+    allocations.reduce((sum, line) => sum + Math.max(0, parseNumber(line?.applyAmount)), 0)
+  );
+  const totalSettled = amountPaid + tdsAmount;
+  const unappliedAmount = Math.max(0, amountPaid - amountApplied);
+
+  return {
+    ...entry,
+    allocations,
+    totals: {
+      ...(entry?.totals || {}),
+      amountPaid,
+      tdsAmount,
+      totalSettled,
+      amountApplied,
+      unappliedAmount
+    }
+  };
+}
+
 function normalizeCountry(value) {
   if (!value) return "";
   const clean = String(value).trim();
@@ -86,7 +116,22 @@ function normalizeCountry(value) {
 }
 
 function getAllPayments() {
-  return ensureArray(lsGetOrganizationScoped(PAYMENT_OUT_STORE_KEY, []));
+  const rawList = ensureArray(lsGetOrganizationScoped(PAYMENT_OUT_STORE_KEY, []));
+  const normalizedList = rawList.map((entry) => normalizeStoredPaymentOut(entry));
+  const needsRewrite = rawList.some((entry, index) => {
+    const normalized = normalizedList[index];
+    return (
+      parseNumber(entry?.totals?.amountPaid) !== parseNumber(normalized?.totals?.amountPaid) ||
+      parseNumber(entry?.totals?.tdsAmount) !== parseNumber(normalized?.totals?.tdsAmount) ||
+      parseNumber(entry?.totals?.totalSettled) !== parseNumber(normalized?.totals?.totalSettled) ||
+      parseNumber(entry?.totals?.amountApplied) !== parseNumber(normalized?.totals?.amountApplied) ||
+      parseNumber(entry?.totals?.unappliedAmount) !== parseNumber(normalized?.totals?.unappliedAmount)
+    );
+  });
+  if (needsRewrite) {
+    lsSetOrganizationScoped(PAYMENT_OUT_STORE_KEY, normalizedList);
+  }
+  return normalizedList;
 }
 
 function getLegacyPayments() {
@@ -135,7 +180,8 @@ function getLegacyPayments() {
           tdsAmount,
           totalSettled,
           amountApplied: applyAmount,
-          unappliedAmount: Math.max(0, totalSettled - applyAmount)
+          // Only excess cash should become supplier advance; TDS is part of settlement, not wallet balance.
+          unappliedAmount: Math.max(0, amountPaid - applyAmount)
         },
         audit: {
           createdBy: String(entry?.createdBy || "Legacy Import"),
@@ -650,10 +696,9 @@ export function mapOpenBillsByCountry(country) {
 }
 
 export function mapBillsByCountryForSelection(country) {
-  return mapOpenBillsByCountryInternal(country, {
-    applyAdvance: true,
-    includeCoveredByAdvance: true
-  });
+  // Payment Out invoice selection should list all live unpaid / partially paid bills
+  // before supplier advance is netted off at the wallet level.
+  return mapOpenBillsByCountryInternal(country, { applyAdvance: false });
 }
 
 export function outstandingBySupplier(country, supplierId) {

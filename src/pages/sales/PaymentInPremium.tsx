@@ -9,7 +9,6 @@ import {
   COUNTRY_OPTIONS,
   formatPaymentModeLabel,
   normalizePaymentMode,
-  paymentStatusLabel,
   type CountryCode,
   type PaymentMode,
   type PaymentStatus
@@ -72,6 +71,7 @@ const CREDIT_NOTE_PREMIUM_KEY = "creditNotesPremiumV1";
 
 type PanelMode = "feed" | "flow";
 type FlowMode = "create" | "edit" | "view";
+type PaymentDisplayStatus = "Received" | "Partial";
 
 function roleAccess(role: string, user: any) {
   const configured = Array.isArray(user?.allowedCountries) ? user.allowedCountries.filter((entry: string) => entry in COUNTRY_CONFIG) : [];
@@ -87,10 +87,29 @@ function canReopenWithinWindow(record: PaymentInRecord | null) {
   return Number.isFinite(touched) && Date.now() - touched <= EDIT_WINDOW_MS;
 }
 
-function statusBadgeClass(status: PaymentStatus) {
-  if (status === "Applied") return "bg-emerald-100 text-emerald-700";
-  if (status === "Confirmed") return "bg-amber-100 text-amber-700";
-  return "bg-slate-100 text-slate-700";
+function paymentDisplayStatus(record: Pick<PaymentInRecord, "allocations">): PaymentDisplayStatus {
+  const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
+  const hasPartialAllocation = allocations.some((line) => {
+    const applyAmount = Math.max(0, parseNumber(line?.applyAmount as any));
+    const balanceDue = Math.max(0, parseNumber(line?.balanceDue as any));
+    return applyAmount > 0 && applyAmount + 0.009 < balanceDue;
+  });
+  return hasPartialAllocation ? "Partial" : "Received";
+}
+
+function paymentDisplayStatusClass(status: PaymentDisplayStatus) {
+  return status === "Partial" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700";
+}
+
+function paymentRemainingBalance(record: Pick<PaymentInRecord, "allocations" | "totals">) {
+  const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
+  const linkedRemaining = allocations.reduce((sum, line) => {
+    const balanceDue = Math.max(0, parseNumber(line?.balanceDue as any));
+    const applyAmount = Math.max(0, parseNumber(line?.applyAmount as any));
+    return sum + Math.max(0, balanceDue - applyAmount);
+  }, 0);
+  if (linkedRemaining > 0) return linkedRemaining;
+  return Math.max(0, parseNumber(record?.totals?.unappliedAmount as any));
 }
 
 function resolveFixedCountry(organizationCountry: string, organizationCountryCode: string): CountryCode {
@@ -383,7 +402,7 @@ export default function PaymentInPremium() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [showAudit, setShowAudit] = useState(false);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<PaymentStatus | "">("");
+  const [statusFilter, setStatusFilter] = useState<PaymentDisplayStatus | "">("");
   const [customerFilter, setCustomerFilter] = useState("");
   const [modeFilter, setModeFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
@@ -671,32 +690,34 @@ export default function PaymentInPremium() {
     if (form?.allocationMode !== "linked" || !selectedCustomerDocument) return null;
     return Math.max(0, effectiveSelectedDocumentBalance);
   }, [effectiveSelectedDocumentBalance, form?.allocationMode, selectedCustomerDocument]);
-  const filteredPayments = useMemo(() => payments.filter((entry) => {
-    const allocationText = (Array.isArray(entry.allocations) ? entry.allocations : [])
-      .map((allocation) =>
-        [
-          allocation?.invoiceNo,
-          allocation?.invoiceId,
-          allocation?.documentType
-        ]
-          .map((value) => String(value || "").trim())
-          .filter(Boolean)
-          .join(" ")
-      )
-      .join(" ");
-    const haystack = `${entry.customerName} ${entry.receiptNo} ${entry.referenceNo || ""} ${entry.transactionId || ""} ${allocationText}`.toLowerCase();
-    const q = search.trim().toLowerCase();
-    const matchFrom = fromDate ? entry.paymentDate >= fromDate : true;
-    const matchTo = toDate ? entry.paymentDate <= toDate : true;
-    return (
-      (!q || haystack.includes(q)) &&
-      (!statusFilter || entry.status === statusFilter) &&
-      (!customerFilter || entry.customerId === customerFilter) &&
-      (!modeFilter || normalizePaymentMode(entry.paymentMode) === normalizePaymentMode(modeFilter)) &&
-      matchFrom &&
-      matchTo
-    );
-  }), [payments, search, statusFilter, customerFilter, modeFilter, fromDate, toDate]);
+  const filteredPayments = useMemo(
+    () =>
+      payments.filter((entry) => {
+        if (entry.status === "Draft") return false;
+        const allocationText = (Array.isArray(entry.allocations) ? entry.allocations : [])
+          .map((allocation) =>
+            [allocation?.invoiceNo, allocation?.invoiceId, allocation?.documentType]
+              .map((value) => String(value || "").trim())
+              .filter(Boolean)
+              .join(" ")
+          )
+          .join(" ");
+        const displayStatus = paymentDisplayStatus(entry);
+        const haystack = `${entry.customerName} ${entry.receiptNo} ${entry.referenceNo || ""} ${entry.transactionId || ""} ${allocationText}`.toLowerCase();
+        const q = search.trim().toLowerCase();
+        const matchFrom = fromDate ? entry.paymentDate >= fromDate : true;
+        const matchTo = toDate ? entry.paymentDate <= toDate : true;
+        return (
+          (!q || haystack.includes(q)) &&
+          (!statusFilter || displayStatus === statusFilter) &&
+          (!customerFilter || entry.customerId === customerFilter) &&
+          (!modeFilter || normalizePaymentMode(entry.paymentMode) === normalizePaymentMode(modeFilter)) &&
+          matchFrom &&
+          matchTo
+        );
+      }),
+    [payments, search, statusFilter, customerFilter, modeFilter, fromDate, toDate]
+  );
   const paymentTdsHistory = useMemo(
     () =>
       filteredPayments
@@ -1617,7 +1638,7 @@ export default function PaymentInPremium() {
                   <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search customer, receipt, reference" className="search-field-input h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
                   <select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Customers</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select>
                   <select value={modeFilter} onChange={(event) => setModeFilter(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Modes</option>{COUNTRY_CONFIG[country].paymentModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select>
-                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PaymentStatus | "")} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Status</option><option value="Draft">Draft</option><option value="Confirmed">Received</option><option value="Applied">Applied</option></select>
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PaymentDisplayStatus | "")} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Status</option><option value="Received">Received</option><option value="Partial">Partial</option></select>
                   <DateInput value={fromDate} onChange={(nextValue) => setFromDate(nextValue)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
                   <DateInput value={toDate} onChange={(nextValue) => setToDate(nextValue)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
                 </div>
@@ -1641,8 +1662,8 @@ export default function PaymentInPremium() {
                         <th className="px-3 py-3 font-semibold">Mode</th>
                         <th className="px-3 py-3 font-semibold text-right">Received Amount</th>
                         <th className="px-3 py-3 font-semibold text-right">TDS Amount</th>
-                        <th className="px-3 py-3 font-semibold text-right">Total Settled</th>
-                        <th className="px-3 py-3 font-semibold text-right">Advance Balance</th>
+                        <th className="px-3 py-3 font-semibold text-right">Applied Amount</th>
+                        <th className="px-3 py-3 font-semibold text-right">Unapplied Balance</th>
                         <th className="px-3 py-3 font-semibold">Status</th>
                         <th className="px-3 py-3 font-semibold">Actions</th>
                       </tr>
@@ -1669,14 +1690,14 @@ export default function PaymentInPremium() {
                               {formatMoney(record?.totals?.tdsAmount || 0, country)}
                             </td>
                             <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                              {formatMoney(record?.totals?.totalSettled || 0, country)}
+                              {formatMoney(record?.totals?.amountApplied || 0, country)}
                             </td>
                             <td className="px-3 py-3 text-right text-slate-700">
-                              {formatMoney(record?.totals?.unappliedAmount || 0, country)}
+                              {formatMoney(paymentRemainingBalance(record), country)}
                             </td>
                             <td className="px-3 py-3">
-                              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(record.status)}`}>
-                                {paymentStatusLabel(record.status)}
+                              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${paymentDisplayStatusClass(paymentDisplayStatus(record))}`}>
+                                {paymentDisplayStatus(record)}
                               </span>
                             </td>
                             <td className="px-3 py-3">
@@ -2448,19 +2469,6 @@ export default function PaymentInPremium() {
           >
             <Save className="h-3.5 w-3.5" />
             {saving ? "Saving..." : saveStatus === "Draft" ? "Save Draft" : "Save Received"}
-          </button>
-          <button
-            type="button"
-            onClick={handleApply}
-            disabled={
-              !canSaveCurrentFlow ||
-              activeStep !== 2 ||
-              form.allocationMode !== "linked" ||
-              activePayment?.status !== "Confirmed"
-            }
-            className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Apply
           </button>
           <button
             type="button"
