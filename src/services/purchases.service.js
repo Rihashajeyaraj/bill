@@ -1,5 +1,10 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped, uid } from "./storage";
-import { authGetOrganizationId, authGetRole, authGetUser } from "./auth.service";
+import {
+  authEnsureOrganizationAccess,
+  authGetOrganizationId,
+  authGetRole,
+  authGetUser
+} from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
@@ -711,7 +716,12 @@ export async function purchasesCreate(bill) {
     (await financialYearsEnsureForDate(billDate).catch(() => null)) ||
     financialYearsResolveForDate(billDate);
 
-  const organizationId = isSupabaseConfigured && supabase ? authGetOrganizationId() : "";
+  const organizationId =
+    isSupabaseConfigured && supabase
+      ? String(
+          (await authEnsureOrganizationAccess(authGetOrganizationId()).catch(() => "")) || ""
+        ).trim()
+      : "";
   for (let attempt = 0; attempt < 5; attempt += 1) {
     effectiveBillNumber = await resolveUniquePurchaseNumber(requestedBillNumber, billDate, organizationId);
     if (!effectiveBillNumber || hasPurchaseNumberConflict(effectiveBillNumber)) {
@@ -992,7 +1002,12 @@ export async function purchasesUpdate(purchaseId, bill) {
   const actorUserId = actor?.id || existing?.createdByUserId || null;
   const actorName =
     String(actor?.name || actor?.email || existing?.createdByName || existing?.createdBy || "").trim();
-  const organizationId = isSupabaseConfigured && supabase ? authGetOrganizationId() : "";
+  const organizationId =
+    isSupabaseConfigured && supabase
+      ? String(
+          (await authEnsureOrganizationAccess(authGetOrganizationId()).catch(() => "")) || ""
+        ).trim()
+      : "";
   if (
     organizationId &&
     (await purchaseNumberExistsRemotely(
