@@ -314,11 +314,45 @@ function dedupeItems(items) {
   });
 }
 
+function extractPercentValuesFromLine(line) {
+  const matches = String(line || "").match(/(\d+(?:\.\d+)?)\s*%/gi) || [];
+  return matches
+    .map((entry) => Number(String(entry).replace(/[^\d.]/g, "")))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+}
+
 function extractInvoiceLevelGst(lines) {
-  const gstLine = lines.find((line) => /\b[isc]?\s*gst\b/i.test(line) && /%/.test(line));
-  const match = gstLine?.match(/(\d+(?:\.\d+)?)\s*%/);
-  const rate = Number(match?.[1] || 0);
-  return Number.isFinite(rate) ? rate : 0;
+  const safeLines = Array.isArray(lines) ? lines : [];
+  let genericGstRate = 0;
+  let cgstRate = 0;
+  let sgstRate = 0;
+  let igstRate = 0;
+
+  safeLines.forEach((line) => {
+    if (!/%/.test(String(line || ""))) return;
+    const percentValues = extractPercentValuesFromLine(line);
+    if (!percentValues.length) return;
+    const primaryRate = Math.max(...percentValues);
+    const normalizedLine = normalizeKey(line);
+
+    if (/\bigst\b/.test(normalizedLine)) {
+      igstRate = Math.max(igstRate, primaryRate);
+      return;
+    }
+    if (/\bcgst\b/.test(normalizedLine)) {
+      cgstRate = Math.max(cgstRate, primaryRate);
+    }
+    if (/\bsgst\b/.test(normalizedLine)) {
+      sgstRate = Math.max(sgstRate, primaryRate);
+    }
+    if (/\bgst\b/.test(normalizedLine) && !/\b[isc]gst\b/.test(normalizedLine)) {
+      genericGstRate = Math.max(genericGstRate, primaryRate);
+    }
+  });
+
+  if (igstRate > 0) return igstRate;
+  if (cgstRate > 0 || sgstRate > 0) return round2(cgstRate + sgstRate);
+  return genericGstRate > 0 ? genericGstRate : 0;
 }
 
 function parseHuesGranitesItems(lines) {

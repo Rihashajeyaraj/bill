@@ -139,6 +139,7 @@ function recalculateInvoiceBalance(entry, paymentMap = null, creditMap = null) {
     0,
     hasLinkedActivity ? grandTotal - paymentApplied - creditApplied : storedBalance
   );
+  const totalApplied = Math.min(grandTotal, paymentApplied + creditApplied);
   const nextStatus =
     String(entry?.status || "").toLowerCase() === "cancelled"
       ? "cancelled"
@@ -148,10 +149,16 @@ function recalculateInvoiceBalance(entry, paymentMap = null, creditMap = null) {
     ...entry,
     totals: {
       ...(entry?.totals || {}),
-      balance: effectiveBalance
+      balance: effectiveBalance,
+      paidAmount: paymentApplied,
+      amountApplied: totalApplied
     },
     remainingBalance: effectiveBalance,
     balanceAmount: effectiveBalance,
+    paidAmount: paymentApplied,
+    appliedAmount: totalApplied,
+    paymentApplied,
+    creditApplied,
     status: nextStatus,
     paymentStatus: nextStatus
   };

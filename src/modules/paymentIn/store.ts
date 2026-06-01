@@ -437,6 +437,23 @@ function invoiceLikeStatus(totalAmount: number, balanceAmount: number) {
   return "issued";
 }
 
+function buildInvoicePaymentSnapshot(invoiceTotal: number, paymentApplied: number, creditApplied: number) {
+  const total = Math.max(0, toNumber(invoiceTotal));
+  const appliedPayments = Math.max(0, toNumber(paymentApplied));
+  const appliedCredits = Math.max(0, toNumber(creditApplied));
+  const totalApplied = Math.min(total, appliedPayments + appliedCredits);
+  const nextBalance = Math.max(0, total - totalApplied);
+  const nextStatus = invoiceLikeStatus(total, nextBalance);
+
+  return {
+    paymentApplied: appliedPayments,
+    creditApplied: appliedCredits,
+    totalApplied,
+    nextBalance,
+    nextStatus
+  };
+}
+
 export function paymentInAllocationTdsShare(record: Pick<PaymentInRecord, "allocations" | "totals">, line: Partial<PaymentAllocationDraft>) {
   const totalTdsAmount = Math.max(0, toNumber(record?.totals?.tdsAmount));
   if (totalTdsAmount <= 0) return 0;
@@ -569,19 +586,31 @@ function recalculateLocalInvoiceBalance(invoiceId: string) {
   const nextInvoices = invoices.map((invoice: any) => {
     if (String(invoice?.id || "").trim() !== normalizedInvoiceId) return invoice;
     const invoiceTotal = invoiceLikeTotal(invoice);
-    const nextBalance = Math.max(0, invoiceTotal - paymentApplied - creditApplied);
-    const nextStatus = invoiceLikeStatus(invoiceTotal, nextBalance);
+    const snapshot = buildInvoicePaymentSnapshot(invoiceTotal, paymentApplied, creditApplied);
     const nextTotals =
       invoice?.totals && typeof invoice.totals === "object"
-        ? { ...invoice.totals, balance: nextBalance }
-        : { balance: nextBalance };
+        ? {
+            ...invoice.totals,
+            balance: snapshot.nextBalance,
+            paidAmount: snapshot.paymentApplied,
+            amountApplied: snapshot.totalApplied
+          }
+        : {
+            balance: snapshot.nextBalance,
+            paidAmount: snapshot.paymentApplied,
+            amountApplied: snapshot.totalApplied
+          };
     return {
       ...invoice,
       totals: nextTotals,
-      remainingBalance: nextBalance,
-      balanceAmount: nextBalance,
-      status: nextStatus,
-      paymentStatus: nextStatus
+      remainingBalance: snapshot.nextBalance,
+      balanceAmount: snapshot.nextBalance,
+      paidAmount: snapshot.paymentApplied,
+      appliedAmount: snapshot.totalApplied,
+      paymentApplied: snapshot.paymentApplied,
+      creditApplied: snapshot.creditApplied,
+      status: snapshot.nextStatus,
+      paymentStatus: snapshot.nextStatus
     };
   });
 
@@ -1404,9 +1433,6 @@ export function savePaymentIn(payload: SavePaymentInPayload): PaymentInRecord {
   const now = nowIso();
   const previousStatus: PaymentStatus = normalizePaymentStatus(existing?.status || "Draft");
   const nextStatus: PaymentStatus = normalizePaymentStatus(payload.desiredStatus);
-  if (previousStatus === "Draft" && nextStatus === "Applied") {
-    throw new Error("Confirm the payment before applying it.");
-  }
   ensureTransition(previousStatus, nextStatus);
 
   const calculated = computeTotals(payload);

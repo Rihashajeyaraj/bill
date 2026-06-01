@@ -154,7 +154,8 @@ export const COUNTRY_NAME_TO_CODE: Record<string, CountryCode> = {
 };
 
 export const STATUS_FLOW: Record<PaymentStatus, PaymentStatus[]> = {
-  Draft: ["Draft", "Confirmed"],
+  // Linked receipts can now be posted directly against an invoice in one save.
+  Draft: ["Draft", "Confirmed", "Applied"],
   Confirmed: ["Confirmed", "Applied"],
   Applied: ["Applied", "Confirmed"]
 };

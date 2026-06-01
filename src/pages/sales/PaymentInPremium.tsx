@@ -1566,9 +1566,12 @@ export default function PaymentInPremium() {
   }
 
   const saveStatus: PaymentStatus =
-    activePayment?.status === "Applied" || activePayment?.status === "Confirmed" || activeStep === 2
-      ? "Confirmed"
-      : "Draft";
+    activePayment?.status === "Applied" ||
+    (form?.allocationMode === "linked" && !!form?.selectedDocumentId && totals.amountApplied > 0)
+      ? "Applied"
+      : activePayment?.status === "Confirmed" || activeStep === 2
+        ? "Confirmed"
+        : "Draft";
   const hasPreviousStep = activeStep > 0;
   const hasNextStep = activeStep < STEPS.length - 1;
   const canSaveCurrentFlow = !saving && (form?.id ? canEditPayment : canCreatePayment);
@@ -2468,7 +2471,7 @@ export default function PaymentInPremium() {
             className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Save className="h-3.5 w-3.5" />
-            {saving ? "Saving..." : saveStatus === "Draft" ? "Save Draft" : "Save Received"}
+            {saving ? "Saving..." : saveStatus === "Draft" ? "Save Draft" : saveStatus === "Applied" ? "Save & Apply" : "Save Received"}
           </button>
           <button
             type="button"
