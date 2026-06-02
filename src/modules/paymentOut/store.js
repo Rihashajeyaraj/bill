@@ -103,6 +103,52 @@ function normalizeStoredPaymentOut(entry) {
   };
 }
 
+function matchingPurchaseBillFromEntry(entry) {
+  const note = String(entry?.internalNotes || entry?.notes || "").trim();
+  const match = note.match(/Payment from purchase bill\s+(.+?)\s+\(saved as advance balance\)/i);
+  const billNo = String(match?.[1] || "").trim();
+  if (!billNo) return null;
+
+  const purchases = ensureArray(lsGetOrganizationScoped(LS_KEYS.purchases, []));
+  return (
+    purchases.find((bill) => {
+      const sameBillNo = String(bill?.billNumber || bill?.bill_no || "").trim() === billNo;
+      const sameSupplier =
+        String(bill?.partyId || bill?.supplierId || "").trim() === String(entry?.supplierId || "").trim();
+      return sameBillNo && sameSupplier;
+    }) || null
+  );
+}
+
+function isLegacyDuplicateAdvanceEntry(entry) {
+  if (!entry || String(entry?.status || "") !== "Paid") return false;
+  if (ensureArray(entry?.allocations).length) return false;
+
+  const note = String(entry?.internalNotes || entry?.notes || "").trim().toLowerCase();
+  if (!note.includes("(saved as advance balance)")) return false;
+
+  const bill = matchingPurchaseBillFromEntry(entry);
+  if (!bill) return false;
+
+  const billTotal = Math.max(
+    0,
+    parseNumber(
+      bill?.totals?.finalTotal ??
+        bill?.totals?.grandTotal ??
+        bill?.totals?.total ??
+        bill?.grandTotal ??
+        bill?.total
+    )
+  );
+  const billBalance = Math.max(
+    0,
+    parseNumber(bill?.remainingBalance ?? bill?.totals?.balance ?? billTotal)
+  );
+  const amountPaid = Math.max(0, parseNumber(entry?.totals?.amountPaid ?? entry?.amountPaid ?? entry?.amount));
+
+  return Math.abs(amountPaid - billTotal) <= 0.01 && billBalance <= 0.01;
+}
+
 function normalizeCountry(value) {
   if (!value) return "";
   const clean = String(value).trim();
@@ -117,9 +163,12 @@ function normalizeCountry(value) {
 
 function getAllPayments() {
   const rawList = ensureArray(lsGetOrganizationScoped(PAYMENT_OUT_STORE_KEY, []));
-  const normalizedList = rawList.map((entry) => normalizeStoredPaymentOut(entry));
+  const normalizedList = rawList
+    .map((entry) => normalizeStoredPaymentOut(entry))
+    .filter((entry) => !isLegacyDuplicateAdvanceEntry(entry));
   const needsRewrite = rawList.some((entry, index) => {
     const normalized = normalizedList[index];
+    if (!normalized) return true;
     return (
       parseNumber(entry?.totals?.amountPaid) !== parseNumber(normalized?.totals?.amountPaid) ||
       parseNumber(entry?.totals?.tdsAmount) !== parseNumber(normalized?.totals?.tdsAmount) ||
@@ -755,7 +804,11 @@ export function listSupplierAdvanceWalletHistory(country, supplierId) {
       const advanceUsed = round2(
         advanceUsageLines.reduce((sum, line) => sum + Math.max(0, parseNumber(line?.applyAmount)), 0)
       );
-      const advanceAdded = round2(Math.max(0, parseNumber(entry?.totals?.unappliedAmount)) + advanceUsed);
+      // Rebuild the original advance created by this payment. `unappliedAmount`
+      // is only the balance still left after later advance applications.
+      const advanceAdded = round2(
+        Math.max(0, parseNumber(entry?.totals?.unappliedAmount)) + advanceUsed
+      );
 
       if (advanceAdded > 0) {
         events.push({

@@ -1064,7 +1064,11 @@ export function listCustomerAdvanceWalletHistory(country: CountryCode, customerI
       const advanceUsed = round2(
         advanceUsageLines.reduce((sum, line) => sum + Math.max(0, toNumber(line?.applyAmount)), 0)
       );
-      const advanceAdded = round2(Math.max(0, toNumber(entry?.totals?.unappliedAmount)));
+      // Rebuild the original advance created by this receipt. `unappliedAmount`
+      // is only the balance still left after later advance applications.
+      const advanceAdded = round2(
+        Math.max(0, toNumber(entry?.totals?.unappliedAmount)) + advanceUsed
+      );
 
       if (advanceAdded > 0) {
         events.push({

@@ -1754,10 +1754,14 @@ export default function PurchaseBill() {
       let paymentSaved = false;
       let paymentSavedUnapplied = false;
       let partialSaveErrorMessage = "";
-      if (!isEditMode && paymentAmount > 0) {
+      const remainingCashPayable = round2(
+        Math.max(0, Number(computed.finalTotal || 0) - advanceAppliedFromWallet - debitNotesUsedAmount)
+      );
+      const effectiveCashPaymentAmount = round2(Math.min(paymentAmount, remainingCashPayable));
+      if (!isEditMode && effectiveCashPaymentAmount > 0) {
         try {
           const payableBefore = outstandingBySupplier(country, effectivePartyId);
-          const applyAmount = Math.min(paymentAmount, Math.max(0, Number(computed.finalTotal || 0) - advanceAppliedFromWallet));
+          const applyAmount = Math.min(effectiveCashPaymentAmount, remainingCashPayable);
           const paymentOutRecord = savePaymentOut({
             country,
             paymentDate: paymentDate || billDate,
@@ -1776,7 +1780,7 @@ export default function PurchaseBill() {
             internalNotes: paymentNotes || `Payment from purchase bill ${effectiveBillNumber}`,
             attachment: null,
             desiredStatus: "Applied",
-            amountPaid: paymentAmount,
+            amountPaid: effectiveCashPaymentAmount,
             allocations: [
               {
                 billId: savedBillId,
@@ -1813,7 +1817,7 @@ export default function PurchaseBill() {
                 paymentNotes || `Payment from purchase bill ${effectiveBillNumber} (saved as advance balance)`,
               attachment: null,
               desiredStatus: "Paid",
-              amountPaid: paymentAmount,
+              amountPaid: effectiveCashPaymentAmount,
               allocations: [],
               supplierOutstandingBefore: 0,
               actor: authGetUser()?.name || authGetUser()?.email || "System User"
