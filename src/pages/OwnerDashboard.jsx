@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ArrowDownCircle,
   ArrowUpCircle,
@@ -164,6 +165,7 @@ function countryMatches(recordValue, targetCountry) {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { currency = "INR", country = "India", countryCode = "IN", profile = {} } = useOrganization();
   const { selectedYear, activeRange } = useFinancialYears();
   const companyTimeZone = useMemo(
@@ -600,7 +602,11 @@ export default function Dashboard() {
       </div>
 
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
-        <Card className="p-3 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => navigate("/app/reports?report=sale-report")}
+          className="card flex items-center justify-between p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+        >
           <div>
             <p className="text-xs text-slate-500">Receivable</p>
             <p className="text-sm font-semibold text-blue-600">{currencyPrefix}{money(totals.receivables)}</p>
@@ -608,9 +614,13 @@ export default function Dashboard() {
           <div className="h-9 w-9 rounded-full bg-emerald-100 flex items-center justify-center">
             <ArrowDownCircle className="h-4 w-4 text-emerald-600" />
           </div>
-        </Card>
+        </button>
 
-        <Card className="p-3 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => navigate("/app/reports?report=purchase-report")}
+          className="card flex items-center justify-between p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+        >
           <div>
             <p className="text-xs text-slate-500">Payables</p>
             <p className="text-sm font-semibold text-rose-500">{currencyPrefix}{money(totals.payables)}</p>
@@ -618,7 +628,7 @@ export default function Dashboard() {
           <div className="h-9 w-9 rounded-full bg-rose-100 flex items-center justify-center">
             <ArrowUpCircle className="h-4 w-4 text-rose-500" />
           </div>
-        </Card>
+        </button>
 
         <Card className="p-3 flex items-center justify-between">
           <div>

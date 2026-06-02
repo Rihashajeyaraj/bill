@@ -744,6 +744,10 @@ export function mapOpenBillsByCountry(country) {
   return mapOpenBillsByCountryInternal(country, { applyAdvance: true });
 }
 
+export function mapBillsByCountryWithAdvanceCoverage(country) {
+  return mapOpenBillsByCountryInternal(country, { applyAdvance: true, includeCoveredByAdvance: true });
+}
+
 export function mapBillsByCountryForSelection(country) {
   // Payment Out invoice selection should list all live unpaid / partially paid bills
   // before supplier advance is netted off at the wallet level.

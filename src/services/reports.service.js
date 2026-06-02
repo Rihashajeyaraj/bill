@@ -2,7 +2,12 @@ import { listParties, computePartyFinancials, syncPartiesFromRemote } from "../m
 import { listCreditNotes as listPremiumCreditNotes } from "../modules/creditNote/store";
 import { listDebitNotes } from "../modules/debitNote/store";
 import { listPaymentIn, paymentInAllocationSettledAmount, paymentInAllocationTdsShare } from "../modules/paymentIn/store";
-import { listPaymentOut, paymentOutAllocationSettledAmount, paymentOutAllocationTdsShare } from "../modules/paymentOut/store";
+import {
+  listPaymentOut,
+  mapBillsByCountryWithAdvanceCoverage,
+  paymentOutAllocationSettledAmount,
+  paymentOutAllocationTdsShare
+} from "../modules/paymentOut/store";
 import { normalizeText, openingBalanceSigned, parseNumber, toIsoDate } from "../modules/parties/utils";
 import { creditNotesList, creditNotesSyncFromRemote } from "./creditNotes.service";
 import { expensesList, expensesSyncFromRemote } from "./expenses.service";
@@ -1367,6 +1372,10 @@ export function buildPurchaseReport(dataset, filters = {}) {
   const indexes = buildPartyIndexes(dataset);
   const paymentsByBill = supplierPaymentAppliedByBill(dataset, toDate);
   const debitByBill = supplierDebitAppliedByBill(dataset, toDate);
+  const adjustedOpenBills = mapBillsByCountryWithAdvanceCoverage("");
+  const adjustedBalanceByBillId = new Map(
+    adjustedOpenBills.map((bill) => [String(bill?.id || "").trim(), Math.max(0, parseNumber(bill?.balanceDue))])
+  );
 
   const rows = (Array.isArray(dataset?.purchases) ? dataset.purchases : [])
     .filter((row) => normalizeText(row?.status) !== "draft" && normalizeText(row?.status) !== "cancelled")
@@ -1374,7 +1383,12 @@ export function buildPurchaseReport(dataset, filters = {}) {
     .filter((row) => matchesPartyId(row, partyId, PARTY_TYPES.supplier))
     .map((row) => {
       const totalAmount = amountFromInvoice(row);
-      const balance = resolvePurchaseBalance(row, paymentsByBill, debitByBill);
+      const baseBalance = resolvePurchaseBalance(row, paymentsByBill, debitByBill);
+      const billId = String(row?.id || "").trim();
+      const adjustedBalance = adjustedBalanceByBillId.has(billId)
+        ? adjustedBalanceByBillId.get(billId)
+        : 0;
+      const balance = Math.min(baseBalance, Math.max(0, parseNumber(adjustedBalance)));
       const paidAmount = Math.max(0, totalAmount - balance);
       return {
         id: String(row?.id || row?.billNumber || ""),

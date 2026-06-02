@@ -956,22 +956,28 @@ function PartyStatementTable({ columns, rows, currency, emptyText = "No records 
   );
 }
 
-function buildViewModel({ activeReport, data, currency, currentPage, agingMetricFilter }) {
+function buildViewModel({ activeReport, data, currency, currentPage, agingMetricFilter, saleMetricFilter, purchaseMetricFilter }) {
   if (!data) return null;
 
   const paginateIfNeeded = (rows) => paginateRows(rows, currentPage, REPORT_PAGE_SIZE);
 
   switch (activeReport) {
     case "sale-report": {
-      const pageInfo = paginateIfNeeded(data.rows);
+      const filteredRows =
+        saleMetricFilter === "received"
+          ? data.rows.filter((row) => Number(row?.unpaidAmount || 0) <= 0)
+          : saleMetricFilter === "receivable"
+            ? data.rows.filter((row) => Number(row?.unpaidAmount || 0) > 0)
+            : data.rows;
+      const pageInfo = paginateIfNeeded(filteredRows);
       return {
         title: "Sale Report",
-        subtitle: "Invoice list with paid and unpaid status for the selected period.",
+        subtitle: "Invoice list with received and receivable status for the selected period.",
         filename: "sale-report",
         metrics: [
-          { label: "Total Sales", value: formatMoney(data.totals.totalSales, currency), tone: "positive" },
-          { label: "Paid", value: formatMoney(data.totals.paidAmount, currency) },
-          { label: "Unpaid", value: formatMoney(data.totals.unpaidAmount, currency), tone: data.totals.unpaidAmount > 0 ? "negative" : "default" },
+          { label: "Total Sales", value: formatMoney(data.totals.totalSales, currency), tone: "positive", metricKey: "all" },
+          { label: "Received", value: formatMoney(data.totals.paidAmount, currency), metricKey: "received" },
+          { label: "Receivable", value: formatMoney(data.totals.unpaidAmount, currency), tone: data.totals.unpaidAmount > 0 ? "negative" : "default", metricKey: "receivable" },
           { label: "Invoices", value: data.totals.invoiceCount }
         ],
         columns: [
@@ -979,26 +985,32 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
           { key: "reference", label: "Invoice No" },
           { key: "partyName", label: "Customer" },
           { key: "totalAmount", label: "Total", align: "right", format: "money" },
-          { key: "paidAmount", label: "Paid", align: "right", format: "money" },
-          { key: "unpaidAmount", label: "Unpaid", align: "right", format: "money" },
+          { key: "paidAmount", label: "Received", align: "right", format: "money" },
+          { key: "unpaidAmount", label: "Receivable", align: "right", format: "money" },
           { key: "status", label: "Status", align: "right" }
         ],
         tableTitle: "Invoices",
         rows: pageInfo.rows,
-        exportRows: data.rows,
+        exportRows: filteredRows,
         pageInfo
       };
     }
     case "purchase-report": {
-      const pageInfo = paginateIfNeeded(data.rows);
+      const filteredRows =
+        purchaseMetricFilter === "paid"
+          ? data.rows.filter((row) => Number(row?.pendingAmount || 0) <= 0)
+          : purchaseMetricFilter === "payable"
+            ? data.rows.filter((row) => Number(row?.pendingAmount || 0) > 0)
+            : data.rows;
+      const pageInfo = paginateIfNeeded(filteredRows);
       return {
         title: "Purchase Report",
-        subtitle: "Supplier bills with paid versus pending visibility.",
+        subtitle: "Supplier bills with paid and payable visibility.",
         filename: "purchase-report",
         metrics: [
-          { label: "Total Purchases", value: formatMoney(data.totals.totalPurchases, currency) },
-          { label: "Paid", value: formatMoney(data.totals.paidAmount, currency) },
-          { label: "Pending", value: formatMoney(data.totals.pendingAmount, currency), tone: data.totals.pendingAmount > 0 ? "negative" : "default" },
+          { label: "Total Purchases", value: formatMoney(data.totals.totalPurchases, currency), metricKey: "all" },
+          { label: "Paid", value: formatMoney(data.totals.paidAmount, currency), metricKey: "paid" },
+          { label: "Payable", value: formatMoney(data.totals.pendingAmount, currency), tone: data.totals.pendingAmount > 0 ? "negative" : "default", metricKey: "payable" },
           { label: "Bills", value: data.totals.billCount }
         ],
         columns: [
@@ -1007,12 +1019,12 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
           { key: "partyName", label: "Supplier" },
           { key: "totalAmount", label: "Total", align: "right", format: "money" },
           { key: "paidAmount", label: "Paid", align: "right", format: "money" },
-          { key: "pendingAmount", label: "Pending", align: "right", format: "money" },
+          { key: "pendingAmount", label: "Payable", align: "right", format: "money" },
           { key: "status", label: "Status", align: "right" }
         ],
         tableTitle: "Purchase Bills",
         rows: pageInfo.rows,
-        exportRows: data.rows,
+        exportRows: filteredRows,
         pageInfo
       };
     }
@@ -1270,6 +1282,8 @@ export default function Reports() {
   const [sidebarWidth, setSidebarWidth] = useState(REPORT_SIDEBAR_DEFAULT_WIDTH);
   const [expandedAgingBucket, setExpandedAgingBucket] = useState(null);
   const [agingMetricFilter, setAgingMetricFilter] = useState("totalOutstanding");
+  const [saleMetricFilter, setSaleMetricFilter] = useState("all");
+  const [purchaseMetricFilter, setPurchaseMetricFilter] = useState("all");
   const [profitBreakdownMode, setProfitBreakdownMode] = useState("");
   const resizeStateRef = useRef(null);
   const deferredDataset = useDeferredValue(dataset);
@@ -1338,6 +1352,8 @@ export default function Reports() {
   useEffect(() => {
     setExpandedAgingBucket(null);
     setAgingMetricFilter("totalOutstanding");
+    setSaleMetricFilter("all");
+    setPurchaseMetricFilter("all");
   }, [activeReport, filters.asOfDate, filters.partyId, filters.partyType, dataset]);
 
   useEffect(() => {
@@ -1498,8 +1514,8 @@ export default function Reports() {
   }, [activeReport, deferredDataset, deferredFilters, deferredPage, organizationProfile]);
 
   const viewModel = useMemo(
-    () => (reportResult?.error ? null : buildViewModel({ activeReport, data: reportResult, currency, currentPage: page, agingMetricFilter })),
-    [activeReport, reportResult, currency, page, agingMetricFilter]
+    () => (reportResult?.error ? null : buildViewModel({ activeReport, data: reportResult, currency, currentPage: page, agingMetricFilter, saleMetricFilter, purchaseMetricFilter })),
+    [activeReport, reportResult, currency, page, agingMetricFilter, saleMetricFilter, purchaseMetricFilter]
   );
 
   function handleRefresh() {
@@ -1780,6 +1796,30 @@ export default function Reports() {
                             setExpandedAgingBucket(null);
                             setPage(1);
                             setAgingMetricFilter(metric.metricKey);
+                          }}
+                        />
+                      ) : metric.metricKey && activeReport === "sale-report" ? (
+                        <InteractiveMetricCard
+                          key={metric.label}
+                          label={metric.label}
+                          value={metric.value}
+                          tone={metric.tone}
+                          active={saleMetricFilter === metric.metricKey}
+                          onClick={() => {
+                            setPage(1);
+                            setSaleMetricFilter(metric.metricKey);
+                          }}
+                        />
+                      ) : metric.metricKey && activeReport === "purchase-report" ? (
+                        <InteractiveMetricCard
+                          key={metric.label}
+                          label={metric.label}
+                          value={metric.value}
+                          tone={metric.tone}
+                          active={purchaseMetricFilter === metric.metricKey}
+                          onClick={() => {
+                            setPage(1);
+                            setPurchaseMetricFilter(metric.metricKey);
                           }}
                         />
                       ) : metric.metricKey && activeReport === "profit-loss" ? (

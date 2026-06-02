@@ -409,17 +409,25 @@ export default function AccounterDashboard() {
           <p className="text-xs text-slate-500">Issued/Paid docs to apply</p>
         </Card>
 
-        <Card className="p-4">
+        <button
+          type="button"
+          onClick={() => navigate("/app/reports?report=sale-report")}
+          className="card p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+        >
           <p className="text-xs text-slate-500">Receivables</p>
           <p className="mt-2 text-xl font-semibold text-amber-700">{money(dashboard.receivableAmount, currency)}</p>
           <p className="text-xs text-slate-500">{dashboard.receivableCount} open invoices</p>
-        </Card>
+        </button>
 
-        <Card className="p-4">
+        <button
+          type="button"
+          onClick={() => navigate("/app/reports?report=purchase-report")}
+          className="card p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+        >
           <p className="text-xs text-slate-500">Payables</p>
           <p className="mt-2 text-xl font-semibold text-rose-700">{money(dashboard.payableAmount, currency)}</p>
           <p className="text-xs text-slate-500">Live supplier balances</p>
-        </Card>
+        </button>
 
         <Card className="p-4">
           <p className="text-xs text-slate-500">Cash Net</p>
