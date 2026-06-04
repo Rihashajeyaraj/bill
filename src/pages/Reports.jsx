@@ -960,6 +960,7 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
   if (!data) return null;
 
   const paginateIfNeeded = (rows) => paginateRows(rows, currentPage, REPORT_PAGE_SIZE);
+  const sumRows = (rows, key) => rows.reduce((total, row) => total + Number(row?.[key] || 0), 0);
 
   switch (activeReport) {
     case "sale-report": {
@@ -969,16 +970,22 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
           : saleMetricFilter === "receivable"
             ? data.rows.filter((row) => Number(row?.unpaidAmount || 0) > 0)
             : data.rows;
+      const metricTotals = {
+        totalSales: sumRows(filteredRows, "totalAmount"),
+        paidAmount: sumRows(filteredRows, "paidAmount"),
+        unpaidAmount: sumRows(filteredRows, "unpaidAmount"),
+        invoiceCount: filteredRows.length
+      };
       const pageInfo = paginateIfNeeded(filteredRows);
       return {
         title: "Sale Report",
         subtitle: "Invoice list with received and receivable status for the selected period.",
         filename: "sale-report",
         metrics: [
-          { label: "Total Sales", value: formatMoney(data.totals.totalSales, currency), tone: "positive", metricKey: "all" },
-          { label: "Received", value: formatMoney(data.totals.paidAmount, currency), metricKey: "received" },
-          { label: "Receivable", value: formatMoney(data.totals.unpaidAmount, currency), tone: data.totals.unpaidAmount > 0 ? "negative" : "default", metricKey: "receivable" },
-          { label: "Invoices", value: data.totals.invoiceCount }
+          { label: "Total Sales", value: formatMoney(metricTotals.totalSales, currency), tone: "positive", metricKey: "all" },
+          { label: "Received", value: formatMoney(metricTotals.paidAmount, currency), metricKey: "received" },
+          { label: "Receivable", value: formatMoney(metricTotals.unpaidAmount, currency), tone: metricTotals.unpaidAmount > 0 ? "negative" : "default", metricKey: "receivable" },
+          { label: "Invoices", value: metricTotals.invoiceCount }
         ],
         columns: [
           { key: "date", label: "Date", format: "date", sortable: true },
@@ -1002,16 +1009,22 @@ function buildViewModel({ activeReport, data, currency, currentPage, agingMetric
           : purchaseMetricFilter === "payable"
             ? data.rows.filter((row) => Number(row?.pendingAmount || 0) > 0)
             : data.rows;
+      const metricTotals = {
+        totalPurchases: sumRows(filteredRows, "totalAmount"),
+        paidAmount: sumRows(filteredRows, "paidAmount"),
+        pendingAmount: sumRows(filteredRows, "pendingAmount"),
+        billCount: filteredRows.length
+      };
       const pageInfo = paginateIfNeeded(filteredRows);
       return {
         title: "Purchase Report",
         subtitle: "Supplier bills with paid and payable visibility.",
         filename: "purchase-report",
         metrics: [
-          { label: "Total Purchases", value: formatMoney(data.totals.totalPurchases, currency), metricKey: "all" },
-          { label: "Paid", value: formatMoney(data.totals.paidAmount, currency), metricKey: "paid" },
-          { label: "Payable", value: formatMoney(data.totals.pendingAmount, currency), tone: data.totals.pendingAmount > 0 ? "negative" : "default", metricKey: "payable" },
-          { label: "Bills", value: data.totals.billCount }
+          { label: "Total Purchases", value: formatMoney(metricTotals.totalPurchases, currency), metricKey: "all" },
+          { label: "Paid", value: formatMoney(metricTotals.paidAmount, currency), metricKey: "paid" },
+          { label: "Payable", value: formatMoney(metricTotals.pendingAmount, currency), tone: metricTotals.pendingAmount > 0 ? "negative" : "default", metricKey: "payable" },
+          { label: "Bills", value: metricTotals.billCount }
         ],
         columns: [
           { key: "date", label: "Date", format: "date" },

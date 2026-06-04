@@ -28,6 +28,8 @@ import {
   markStockNotificationRead,
   syncStockNotificationsFromRemote
 } from "../services/stockNotifications.service";
+import { listItems } from "../modules/items/store";
+import { listParties } from "../modules/parties/store";
 import { syncTdsComplianceReminders } from "../services/tds.service";
 import { useOrganization } from "./OrganizationContext";
 
@@ -43,15 +45,32 @@ function resolveNotificationType(entry, fallback = "credit") {
   return fallback;
 }
 
-function mergeNotifications(creditList, stockList, appList) {
-  const normalizedCredit = (Array.isArray(creditList) ? creditList : []).map((entry) => ({
-    ...entry,
-    notificationType: resolveNotificationType(entry, "credit")
-  }));
-  const normalizedStock = (Array.isArray(stockList) ? stockList : []).map((entry) => ({
-    ...entry,
-    notificationType: resolveNotificationType(entry, "stock")
-  }));
+function mergeNotifications(creditList, stockList, appList, options = {}) {
+  const allowedPartyIds = options?.allowedPartyIds instanceof Set ? options.allowedPartyIds : null;
+  const allowedItemIds = options?.allowedItemIds instanceof Set ? options.allowedItemIds : null;
+  const hasPartyScope = !!allowedPartyIds?.size;
+  const hasItemScope = !!allowedItemIds?.size;
+
+  const normalizedCredit = (Array.isArray(creditList) ? creditList : [])
+    .map((entry) => ({
+      ...entry,
+      notificationType: resolveNotificationType(entry, "credit")
+    }))
+    .filter((entry) => {
+      if (!hasPartyScope) return true;
+      const partyId = String(entry?.partyId || "").trim();
+      return !partyId || allowedPartyIds.has(partyId);
+    });
+  const normalizedStock = (Array.isArray(stockList) ? stockList : [])
+    .map((entry) => ({
+      ...entry,
+      notificationType: resolveNotificationType(entry, "stock")
+    }))
+    .filter((entry) => {
+      if (!hasItemScope) return true;
+      const itemId = String(entry?.itemId || "").trim();
+      return !itemId || allowedItemIds.has(itemId);
+    });
   const normalizedApp = (Array.isArray(appList) ? appList : [])
     .filter((entry) => String(entry?.meta?.kind || "").startsWith("tds_"))
     .map((entry) => ({
@@ -85,10 +104,15 @@ export function AppShellProvider({ children }) {
     const remote = options?.remote === true;
     const force = options?.force === true;
     syncTdsComplianceReminders();
+    const allowedPartyIds = new Set(listParties().map((entry) => String(entry?.id || "").trim()).filter(Boolean));
+    const allowedItemIds = new Set(listItems().map((entry) => String(entry?.id || "").trim()).filter(Boolean));
     const cachedCredit = listCreditNotificationsCached();
     const cachedStock = listStockNotificationsCached();
     const cachedApp = listAppNotifications();
-    const cachedMerged = mergeNotifications(cachedCredit, cachedStock, cachedApp);
+    const cachedMerged = mergeNotifications(cachedCredit, cachedStock, cachedApp, {
+      allowedPartyIds,
+      allowedItemIds
+    });
     setNotifications(cachedMerged);
     setActivities(listActivities(90));
 
@@ -106,7 +130,10 @@ export function AppShellProvider({ children }) {
       ]);
       const nextCredit = creditResult.status === "fulfilled" ? creditResult.value : cachedCredit;
       const nextStock = stockResult.status === "fulfilled" ? stockResult.value : cachedStock;
-      const merged = mergeNotifications(nextCredit, nextStock, listAppNotifications());
+      const merged = mergeNotifications(nextCredit, nextStock, listAppNotifications(), {
+        allowedPartyIds,
+        allowedItemIds
+      });
       setNotifications(merged);
       lastRemoteRefreshAtRef.current = Date.now();
       return merged;
