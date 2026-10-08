@@ -1,20 +1,66 @@
-# Vyapar-like Frontend (Relaxing Red)
+# Billing Application
 
-## Run
+A professional billing and accounting application featuring Tax Invoices, Pro Forma Invoices, Payment In tracking, and Financial Reports.
+
+## Project Architecture
+
+```
+                 Billing Application
+                         │
+             ┌───────────┴───────────┐
+             │                       │
+         frontend/               backend/
+             │                       │
+       React + Vite             FastAPI
+       Tailwind                 Business Logic
+       UI only                  Calculations
+             │                  Validation
+             │                  Auth
+             │                       │
+             └───────────┬───────────┘
+                         │
+                      Supabase
+                   PostgreSQL + Auth
+```
+
+## Frontend
+
 ```bash
+cd frontend
 npm install
 npm run dev
 ```
 
-## Supabase Setup
-1. Copy `.env.example` to `.env` and add your Supabase values.
-2. Run `supabase/schema.sql` in Supabase SQL Editor.
-3. See full setup guide: `docs/SUPABASE_SETUP.md`.
+- **Build**: `npm run build`
+- **Tests**: `npm run test:tax`, `npm run test:customer-tax`
 
-## Roles and workflow
-- `Owner`: registers, creates organization, enters dashboard.
-- `Accounter` / `Staff`: register using owner-generated register code.
-- Register code generation is available in `Company Settings -> Users & Roles`.
+## Backend
 
-## Local fallback mode
-If Supabase env is not configured, the app runs in local demo mode.
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+- **API Documentation**: http://127.0.0.1:8000/docs
+- **Health Check**: http://127.0.0.1:8000/health
+
+## Database
+
+Supabase/database migrations and SQL schemas are located under:
+
+```
+supabase/
+```
+- Core SQL schema: `supabase/schema.sql`
+- Migrations: `supabase/migrations/`
+
+## Documentation
+
+Project documentation is located under:
+
+```
+docs/
+```
+- `docs/BILLING_APPLICATION_AUDIT.md`
+- `docs/AUTHENTICATION.md`
