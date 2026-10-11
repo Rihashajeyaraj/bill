@@ -715,6 +715,7 @@ export default function SalesProformasList() {
                     templateId={viewModalRow.templateId || viewFullRecord?.template_id || "new_globe_export"}
                     styleConfig={{}}
                     invoiceData={previewInvoiceData}
+                    documentType="PRO FORMA INVOICE"
                   />
                 </div>
               ) : (

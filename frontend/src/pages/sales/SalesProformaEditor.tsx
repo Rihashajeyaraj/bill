@@ -2083,6 +2083,7 @@ export default function SalesProformaEditor() {
                   templateId={selectedTemplateKey}
                   styleConfig={{}}
                   invoiceData={previewData}
+                  documentType="PRO FORMA INVOICE"
                 />
               </div>
             </Card>

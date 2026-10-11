@@ -84,9 +84,9 @@ function getStateWithCode(stateName, stateCode, gstin) {
 
 export default function InvoicePreview({
   templateId,
-  styleConfig,
+  styleConfig = {},
   invoiceData = {},
-  documentType
+  documentType = ""
 }) {
   const { logoUrl } = styleConfig || {};
   const resolvedLogoUrl =
