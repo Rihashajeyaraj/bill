@@ -1,4 +1,7 @@
-def number_to_words_indian(amount: float) -> str:
+from typing import Optional
+
+def number_to_words_indian(amount: float, currency_prefix: Optional[str] = None) -> str:
+
     """
     Converts a numerical amount into Indian currency words representation.
     Example: 67157.27 -> SIXTY-SEVEN THOUSAND ONE HUNDRED FIFTY-SEVEN AND TWENTY-SEVEN ONLY
@@ -52,10 +55,14 @@ def number_to_words_indian(amount: float) -> str:
         paise = int(round((val - rupees) * 100))
 
         rupees_words = convert_integer(rupees)
+        prefix_part = f"{currency_prefix.strip().upper()} " if currency_prefix else ""
         if paise > 0:
             paise_words = convert_less_than_thousand(paise)
-            return f"{rupees_words} AND {paise_words} ONLY".upper()
+            return f"{prefix_part}{rupees_words} AND {paise_words} ONLY".strip()
         else:
-            return f"{rupees_words} ONLY".upper()
+            return f"{prefix_part}{rupees_words} ONLY".strip()
     except Exception:
         return f"{amount:,.2f}"
+
+def amount_to_words_inr(amount: float) -> str:
+    return number_to_words_indian(amount)

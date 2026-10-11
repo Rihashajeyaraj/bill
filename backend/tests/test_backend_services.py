@@ -191,3 +191,125 @@ def test_country_aware_tax_jurisdictions():
     assert uae_doc.grand_total == Decimal("21000.00")
 
 
+def test_calculation_service_foreign_currency_discount_before_after():
+    """
+    Task 9 Requirement:
+    USD item with fixed amount discount:
+    Item: qty=2, unit_price=100 USD, discount_amount=20 USD, exchange_rate=80.0
+    Old code treated discount_amount as already in INR (20 INR discount on 16000 INR order).
+    New code scales discount_amount by exchange_rate (20 USD * 80 = 1600 INR discount).
+    Asserts:
+    1. New code correctly scales foreign fixed discount by exchange rate.
+    2. Proves that existing proforma totals for INR cases (ROE=1.0) remain identical to the paisa.
+    """
+    items_usd = [{
+        "qty": 2,
+        "unit_price": 100,
+        "currency": "USD",
+        "discount_amount": 20,
+        "tax_rate": 18
+    }]
+    # Run calculation with exchange_rate 80.0
+    res_usd = calculate_document_totals(
+        items_usd,
+        company_state="Maharashtra",
+        customer_state="Karnataka",
+        exchange_rate=80.0,
+        doc_currency="USD"
+    )
+    # Subtotal in INR: 2 * 100 * 80 = 16,000.00
+    assert res_usd.subtotal == Decimal("16000.00")
+    # Discount in INR: 20 USD * 80 = 1,600.00 (Old bug produced 20.00 INR)
+    assert res_usd.discount_total == Decimal("1600.00")
+    # Taxable total: 16,000 - 1,600 = 14,400.00
+    assert res_usd.taxable_total == Decimal("14400.00")
+    # IGST at 18%: 14,400 * 0.18 = 2,592.00
+    assert res_usd.igst_total == Decimal("2592.00")
+    assert res_usd.grand_total == Decimal("16992.00")
+
+    # Prove existing INR domestic cases are 100% unchanged to the paisa
+    items_inr = [
+        {"qty": 5, "unit_price": 100, "tax_rate": 18, "description": "Standard Item 1"},
+        {"qty": 2, "unit_price": 250, "discount_amount": 50, "tax_rate": 18, "description": "Standard Item 2"}
+    ]
+    res_inr = calculate_document_totals(items_inr, "Maharashtra", "Karnataka")
+    assert res_inr.subtotal == Decimal("1000.00")
+    assert res_inr.discount_total == Decimal("50.00")
+    assert res_inr.taxable_total == Decimal("950.00")
+    assert res_inr.igst_total == Decimal("171.00")
+    assert res_inr.grand_total == Decimal("1121.00")
+
+
+def test_freight_forwarding_reference_invoice_calculation():
+    """
+    Step 3 Acceptance Test:
+    Reference freight-forwarding invoice fixture:
+    Lines:
+     1. Ocean Freight, SAC 996521, USD 50.00 x1, GST 2.5+2.5 -> INR 4,922.50, GST 246.12
+     2. Origin Ex-Works Charges, SAC 996759, USD 495.00 x1, 9+9 -> INR 48,732.75, GST 8,771.90
+     3. Dstn. Inland Haulage, 996759, INR 1,400.00, 9+9 -> 1,400.00, GST 252.00
+     4. Dstn. Terminal Handling, 996759, INR 1,400.00, 9+9 -> 1,400.00, GST 252.00
+     5. Dstn. Delivery Order Fee, 996759, INR 1,000.00, 9+9 -> 1,000.00, GST 180.00
+    ROE 98.45, same-state (Maharashtra -> Maharashtra so CGST+SGST).
+    Expected:
+      taxable total: 57,455.25
+      CGST total: 4,851.01
+      SGST total: 4,851.01
+      IGST: 0.00
+      GST total: 9,702.02
+      total after tax: 67,157.27
+      words: "SIXTY-SEVEN THOUSAND ONE HUNDRED FIFTY-SEVEN AND TWENTY-SEVEN ONLY"
+    """
+    from app.utils.num2words import number_to_words_indian, amount_to_words_inr
+
+    items = [
+        {"description": "Ocean Freight", "hsn_sac": "996521", "currency": "USD", "unit_price": 50.00, "qty": 1, "tax_rate": 5},
+        {"description": "Origin Ex-Works Charges", "hsn_sac": "996759", "currency": "USD", "unit_price": 495.00, "qty": 1, "tax_rate": 18},
+        {"description": "Dstn. Inland Haulage", "hsn_sac": "996759", "currency": "INR", "unit_price": 1400.00, "qty": 1, "tax_rate": 18},
+        {"description": "Dstn. Terminal Handling", "hsn_sac": "996759", "currency": "INR", "unit_price": 1400.00, "qty": 1, "tax_rate": 18},
+        {"description": "Dstn. Delivery Order Fee", "hsn_sac": "996759", "currency": "INR", "unit_price": 1000.00, "qty": 1, "tax_rate": 18},
+    ]
+
+    res = calculate_document_totals(
+        items,
+        company_state="Maharashtra",
+        customer_state="Maharashtra",
+        exchange_rate=98.45,
+        enable_auto_round_off=False
+    )
+
+    # Per-line assertions
+    assert res.items[0].amount_inr == Decimal("4922.50")
+    assert res.items[0].cgst_amount == Decimal("123.06")
+    assert res.items[0].sgst_amount == Decimal("123.06")
+    assert res.items[0].tax_amount == Decimal("246.12")
+
+    assert res.items[1].amount_inr == Decimal("48732.75")
+    assert res.items[1].cgst_amount == Decimal("4385.95")
+    assert res.items[1].sgst_amount == Decimal("4385.95")
+    assert res.items[1].tax_amount == Decimal("8771.90")
+
+    assert res.items[2].amount_inr == Decimal("1400.00")
+    assert res.items[2].tax_amount == Decimal("252.00")
+
+    assert res.items[3].amount_inr == Decimal("1400.00")
+    assert res.items[3].tax_amount == Decimal("252.00")
+
+    assert res.items[4].amount_inr == Decimal("1000.00")
+    assert res.items[4].tax_amount == Decimal("180.00")
+
+    # Document total assertions
+    assert res.taxable_total == Decimal("57455.25")
+    assert res.cgst_total == Decimal("4851.01")
+    assert res.sgst_total == Decimal("4851.01")
+    assert res.igst_total == Decimal("0.00")
+    assert res.tax_total == Decimal("9702.02")
+    assert res.grand_total == Decimal("67157.27")
+
+    # Amount in words
+    expected_words = "SIXTY-SEVEN THOUSAND ONE HUNDRED FIFTY-SEVEN AND TWENTY-SEVEN ONLY"
+    assert res.grand_total_in_words == expected_words
+    assert number_to_words_indian(float(res.grand_total)) == expected_words
+    assert amount_to_words_inr(float(res.grand_total)) == expected_words
+
+
