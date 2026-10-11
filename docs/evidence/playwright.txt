@@ -1,0 +1,9 @@
+﻿
+Running 4 tests using 4 workers
+
+  ok 2 [chromium] ΓÇ║ tests\e2e\payment-in-flow.spec.js:492:3 ΓÇ║ Payment In End-to-End User Journeys ΓÇ║ Journey 6: Customer Statement displays payment with receipt number and running balance (9.6s)
+  ok 3 [chromium] ΓÇ║ tests\e2e\payment-in-flow.spec.js:409:3 ΓÇ║ Payment In End-to-End User Journeys ΓÇ║ Journey 5: Delete/edit/reverse payment restores invoice balance (19.9s)
+  ok 4 [chromium] ΓÇ║ tests\e2e\payment-in-flow.spec.js:312:3 ΓÇ║ Payment In End-to-End User Journeys ΓÇ║ Journey 3 & 4: Advance payment, unallocated balance, and proforma conversion reduced balance (21.4s)
+  ok 1 [chromium] ΓÇ║ tests\e2e\payment-in-flow.spec.js:107:3 ΓÇ║ Payment In End-to-End User Journeys ΓÇ║ Journey 1 & 2: Table columns, grand_total, New Payment modal, auto/manual allocation, balance reduction (22.1s)
+
+  4 passed (25.1s)
