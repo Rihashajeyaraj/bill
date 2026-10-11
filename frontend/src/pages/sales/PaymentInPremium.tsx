@@ -1,2497 +1,2143 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Eye, FileDown, FilePenLine, FileSpreadsheet, Mail, Plus, Save, Search, Trash2, X } from "lucide-react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import DateInput from "../../components/DateInput";
-import FieldLabelText from "../../components/FieldLabelText";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
-  COUNTRY_CONFIG,
-  COUNTRY_NAME_TO_CODE,
-  COUNTRY_OPTIONS,
-  formatPaymentModeLabel,
-  normalizePaymentMode,
-  type CountryCode,
-  type PaymentMode,
-  type PaymentStatus
-} from "../../modules/paymentIn/countryConfig";
-import {
-  applySelectedAdvanceWalletEntriesToCustomerInvoice,
-  getSelectedPaymentCountry,
-  listCustomerAdvanceWalletEntries,
-  listCustomerAdvanceWalletHistory,
-  listPaymentIn,
-  mapCustomersByCountry,
-  mapOpenInvoicesByCountry,
-  outstandingByCustomer,
-  paymentInAllocationTdsShare,
-  paymentInsightsByCustomer,
-  removePaymentIn,
-  savePaymentIn,
-  setSelectedPaymentCountry,
-  summarizePaymentIn,
-  type CustomerOpenInvoice,
-  type PaymentInRecord
-} from "../../modules/paymentIn/store";
-import {
-  applySelectedCreditNotesToInvoice,
-  listCreditNotesForCustomerMatch
-} from "../../modules/creditNote/store";
-import {
-  calculateTdsAmount,
-  computeEditorTotals,
-  defaultForm,
-  formFromRecord,
-  formatMoney,
-  isCustomTdsCategory,
-  TDS_CATEGORY_OPTIONS,
-  getTdsRateForCategory,
-  parseNumber
-} from "../../modules/paymentIn/utils";
-import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf } from "../../modules/paymentIn/pdf";
-import type { PaymentInFormState } from "../../modules/paymentIn/types";
-import { authGetRole, authGetUser } from "../../services/auth.service";
-import { canCreateEntries, canDeleteEntries, canEditEntries, roleTypeLabel } from "../../services/roles";
+  Search, Plus, X, RotateCcw, Download, Filter, ChevronDown, ChevronUp,
+  FileText, Calendar, CheckCircle2, AlertCircle, Clock, Eye, Printer,
+  FileSpreadsheet, ShieldAlert, ArrowUpDown, ChevronRight, User, MoreVertical,
+  Check, CreditCard, Building, Building2, ExternalLink, RefreshCw, Users,
+  Layers, ArrowRight, Sparkles, AlertTriangle
+} from "lucide-react";
+import { apiClient } from "../../services/apiClient";
 import { useOrganization } from "../../context/OrganizationContext";
-import { creditNotesSyncFromRemote } from "../../services/creditNotes.service";
-import { invoicesSyncFromRemote } from "../../services/invoices.service";
-import { deletePaymentInRemote, paymentsSyncFromRemote, syncPaymentInRemote } from "../../services/payments.service";
-import { salesProformasSyncFromRemote } from "../../services/proformas.service";
-import { syncPartiesFromRemote } from "../../modules/parties/store";
-import { isOrganizationScopedStorageEventKey, LS_KEYS, lsGetOrganizationScoped } from "../../services/storage";
-import { formatInputNumberByPreference, normalizeFormattedNumberInput } from "../../lib/formatPreferences";
-import FlowCard from "../../modules/paymentIn/FlowCard";
-import FlowStepTabs from "../../modules/paymentIn/FlowStepTabs";
-import PaymentModePicker from "../../modules/paymentIn/PaymentModePicker";
-import PaymentInSkeleton from "../../modules/paymentIn/PaymentInSkeleton";
-import AuditDrawer from "../../modules/paymentIn/AuditDrawer";
-import { useGlobalLoadingBridge } from "../../hooks/useGlobalLoadingBridge";
+import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf } from "../../modules/paymentIn/pdf";
 
-const STEPS = ["Customer", "Details", "Review"];
-const EDIT_WINDOW_MS = 15 * 60 * 1000;
-const CREDIT_NOTE_PREMIUM_KEY = "creditNotesPremiumV1";
-
-type PanelMode = "feed" | "flow";
-type FlowMode = "create" | "edit" | "view";
-type PaymentDisplayStatus = "Received" | "Partial";
-
-function roleAccess(role: string, user: any) {
-  const configured = Array.isArray(user?.allowedCountries) ? user.allowedCountries.filter((entry: string) => entry in COUNTRY_CONFIG) : [];
-  return {
-    roleType: roleTypeLabel(role) as "Admin" | "Staff",
-    allowedCountries: configured.length ? configured : COUNTRY_OPTIONS.map((entry) => entry.code)
-  };
+// --- Helper Functions ---
+function formatINR(val: number | string | null | undefined): string {
+  const num = Number(val ?? 0);
+  if (isNaN(num)) return "₹0.00";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(num);
 }
 
-function canReopenWithinWindow(record: PaymentInRecord | null) {
-  if (!record || record.status !== "Applied") return false;
-  const touched = new Date(record.audit.modifiedAt).getTime();
-  return Number.isFinite(touched) && Date.now() - touched <= EDIT_WINDOW_MS;
+function formatDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "-";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
 }
 
-function paymentDisplayStatus(record: Pick<PaymentInRecord, "allocations">): PaymentDisplayStatus {
-  const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
-  const hasPartialAllocation = allocations.some((line) => {
-    const applyAmount = Math.max(0, parseNumber(line?.applyAmount as any));
-    const balanceDue = Math.max(0, parseNumber(line?.balanceDue as any));
-    return applyAmount > 0 && applyAmount + 0.009 < balanceDue;
-  });
-  return hasPartialAllocation ? "Partial" : "Received";
-}
+// Compute Indian Financial Year dates
+function getFinancialYearDates(fyKey: string) {
+  const today = new Date();
+  let year = today.getFullYear();
+  const month = today.getMonth() + 1; // 1-12
+  if (month < 4) year -= 1; // FY starts in April
 
-function paymentDisplayStatusClass(status: PaymentDisplayStatus) {
-  return status === "Partial" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700";
-}
-
-function paymentRemainingBalance(record: Pick<PaymentInRecord, "allocations" | "totals">) {
-  const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
-  const linkedRemaining = allocations.reduce((sum, line) => {
-    const balanceDue = Math.max(0, parseNumber(line?.balanceDue as any));
-    const applyAmount = Math.max(0, parseNumber(line?.applyAmount as any));
-    return sum + Math.max(0, balanceDue - applyAmount);
-  }, 0);
-  if (linkedRemaining > 0) return linkedRemaining;
-  return Math.max(0, parseNumber(record?.totals?.unappliedAmount as any));
-}
-
-function resolveFixedCountry(organizationCountry: string, organizationCountryCode: string): CountryCode {
-  const rawCode = String(organizationCountryCode || "").trim().toUpperCase();
-  if (rawCode === "LK") return "SL";
-  if (rawCode === "GB") return "UK";
-  if (rawCode && rawCode in COUNTRY_CONFIG) return rawCode as CountryCode;
-
-  const raw = String(organizationCountry || "").trim();
-  if (raw && raw in COUNTRY_CONFIG) return raw as CountryCode;
-  if (raw && COUNTRY_NAME_TO_CODE[raw]) return COUNTRY_NAME_TO_CODE[raw];
-  const saved = getSelectedPaymentCountry();
-  if (saved && saved in COUNTRY_CONFIG) return saved;
-  return "IN";
-}
-
-function normalizePhoneForLookup(value: unknown) {
-  let digits = String(value || "").replace(/\D/g, "");
-  if (!digits) return "";
-  if (digits.length > 10) digits = digits.slice(-10);
-  digits = digits.replace(/^0+/, "");
-  return digits || "0";
-}
-
-function normalizeIdentityName(value: unknown) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-}
-
-function customerAddressSummary(customer: any) {
-  return [customer?.address, customer?.state, customer?.country]
-    .map((value) => String(value || "").trim())
-    .filter(Boolean)
-    .join(", ");
-}
-
-function numberInputValue(value: unknown) {
-  const numeric = parseNumber(value as any);
-  if (!Number.isFinite(numeric) || numeric === 0) return "";
-  return formatInputNumberByPreference(value);
-}
-
-function documentTypeLabel(documentType: "invoice" | "proforma") {
-  return documentType === "proforma" ? "Proforma" : "Invoice";
-}
-
-function paymentLinkedDocumentSummary(record: Pick<PaymentInRecord, "allocations">) {
-  const allocations = Array.isArray(record?.allocations) ? record.allocations : [];
-  if (!allocations.length) return "-";
-
-  const labels = allocations
-    .map((line) => {
-      const invoiceNo = String(line?.invoiceNo || "").trim();
-      if (!invoiceNo) return "";
-      return `${documentTypeLabel((line?.documentType || "invoice") as "invoice" | "proforma")} ${invoiceNo}`;
-    })
-    .filter(Boolean);
-
-  if (!labels.length) return "-";
-  return labels.join(", ");
-}
-
-function formatTdsPercent(value: unknown) {
-  const rate = Math.max(0, parseNumber(value as any));
-  return `${rate}%`;
-}
-
-function buildAllocation(document: CustomerOpenInvoice | null, amountReceived: unknown) {
-  if (!document) return [];
-  const amount = Math.max(0, parseNumber(amountReceived as any));
-  return [
-    {
-      invoiceId: document.id,
-      invoiceNo: document.invoiceNo,
-      invoiceDate: document.invoiceDate,
-      invoiceAmount: document.invoiceAmount,
-      discountAmount: document.discountAmount,
-      taxableAmount: document.taxableAmount,
-      taxAmount: document.taxAmount,
-      balanceDue: document.balanceDue,
-      applyAmount: Math.min(amount, document.balanceDue),
-      documentType: document.documentType
-    }
-  ];
-}
-
-function withAdjustedDocumentBalance(document: CustomerOpenInvoice | null, advanceUsed = 0) {
-  if (!document) return null;
-  return {
-    ...document,
-    balanceDue: Math.max(0, Number(document.balanceDue || 0) - Math.max(0, Number(advanceUsed || 0)))
-  };
-}
-
-function updatePrimaryAllocationAmount(allocations: any[], nextInvoiceAmount: number) {
-  if (!Array.isArray(allocations) || !allocations.length) return allocations;
-  return allocations.map((line, index) =>
-    index === 0
-      ? {
-          ...line,
-          invoiceAmount: nextInvoiceAmount
-        }
-      : line
-  );
-}
-
-function calculatedTdsInputValue(amountReceived: unknown, tdsRate: unknown) {
-  return String(calculateTdsAmount(amountReceived, tdsRate));
-}
-
-function autoTdsBaseAmount(document: CustomerOpenInvoice | null, allocationMode: "linked" | "normal", fallbackAmount: unknown) {
-  if (allocationMode === "linked") {
-    const taxableAmount = Math.max(0, parseNumber(document?.taxableAmount as any));
-    if (taxableAmount > 0) return taxableAmount;
+  if (fyKey === "current") {
+    return {
+      fromDate: `${year}-04-01`,
+      toDate: `${year + 1}-03-31`
+    };
+  } else if (fyKey === "previous") {
+    return {
+      fromDate: `${year - 1}-04-01`,
+      toDate: `${year}-03-31`
+    };
+  } else if (fyKey === "all") {
+    return { fromDate: "", toDate: "" };
   }
-  return Math.max(0, parseNumber(fallbackAmount as any));
+  return { fromDate: `${year}-04-01`, toDate: `${year + 1}-03-31` };
 }
 
-function normalizeRegion(value: unknown) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function buildDocumentGstLines({
-  taxAmount,
-  taxBreakup,
-  supplyType,
-  companyState,
-  partyState
-}: {
-  taxAmount: unknown;
-  taxBreakup?: Record<string, unknown> | null;
-  supplyType?: unknown;
-  companyState?: unknown;
-  partyState?: unknown;
-}) {
-  const totalTax = Math.max(0, parseNumber(taxAmount as any));
-  const cgstValue = Math.max(0, parseNumber((taxBreakup as any)?.cgst));
-  const sgstValue = Math.max(0, parseNumber((taxBreakup as any)?.sgst));
-  const igstValue = Math.max(0, parseNumber((taxBreakup as any)?.igst));
-
-  if (cgstValue > 0 || sgstValue > 0 || igstValue > 0) {
-    return [
-      cgstValue > 0 ? { label: "CGST", value: cgstValue } : null,
-      sgstValue > 0 ? { label: "SGST", value: sgstValue } : null,
-      igstValue > 0 ? { label: "IGST", value: igstValue } : null
-    ].filter(Boolean) as Array<{ label: string; value: number }>;
+// Payment Status Badge Styling
+function StatusBadge({ status, isReversed }: { status: string; isReversed?: boolean }) {
+  if (isReversed || status?.toLowerCase().includes("reverse") || status?.toLowerCase().includes("cancel")) {
+    return (
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
+        Reversed
+      </span>
+    );
   }
-
-  if (totalTax <= 0) return [];
-
-  const normalizedSupplyType = String(supplyType || "").trim().toUpperCase();
-  const intraState =
-    normalizedSupplyType === "INTRA" ||
-    (normalizedSupplyType !== "INTER" &&
-      normalizeRegion(companyState) &&
-      normalizeRegion(companyState) === normalizeRegion(partyState));
-
-  if (intraState) {
-    const cgst = Number((totalTax / 2).toFixed(2));
-    const sgst = Number((totalTax - cgst).toFixed(2));
-    return [
-      { label: "CGST", value: cgst },
-      { label: "SGST", value: sgst }
-    ];
+  const s = status?.toLowerCase() || "";
+  if (s === "fully applied" || s === "applied" || s === "paid") {
+    return (
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
+        Paid
+      </span>
+    );
   }
-
-  return [{ label: "IGST", value: totalTax }];
-}
-
-function fallbackOpenInvoiceFromStorage(
-  country: CountryCode,
-  invoiceId: string,
-  customers: Array<{ id: string; name?: string; phone?: string; state?: string }>
-): CustomerOpenInvoice | null {
-  const invoices = lsGetOrganizationScoped(LS_KEYS.invoices, []);
-  const source = Array.isArray(invoices) ? invoices : [];
-  const invoice = source.find((entry: any) => String(entry?.id || entry?.invoiceId || entry?.invoice_id || "").trim() === invoiceId);
-  if (!invoice) return null;
-
-  const total = Math.max(
-    0,
-    parseNumber(
-      invoice?.totals?.grandTotal ??
-        invoice?.totals?.finalTotal ??
-        invoice?.totals?.total ??
-        invoice?.grandTotal ??
-        invoice?.finalTotal ??
-        invoice?.total ??
-        invoice?.amount
-    )
+  if (s === "partially applied" || s === "partial" || s === "partially paid") {
+    return (
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
+        Partially Paid
+      </span>
+    );
+  }
+  if (s === "overdue") {
+    return (
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
+        Overdue
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
+      Unpaid
+    </span>
   );
-  const storedBalance = Math.max(
-    0,
-    parseNumber(invoice?.totals?.balance ?? invoice?.remainingBalance ?? invoice?.balanceAmount ?? total)
-  );
-  if (storedBalance <= 0) return null;
-
-  const rawCustomerId = String(
-    invoice?.partyId || invoice?.party_id || invoice?.customerId || invoice?.customer_id || invoice?.buyer?.id || ""
-  ).trim();
-  const rawCustomerName = String(
-    invoice?.partyName || invoice?.party_name || invoice?.customerName || invoice?.customer_name || invoice?.buyer?.name || "Customer"
-  ).trim();
-  const rawCustomerPhone = normalizePhoneForLookup(
-    invoice?.phone ||
-      invoice?.partyPhone ||
-      invoice?.party_phone ||
-      invoice?.customerPhone ||
-      invoice?.customer_phone ||
-      invoice?.buyer?.phone ||
-      ""
-  );
-
-  const matchedCustomer =
-    customers.find((entry) => rawCustomerId && String(entry?.id || "").trim() === rawCustomerId) ||
-    customers.find((entry) => {
-      if (normalizeIdentityName(entry?.name) !== normalizeIdentityName(rawCustomerName)) return false;
-      const customerPhone = normalizePhoneForLookup(entry?.phone || "");
-      if (rawCustomerPhone && customerPhone) return rawCustomerPhone === customerPhone;
-      return true;
-    }) ||
-    null;
-
-  return {
-    id: invoiceId,
-    invoiceNo: String(invoice?.invoiceNo || invoice?.invoice_no || invoiceId).trim(),
-    country,
-    customerId: String(matchedCustomer?.id || rawCustomerId || rawCustomerName || "unknown_customer").trim(),
-    customerName: String(matchedCustomer?.name || rawCustomerName || "Customer").trim(),
-    customerState: String(invoice?.buyer?.state || invoice?.partyState || invoice?.party_state || invoice?.customerState || matchedCustomer?.state || "").trim(),
-    invoiceDate: String(invoice?.invoiceDate || invoice?.invoice_date || invoice?.date || "").trim(),
-    invoiceAmount: total,
-    discountAmount: Math.max(
-      0,
-      parseNumber(invoice?.totals?.discountTotal ?? invoice?.totals?.discount ?? invoice?.discountTotal ?? 0)
-    ),
-    taxableAmount: Math.max(
-      0,
-      parseNumber(invoice?.totals?.subTotal ?? invoice?.totals?.taxableTotal ?? invoice?.taxableTotal ?? total)
-    ),
-    taxAmount: Math.max(
-      0,
-      parseNumber(invoice?.totals?.taxTotal ?? invoice?.totals?.taxAmount ?? invoice?.taxTotal ?? 0)
-    ),
-    taxBreakup:
-      invoice?.totals?.taxBreakup && typeof invoice.totals.taxBreakup === "object"
-        ? invoice.totals.taxBreakup
-        : invoice?.taxBreakup && typeof invoice.taxBreakup === "object"
-          ? invoice.taxBreakup
-          : null,
-    supplyType:
-      invoice?.supplyType ||
-      invoice?.totals?.tax?.supplyType ||
-      invoice?.totals?.taxBreakup?.supplyType ||
-      null,
-    balanceDue: storedBalance,
-    documentType: "invoice"
-  };
 }
 
 export default function PaymentInPremium() {
+  const queryClient = useQueryClient();
+  const { currentOrganization } = useOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { profile: company = {}, country: organizationCountry, countryCode: organizationCountryCode } = useOrganization();
-  const user = authGetUser();
-  const role = authGetRole();
-  const access = useMemo(() => roleAccess(role, user), [role, user]);
-  const canCreatePayment = canCreateEntries(role);
-  const canEditPayment = canEditEntries(role);
-  const canDeletePayment = canDeleteEntries(role);
-  const actorName = user?.name || user?.email || "System User";
 
-  const country = useMemo<CountryCode>(
-    () => resolveFixedCountry(organizationCountry, organizationCountryCode),
-    [organizationCountry, organizationCountryCode]
-  );
-  const [panelMode, setPanelMode] = useState<PanelMode>("feed");
-  const [flowMode, setFlowMode] = useState<FlowMode>("create");
-  const [activeStep, setActiveStep] = useState(0);
-  const [form, setForm] = useState<PaymentInFormState | null>(null);
-  const [activePayment, setActivePayment] = useState<PaymentInRecord | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveSuccessPopup, setSaveSuccessPopup] = useState("");
-  const [dirty, setDirty] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [showAudit, setShowAudit] = useState(false);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<PaymentDisplayStatus | "">("");
-  const [customerFilter, setCustomerFilter] = useState("");
-  const [modeFilter, setModeFilter] = useState("");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
-  const [customerLookupQuery, setCustomerLookupQuery] = useState("");
-  const [customerSearchError, setCustomerSearchError] = useState("");
-  const [useAdvanceWallet, setUseAdvanceWallet] = useState(false);
-  const [selectedAdvancePaymentIds, setSelectedAdvancePaymentIds] = useState<string[]>([]);
-  const [selectedCreditNoteIds, setSelectedCreditNoteIds] = useState<string[]>([]);
-  const [advanceWalletPickerOpen, setAdvanceWalletPickerOpen] = useState(false);
-  const [creditNotePickerOpen, setCreditNotePickerOpen] = useState(false);
-  const savingRef = useRef(false);
-  useGlobalLoadingBridge(loading || saving, "payment-in");
+  // --- View Mode: invoices | customers | receipts ---
+  const [viewMode, setViewMode] = useState<"invoices" | "customers" | "receipts">("invoices");
 
-  const payments = useMemo(() => listPaymentIn(country), [country, refreshKey]);
-  const customers = useMemo(() => mapCustomersByCountry(country), [country, refreshKey]);
-  const openInvoices = useMemo(() => mapOpenInvoicesByCountry(country), [country, refreshKey]);
-  const summary = useMemo(() => summarizePaymentIn(country), [country, refreshKey]);
+  // Status Tab for Invoice-wise view: all | overdue | partial | unpaid | paid
+  const [statusTab, setStatusTab] = useState<"all" | "overdue" | "partial" | "unpaid" | "paid">("all");
 
-  const customerOutstandingBefore = useMemo(() => (form?.customerId ? outstandingByCustomer(country, form.customerId) : 0), [country, form?.customerId, refreshKey]);
-  const customerInsights = useMemo(() => (form?.customerId ? paymentInsightsByCustomer(country, form.customerId) : { lastPaymentDate: "", advanceWallet: 0, totalReceived: 0, paymentCount: 0 }), [country, form?.customerId, refreshKey]);
-  const customerAdvanceHistory = useMemo(
-    () => (form?.customerId ? listCustomerAdvanceWalletHistory(country, form.customerId) : []),
-    [country, form?.customerId, refreshKey]
-  );
-  const customerAdvanceEntries = useMemo(
-    () => (form?.customerId ? listCustomerAdvanceWalletEntries(country, form.customerId) : []),
-    [country, form?.customerId, refreshKey]
-  );
-  const selectedCustomer = useMemo(() => customers.find((entry) => entry.id === form?.customerId) || null, [customers, form?.customerId]);
-  const customerCreditNotes = useMemo(
-    () => (
-      form?.customerId || form?.customerInput
-        ? listCreditNotesForCustomerMatch(country, form?.customerId || "", selectedCustomer?.name || form?.customerInput || "", form?.selectedDocumentId || "")
-        : []
-    ),
-    [country, form?.customerId, form?.customerInput, form?.selectedDocumentId, selectedCustomer?.name, refreshKey]
-  );
-  const selectedAdvancePaymentIdSet = useMemo(
-    () => new Set(selectedAdvancePaymentIds.map((entry) => String(entry || "").trim()).filter(Boolean)),
-    [selectedAdvancePaymentIds]
-  );
-  const selectedCreditNoteIdSet = useMemo(
-    () => new Set(selectedCreditNoteIds.map((entry) => String(entry || "").trim()).filter(Boolean)),
-    [selectedCreditNoteIds]
-  );
-  const customerTdsHistory = useMemo(
-    () =>
-      payments
-        .filter((entry) => entry.customerId === form?.customerId)
-        .filter((entry) => Math.max(0, Number(entry?.totals?.tdsAmount || 0)) > 0)
-        .flatMap((entry) => {
-          const allocations = Array.isArray(entry?.allocations) ? entry.allocations : [];
-          if (!allocations.length) {
-            return [
-              {
-                id: `tds_${entry.id}`,
-                date: entry.paymentDate || "",
-                invoiceNo: "-",
-                customerName: entry.customerName || "-",
-                tdsRate: Number(entry?.tdsRate || 0),
-                tdsAmount: Math.max(0, Number(entry?.totals?.tdsAmount || 0))
-              }
-            ];
+  // Expanded customer IDs in customer-wise view
+  const [expandedCustomers, setExpandedCustomers] = useState<{ [id: string]: boolean }>({});
+
+  // --- URL State & Filters ---
+  const search = searchParams.get("search") || "";
+  const financialYear = searchParams.get("fy") || "current";
+  const customerId = searchParams.get("customerId") || "all";
+  const paymentMode = searchParams.get("mode") || "all";
+  const statusParam = searchParams.get("status") || "all";
+  const docType = searchParams.get("docType") || "all";
+  const fromDate = searchParams.get("from") || getFinancialYearDates("current").fromDate;
+  const toDate = searchParams.get("to") || getFinancialYearDates("current").toDate;
+  const page = parseInt(searchParams.get("page") || "1", 10);
+  const pageSize = parseInt(searchParams.get("pageSize") || "25", 10);
+  const sortBy = searchParams.get("sortBy") || "payment_date";
+  const sortDir = searchParams.get("sortDir") || "desc";
+
+  // Local Search Input (Debounced 300ms)
+  const [searchInput, setSearchInput] = useState(search);
+  useEffect(() => {
+    setSearchInput(search);
+  }, [search]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchInput !== search) {
+        updateFilter("search", searchInput);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  const updateFilter = (key: string, value: string | number) => {
+    const newParams = new URLSearchParams(searchParams);
+    if (value && value !== "all" && value !== "") {
+      newParams.set(key, String(value));
+    } else {
+      newParams.delete(key);
+    }
+    if (key !== "page") newParams.set("page", "1");
+    setSearchParams(newParams);
+  };
+
+  const resetFilters = () => {
+    const fyDates = getFinancialYearDates("current");
+    setSearchParams({
+      fy: "current",
+      from: fyDates.fromDate,
+      to: fyDates.toDate
+    });
+    setSearchInput("");
+    setStatusTab("all");
+  };
+
+  const handleFyChange = (fyKey: string) => {
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set("fy", fyKey);
+    const dates = getFinancialYearDates(fyKey);
+    if (dates.fromDate) newParams.set("from", dates.fromDate);
+    else newParams.delete("from");
+    if (dates.toDate) newParams.set("to", dates.toDate);
+    else newParams.delete("to");
+    newParams.set("page", "1");
+    setSearchParams(newParams);
+  };
+
+  // --- Date Validation ---
+  const dateError = fromDate && toDate && new Date(toDate) < new Date(fromDate)
+    ? "To date must be on or after From date"
+    : null;
+
+  // --- TanStack Queries ---
+  // 1. KPI Summary (Server-computed)
+  const {
+    data: summaryData,
+    isLoading: isSummaryLoading,
+    isError: isSummaryError,
+    refetch: refetchSummary
+  } = useQuery<any>({
+    queryKey: ["receivables-summary", customerId, fromDate, toDate],
+    queryFn: () => apiClient.getReceivablesSummary({
+      customer_id: customerId !== "all" ? customerId : undefined,
+      from_date: fromDate || undefined,
+      to_date: toDate || undefined
+    }),
+    staleTime: 15000
+  });
+
+  // 2. Customer List (for dropdown filter)
+  const { data: customers = [] } = useQuery<any[]>({
+    queryKey: ["customers-list"],
+    queryFn: async () => {
+      const res = await apiClient.getParties("customer");
+      return Array.isArray(res) ? res : res?.items || [];
+    }
+  });
+
+  // 3. Receivables List (Invoice-wise)
+  const {
+    data: receivablesData = [],
+    isLoading: isReceivablesLoading,
+    isError: isReceivablesError,
+    refetch: refetchReceivables
+  } = useQuery<any[]>({
+    queryKey: ["receivables", customerId, statusTab, fromDate, toDate, search],
+    queryFn: () => apiClient.getReceivables({
+      customer_id: customerId !== "all" ? customerId : undefined,
+      status: statusTab !== "all" ? statusTab : undefined,
+      from_date: fromDate || undefined,
+      to_date: toDate || undefined,
+      q: search || undefined
+    }),
+    enabled: viewMode === "invoices"
+  });
+
+  // 4. Customer-wise Receivables
+  const {
+    data: customerReceivablesData = [],
+    isLoading: isCustomerReceivablesLoading,
+    isError: isCustomerReceivablesError,
+    refetch: refetchCustomerReceivables
+  } = useQuery<any[]>({
+    queryKey: ["receivables-customers", fromDate, toDate],
+    queryFn: () => apiClient.getCustomerReceivables({
+      from_date: fromDate || undefined,
+      to_date: toDate || undefined
+    }),
+    enabled: viewMode === "customers"
+  });
+
+  const filteredCustomerReceivables = useMemo(() => {
+    if (!Array.isArray(customerReceivablesData)) return [];
+    return customerReceivablesData.filter((cr: any) => {
+      if (customerId !== "all" && cr.customer_id !== customerId) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        const matchesName = cr.customer_name?.toLowerCase().includes(q);
+        const matchesInv = cr.invoices?.some((i: any) => i.invoice_no?.toLowerCase().includes(q));
+        if (!matchesName && !matchesInv) return false;
+      }
+      return true;
+    });
+  }, [customerReceivablesData, customerId, search]);
+
+  // 5. Payment Receipts History (for Receipts tab)
+  const filterQueryParams = useMemo(() => ({
+    q: search,
+    customer_id: customerId !== "all" ? customerId : undefined,
+    mode: paymentMode !== "all" ? paymentMode : undefined,
+    status: statusParam !== "all" ? statusParam : undefined,
+    doc_type: docType !== "all" ? docType : undefined,
+    from: fromDate || undefined,
+    to: toDate || undefined,
+    page,
+    page_size: pageSize,
+    sort: sortDir === "asc" ? sortBy : `-${sortBy}`
+  }), [search, customerId, paymentMode, statusParam, docType, fromDate, toDate, page, pageSize, sortBy, sortDir]);
+
+  const {
+    data: paymentsData,
+    isLoading: isPaymentsLoading,
+    isError: isPaymentsError,
+    refetch: refetchPayments
+  } = useQuery<any>({
+    queryKey: ["payments-receipts", filterQueryParams],
+    queryFn: () => apiClient.getPayments(filterQueryParams),
+    placeholderData: keepPreviousData,
+    enabled: viewMode === "receipts"
+  });
+
+  // 6. Customer TDS History
+  const [tdsCollapsed, setTdsCollapsed] = useState(true);
+  const tdsEnabled = currentOrganization?.settings?.tds_enabled ?? true;
+  const { data: tdsHistory = [] } = useQuery<any[]>({
+    queryKey: ["tds-history", customerId, fromDate, toDate],
+    queryFn: () => apiClient.getTdsHistory({
+      customer_id: customerId !== "all" ? customerId : undefined,
+      from: fromDate || undefined,
+      to: toDate || undefined
+    }),
+    enabled: tdsEnabled
+  });
+
+  // --- Modals & Actions State ---
+  const [selectedPayment, setSelectedPayment] = useState<any>(null); // Detail drawer
+  const [reverseModalPayment, setReverseModalPayment] = useState<any>(null); // Reversal modal
+  const [reversalReason, setReversalReason] = useState("");
+  const [reversalError, setReversalError] = useState("");
+  const [exporting, setExporting] = useState(false);
+
+  // New Payment Wizard State
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const [wizCustomer, setWizCustomer] = useState<any>(null);
+  const [wizDate, setWizDate] = useState(new Date().toISOString().slice(0, 10));
+  const [wizAmount, setWizAmount] = useState<number | "">(0);
+  const [wizMode, setWizMode] = useState("UPI");
+  const [wizRefNo, setWizRefNo] = useState("");
+  const [wizChequeNo, setWizChequeNo] = useState("");
+  const [wizChequeDate, setWizChequeDate] = useState("");
+  const [wizBankName, setWizBankName] = useState("");
+  const [wizDepositAccount, setWizDepositAccount] = useState("");
+  const [wizTdsEnabled, setWizTdsEnabled] = useState(false);
+  const [wizTdsRate, setWizTdsRate] = useState<number>(2);
+  const [wizTdsAmount, setWizTdsAmount] = useState<number>(0);
+  const [wizTdsSection, setWizTdsSection] = useState("194C");
+  const [wizNotes, setWizNotes] = useState("");
+  const [wizAdvance, setWizAdvance] = useState(false);
+  const [wizAllocations, setWizAllocations] = useState<{ [docId: string]: number }>({});
+  const [wizSaveLoading, setWizSaveLoading] = useState(false);
+  const [wizError, setWizError] = useState("");
+  const [toastMessage, setToastMessage] = useState("");
+
+  const [idempotencyKey, setIdempotencyKey] = useState<string>("");
+
+  // Customer Summary when Customer is chosen in Wizard (to detect available advance)
+  const { data: wizCustomerSummary } = useQuery<any>({
+    queryKey: ["customer-summary-wiz", wizCustomer?.id],
+    queryFn: () => apiClient.apiRequest(`/payments/customer-summary/${wizCustomer?.id}`, "GET"),
+    enabled: !!wizCustomer?.id && wizardOpen
+  });
+
+  // Query open docs for chosen customer when wizard is active
+  const { data: wizCustomerDocs = [], isLoading: isWizDocsLoading } = useQuery<any[]>({
+    queryKey: ["pending-documents-wiz", wizCustomer?.id],
+    queryFn: () => apiClient.getPendingDocuments({ customer_id: wizCustomer?.id }),
+    enabled: !!wizCustomer?.id && wizardOpen
+  });
+
+  // When wizCustomerDocs load, auto-populate allocations if empty
+  useEffect(() => {
+    if (!wizardOpen || !wizCustomer?.id) return;
+    if (Array.isArray(wizCustomerDocs)) {
+      if (wizCustomerDocs.length === 0) {
+        setWizAdvance(true);
+      } else {
+        if (Object.keys(wizAllocations).length === 0) {
+          const initialAlloc: { [docId: string]: number } = {};
+          let totalBal = 0;
+          wizCustomerDocs.forEach((doc: any) => {
+            const did = doc.id || doc.document_id;
+            const bal = Number(doc.balance_due || 0);
+            if (bal > 0 && did) {
+              initialAlloc[did] = bal;
+              totalBal += bal;
+            }
+          });
+          setWizAllocations(initialAlloc);
+          if (wizAmount === 0 || wizAmount === "") {
+            setWizAmount(totalBal);
           }
-          return allocations
-            .map((allocation, index) => ({
-              id: `tds_${entry.id}_${allocation.invoiceId || index}`,
-              date: entry.paymentDate || "",
-              invoiceNo: allocation.invoiceNo || "-",
-              customerName: entry.customerName || "-",
-              tdsRate: Number(entry?.tdsRate || 0),
-              tdsAmount: paymentInAllocationTdsShare(entry, allocation)
-            }))
-            .filter((row) => row.tdsAmount > 0);
-        })
-        .sort((left, right) => {
-          const byDate = String(right.date || "").localeCompare(String(left.date || ""));
-          if (byDate !== 0) return byDate;
-          return String(right.id || "").localeCompare(String(left.id || ""));
-        }),
-    [form?.customerId, payments]
-  );
-  const totals = useMemo(
-    () =>
-      form
-        ? computeEditorTotals(form, customerOutstandingBefore)
-        : { amountReceived: 0, tdsAmount: 0, totalSettled: 0, amountApplied: 0, unappliedAmount: 0, outstandingAfter: 0 },
-    [form, customerOutstandingBefore]
-  );
-  const availableAdvanceBalance = useMemo(() => Math.max(0, Number(customerInsights.advanceWallet || 0)), [customerInsights.advanceWallet]);
-  const selectedAdvancePaymentBalance = useMemo(
-    () =>
-      customerAdvanceEntries.reduce((sum, entry) => {
-        if (!selectedAdvancePaymentIdSet.has(String(entry.paymentId || "").trim())) return sum;
-        return sum + Math.max(0, Number(entry.availableAmount || 0));
-      }, 0),
-    [customerAdvanceEntries, selectedAdvancePaymentIdSet]
-  );
-  const selectedCreditNoteBalance = useMemo(
-    () =>
-      customerCreditNotes.reduce((sum, entry: any) => {
-        if (!selectedCreditNoteIdSet.has(String(entry.id || "").trim())) return sum;
-        return sum + Math.max(0, Number(entry.availableAmount || 0));
-      }, 0),
-    [customerCreditNotes, selectedCreditNoteIdSet]
-  );
-  const customerDocuments = useMemo(
-    () =>
-      openInvoices.filter(
-        (entry) =>
-          entry.customerId === form?.customerId && Math.max(0, Number(entry?.balanceDue || 0)) > 0
-      ),
-    [openInvoices, form?.customerId]
-  );
-  const selectedCustomerDocument = useMemo(() => {
-    const liveDocument = customerDocuments.find((entry) => entry.id === form?.selectedDocumentId);
-    if (liveDocument) return liveDocument;
-    const savedDocument = form?.allocations?.[0];
-    if (!savedDocument) return null;
-    return {
-      id: savedDocument.invoiceId,
-      invoiceNo: savedDocument.invoiceNo,
-      country,
-      customerId: form?.customerId || "",
-      customerName: form?.customerInput || "",
-      customerState: selectedCustomer?.state || "",
-      invoiceDate: savedDocument.invoiceDate,
-      invoiceAmount: savedDocument.invoiceAmount,
-      discountAmount: savedDocument.discountAmount ?? 0,
-      taxableAmount: savedDocument.taxableAmount ?? savedDocument.invoiceAmount,
-      taxAmount: savedDocument.taxAmount ?? 0,
-      taxBreakup: null,
-      supplyType: null,
-      balanceDue: savedDocument.balanceDue,
-      documentType: savedDocument.documentType || "invoice"
-    } satisfies CustomerOpenInvoice;
-  }, [country, customerDocuments, form?.allocations, form?.customerId, form?.customerInput, form?.selectedDocumentId, selectedCustomer?.state]);
-  const invoiceGstLines = useMemo(
-    () =>
-      buildDocumentGstLines({
-        taxAmount: selectedCustomerDocument?.taxAmount,
-        taxBreakup: selectedCustomerDocument?.taxBreakup || null,
-        supplyType: selectedCustomerDocument?.supplyType,
-        companyState: company?.address?.state || company?.state || "",
-        partyState: selectedCustomerDocument?.customerState || selectedCustomer?.state || ""
-      }),
-    [company?.address?.state, company?.state, selectedCustomer?.state, selectedCustomerDocument]
-  );
-  const selectedDocumentPaymentHistory = useMemo(() => {
-    if (!selectedCustomerDocument) return [];
-    return payments
-      .filter((entry) => entry.status !== "Draft")
-      .flatMap((entry) =>
-        (Array.isArray(entry.allocations) ? entry.allocations : [])
-          .filter(
-            (allocation) =>
-              (
-                String(allocation?.invoiceId || "") === String(selectedCustomerDocument.id) ||
-                (
-                  String(allocation?.invoiceNo || "").trim().toLowerCase() ===
-                    String(selectedCustomerDocument.invoiceNo || "").trim().toLowerCase() &&
-                  String(entry?.customerId || "") === String(selectedCustomerDocument.customerId || "")
-                )
-              ) &&
-              String(allocation?.documentType || "invoice") === String(selectedCustomerDocument.documentType || "invoice")
-          )
-          .map((allocation, index) => {
-            const appliedAmount = Math.max(0, parseNumber(allocation?.applyAmount as any));
-            const tdsShare = Math.max(0, paymentInAllocationTdsShare(entry, allocation));
-            return {
-              id: `${entry.id}_${allocation.invoiceId || index}`,
-              receiptNo: entry.receiptNo || "-",
-              paymentDate: entry.paymentDate || "",
-              paymentMode: formatPaymentModeLabel(entry.paymentMode),
-              appliedAmount,
-              tdsShare,
-              settledAmount: appliedAmount + tdsShare,
-              referenceNo: entry.referenceNo || entry.transactionId || ""
-            };
-          })
-      )
-      .filter((entry) => entry.appliedAmount > 0 || entry.tdsShare > 0)
-      .sort((left, right) => {
-        const byDate = String(right.paymentDate || "").localeCompare(String(left.paymentDate || ""));
-        if (byDate !== 0) return byDate;
-        return String(right.receiptNo || "").localeCompare(String(left.receiptNo || ""));
-      });
-  }, [payments, selectedCustomerDocument]);
-  const inferredPreviouslySettledAmount = useMemo(() => {
-    if (!selectedCustomerDocument) return 0;
-    return Math.max(
-      0,
-      parseNumber(selectedCustomerDocument.invoiceAmount as any) - parseNumber(selectedCustomerDocument.balanceDue as any)
-    );
-  }, [selectedCustomerDocument]);
-  const selectedDocumentPreviouslyPaidAmount = useMemo(
-    () =>
-      Math.max(
-        selectedDocumentPaymentHistory.reduce((sum, entry) => sum + entry.appliedAmount, 0),
-        inferredPreviouslySettledAmount
-      ),
-    [inferredPreviouslySettledAmount, selectedDocumentPaymentHistory]
-  );
-  useEffect(() => {
-    if (!form || form.allocationMode !== "linked" || !selectedCustomerDocument) return;
-    const invoiceAmount = Math.max(0, parseNumber(selectedCustomerDocument.invoiceAmount as any));
-    const taxableAmount = Math.max(0, parseNumber(selectedCustomerDocument.taxableAmount as any));
-    const discountAmount = Math.max(0, parseNumber((selectedCustomerDocument as any).discountAmount as any));
-    const gstAmount = Math.max(0, parseNumber(selectedCustomerDocument.taxAmount as any));
-    const tdsPercentage = Math.max(0, parseNumber(form.tdsRate as any));
-    const calculatedTdsAmount = calculateTdsAmount(
-      autoTdsBaseAmount(selectedCustomerDocument, form.allocationMode, form.amountReceived),
-      tdsPercentage
-    );
-    console.log("[PaymentIn:TDS]", {
-      invoiceAmount,
-      taxableAmount,
-      discountAmount,
-      gstAmount,
-      tdsPercentage,
-      calculatedTdsAmount
-    });
-  }, [
-    form,
-    selectedCustomerDocument
-  ]);
-  const advanceWalletUsable = useMemo(() => {
-    if (!useAdvanceWallet) return 0;
-    if (!selectedCustomerDocument || selectedCustomerDocument.documentType !== "invoice") return 0;
-    return Math.max(0, Math.min(selectedAdvancePaymentBalance, Number(selectedCustomerDocument.balanceDue || 0)));
-  }, [selectedAdvancePaymentBalance, selectedCustomerDocument, useAdvanceWallet]);
-  const creditNoteUsable = useMemo(() => {
-    if (!selectedCustomerDocument || selectedCustomerDocument.documentType !== "invoice") return 0;
-    return Math.max(0, Math.min(selectedCreditNoteBalance, Math.max(0, Number(selectedCustomerDocument.balanceDue || 0) - advanceWalletUsable)));
-  }, [advanceWalletUsable, selectedCreditNoteBalance, selectedCustomerDocument]);
-  const documentBalanceAfterAdvance = useMemo(() => {
-    if (!selectedCustomerDocument) return 0;
-    return Math.max(0, Number(selectedCustomerDocument.balanceDue || 0) - advanceWalletUsable - creditNoteUsable);
-  }, [advanceWalletUsable, creditNoteUsable, selectedCustomerDocument]);
-  const totalAvailableCreditNoteBalance = useMemo(
-    () =>
-      customerCreditNotes.reduce(
-        (sum: number, row: any) => sum + Math.max(0, Number(row.availableAmount || 0)),
-        0
-      ),
-    [customerCreditNotes]
-  );
-  const effectiveSelectedDocumentBalance = useMemo(() => {
-    if (!selectedCustomerDocument) return 0;
-    if (selectedCustomerDocument.documentType !== "invoice") {
-      return Math.max(0, Number(selectedCustomerDocument.balanceDue || 0));
-    }
-    return documentBalanceAfterAdvance;
-  }, [documentBalanceAfterAdvance, selectedCustomerDocument]);
-  const remainingWalletBalance = useMemo(
-    () => Math.max(0, selectedAdvancePaymentBalance - advanceWalletUsable),
-    [selectedAdvancePaymentBalance, advanceWalletUsable]
-  );
-  useEffect(() => {
-    setUseAdvanceWallet(selectedAdvancePaymentIds.length > 0);
-  }, [selectedAdvancePaymentIds]);
-  useEffect(() => {
-    setSelectedAdvancePaymentIds([]);
-    setSelectedCreditNoteIds([]);
-  }, [form?.customerId, form?.selectedDocumentId]);
-  const editableInvoiceAmount = useMemo(() => {
-    const allocationInvoiceAmount = form?.allocations?.[0]?.invoiceAmount;
-    if (allocationInvoiceAmount !== undefined && allocationInvoiceAmount !== null && allocationInvoiceAmount !== "") {
-      return parseNumber(allocationInvoiceAmount as any);
-    }
-    return parseNumber(selectedCustomerDocument?.invoiceAmount as any);
-  }, [form?.allocations, selectedCustomerDocument?.invoiceAmount]);
-  const displayedInvoiceAmount = useMemo(() => {
-    if (form?.allocationMode === "linked" && selectedCustomerDocument) {
-      return effectiveSelectedDocumentBalance;
-    }
-    return editableInvoiceAmount;
-  }, [editableInvoiceAmount, effectiveSelectedDocumentBalance, form?.allocationMode, selectedCustomerDocument]);
-  const remainingPayableAfterPayment = useMemo(
-    () => Math.max(0, documentBalanceAfterAdvance - totals.totalSettled),
-    [documentBalanceAfterAdvance, totals.totalSettled]
-  );
-  const maxReceivableAmount = useMemo(() => {
-    if (form?.allocationMode !== "linked" || !selectedCustomerDocument) return null;
-    return Math.max(0, effectiveSelectedDocumentBalance);
-  }, [effectiveSelectedDocumentBalance, form?.allocationMode, selectedCustomerDocument]);
-  const filteredPayments = useMemo(
-    () =>
-      payments.filter((entry) => {
-        if (entry.status === "Draft") return false;
-        const allocationText = (Array.isArray(entry.allocations) ? entry.allocations : [])
-          .map((allocation) =>
-            [allocation?.invoiceNo, allocation?.invoiceId, allocation?.documentType]
-              .map((value) => String(value || "").trim())
-              .filter(Boolean)
-              .join(" ")
-          )
-          .join(" ");
-        const displayStatus = paymentDisplayStatus(entry);
-        const haystack = `${entry.customerName} ${entry.receiptNo} ${entry.referenceNo || ""} ${entry.transactionId || ""} ${allocationText}`.toLowerCase();
-        const q = search.trim().toLowerCase();
-        const matchFrom = fromDate ? entry.paymentDate >= fromDate : true;
-        const matchTo = toDate ? entry.paymentDate <= toDate : true;
-        return (
-          (!q || haystack.includes(q)) &&
-          (!statusFilter || displayStatus === statusFilter) &&
-          (!customerFilter || entry.customerId === customerFilter) &&
-          (!modeFilter || normalizePaymentMode(entry.paymentMode) === normalizePaymentMode(modeFilter)) &&
-          matchFrom &&
-          matchTo
-        );
-      }),
-    [payments, search, statusFilter, customerFilter, modeFilter, fromDate, toDate]
-  );
-  const paymentTdsHistory = useMemo(
-    () =>
-      filteredPayments
-        .filter((entry) => Math.max(0, Number(entry?.totals?.tdsAmount || 0)) > 0)
-        .flatMap((entry) => {
-          const allocations = Array.isArray(entry?.allocations) ? entry.allocations : [];
-          if (!allocations.length) {
-            return [
-              {
-                id: `tds_feed_${entry.id}`,
-                date: entry.paymentDate || "",
-                invoiceNo: "-",
-                customerName: entry.customerName || "-",
-                tdsRate: Number(entry?.tdsRate || 0),
-                tdsAmount: Math.max(0, Number(entry?.totals?.tdsAmount || 0))
-              }
-            ];
-          }
-          return allocations
-            .map((allocation, index) => ({
-              id: `tds_feed_${entry.id}_${allocation.invoiceId || index}`,
-              date: entry.paymentDate || "",
-              invoiceNo: allocation.invoiceNo || "-",
-              customerName: entry.customerName || "-",
-              tdsRate: Number(entry?.tdsRate || 0),
-              tdsAmount: paymentInAllocationTdsShare(entry, allocation)
-            }))
-            .filter((row) => row.tdsAmount > 0);
-        })
-        .sort((left, right) => {
-          const byDate = String(right.date || "").localeCompare(String(left.date || ""));
-          if (byDate !== 0) return byDate;
-          return String(right.id || "").localeCompare(String(left.id || ""));
-        }),
-    [filteredPayments]
-  );
-  const customerLookupResults = useMemo(() => {
-    const query = String(customerLookupQuery || "").trim().toLowerCase();
-    if (!query) return [];
-    const normalizedPhoneQuery = normalizePhoneForLookup(query);
-    return customers
-      .filter((customer) => {
-        const text = [
-          customer?.name,
-          customer?.email,
-          customer?.address,
-          customer?.state,
-          customer?.country
-        ]
-          .map((value) => String(value || "").toLowerCase())
-          .join(" ");
-        const customerPhone = normalizePhoneForLookup(customer?.phone);
-        return (
-          text.includes(query) ||
-          (normalizedPhoneQuery && customerPhone && customerPhone.includes(normalizedPhoneQuery))
-        );
-      })
-      .slice(0, 8);
-  }, [customers, customerLookupQuery]);
-
-  const allowed = access.allowedCountries.includes(country);
-  const readOnly = flowMode === "view";
-  const prefillInvoiceId = searchParams.get("invoiceId") || "";
-  const prefillInvoice = useMemo(() => {
-    if (!prefillInvoiceId) return null;
-    return (
-      openInvoices.find((entry) => entry.id === prefillInvoiceId) ||
-      fallbackOpenInvoiceFromStorage(country, prefillInvoiceId, customers)
-    );
-  }, [country, customers, openInvoices, prefillInvoiceId]);
-  useEffect(() => {
-    setSelectedPaymentCountry(country);
-  }, [country]);
-
-  useEffect(() => {
-    let mounted = true;
-    async function syncReferenceData() {
-      try {
-        await Promise.allSettled([
-          syncPartiesFromRemote(),
-          invoicesSyncFromRemote(),
-          salesProformasSyncFromRemote(),
-          paymentsSyncFromRemote(),
-          creditNotesSyncFromRemote()
-        ]);
-      } catch {
-        // Continue with local cache.
-      } finally {
-        if (mounted) setRefreshKey((prev) => prev + 1);
-      }
-    }
-    syncReferenceData();
-    return () => {
-      mounted = false;
-    };
-  }, [country]);
-
-  useEffect(() => {
-    let disposed = false;
-
-    const refreshReferences = async () => {
-      try {
-        await Promise.allSettled([
-          syncPartiesFromRemote(),
-          invoicesSyncFromRemote(),
-          salesProformasSyncFromRemote(),
-          paymentsSyncFromRemote(),
-          creditNotesSyncFromRemote()
-        ]);
-      } finally {
-        if (!disposed) setRefreshKey((prev) => prev + 1);
-      }
-    };
-
-    const onStorage = (event: StorageEvent) => {
-      const key = event?.key || "";
-      if (
-        isOrganizationScopedStorageEventKey(LS_KEYS.parties, key) ||
-        isOrganizationScopedStorageEventKey(LS_KEYS.invoices, key) ||
-        isOrganizationScopedStorageEventKey(LS_KEYS.sales_proformas, key) ||
-        isOrganizationScopedStorageEventKey(LS_KEYS.payments, key) ||
-        isOrganizationScopedStorageEventKey(LS_KEYS.creditNotes, key) ||
-        isOrganizationScopedStorageEventKey(CREDIT_NOTE_PREMIUM_KEY, key)
-      ) {
-        setRefreshKey((prev) => prev + 1);
-      }
-    };
-
-    const onFocus = () => {
-      void refreshReferences();
-    };
-
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("focus", onFocus);
-    return () => {
-      disposed = true;
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [country]);
-
-  useEffect(() => {
-    setLoading(true);
-    const timer = window.setTimeout(() => setLoading(false), 180);
-    return () => window.clearTimeout(timer);
-  }, [country]);
-
-  useEffect(() => {
-    if (!dirty) return;
-    const beforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", beforeUnload);
-    return () => window.removeEventListener("beforeunload", beforeUnload);
-  }, [dirty]);
-
-  useEffect(() => {
-    if (!prefillInvoiceId) return;
-    const invoice = prefillInvoice;
-    if (!invoice) return;
-
-    setForm((prev) => {
-      const base = prev || defaultForm(country, company);
-      return {
-        ...base,
-        customerId: invoice.customerId,
-        customerInput: invoice.customerName,
-        allocationMode: "linked",
-        selectedDocumentId: invoice.id,
-        allocations: buildAllocation(invoice, base.amountReceived)
-      };
-    });
-    setPanelMode("flow");
-    setFlowMode("create");
-    setActiveStep(1);
-    setDirty(false);
-
-    const next = new URLSearchParams(searchParams);
-    next.delete("invoiceId");
-    setSearchParams(next, { replace: true });
-  }, [prefillInvoice, prefillInvoiceId, country, company, searchParams, setSearchParams]);
-
-  useEffect(() => {
-    if (!form || form.allocationMode !== "linked" || !form.selectedDocumentId) return;
-    setForm((prev) => {
-      if (!prev || prev.allocationMode !== "linked" || !prev.selectedDocumentId) return prev;
-      const linkedDocument =
-        customerDocuments.find((entry) => entry.id === prev.selectedDocumentId) || null;
-      return {
-        ...prev,
-        allocations: buildAllocation(
-          withAdjustedDocumentBalance(
-            linkedDocument,
-            linkedDocument?.documentType === "invoice" ? advanceWalletUsable + creditNoteUsable : 0
-          ),
-          prev.amountReceived
-        )
-      };
-    });
-  }, [advanceWalletUsable, creditNoteUsable, customerDocuments, form?.allocationMode, form?.amountReceived, form?.selectedDocumentId]);
-
-  function clearMessages() {
-    setErrorMessage("");
-    setSuccessMessage("");
-    setFieldErrors({});
-  }
-
-  function clearFieldError(field: string) {
-    setFieldErrors((prev) => {
-      if (!prev?.[field]) return prev;
-      const next = { ...prev };
-      delete next[field];
-      return next;
-    });
-  }
-
-  function startNewPayment() {
-    if (!allowed) return;
-    if (!canCreatePayment) {
-      setErrorMessage("You do not have permission to create payment receipts.");
-      setSuccessMessage("");
-      return;
-    }
-    setForm(defaultForm(country, company));
-    setActivePayment(null);
-    setPanelMode("flow");
-    setFlowMode("create");
-    setActiveStep(0);
-    setDirty(false);
-    setUseAdvanceWallet(false);
-    setCustomerLookupQuery("");
-    setCustomerSearchError("");
-    clearMessages();
-  }
-
-  function openFlow(record: PaymentInRecord, mode: FlowMode) {
-    if (record.country !== country) return;
-    if (mode === "edit" && !canEditPayment) {
-      setErrorMessage("You do not have permission to edit payment receipts.");
-      setSuccessMessage("");
-      return;
-    }
-    if (mode === "edit" && record.status === "Applied" && !canReopenWithinWindow(record)) return;
-    setForm(formFromRecord(record));
-    setActivePayment(record);
-    setPanelMode("flow");
-    setFlowMode(mode);
-    setActiveStep(mode === "view" ? 2 : 0);
-    setDirty(false);
-    setUseAdvanceWallet(false);
-    clearMessages();
-  }
-
-  function backToFeed() {
-    if (dirty && !window.confirm("Discard unsaved changes?")) return;
-    setPanelMode("feed");
-    setFlowMode("create");
-    setActiveStep(0);
-    setForm(null);
-    setActivePayment(null);
-    setDirty(false);
-    setUseAdvanceWallet(false);
-    setCustomerLookupQuery("");
-    setCustomerSearchError("");
-    clearMessages();
-  }
-
-  function updateForm<K extends keyof PaymentInFormState>(key: K, value: PaymentInFormState[K]) {
-    setForm((prev) => {
-      if (!prev) return prev;
-      const next = { ...prev, [key]: value };
-      if (key === "amountReceived" && next.allocationMode === "linked" && next.selectedDocumentId) {
-        const linkedDocument =
-          openInvoices.find(
-            (entry) => entry.id === next.selectedDocumentId && entry.customerId === next.customerId
-          ) || null;
-        const effectiveBalance = Math.max(
-          0,
-          Number(linkedDocument?.balanceDue || 0) -
-            (linkedDocument?.documentType === "invoice" ? advanceWalletUsable + creditNoteUsable : 0)
-        );
-        next.allocations = linkedDocument
-          ? [
-              {
-                invoiceId: linkedDocument.id,
-                invoiceNo: linkedDocument.invoiceNo,
-                invoiceDate: linkedDocument.invoiceDate,
-                invoiceAmount: linkedDocument.invoiceAmount,
-                balanceDue: effectiveBalance,
-                applyAmount: Math.min(Math.max(0, parseNumber(value as any)), effectiveBalance),
-                documentType: linkedDocument.documentType
-              }
-            ]
-          : [];
-      }
-      return next;
-    });
-    setDirty(true);
-  }
-
-  function handleAmountReceivedChange(value: string) {
-    setForm((prev) => {
-      if (!prev) return prev;
-      let nextAmountReceived = value;
-      if (prev.allocationMode === "linked" && prev.selectedDocumentId) {
-        const linkedDocument =
-          openInvoices.find(
-            (entry) => entry.id === prev.selectedDocumentId && entry.customerId === prev.customerId
-          ) || null;
-        const cappedAmount = linkedDocument
-          ? Math.min(
-              Math.max(0, parseNumber(value as any)),
-              Math.max(
-                0,
-                Number(linkedDocument.balanceDue || 0) -
-                  (linkedDocument?.documentType === "invoice" ? advanceWalletUsable + creditNoteUsable : 0)
-              )
-            )
-          : Math.max(0, parseNumber(value as any));
-        nextAmountReceived = String(cappedAmount);
-      }
-      const next = { ...prev, amountReceived: nextAmountReceived };
-      if (next.allocationMode === "linked" && next.selectedDocumentId) {
-        const linkedDocument =
-          openInvoices.find(
-            (entry) => entry.id === next.selectedDocumentId && entry.customerId === next.customerId
-          ) || null;
-        next.allocations = buildAllocation(
-          withAdjustedDocumentBalance(
-            linkedDocument,
-            linkedDocument?.documentType === "invoice" ? advanceWalletUsable + creditNoteUsable : 0
-          ),
-          nextAmountReceived
-        );
-        if (!next.isManual) {
-          next.tdsAmount = calculatedTdsInputValue(
-            autoTdsBaseAmount(linkedDocument, next.allocationMode, nextAmountReceived),
-            next.tdsRate
-          );
+          setWizAdvance(false);
         }
-        return next;
-      }
-      if (!next.isManual) {
-        next.tdsAmount = calculatedTdsInputValue(
-          autoTdsBaseAmount(null, next.allocationMode, value),
-          next.tdsRate
-        );
-      }
-      return next;
-    });
-    clearFieldError("amountReceived");
-    clearFieldError("tdsAmount");
-    setDirty(true);
-  }
-
-  function handleInvoiceAmountChange(value: string) {
-    setForm((prev) => {
-      if (!prev) return prev;
-      const nextInvoiceAmount = Math.max(0, parseNumber(value));
-      return {
-        ...prev,
-        allocations: updatePrimaryAllocationAmount(prev.allocations, nextInvoiceAmount)
-      };
-    });
-    setDirty(true);
-  }
-
-  function handleTdsAmountChange(value: string) {
-    setForm((prev) =>
-      prev
-        ? {
-            ...prev,
-            tdsAmount: value,
-            tdsCategory: "none",
-            tdsRate: "0",
-            isManual: false
-          }
-        : prev
-    );
-    clearFieldError("tdsAmount");
-    setDirty(true);
-  }
-
-  function handleTdsCategoryChange(category: string) {
-    if (isCustomTdsCategory(category)) {
-      setForm((prev) =>
-        prev
-          ? {
-              ...prev,
-              tdsCategory: "custom",
-              tdsAmount: calculatedTdsInputValue(
-                autoTdsBaseAmount(selectedCustomerDocument, prev.allocationMode, prev.amountReceived),
-                prev.tdsRate
-              ),
-              isManual: false
-            }
-          : prev
-      );
-      clearFieldError("tdsAmount");
-      setDirty(true);
-      return;
-    }
-    const nextRate = getTdsRateForCategory(category);
-    setForm((prev) =>
-      prev
-        ? {
-            ...prev,
-            tdsCategory: category,
-            tdsRate: String(nextRate),
-            tdsAmount: calculatedTdsInputValue(
-              autoTdsBaseAmount(selectedCustomerDocument, prev.allocationMode, prev.amountReceived),
-              nextRate
-            ),
-            isManual: false
-          }
-        : prev
-    );
-    clearFieldError("tdsAmount");
-    setDirty(true);
-  }
-
-  function handleTdsRateChange(value: string) {
-    setForm((prev) => {
-      if (!prev) return prev;
-      const parsedRate = Math.max(0, parseNumber(value));
-      const matchedOption = TDS_CATEGORY_OPTIONS.find((option) => option.rate === parsedRate);
-      return {
-        ...prev,
-        tdsCategory: matchedOption ? matchedOption.value : "custom",
-        tdsRate: value,
-        tdsAmount: calculatedTdsInputValue(
-          autoTdsBaseAmount(selectedCustomerDocument, prev.allocationMode, prev.amountReceived),
-          value
-        ),
-        isManual: false
-      };
-    });
-    clearFieldError("tdsAmount");
-    setDirty(true);
-  }
-
-  function applyCalculatedTds() {
-    setForm((prev) =>
-      prev
-        ? {
-            ...prev,
-            tdsAmount: calculatedTdsInputValue(
-              autoTdsBaseAmount(selectedCustomerDocument, prev.allocationMode, prev.amountReceived),
-              prev.tdsRate
-            ),
-            isManual: false
-          }
-        : prev
-    );
-    clearFieldError("tdsAmount");
-    setDirty(true);
-  }
-
-  function handleAllocationModeChange(mode: "linked" | "normal") {
-    setForm((prev) => {
-      if (!prev) return prev;
-      if (mode === "normal") {
-        return {
-          ...prev,
-          allocationMode: "normal",
-          selectedDocumentId: "",
-          allocations: []
-        };
-      }
-      const linkedDocument =
-        customerDocuments.find((entry) => entry.id === prev.selectedDocumentId) || null;
-      const next = {
-        ...prev,
-        allocationMode: "linked",
-        allocations: buildAllocation(
-          withAdjustedDocumentBalance(
-            linkedDocument,
-            useAdvanceWallet && linkedDocument?.documentType === "invoice" ? advanceWalletUsable : 0
-          ),
-          prev.amountReceived
-        )
-      };
-      if (!next.isManual) {
-        next.tdsAmount = calculatedTdsInputValue(
-          autoTdsBaseAmount(linkedDocument, next.allocationMode, next.amountReceived),
-          next.tdsRate
-        );
-      }
-      return next;
-    });
-    clearFieldError("selectedDocumentId");
-    setDirty(true);
-  }
-
-  function handleDocumentSelection(documentId: string) {
-    const linkedDocument = customerDocuments.find((entry) => entry.id === documentId) || null;
-    setUseAdvanceWallet(false);
-    setForm((prev) =>
-      prev
-        ? (() => {
-            const next = {
-              ...prev,
-              allocationMode: "linked" as const,
-              selectedDocumentId: linkedDocument?.id || "",
-              allocations: buildAllocation(linkedDocument, prev.amountReceived)
-            };
-            if (!next.isManual) {
-              next.tdsAmount = calculatedTdsInputValue(
-                autoTdsBaseAmount(linkedDocument, next.allocationMode, next.amountReceived),
-                next.tdsRate
-              );
-            }
-            return next;
-          })()
-        : prev
-    );
-    clearFieldError("selectedDocumentId");
-    setDirty(true);
-  }
-
-  function applyCustomer(customerId: string, inputName?: string) {
-    const customer = customers.find((entry) => entry.id === customerId);
-    setForm((prev) =>
-      prev
-        ? {
-            ...prev,
-            customerId,
-            customerInput: inputName || customer?.name || prev.customerInput,
-            allocationMode: "normal",
-            selectedDocumentId: "",
-            registrationNumber: customer?.registrationNumber || prev.registrationNumber,
-            allocations: []
-          }
-        : prev
-    );
-    setUseAdvanceWallet(false);
-    setDirty(true);
-  }
-
-  function applyCustomerSelection(customer: any) {
-    if (!customer) return;
-    applyCustomer(customer.id, customer.name);
-    setCustomerLookupQuery("");
-    setCustomerSearchError("");
-  }
-
-  function handleCustomerLookupChange(value: string) {
-    setCustomerLookupQuery(value);
-    setCustomerSearchError("");
-  }
-
-  function handleCustomerSearch() {
-    const query = String(customerLookupQuery || "").trim();
-    if (query.length < 2) {
-      setCustomerSearchError("Enter at least 2 characters to search.");
-      return;
-    }
-    if (!customerLookupResults.length) {
-      setCustomerSearchError("No customer found.");
-      return;
-    }
-    if (customerLookupResults.length === 1) {
-      applyCustomerSelection(customerLookupResults[0]);
-      return;
-    }
-    setCustomerSearchError("Multiple customers found. Select one below.");
-  }
-
-  function resetCustomerSelection() {
-    setForm((prev) =>
-      prev
-        ? {
-            ...prev,
-            customerId: "",
-            customerInput: "",
-            allocationMode: "normal",
-            selectedDocumentId: "",
-            allocations: []
-          }
-        : prev
-    );
-    setDirty(true);
-    setCustomerLookupQuery("");
-    setCustomerSearchError("");
-    setUseAdvanceWallet(false);
-  }
-
-  function validate(targetStatus: PaymentStatus) {
-    if (!form) return false;
-    const cfg = COUNTRY_CONFIG[country];
-    const errors: Record<string, string> = {};
-    const amountReceived = Math.max(0, parseNumber(form.amountReceived));
-    if (!form.paymentDate) errors.paymentDate = "Payment date is required.";
-    if (!form.customerId) errors.customerId = "Customer is required.";
-    if (amountReceived <= 0) errors.amountReceived = "Amount received must be greater than zero.";
-    if (form.allocationMode === "linked" && !form.selectedDocumentId) {
-      errors.selectedDocumentId = "Select an invoice or proforma invoice.";
-    }
-    if (cfg.registrationRequired && !form.registrationNumber.trim()) errors.registrationNumber = `${cfg.registrationLabel} is required.`;
-    if (cfg.registrationRegex && form.registrationNumber.trim() && !cfg.registrationRegex.test(form.registrationNumber.trim())) errors.registrationNumber = `Invalid ${cfg.registrationLabel} format.`;
-    if (form.paymentMode === "Cheque") {
-      if (!form.chequeNo.trim()) errors.chequeNo = "Cheque number is required.";
-      if (!form.bankName.trim()) errors.bankName = "Bank name is required.";
-    }
-    if (form.paymentMode === "Net Banking" && !form.bankAccount.trim()) errors.bankAccount = "Bank account is required.";
-    if ((form.paymentMode === "Net Banking" || form.paymentMode === "Card" || form.paymentMode === "UPI" || form.paymentMode === "Online Gateway") && !form.transactionId.trim()) errors.transactionId = "Transaction ID is required.";
-    if (targetStatus === "Applied") {
-      if (form.allocationMode !== "linked" || !form.selectedDocumentId) {
-        errors.selectedDocumentId = "Select an invoice or proforma and confirm the payment before applying it.";
-      } else if (totals.amountApplied <= 0) {
-        errors.selectedDocumentId = "Applied amount must be greater than zero before applying this payment.";
       }
     }
+  }, [wizCustomerDocs, wizardOpen, wizCustomer?.id]);
 
-    setFieldErrors(errors);
-    if (Object.keys(errors).length) {
-      if (errors.customerId) {
-        setActiveStep(0);
-      } else if (
-        errors.amountReceived ||
-        errors.selectedDocumentId ||
-        errors.paymentDate ||
-        errors.registrationNumber ||
-        errors.chequeNo ||
-        errors.bankName ||
-        errors.bankAccount ||
-        errors.transactionId
-      ) {
-        setActiveStep(1);
+  // Auto-open wizard from URL query param ?invoiceId=
+  useEffect(() => {
+    const prefillInvoice = searchParams.get("invoiceId");
+    if (prefillInvoice && Array.isArray(receivablesData) && receivablesData.length > 0) {
+      const matchedDoc = receivablesData.find((d: any) => d.invoice_id === prefillInvoice);
+      if (matchedDoc) {
+        handleOpenWizardWithDoc({
+          id: matchedDoc.invoice_id,
+          document_id: matchedDoc.invoice_id,
+          document_no: matchedDoc.invoice_no,
+          customer_id: matchedDoc.customer_id,
+          customer_name: matchedDoc.customer_name,
+          balance_due: matchedDoc.balance_due,
+          available_customer_advance: matchedDoc.available_customer_advance
+        });
       }
-      setErrorMessage(Object.values(errors)[0] || "Please fix the highlighted fields before saving.");
-      setSuccessMessage("");
-      return false;
     }
-    return true;
-  }
+  }, [searchParams, receivablesData]);
 
-  function buildPayload(targetStatus: PaymentStatus, options?: { id?: string; outstandingOverride?: number }) {
-    if (!form) return null;
-    const customer = customers.find((entry) => entry.id === form.customerId);
-    return {
-      id: options?.id ?? form.id,
-      country,
-      paymentDate: form.paymentDate,
-      customerId: form.customerId,
-      customerName: customer?.name || form.customerInput || "Customer",
-      paymentMode: form.paymentMode,
-      referenceNo: form.referenceNo,
-      chequeNo: form.chequeNo,
-      bankName: form.bankName,
-      bankAccount: form.bankAccount,
-      transactionId: form.transactionId,
-      paymentReference: form.paymentReference,
-      registrationNumber: form.registrationNumber,
-      internalNotes: form.internalNotes,
-      customerNotes: form.customerNotes,
-      attachment: form.attachment,
-      desiredStatus: targetStatus,
-      amountReceived: parseNumber(form.amountReceived),
-      tdsRate: parseNumber(form.tdsRate),
-      tdsAmount: parseNumber(form.tdsAmount),
-      tdsCategory: form.tdsCategory,
-      isManual: false,
-      allocations: form.allocations,
-      customerOutstandingBefore:
-        typeof options?.outstandingOverride === "number" ? options.outstandingOverride : customerOutstandingBefore,
-      actor: actorName
+  const handleOpenWizardWithDoc = (doc: any) => {
+    const cust = customers.find((c: any) => c.id === doc.customer_id) || {
+      id: doc.customer_id,
+      name: doc.customer_name
     };
-  }
+    const did = doc.id || doc.document_id || doc.invoice_id;
+    setWizCustomer(cust);
+    setWizAmount(doc.balance_due || 0);
+    setWizAllocations(did ? { [did]: doc.balance_due || 0 } : {});
+    setWizRefNo("");
+    setWizNotes("");
+    setWizAdvance(false);
+    setWizError("");
+    setIdempotencyKey(crypto.randomUUID());
+    setWizardStep(2);
+    setWizardOpen(true);
+  };
 
-  async function persist(
-    targetStatus: PaymentStatus,
-    options?: { email?: boolean; download?: boolean },
-    payloadOptions?: { id?: string; outstandingOverride?: number }
-  ) {
-    if (!form) return;
-    if (savingRef.current) return;
-    savingRef.current = true;
-    setSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("Saving payment...");
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-    const isEditMode = !!form?.id;
-    if (isEditMode && !canEditPayment) {
-      setErrorMessage("You do not have permission to edit payment receipts.");
-      setSuccessMessage("");
-      savingRef.current = false;
-      setSaving(false);
-      return;
+  const handleOpenWizardEmpty = () => {
+    setWizCustomer(null);
+    setWizAmount(0);
+    setWizAllocations({});
+    setWizRefNo("");
+    setWizNotes("");
+    setWizAdvance(false);
+    setWizError("");
+    setIdempotencyKey(crypto.randomUUID());
+    setWizardStep(1);
+    setWizardOpen(true);
+  };
+
+  // Apply Advance Mutation
+  const applyAdvanceMutation = useMutation({
+    mutationFn: async ({ customerId, invoiceId, amount }: { customerId: string; invoiceId: string; amount: number }) => {
+      return apiClient.applyAdvance({
+        customer_id: customerId,
+        invoice_id: invoiceId,
+        amount
+      });
+    },
+    onSuccess: (data: any) => {
+      setToastMessage(`Applied ${formatINR(data.applied_amount)} advance to invoice ${data.invoice_no}!`);
+      setTimeout(() => setToastMessage(""), 5000);
+      queryClient.invalidateQueries({ queryKey: ["receivables"] });
+      queryClient.invalidateQueries({ queryKey: ["receivables-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["receivables-customers"] });
+      queryClient.invalidateQueries({ queryKey: ["payments-receipts"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+      if (wizardOpen) setWizardOpen(false);
+    },
+    onError: (err: any) => {
+      const msg = err.message || "Failed to apply advance";
+      setToastMessage(msg);
+      setTimeout(() => setToastMessage(""), 5000);
     }
-    if (!isEditMode && !canCreatePayment) {
-      setErrorMessage("You do not have permission to create payment receipts.");
-      setSuccessMessage("");
-      savingRef.current = false;
-      setSaving(false);
-      return;
+  });
+
+  // Reversal Mutation
+  const reverseMutation = useMutation({
+    mutationFn: async ({ paymentId, reason }: { paymentId: string; reason: string }) => {
+      return apiClient.reversePayment(paymentId, reason);
+    },
+    onSuccess: () => {
+      setReverseModalPayment(null);
+      setReversalReason("");
+      setReversalError("");
+      queryClient.invalidateQueries({ queryKey: ["payments-receipts"] });
+      queryClient.invalidateQueries({ queryKey: ["receivables"] });
+      queryClient.invalidateQueries({ queryKey: ["receivables-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["receivables-customers"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+      setToastMessage("Payment reversed successfully");
+      setTimeout(() => setToastMessage(""), 4000);
+    },
+    onError: (err: any) => {
+      const msg = err.message || "Failed to reverse payment";
+      setReversalError(msg);
+      setToastMessage(msg);
+      setTimeout(() => setToastMessage(""), 5000);
     }
-    if (!validate(targetStatus)) {
-      savingRef.current = false;
-      setSaving(false);
-      return;
-    }
+  });
+
+  // Handle Export
+  const handleExport = async (type: "csv" | "excel" | "pdf") => {
+    setExporting(true);
     try {
-      const payload = buildPayload(targetStatus, payloadOptions);
-      if (!payload) return;
-      const saved = savePaymentIn(payload);
-      if (!saved) return;
-      const savedMessage = `${saved.receiptNo} payment saved successfully.`;
-      setSuccessMessage(savedMessage);
-      setErrorMessage("");
-      setSaveSuccessPopup(savedMessage);
-      if (options?.download) exportSinglePaymentInPdf(saved);
-      if (options?.email) window.alert(`Email queued for ${saved.receiptNo}.`);
-      setRefreshKey((prev) => prev + 1);
-      setActivePayment(saved);
-      setForm(formFromRecord(saved));
-      setFlowMode("edit");
-      setActiveStep(2);
-      setDirty(false);
-      void syncPaymentInRemote(saved).then((remoteResult) => {
-        if (remoteResult?.savedLocallyOnly) {
-          setErrorMessage(remoteResult?.remoteSyncMessage || "Supabase denied access. Saved in local storage only.");
-        }
-      }).catch((syncError) => {
-        console.warn("Payment In remote sync failed after local save", syncError);
-      });
-      return saved;
-    } catch (error: any) {
-      setErrorMessage(error?.message || "Unable to save payment.");
-      return null;
+      const allFiltered = await apiClient.getPayments({ ...filterQueryParams, page_size: 5000 });
+      const records = allFiltered?.items || [];
+      if (type === "csv" || type === "excel") {
+        exportPaymentInCsv(records, "IN");
+      } else if (type === "pdf") {
+        exportPaymentInSummaryPdf(records, "IN");
+      }
+    } catch (err: any) {
+      console.error("Export error:", err);
     } finally {
-      savingRef.current = false;
-      setSaving(false);
+      setExporting(false);
     }
-  }
+  };
 
-  function closeSaveSuccessPopup() {
-    setSaveSuccessPopup("");
-    setPanelMode("feed");
-    setFlowMode("create");
-    setActiveStep(0);
-    setForm(null);
-    setActivePayment(null);
-    setDirty(false);
-    setUseAdvanceWallet(false);
-    setCustomerLookupQuery("");
-    setCustomerSearchError("");
-  }
-
-  async function handleApply() {
-    if (!form) return;
-    if (!activePayment || activePayment.status !== "Confirmed") {
-      setErrorMessage("Save this payment as Received before applying it.");
-      setSuccessMessage("");
+  // Save Wizard Payment
+  const handleSavePayment = async () => {
+    if (!wizCustomer?.id) {
+      const msg = "Customer is required";
+      setWizError(msg);
+      setToastMessage(msg);
+      setTimeout(() => setToastMessage(""), 4000);
       return;
     }
-    if (form.allocationMode !== "linked" || !form.selectedDocumentId || totals.amountApplied <= 0) {
-      setFieldErrors((prev) => ({
-        ...prev,
-        selectedDocumentId: "Select an invoice or proforma and confirm the payment before applying it."
-      }));
-      setActiveStep(1);
-      setErrorMessage("Confirm the payment and select a valid invoice or proforma before applying it.");
-      setSuccessMessage("");
+    const numAmount = Number(wizAmount || 0);
+    if (numAmount <= 0) {
+      const msg = "Amount must be greater than 0";
+      setWizError(msg);
+      setToastMessage(msg);
+      setTimeout(() => setToastMessage(""), 4000);
+      return;
+    }
+    if (["UPI", "Bank Transfer", "Cheque", "Card"].includes(wizMode) && !wizRefNo.trim()) {
+      const msg = `Reference number is required for ${wizMode}.`;
+      setWizError(msg);
+      setToastMessage(msg);
+      setTimeout(() => setToastMessage(""), 4000);
       return;
     }
 
-    if (
-      useAdvanceWallet &&
-      selectedCustomerDocument &&
-      selectedCustomerDocument.documentType === "invoice" &&
-      advanceWalletUsable > 0
-    ) {
-      applySelectedAdvanceWalletEntriesToCustomerInvoice({
-        country,
-        customerId: form.customerId,
-        invoiceId: selectedCustomerDocument.id,
-        invoiceNo: selectedCustomerDocument.invoiceNo,
-        invoiceDate: selectedCustomerDocument.invoiceDate,
-        invoiceAmount: selectedCustomerDocument.invoiceAmount,
-        selectedPaymentIds: selectedAdvancePaymentIds,
-        maxApplyAmount: advanceWalletUsable,
-        actor: actorName
-      });
-      setRefreshKey((prev) => prev + 1);
-    }
-    if (selectedCustomerDocument && creditNoteUsable > 0) {
-      applySelectedCreditNotesToInvoice({
-        country,
-        customerId: form.customerId,
-        invoiceId: selectedCustomerDocument.id,
-        invoiceNo: selectedCustomerDocument.invoiceNo,
-        invoiceDate: selectedCustomerDocument.invoiceDate,
-        invoiceAmount: selectedCustomerDocument.invoiceAmount,
-        selectedNoteIds: selectedCreditNoteIds,
-        maxApplyAmount: creditNoteUsable,
-        actor: actorName
-      });
-      setRefreshKey((prev) => prev + 1);
-    }
-
-    await persist(
-      "Applied",
-      undefined,
-      activePayment
-        ? {
-            id: activePayment.id,
-            outstandingOverride: activePayment.totals.customerOutstandingBefore
-          }
-        : undefined
-    );
-  }
-
-  async function removeRecord(record: PaymentInRecord) {
-    if (!canDeletePayment) {
-      setErrorMessage("You do not have permission to delete payment receipts.");
-      setSuccessMessage("");
-      return;
-    }
-    if (record.status === "Applied") {
-      setErrorMessage("Applied payment receipts cannot be deleted.");
-      setSuccessMessage("");
-      return;
-    }
-    const confirmed = window.confirm(`Delete ${record.receiptNo}? This cannot be undone.`);
-    if (!confirmed) return;
+    setWizSaveLoading(true);
+    setWizError("");
     try {
-      removePaymentIn(record.id);
-      await deletePaymentInRemote(record.id);
-      if (activePayment?.id === record.id) {
-        setPanelMode("feed");
-        setFlowMode("create");
-        setActiveStep(0);
-        setForm(null);
-        setActivePayment(null);
-        setDirty(false);
-      }
-      setRefreshKey((prev) => prev + 1);
-      setSuccessMessage(`${record.receiptNo} deleted successfully.`);
-      setErrorMessage("");
-    } catch (error: any) {
-      setErrorMessage(error?.message || "Unable to delete payment receipt.");
-      setSuccessMessage("");
-    }
-  }
+      const allocList = Object.entries(wizAllocations)
+        .filter(([_, amt]) => Number(amt) > 0)
+        .map(([docId, amt]) => {
+          const doc = (Array.isArray(wizCustomerDocs) ? wizCustomerDocs : []).find((d: any) => (d.id || d.document_id) === docId)
+            || (Array.isArray(receivablesData) ? receivablesData : []).find((d: any) => (d.invoice_id || d.id) === docId);
+          return {
+            document_id: docId,
+            document_type: doc?.document_type || "invoice",
+            amount: Number(amt),
+            amount_applied: Number(amt)
+          };
+        });
 
-  const saveStatus: PaymentStatus =
-    activePayment?.status === "Applied" ||
-    (form?.allocationMode === "linked" && !!form?.selectedDocumentId && totals.amountApplied > 0)
-      ? "Applied"
-      : activePayment?.status === "Confirmed" || activeStep === 2
-        ? "Confirmed"
-        : "Draft";
-  const hasPreviousStep = activeStep > 0;
-  const hasNextStep = activeStep < STEPS.length - 1;
-  const canSaveCurrentFlow = !saving && (form?.id ? canEditPayment : canCreatePayment);
+      const payload = {
+        customer_id: wizCustomer.id,
+        payment_date: wizDate,
+        amount: numAmount,
+        amount_received: numAmount,
+        mode: wizMode,
+        payment_mode: wizMode,
+        reference_no: wizRefNo,
+        cheque_no: wizMode === "Cheque" ? wizChequeNo : undefined,
+        cheque_date: wizMode === "Cheque" ? wizChequeDate : undefined,
+        bank_name: wizMode === "Cheque" ? wizBankName : undefined,
+        deposit_account_id: wizDepositAccount || undefined,
+        tds_percent: wizTdsEnabled ? wizTdsRate : 0,
+        tds_amount: wizTdsEnabled ? wizTdsAmount : 0,
+        notes: wizNotes,
+        allocations: allocList,
+        is_advance: wizAdvance,
+        idempotency_key: idempotencyKey || crypto.randomUUID()
+      };
+
+      const saved = await apiClient.createPayment(payload);
+      setWizSaveLoading(false);
+      setWizardOpen(false);
+      setToastMessage("Payment receipt created successfully!");
+      setTimeout(() => setToastMessage(""), 4000);
+
+      // Auto download PDF receipt if supported
+      if (saved) {
+        try {
+          exportSinglePaymentInPdf(saved);
+        } catch (_) {}
+      }
+
+      // Refresh query caches
+      queryClient.invalidateQueries({ queryKey: ["receivables"] });
+      queryClient.invalidateQueries({ queryKey: ["receivables-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["receivables-customers"] });
+      queryClient.invalidateQueries({ queryKey: ["payments-receipts"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+    } catch (err: any) {
+      setWizSaveLoading(false);
+      const errMsg = err.message || "Failed to record payment.";
+      setWizError(errMsg);
+      setToastMessage(errMsg);
+      setTimeout(() => setToastMessage(""), 5000);
+    }
+  };
+
+  // Active Filter Chips
+  const activeChips = useMemo(() => {
+    const chips: { label: string; key: string }[] = [];
+    if (search) chips.push({ label: `Search: "${search}"`, key: "search" });
+    if (customerId !== "all") {
+      const cust = customers.find((c: any) => c.id === customerId);
+      chips.push({ label: `Customer: ${cust?.name || customerId}`, key: "customerId" });
+    }
+    if (paymentMode !== "all") chips.push({ label: `Mode: ${paymentMode}`, key: "paymentMode" });
+    if (statusParam !== "all") chips.push({ label: `Status: ${statusParam}`, key: "status" });
+    if (docType !== "all") chips.push({ label: `Type: ${docType}`, key: "docType" });
+    if (financialYear !== "current") chips.push({ label: `FY: ${financialYear}`, key: "fy" });
+    return chips;
+  }, [search, customerId, paymentMode, statusParam, docType, financialYear, customers]);
+
+  // Compute available advance for chosen customer in wizard
+  const wizCustomerAdvanceAvailable = useMemo(() => {
+    return Number(wizCustomerSummary?.advance_balance ?? wizCustomerSummary?.unapplied_balance ?? 0);
+  }, [wizCustomerSummary]);
 
   return (
-    <div className="mx-auto min-h-full max-w-[1360px] space-y-4 pb-36">
-      {saving ? (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 backdrop-blur-sm">
-          <div className="rounded-3xl border border-slate-200 bg-white px-6 py-5 text-center shadow-2xl">
-            <div className="mx-auto mb-3 h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-slate-900" />
-            <p className="text-sm font-semibold text-slate-900">Saving payment...</p>
-            <p className="mt-1 text-xs text-slate-500">Please wait. Do not click again.</p>
-          </div>
+    <div className="min-h-screen bg-slate-50 text-slate-800 p-4 sm:p-6 lg:p-8 space-y-6">
+      
+      {/* TOAST NOTIFICATION */}
+      {toastMessage && (
+        <div className="fixed top-5 right-5 z-50 bg-emerald-700 text-white px-4 py-3 rounded-lg shadow-xl flex items-center space-x-2 animate-bounce">
+          <CheckCircle2 className="w-5 h-5 shrink-0" />
+          <span className="text-sm font-medium">{toastMessage}</span>
         </div>
-      ) : null}
+      )}
 
-      {saveSuccessPopup ? (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-3xl border border-emerald-200 bg-white p-6 text-center shadow-2xl">
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-xl font-bold text-emerald-700">
-              ✓
-            </div>
-            <p className="text-base font-semibold text-slate-900">Payment saved successfully</p>
-            <p className="mt-2 text-sm text-slate-600">{saveSuccessPopup}</p>
-            <button
-              type="button"
-              onClick={closeSaveSuccessPopup}
-              className="mt-5 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-            >
-              OK
-            </button>
+      {/* 1. PAGE HEADER */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-4">
+        <div>
+          <nav className="text-xs font-medium text-slate-500 mb-1 flex items-center space-x-2">
+            <span>Payments</span>
+            <span>/</span>
+            <span className="text-slate-900 font-semibold">Payment In</span>
+          </nav>
+          <div className="flex items-center space-x-3">
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Payment In</h1>
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+              ₹ INR
+            </span>
           </div>
+          <p className="text-sm text-slate-500 mt-0.5">Receive money from customers and track open receivables across invoices</p>
         </div>
-      ) : null}
-
-      <div className="z-30 rounded-2xl border border-slate-200/80 bg-gradient-to-r from-white/95 to-slate-50/95 px-3 py-2 shadow-sm backdrop-blur sm:px-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-base font-semibold text-slate-900">Payment In</p>
-            <p className="text-xs text-slate-500">Receive money from customers</p>
-          </div>
-          <div className="mx-auto w-full max-w-xs rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm font-semibold text-slate-700 sm:mx-0 sm:flex-1 sm:max-w-sm">
-            {COUNTRY_CONFIG[country].name} | {COUNTRY_CONFIG[country].currency}
-          </div>
-          <button onClick={startNewPayment} disabled={!allowed || !canCreatePayment} className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
-            <Plus className="h-4 w-4" />
-            New Payment
+        <div>
+          <button
+            onClick={handleOpenWizardEmpty}
+            className="inline-flex items-center px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            + New Payment
           </button>
         </div>
       </div>
 
-      {!allowed ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">You do not have access to manage {COUNTRY_CONFIG[country].name} data.</div>
-      ) : (
-        <div className="space-y-4">
-          {panelMode === "feed" ? (
-            <>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-                <FlowCard title="Total Payments" subtitle="Count of receipts">{loading ? <PaymentInSkeleton /> : <p className="text-2xl font-bold text-slate-900">{summary?.count || 0}</p>}</FlowCard>
-                <FlowCard title="Received Amount" subtitle="Actual incoming payment"><p className="text-2xl font-bold text-slate-900">{formatMoney(summary?.totalReceived || 0, country)}</p></FlowCard>
-                <FlowCard title="Total Settled" subtitle="Received amount plus TDS"><p className="text-2xl font-bold text-slate-900">{formatMoney((summary?.totalReceived || 0) + (summary?.totalTds || 0), country)}</p></FlowCard>
-                <FlowCard title="Advance Balance" subtitle="Amount kept on account"><p className="text-2xl font-bold text-slate-900">{formatMoney(summary?.totalUnallocated || 0, country)}</p></FlowCard>
+      {/* 2. KPI CARDS (4 RESPONSIVE COLS WITH ERROR HANDLING & RETRY) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Total Invoiced */}
+        <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
+          <div className="flex items-center justify-between text-slate-500 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wider">Total Invoiced</span>
+            <FileText className="w-5 h-5 text-emerald-600" />
+          </div>
+          {isSummaryLoading ? (
+            <div className="h-8 w-28 bg-slate-200 animate-pulse rounded my-1" />
+          ) : isSummaryError ? (
+            <div className="py-1">
+              <span className="text-xs text-red-500">Failed to load</span>
+              <button onClick={() => refetchSummary()} className="ml-2 text-xs font-bold text-emerald-700 underline">Retry</button>
+            </div>
+          ) : (
+            <div className="text-2xl font-bold text-slate-900">
+              {formatINR(summaryData?.total_invoiced)}
+            </div>
+          )}
+          <p className="text-xs text-slate-400 mt-2">Total billings in period</p>
+        </div>
+
+        {/* Card 2: Amount Received */}
+        <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
+          <div className="flex items-center justify-between text-slate-500 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wider">Amount Received</span>
+            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+          </div>
+          {isSummaryLoading ? (
+            <div className="h-8 w-32 bg-slate-200 animate-pulse rounded my-1" />
+          ) : isSummaryError ? (
+            <div className="py-1">
+              <span className="text-xs text-red-500">Failed to load</span>
+              <button onClick={() => refetchSummary()} className="ml-2 text-xs font-bold text-emerald-700 underline">Retry</button>
+            </div>
+          ) : (
+            <div className="text-2xl font-bold text-emerald-700">
+              {formatINR(summaryData?.amount_received ?? summaryData?.total_received)}
+            </div>
+          )}
+          <p className="text-xs text-slate-400 mt-2">Collected from payments</p>
+        </div>
+
+        {/* Card 3: Pending Receivable */}
+        <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
+          <div className="flex items-center justify-between text-slate-500 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wider">Pending Receivable</span>
+            <Clock className="w-5 h-5 text-amber-500" />
+          </div>
+          {isSummaryLoading ? (
+            <div className="h-8 w-32 bg-slate-200 animate-pulse rounded my-1" />
+          ) : isSummaryError ? (
+            <div className="py-1">
+              <span className="text-xs text-red-500">Failed to load</span>
+              <button onClick={() => refetchSummary()} className="ml-2 text-xs font-bold text-emerald-700 underline">Retry</button>
+            </div>
+          ) : (
+            <div className="text-2xl font-bold text-amber-700">
+              {formatINR(summaryData?.pending_receivable)}
+            </div>
+          )}
+          <p className="text-xs text-slate-400 mt-2">
+            {summaryData?.overdue_count ? (
+              <span className="text-red-600 font-semibold">{summaryData.overdue_count} overdue ({formatINR(summaryData.overdue_amount)})</span>
+            ) : (
+              "All invoices on schedule"
+            )}
+          </p>
+        </div>
+
+        {/* Card 4: Advance / Unapplied Balance */}
+        <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
+          <div className="flex items-center justify-between text-slate-500 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wider">Advance / Unapplied</span>
+            <AlertCircle className="w-5 h-5 text-purple-500" />
+          </div>
+          {isSummaryLoading ? (
+            <div className="h-8 w-32 bg-slate-200 animate-pulse rounded my-1" />
+          ) : isSummaryError ? (
+            <div className="py-1">
+              <span className="text-xs text-red-500">Failed to load</span>
+              <button onClick={() => refetchSummary()} className="ml-2 text-xs font-bold text-emerald-700 underline">Retry</button>
+            </div>
+          ) : (
+            <div className="text-2xl font-bold text-purple-700">
+              {formatINR(summaryData?.unapplied_advance ?? summaryData?.unapplied_balance)}
+            </div>
+          )}
+          <p className="text-xs text-slate-400 mt-2">Available for invoice allocation</p>
+        </div>
+      </div>
+
+      {/* 3. VIEW MODE SWITCHER TABS */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs">
+        <div className="flex items-center space-x-1.5">
+          <button
+            onClick={() => setViewMode("invoices")}
+            className={`flex items-center px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+              viewMode === "invoices"
+                ? "bg-emerald-600 text-white shadow-xs"
+                : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5 mr-2" />
+            Invoice-wise Receivables
+          </button>
+          <button
+            onClick={() => setViewMode("customers")}
+            className={`flex items-center px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+              viewMode === "customers"
+                ? "bg-emerald-600 text-white shadow-xs"
+                : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <Users className="w-3.5 h-3.5 mr-2" />
+            Customer-wise
+          </button>
+          <button
+            onClick={() => setViewMode("receipts")}
+            className={`flex items-center px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+              viewMode === "receipts"
+                ? "bg-emerald-600 text-white shadow-xs"
+                : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 mr-2" />
+            Payment Receipts History
+          </button>
+        </div>
+
+        {/* Refresh button */}
+        <button
+          onClick={() => {
+            refetchSummary();
+            if (viewMode === "invoices") refetchReceivables();
+            else if (viewMode === "customers") refetchCustomerReceivables();
+            else refetchPayments();
+          }}
+          className="inline-flex items-center px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+          title="Refresh Data"
+        >
+          <RefreshCw className="w-3.5 h-3.5 mr-1.5 text-slate-500" />
+          Refresh
+        </button>
+      </div>
+
+      {/* 4. FILTER BAR */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-5 space-y-4">
+        {/* Row 1: Search */}
+        <div className="relative">
+          <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search invoice no, receipt no, customer name..."
+            className="w-full pl-10 pr-10 py-2.5 border border-slate-300 rounded-lg text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-colors"
+          />
+          {searchInput && (
+            <button
+              onClick={() => { setSearchInput(""); updateFilter("search", ""); }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Row 2: Controls Grid with Dedicated Wide Date Inputs */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          {/* FY */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Financial Year</label>
+            <select
+              value={financialYear}
+              onChange={(e) => handleFyChange(e.target.value)}
+              className="w-full border border-slate-300 rounded-lg py-2 px-2.5 text-xs font-medium text-slate-700 bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            >
+              <option value="current">Current FY (2026-27)</option>
+              <option value="previous">Previous FY (2025-26)</option>
+              <option value="all">All Financial Years</option>
+            </select>
+          </div>
+
+          {/* Customer */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Customer</label>
+            <select
+              value={customerId}
+              onChange={(e) => updateFilter("customerId", e.target.value)}
+              className="w-full border border-slate-300 rounded-lg py-2 px-2.5 text-xs font-medium text-slate-700 bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none truncate"
+            >
+              <option value="all">All Customers</option>
+              {customers.map((c: any) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Mode (active in receipts mode) */}
+          {viewMode === "receipts" && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Payment Mode</label>
+              <select
+                value={paymentMode}
+                onChange={(e) => updateFilter("mode", e.target.value)}
+                className="w-full border border-slate-300 rounded-lg py-2 px-2.5 text-xs font-medium text-slate-700 bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              >
+                <option value="all">All Modes</option>
+                <option value="Cash">Cash</option>
+                <option value="UPI">UPI</option>
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Cheque">Cheque</option>
+                <option value="Card">Card</option>
+              </select>
+            </div>
+          )}
+
+          {/* WIDENED DATE INPUTS (Dedicated Columns to Prevent Truncation) */}
+          <div className="min-w-[140px]">
+            <label className="block text-xs font-semibold text-slate-600 mb-1">From date</label>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => updateFilter("from", e.target.value)}
+              className="w-full border border-slate-300 rounded-lg py-2 px-3 text-xs font-medium text-slate-700 bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="min-w-[140px]">
+            <label className="block text-xs font-semibold text-slate-600 mb-1">To date</label>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => updateFilter("to", e.target.value)}
+              className="w-full border border-slate-300 rounded-lg py-2 px-3 text-xs font-medium text-slate-700 bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Date error validation message */}
+        {dateError && (
+          <p className="text-xs text-red-600 font-medium">{dateError}</p>
+        )}
+
+        {/* Bottom Filter Actions & Active Chips */}
+        <div className="flex flex-wrap items-center justify-between pt-2 border-t border-slate-100 gap-3">
+          {/* Active Chips */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {activeChips.length > 0 && (
+              <span className="text-xs text-slate-400 font-medium mr-1">Active:</span>
+            )}
+            {activeChips.map((chip) => (
+              <span
+                key={chip.key}
+                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200"
+              >
+                {chip.label}
+                <button
+                  onClick={() => {
+                    if (chip.key === "search") setSearchInput("");
+                    updateFilter(chip.key, "");
+                  }}
+                  className="ml-1 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+
+          {/* Right Action Buttons */}
+          <div className="flex items-center space-x-3 ml-auto">
+            <button
+              onClick={resetFilters}
+              className="text-xs font-semibold text-slate-500 hover:text-emerald-700 underline underline-offset-2 flex items-center"
+            >
+              <RotateCcw className="w-3.5 h-3.5 mr-1" />
+              Reset filters
+            </button>
+
+            {/* Export Dropdown */}
+            <div className="relative group">
+              <button
+                disabled={exporting}
+                className="inline-flex items-center px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5 mr-1.5 text-slate-500" />
+                {exporting ? "Exporting..." : "Export"}
+                <ChevronDown className="w-3.5 h-3.5 ml-1 text-slate-400" />
+              </button>
+              <div className="absolute right-0 mt-1 w-36 bg-white border border-slate-200 rounded-lg shadow-lg hidden group-hover:block z-20 py-1">
+                <button
+                  onClick={() => handleExport("csv")}
+                  className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100 flex items-center"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 mr-2 text-emerald-600" />
+                  Export CSV
+                </button>
+                <button
+                  onClick={() => handleExport("excel")}
+                  className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100 flex items-center"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 mr-2 text-green-600" />
+                  Export Excel
+                </button>
+                <button
+                  onClick={() => handleExport("pdf")}
+                  className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100 flex items-center"
+                >
+                  <FileText className="w-3.5 h-3.5 mr-2 text-red-600" />
+                  Summary PDF
+                </button>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
-              <FlowCard>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6 2xl:grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr]">
-                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search customer, receipt, reference" className="search-field-input h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
-                  <select value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Customers</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select>
-                  <select value={modeFilter} onChange={(event) => setModeFilter(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Modes</option>{COUNTRY_CONFIG[country].paymentModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select>
-                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PaymentDisplayStatus | "")} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200"><option value="">All Status</option><option value="Received">Received</option><option value="Partial">Partial</option></select>
-                  <DateInput value={fromDate} onChange={(nextValue) => setFromDate(nextValue)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
-                  <DateInput value={toDate} onChange={(nextValue) => setToDate(nextValue)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-200" />
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <button onClick={() => exportPaymentInSummaryPdf(filteredPayments, country)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"><FileDown className="h-3.5 w-3.5" />Summary PDF</button>
-                  <button onClick={() => exportPaymentInCsv(filteredPayments, country)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"><FileSpreadsheet className="h-3.5 w-3.5" />CSV</button>
-                </div>
-              </FlowCard>
+      {/* 5. PRIMARY CONTENT SECTION (BASED ON ACTIVE VIEW) */}
+      
+      {/* 5A. VIEW MODE = "invoices" (INVOICE-WISE RECEIVABLES) */}
+      {viewMode === "invoices" && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+            <div>
+              <h2 className="text-base font-bold text-slate-900">Invoice Receivables</h2>
+              <p className="text-xs text-slate-500">Track balance due, overdue status, and advance applied per invoice</p>
+            </div>
 
-              {loading ? (
-                <PaymentInSkeleton />
-              ) : (
-                <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-                  <table className="min-w-[1180px] w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-slate-600">
-                      <tr>
-                        <th className="px-3 py-3 font-semibold">Receipt No</th>
-                        <th className="px-3 py-3 font-semibold">Invoice No</th>
-                        <th className="px-3 py-3 font-semibold">Date</th>
-                        <th className="px-3 py-3 font-semibold">Customer</th>
-                        <th className="px-3 py-3 font-semibold">Mode</th>
-                        <th className="px-3 py-3 font-semibold text-right">Received Amount</th>
-                        <th className="px-3 py-3 font-semibold text-right">TDS Amount</th>
-                        <th className="px-3 py-3 font-semibold text-right">Applied Amount</th>
-                        <th className="px-3 py-3 font-semibold text-right">Unapplied Balance</th>
-                        <th className="px-3 py-3 font-semibold">Status</th>
-                        <th className="px-3 py-3 font-semibold">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {!filteredPayments.length ? (
-                        <tr className="border-t border-slate-100">
-                          <td className="px-3 py-6 text-center text-slate-500" colSpan={11}>
-                            No payments found. Create a new payment to get started.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredPayments.map((record) => (
-                          <tr key={record.id} className="border-t border-slate-100 hover:bg-slate-50/60">
-                            <td className="px-3 py-3 font-semibold text-slate-900">{record.receiptNo}</td>
-                            <td className="px-3 py-3 text-slate-700">{paymentLinkedDocumentSummary(record)}</td>
-                            <td className="px-3 py-3 text-slate-600">{record.paymentDate || "-"}</td>
-                            <td className="px-3 py-3 text-slate-700">{record.customerName || "-"}</td>
-                            <td className="px-3 py-3 text-slate-600">{formatPaymentModeLabel(record.paymentMode)}</td>
-                            <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                              {formatMoney(record?.totals?.amountReceived || 0, country)}
-                            </td>
-                            <td className="px-3 py-3 text-right font-semibold text-sky-700">
-                              {formatMoney(record?.totals?.tdsAmount || 0, country)}
-                            </td>
-                            <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                              {formatMoney(record?.totals?.amountApplied || 0, country)}
-                            </td>
-                            <td className="px-3 py-3 text-right text-slate-700">
-                              {formatMoney(paymentRemainingBalance(record), country)}
-                            </td>
-                            <td className="px-3 py-3">
-                              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${paymentDisplayStatusClass(paymentDisplayStatus(record))}`}>
-                                {paymentDisplayStatus(record)}
-                              </span>
-                            </td>
-                            <td className="px-3 py-3">
-                              <div className="flex flex-nowrap items-center gap-2 whitespace-nowrap">
-                                <button
-                                  type="button"
-                                  onClick={() => openFlow(record, "view")}
-                                  title="View"
-                                  aria-label="View"
-                                  className="rounded-xl border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-50"
-                                >
-                                  <Eye className="h-4 w-4" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => openFlow(record, "edit")}
-                                  disabled={!canEditPayment || (record.status === "Applied" && !canReopenWithinWindow(record))}
-                                  title="Edit"
-                                  aria-label="Edit"
-                                  className="rounded-xl border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  <FilePenLine className="h-4 w-4" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => exportSinglePaymentInPdf(record)}
-                                  title="Download PDF"
-                                  aria-label="Download PDF"
-                                  className="rounded-xl border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-50"
-                                >
-                                  <FileDown className="h-4 w-4" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => removeRecord(record)}
-                                  disabled={!canDeletePayment || record.status === "Applied"}
-                                  title="Delete"
-                                  aria-label="Delete"
-                                  className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+            {/* STATUS TABS WITH DYNAMIC COUNTS */}
+            <div className="flex items-center space-x-1.5 overflow-x-auto pb-1">
+              {[
+                { id: "all", label: "All", count: summaryData?.tabs_count?.all ?? 0 },
+                { id: "overdue", label: "Overdue", count: summaryData?.tabs_count?.overdue ?? 0, badgeColor: "bg-red-100 text-red-800" },
+                { id: "partial", label: "Partially Paid", count: summaryData?.tabs_count?.partial ?? 0, badgeColor: "bg-amber-100 text-amber-800" },
+                { id: "unpaid", label: "Unpaid", count: summaryData?.tabs_count?.unpaid ?? 0, badgeColor: "bg-blue-100 text-blue-800" },
+                { id: "paid", label: "Paid", count: summaryData?.tabs_count?.paid ?? 0, badgeColor: "bg-emerald-100 text-emerald-800" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setStatusTab(tab.id as any)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-colors whitespace-nowrap ${
+                    statusTab === tab.id
+                      ? "bg-slate-900 text-white shadow-xs"
+                      : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                    statusTab === tab.id ? "bg-slate-700 text-white" : tab.badgeColor || "bg-slate-100 text-slate-700"
+                  }`}>
+                    {tab.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
 
-              <FlowCard title="Customer TDS History" subtitle="Invoice-wise TDS deducted from Payment In receipts">
-                <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-                  <table className="min-w-[760px] w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-slate-600">
-                      <tr>
-                        <th className="px-3 py-3 font-semibold">Date</th>
-                        <th className="px-3 py-3 font-semibold">Invoice No</th>
-                        <th className="px-3 py-3 font-semibold">Customer</th>
-                        <th className="px-3 py-3 font-semibold text-right">TDS %</th>
-                        <th className="px-3 py-3 font-semibold text-right">TDS Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {!paymentTdsHistory.length ? (
-                        <tr className="border-t border-slate-100">
-                          <td className="px-3 py-6 text-center text-slate-500" colSpan={5}>
-                            No customer-side TDS history found for the current filters.
-                          </td>
-                        </tr>
-                      ) : (
-                        paymentTdsHistory.map((entry) => (
-                          <tr key={entry.id} className="border-t border-slate-100 hover:bg-slate-50/60">
-                            <td className="px-3 py-3 text-slate-700">{entry.date || "-"}</td>
-                            <td className="px-3 py-3 text-slate-700">{entry.invoiceNo || "-"}</td>
-                            <td className="px-3 py-3 text-slate-700">{entry.customerName || "-"}</td>
-                            <td className="px-3 py-3 text-right font-semibold text-slate-900">{formatTdsPercent(entry.tdsRate)}</td>
-                            <td className="px-3 py-3 text-right font-semibold text-sky-700">{formatMoney(entry.tdsAmount, country)}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </FlowCard>
-            </>
-          ) : null}
+          {/* TABLE */}
+          {isReceivablesLoading ? (
+            <div className="py-6 space-y-3">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <div key={n} className="h-10 bg-slate-100 animate-pulse rounded" />
+              ))}
+            </div>
+          ) : isReceivablesError ? (
+            <div className="py-12 text-center space-y-3">
+              <AlertCircle className="w-10 h-10 text-red-500 mx-auto" />
+              <p className="text-sm text-slate-700 font-medium">Failed to load receivables.</p>
+              <button
+                onClick={() => refetchReceivables()}
+                className="px-4 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700"
+              >
+                Retry
+              </button>
+            </div>
+          ) : receivablesData.length === 0 ? (
+            <div className="py-12 text-center text-xs text-slate-400">
+              No invoice receivables matching active filters.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-700 border-collapse">
+                <thead className="bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="py-3 px-3">Date</th>
+                    <th className="py-3 px-3">Invoice No</th>
+                    <th className="py-3 px-3">Customer</th>
+                    <th className="py-3 px-3">Due Date / Status</th>
+                    <th className="py-3 px-3 text-right">Total (₹)</th>
+                    <th className="py-3 px-3 text-right">Paid (₹)</th>
+                    <th className="py-3 px-3 text-right">Advance Applied (₹)</th>
+                    <th className="py-3 px-3 text-right">Balance Due (₹)</th>
+                    <th className="py-3 px-3">Badges</th>
+                    <th className="py-3 px-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {receivablesData.map((doc: any) => {
+                    const hasAdvAvail = (doc.available_customer_advance || 0) > 0.01;
+                    const canApplyAdv = hasAdvAvail && doc.balance_due > 0.01;
 
-          {panelMode === "flow" && form ? (
-            <>
-              <div className="flex items-center justify-between gap-2">
-                <button onClick={backToFeed} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"><ArrowLeft className="h-4 w-4" />Back</button>
-                <button onClick={() => setShowAudit(true)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700">Audit Timeline</button>
-              </div>
-
-              <FlowStepTabs steps={STEPS} activeStep={activeStep} onChange={setActiveStep} />
-
-              {activeStep === 0 ? (
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                  <FlowCard title="Country Context" subtitle="Auto updates currency, label and legal wording">
-                    <div className="space-y-3">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">{COUNTRY_CONFIG[country].name}</div>
-                      <p className="text-sm text-slate-700">Currency: <span className="font-semibold">{COUNTRY_CONFIG[country].currency}</span></p>
-                      <p className="text-sm text-slate-700">Receipt Label: <span className="font-semibold">{COUNTRY_CONFIG[country].receiptLabel}</span></p>
-                      <p className="text-xs text-slate-500">Payment In is locked to {COUNTRY_CONFIG[country].name}.</p>
-                      <p className="text-xs text-slate-500">{COUNTRY_CONFIG[country].legalWording}</p>
-                    </div>
-                  </FlowCard>
-
-                  <FlowCard title="Customer" subtitle="Search and pick a customer to begin">
-                    <div className="space-y-3">
-                      <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs font-semibold text-slate-600">
-                          <FieldLabelText required className="text-xs font-semibold text-slate-600">
-                            Customer Search
-                          </FieldLabelText>
-                        </p>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <input
-                            value={customerLookupQuery}
-                            onChange={(event) => handleCustomerLookupChange(event.target.value)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                handleCustomerSearch();
-                              }
-                            }}
-                            placeholder="Search customer/supplier by name, phone, email, or address"
-                            disabled={readOnly}
-                            className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-4 focus:ring-slate-200 disabled:bg-slate-100 sm:min-w-[220px]"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleCustomerSearch}
-                            disabled={readOnly}
-                            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <Search className="h-3.5 w-3.5" />
-                            Search
-                          </button>
-                        </div>
-                        {customerSearchError ? (
-                          <p className="text-xs font-medium text-rose-600">{customerSearchError}</p>
-                        ) : null}
-                        {customerLookupQuery.trim() ? (
-                          customerLookupResults.length ? (
-                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                              {customerLookupResults.map((customer) => (
-                                <button
-                                  key={customer.id}
-                                  type="button"
-                                  onClick={() => applyCustomerSelection(customer)}
-                                  disabled={readOnly}
-                                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  <p className="text-sm font-semibold text-slate-900">{customer.name || "-"}</p>
-                                  <p className="text-xs text-slate-600">{customer.phone || "-"}</p>
-                                  <p className="text-xs text-slate-500">{customerAddressSummary(customer) || "-"}</p>
-                                </button>
-                              ))}
-                            </div>
+                    return (
+                      <tr key={doc.invoice_id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-3 whitespace-nowrap">{formatDate(doc.invoice_date)}</td>
+                        <td className="py-3 px-3 font-bold text-slate-900 whitespace-nowrap">{doc.invoice_no}</td>
+                        <td className="py-3 px-3 font-semibold text-slate-800">{doc.customer_name}</td>
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          {doc.status === "paid" ? (
+                            <span className="text-emerald-700 font-bold flex items-center">
+                              <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                              Paid
+                            </span>
+                          ) : doc.days_overdue && doc.days_overdue > 0 ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-red-100 text-red-800 border border-red-200">
+                              <AlertCircle className="w-3 h-3 mr-1 shrink-0" />
+                              {doc.days_overdue} days overdue
+                            </span>
+                          ) : doc.days_to_due !== null && doc.days_to_due !== undefined ? (
+                            <span className="text-slate-600 font-medium flex items-center">
+                              <Clock className="w-3 h-3 mr-1 text-slate-400" />
+                              Due in {doc.days_to_due}d ({formatDate(doc.due_date)})
+                            </span>
+                          ) : doc.due_date ? (
+                            <span className="text-slate-600">{formatDate(doc.due_date)}</span>
                           ) : (
-                            <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
-                              No customer found. Try another search.
-                            </p>
-                          )
-                        ) : null}
-                      </div>
-                      {selectedCustomer ? (
-                        <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs">
-                          <p className="font-semibold text-slate-900">{selectedCustomer.name || "-"}</p>
-                          <p className="mt-1 text-slate-500">{selectedCustomer.phone || "-"}</p>
-                          <p className="mt-1 text-slate-500">{selectedCustomer.email || "-"}</p>
-                          <p className="mt-1 text-slate-500">{customerAddressSummary(selectedCustomer) || "-"}</p>
-                        </div>
-                      ) : null}
-                      {form.customerId ? (
-                        <button
-                          type="button"
-                          onClick={resetCustomerSelection}
-                          disabled={readOnly}
-                          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                          Clear Selection
-                        </button>
-                      ) : null}
-                      {fieldErrors.customerId ? <p className="text-xs text-rose-600">{fieldErrors.customerId}</p> : null}
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                        <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Outstanding</p><p className="font-semibold text-slate-900">{formatMoney(customerOutstandingBefore, country)}</p></div>
-                        <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Last Payment</p><p className="font-semibold text-slate-900">{customerInsights.lastPaymentDate || "-"}</p></div>
-                        <div className="rounded-xl bg-slate-50 p-3 text-xs"><p className="text-slate-500">Available Advance Balance</p><p className="font-semibold text-amber-700">{formatMoney(customerInsights.advanceWallet, country)}</p></div>
-                      </div>
-                      {customerAdvanceHistory.length ? (
-                        <div className="rounded-2xl border border-slate-200 bg-white">
-                          <div className="border-b border-slate-100 px-3 py-2">
-                            <p className="text-xs font-semibold text-slate-700">Advance Wallet History</p>
-                          </div>
-                          <div className="max-h-52 overflow-auto">
-                            <table className="w-full min-w-[720px] text-left text-xs">
-                              <thead className="bg-slate-50 text-slate-500">
-                                <tr>
-                                  <th className="px-3 py-2 font-semibold">Date</th>
-                                  <th className="px-3 py-2 font-semibold">Receipt</th>
-                                  <th className="px-3 py-2 font-semibold">Invoice</th>
-                                  <th className="px-3 py-2 text-right font-semibold">Advance Added</th>
-                                  <th className="px-3 py-2 text-right font-semibold">Advance Used</th>
-                                  <th className="px-3 py-2 text-right font-semibold">Remaining Balance</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {customerAdvanceHistory.slice(0, 12).map((entry) => (
-                                  <tr key={entry.id} className="border-t border-slate-100">
-                                    <td className="px-3 py-2 text-slate-700">{entry.date || "-"}</td>
-                                    <td className="px-3 py-2 text-slate-700">{entry.receiptNo || "-"}</td>
-                                    <td className="px-3 py-2 text-slate-700">{entry.invoiceNo || "-"}</td>
-                                    <td className="px-3 py-2 text-right font-semibold text-emerald-700">
-                                      {entry.amountAdded > 0 ? formatMoney(entry.amountAdded, country) : "-"}
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-semibold text-sky-700">
-                                      {entry.amountUsed > 0 ? formatMoney(entry.amountUsed, country) : "-"}
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-semibold text-slate-900">
-                                      {formatMoney(entry.remainingBalance, country)}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      ) : null}
-                      {customerTdsHistory.length ? (
-                        <div className="rounded-2xl border border-slate-200 bg-white">
-                          <div className="border-b border-slate-100 px-3 py-2">
-                            <p className="text-xs font-semibold text-slate-700">Customer TDS History</p>
-                          </div>
-                          <div className="max-h-52 overflow-auto">
-                            <table className="w-full min-w-[640px] text-left text-xs">
-                              <thead className="bg-slate-50 text-slate-500">
-                                <tr>
-                                  <th className="px-3 py-2 font-semibold">Date</th>
-                                  <th className="px-3 py-2 font-semibold">Invoice</th>
-                                  <th className="px-3 py-2 font-semibold text-right">TDS %</th>
-                                  <th className="px-3 py-2 text-right font-semibold">TDS Amount</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {customerTdsHistory.slice(0, 12).map((entry) => (
-                                  <tr key={entry.id} className="border-t border-slate-100">
-                                    <td className="px-3 py-2 text-slate-700">{entry.date || "-"}</td>
-                                    <td className="px-3 py-2 text-slate-700">{entry.invoiceNo || "-"}</td>
-                                    <td className="px-3 py-2 text-right font-semibold text-slate-900">{formatTdsPercent(entry.tdsRate)}</td>
-                                    <td className="px-3 py-2 text-right font-semibold text-sky-700">{formatMoney(entry.tdsAmount, country)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  </FlowCard>
-                </div>
-              ) : null}
-
-              {activeStep === 1 ? (
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                  <FlowCard title="Payment Details" subtitle="Core details for this receipt">
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-1 gap-3">
-                        <label className="block">
-                          <FieldLabelText required className="text-xs font-semibold text-slate-600">
-                            Received Amount
-                          </FieldLabelText>
-                          <input
-                            type="text"
-                            value={numberInputValue(form.amountReceived)}
-                            placeholder="0"
-                            disabled={readOnly}
-                            onChange={(event) => handleAmountReceivedChange(normalizeFormattedNumberInput(event.target.value))}
-                            inputMode="decimal"
-                            className="numeric-input-uniform mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-2xl font-bold text-slate-900 outline-none focus:ring-4 focus:ring-slate-200"
-                          />
-                          {fieldErrors.amountReceived ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.amountReceived}</p> : null}
-                          {maxReceivableAmount !== null ? (
-                            <p className="mt-1 text-xs text-slate-500">
-                              Received amount is capped to the selected document pending balance of {formatMoney(maxReceivableAmount, country)}.
-                            </p>
-                          ) : null}
-                        </label>
-                      </div>
-                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                          <p className="text-xs font-semibold text-slate-600">Amount Entry</p>
-                          <div className="mt-3 grid grid-cols-1 gap-3">
-                            <label className="block">
-                              <span className="text-xs font-semibold text-slate-600">
-                                {form.allocationMode === "linked" ? "Pending Amount" : "Invoice Amount"}
+                            <span className="text-slate-400 italic">No due date</span>
+                          )}
+                        </td>
+                        {/* FIX: Always render grand_total ?? total_amount to avoid ₹0.00 bug */}
+                        <td className="py-3 px-3 text-right font-medium text-slate-900 whitespace-nowrap">
+                          {formatINR(doc.grand_total ?? doc.total_amount)}
+                        </td>
+                        <td className="py-3 px-3 text-right font-medium text-slate-600 whitespace-nowrap">
+                          {formatINR(doc.paid_amount)}
+                        </td>
+                        <td className="py-3 px-3 text-right font-medium text-blue-700 whitespace-nowrap">
+                          {formatINR(doc.advance_applied)}
+                        </td>
+                        <td className="py-3 px-3 text-right font-bold text-emerald-700 whitespace-nowrap">
+                          {formatINR(doc.balance_due)}
+                        </td>
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          <div className="flex items-center space-x-1">
+                            {doc.has_advance_applied && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                                Adv Applied
                               </span>
-                              <input
-                                type="text"
-                                value={numberInputValue(displayedInvoiceAmount)}
-                                disabled={readOnly || form.allocationMode === "linked"}
-                                onChange={(event) => handleInvoiceAmountChange(normalizeFormattedNumberInput(event.target.value))}
-                                inputMode="decimal"
-                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-slate-200"
-                              />
-                            </label>
-                            <label className="block">
-                              <span className="text-xs font-semibold text-slate-600">Received Amount</span>
-                              <input
-                                type="text"
-                                value={numberInputValue(form.amountReceived)}
-                                disabled={readOnly}
-                                onChange={(event) => handleAmountReceivedChange(normalizeFormattedNumberInput(event.target.value))}
-                                inputMode="decimal"
-                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-slate-200"
-                              />
-                            </label>
-                            <label className="block">
-                              <span className="text-xs font-semibold text-slate-600">Total Settled Amount</span>
-                              <input
-                                type="text"
-                                value={formatMoney(totals.totalSettled, country)}
-                                disabled
-                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
-                              />
-                            </label>
+                            )}
+                            {hasAdvAvail && (
+                              <span
+                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800 border border-purple-200"
+                                title={`Unapplied Advance: ${formatINR(doc.available_customer_advance)}`}
+                              >
+                                Adv Avail ({formatINR(doc.available_customer_advance)})
+                              </span>
+                            )}
                           </div>
-                        </div>
-
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                          <p className="text-xs font-semibold text-slate-600">TDS Entry</p>
-                          <div className="mt-3 grid grid-cols-1 gap-3">
-                            <label className="block">
-                              <span className="text-xs font-semibold text-slate-600">TDS Percentage</span>
-                              <div className="mt-1 grid grid-cols-1 gap-2">
-                                <select
-                                  value={form.tdsCategory}
-                                  disabled={readOnly}
-                                  onChange={(event) => handleTdsCategoryChange(event.target.value)}
-                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                                >
-                                  {TDS_CATEGORY_OPTIONS.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                  <option value="custom">Custom</option>
-                                </select>
-                                {form.tdsCategory === "custom" ? (
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={form.tdsRate}
-                                    disabled={readOnly}
-                                    onChange={(event) => handleTdsRateChange(event.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                                    placeholder="%"
-                                  />
-                                ) : null}
-                              </div>
-                            </label>
-                            <label className="block">
-                              <span className="text-xs font-semibold text-slate-600">TDS Amount</span>
-                              <input
-                                type="text"
-                                value={formatMoney(totals.tdsAmount, country)}
-                                disabled
-                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
-                              />
-                            </label>
+                        </td>
+                        <td className="py-3 px-3 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end space-x-1.5">
+                            {canApplyAdv && (
+                              <button
+                                onClick={() => {
+                                  const amtToApply = Math.min(doc.balance_due, doc.available_customer_advance);
+                                  applyAdvanceMutation.mutate({
+                                    customerId: doc.customer_id,
+                                    invoiceId: doc.invoice_id,
+                                    amount: amtToApply
+                                  });
+                                }}
+                                disabled={applyAdvanceMutation.isPending}
+                                className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-300 rounded text-[11px] font-semibold transition-colors"
+                                title={`Apply available advance of ${formatINR(Math.min(doc.balance_due, doc.available_customer_advance))}`}
+                              >
+                                {applyAdvanceMutation.isPending ? "Applying..." : "Apply Adv"}
+                              </button>
+                            )}
+                            {doc.balance_due > 0.01 && (
+                              <button
+                                onClick={() => handleOpenWizardWithDoc(doc)}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-semibold transition-colors shadow-xs"
+                              >
+                                Receive Payment
+                              </button>
+                            )}
                           </div>
-                        </div>
-                      </div>
-                      {selectedCustomerDocument?.documentType === "invoice" && availableAdvanceBalance > 0 && !customerAdvanceEntries.length ? (
-                        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <div>
-                              <p className="text-xs font-semibold text-slate-700">Customer Advance Wallet</p>
-                              <p className="mt-1 text-xs text-slate-600">
-                                Available Advance Balance: {formatMoney(availableAdvanceBalance, country)}
-                              </p>
-                            </div>
-                            <label className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800">
-                              <input
-                                type="checkbox"
-                                checked={useAdvanceWallet}
-                                onChange={(event) => setUseAdvanceWallet(event.target.checked)}
-                                disabled={readOnly}
-                                className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
-                              />
-                              Use Available Advance Balance
-                            </label>
-                          </div>
-                          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            <div className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-600">
-                              <p>Invoice Total: <span className="font-semibold text-slate-900">{formatMoney(selectedCustomerDocument.invoiceAmount, country)}</span></p>
-                              <p className="mt-1">Advance Used: <span className="font-semibold text-emerald-700">{formatMoney(advanceWalletUsable, country)}</span></p>
-                            </div>
-                            <div className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-600">
-                              <p>Remaining Payable Amount: <span className="font-semibold text-rose-700">{formatMoney(documentBalanceAfterAdvance, country)}</span></p>
-                              <p className="mt-1">Remaining Wallet Balance: <span className="font-semibold text-amber-700">{formatMoney(remainingWalletBalance, country)}</span></p>
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <p className="text-xs font-semibold text-slate-600">Is this payment for a specific invoice?</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleAllocationModeChange("linked")}
-                            disabled={readOnly || !form.customerId}
-                            className={`rounded-full px-3 py-2 text-xs font-semibold transition ${
-                              form.allocationMode === "linked"
-                                ? "bg-slate-900 text-white"
-                                : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                            } disabled:cursor-not-allowed disabled:opacity-50`}
-                          >
-                            Yes - Pay against Invoice
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleAllocationModeChange("normal")}
-                            disabled={readOnly}
-                            className={`rounded-full px-3 py-2 text-xs font-semibold transition ${
-                              form.allocationMode === "normal"
-                                ? "bg-slate-900 text-white"
-                                : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                            } disabled:cursor-not-allowed disabled:opacity-50`}
-                          >
-                            No - Normal Payment Entry
-                          </button>
-                        </div>
-                        {!form.customerId ? (
-                          <p className="mt-2 text-xs text-slate-500">Select a customer first to load invoice and proforma options.</p>
-                        ) : null}
-                      </div>
-                      {form.allocationMode === "linked" ? (
-                        <label className="block">
-                          <FieldLabelText required className="text-xs font-semibold text-slate-600">
-                            Invoice / Proforma Invoice
-                          </FieldLabelText>
-                          <select
-                            value={form.selectedDocumentId}
-                            disabled={readOnly || !form.customerId || !customerDocuments.length}
-                            onChange={(event) => handleDocumentSelection(event.target.value)}
-                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                          >
-                            <option value="">
-                              {customerDocuments.length
-                                ? "Select invoice or proforma invoice"
-                                : "No open invoices or proformas for this customer"}
-                            </option>
-                            {customerDocuments.map((document) => (
-                              <option key={`${document.documentType}-${document.id}`} value={document.id}>
-                                {`${documentTypeLabel(document.documentType)} - ${document.invoiceNo} | ${document.invoiceDate || "-"} | Pending: ${formatMoney(document.balanceDue, country)}`}
-                              </option>
-                            ))}
-                          </select>
-                          {fieldErrors.selectedDocumentId ? (
-                            <p className="mt-1 text-xs text-rose-600">{fieldErrors.selectedDocumentId}</p>
-                          ) : null}
-                        </label>
-                      ) : (
-                        <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-xs text-slate-500">
-                          Normal Payment Entry selected. This payment will be saved without linking to any invoice or proforma invoice.
-                        </div>
-                      )}
-                      {form.allocationMode === "linked" && selectedCustomerDocument ? (
-                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
-                          <p className="font-semibold">
-                            {documentTypeLabel(selectedCustomerDocument.documentType)} - {selectedCustomerDocument.invoiceNo}
-                          </p>
-                          <p className="mt-1">
-                            Date: {selectedCustomerDocument.invoiceDate || "-"} | Pending: {formatMoney(effectiveSelectedDocumentBalance, country)}
-                          </p>
-                          <p className="mt-1">
-                            Taxable Amount: {formatMoney(selectedCustomerDocument.taxableAmount || 0, country)}
-                          </p>
-                          {selectedDocumentPreviouslyPaidAmount > 0 ? (
-                            <>
-                              <p className="mt-1">
-                                Previously Paid: {formatMoney(selectedDocumentPreviouslyPaidAmount, country)}
-                              </p>
-                              {selectedDocumentPaymentHistory.length ? (
-                                <div className="mt-2 rounded-xl border border-emerald-200 bg-white/70 px-3 py-2 text-[11px] text-emerald-950">
-                                  <p className="font-semibold text-emerald-900">Previous Payment History</p>
-                                  <div className="mt-1 space-y-1">
-                                    {selectedDocumentPaymentHistory.slice(0, 3).map((entry) => (
-                                      <p key={entry.id}>
-                                        {entry.paymentDate || "-"} | {entry.receiptNo} | {entry.paymentMode} | Applied{" "}
-                                        {formatMoney(entry.appliedAmount, country)}
-                                        {entry.tdsShare > 0
-                                          ? ` | TDS ${formatMoney(entry.tdsShare, country)} | Settled ${formatMoney(entry.settledAmount, country)}`
-                                          : ""}
-                                        {entry.referenceNo ? ` | Ref ${entry.referenceNo}` : ""}
-                                      </p>
-                                    ))}
-                                    {selectedDocumentPaymentHistory.length > 3 ? (
-                                      <p className="text-emerald-800">
-                                        +{selectedDocumentPaymentHistory.length - 3} more payment entr
-                                        {selectedDocumentPaymentHistory.length - 3 === 1 ? "y" : "ies"}
-                                      </p>
-                                    ) : null}
-                                  </div>
-                                </div>
-                              ) : (
-                                <p className="mt-1 text-[11px] text-emerald-800">
-                                  Previous payment date/details are not available for this older linked entry, but the settled
-                                  amount is included in the pending balance.
-                                </p>
-                              )}
-                            </>
-                          ) : null}
-                          {invoiceGstLines.map((line) => (
-                            <p key={line.label} className="mt-1">
-                              {line.label}: {formatMoney(line.value, country)}
-                            </p>
-                          ))}
-                          {advanceWalletUsable > 0 ? (
-                            <p className="mt-1">
-                              Advance Used: {formatMoney(advanceWalletUsable, country)} | Remaining Payable: {formatMoney(documentBalanceAfterAdvance, country)}
-                            </p>
-                          ) : null}
-                          <p className="mt-1">
-                            Received Amount Applied: {formatMoney(totals.amountApplied, country)}
-                          </p>
-                          <p className="mt-1">
-                            Total Settled: {formatMoney(totals.totalSettled, country)}
-                          </p>
-                        </div>
-                      ) : null}
-                      <label className="block">
-                        <FieldLabelText required className="text-xs font-semibold text-slate-600">
-                          Payment Date
-                        </FieldLabelText>
-                        <DateInput value={form.paymentDate} disabled={readOnly} onChange={(nextValue) => updateForm("paymentDate", nextValue)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
-                        {fieldErrors.paymentDate ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.paymentDate}</p> : null}
-                      </label>
-                      <div>
-                        <p className="mb-1 text-xs font-semibold text-slate-600">Payment Mode</p>
-                        <PaymentModePicker options={COUNTRY_CONFIG[country].paymentModes} value={form.paymentMode} onChange={(mode) => updateForm("paymentMode", mode as PaymentMode)} />
-                      </div>
-                    </div>
-                  </FlowCard>
-
-                  <FlowCard title="Mode Specific Fields" subtitle="Details vary by selected payment mode">
-                    <div className="space-y-3">
-                      <input value={form.referenceNo} disabled={readOnly} onChange={(event) => updateForm("referenceNo", event.target.value)} placeholder="Payment Reference" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
-                      {form.paymentMode === "Cheque" ? (
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <div><input value={form.chequeNo} disabled={readOnly} onChange={(event) => updateForm("chequeNo", event.target.value)} placeholder="Cheque No" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.chequeNo ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.chequeNo}</p> : null}</div>
-                          <div><input value={form.bankName} disabled={readOnly} onChange={(event) => updateForm("bankName", event.target.value)} placeholder="Bank Name" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.bankName ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.bankName}</p> : null}</div>
-                        </div>
-                      ) : null}
-                      {form.paymentMode === "Net Banking" ? (
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <div><input value={form.bankAccount} disabled={readOnly} onChange={(event) => updateForm("bankAccount", event.target.value)} placeholder="Bank Account" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.bankAccount ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.bankAccount}</p> : null}</div>
-                          <div><input value={form.transactionId} disabled={readOnly} onChange={(event) => updateForm("transactionId", event.target.value)} placeholder="Transaction ID" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.transactionId ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.transactionId}</p> : null}</div>
-                        </div>
-                      ) : null}
-                      {(form.paymentMode === "Card" || form.paymentMode === "UPI" || form.paymentMode === "Online Gateway") ? <div><input value={form.transactionId} disabled={readOnly} onChange={(event) => updateForm("transactionId", event.target.value)} placeholder="Transaction ID" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />{fieldErrors.transactionId ? <p className="mt-1 text-xs text-rose-600">{fieldErrors.transactionId}</p> : null}</div> : null}
-                      <label className="block">
-                        <FieldLabelText
-                          required={COUNTRY_CONFIG[country].registrationRequired}
-                          className="text-xs font-semibold text-slate-600"
-                        >
-                          {COUNTRY_CONFIG[country].registrationLabel}
-                        </FieldLabelText>
-                        <input value={form.registrationNumber} disabled={readOnly} onChange={(event) => updateForm("registrationNumber", event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
-                      </label>
-                      <label className="block rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                        <input type="file" disabled={readOnly} onChange={(event) => {
-                          const file = event.target.files?.[0] || null;
-                          updateForm("attachment", file ? { name: file.name, size: file.size, type: file.type || "application/octet-stream" } : null);
-                        }} className="hidden" />
-                        Drag & drop payment proof or click to upload
-                        {form.attachment ? <p className="mt-2 text-xs font-semibold text-slate-700">{form.attachment.name}</p> : null}
-                      </label>
-                      <label className="block">
-                        <span className="text-xs font-semibold text-slate-600">Internal Notes</span>
-                        <textarea
-                          value={form.internalNotes}
-                          disabled={readOnly}
-                          onChange={(event) => updateForm("internalNotes", event.target.value)}
-                          rows={3}
-                          className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                          placeholder="Visible to finance team only"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="text-xs font-semibold text-slate-600">Customer Notes</span>
-                        <textarea
-                          value={form.customerNotes}
-                          disabled={readOnly}
-                          onChange={(event) => updateForm("customerNotes", event.target.value)}
-                          rows={3}
-                          className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                          placeholder="Shown in receipt PDF"
-                        />
-                      </label>
-                    </div>
-                  </FlowCard>
-                </div>
-              ) : null}
-
-              {activeStep === 2 ? (
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_0.8fr]">
-                  <FlowCard title="Review & Confirm" subtitle="Final check before posting this payment">
-                    <div className="space-y-3 text-sm">
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">Customer</p>
-                        <p className="font-semibold text-slate-900">{selectedCustomer?.name || form.customerInput || "-"}</p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {COUNTRY_CONFIG[country].name} | {COUNTRY_CONFIG[country].currency}
-                        </p>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Invoice Amount</p>
-                          <p className="text-base font-semibold text-slate-900">{selectedCustomerDocument ? formatMoney(selectedCustomerDocument.invoiceAmount, country) : "-"}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Received Amount</p>
-                          <p className="text-base font-semibold text-slate-900">{formatMoney(totals.amountReceived, country)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">TDS Percentage</p>
-                          <p className="text-base font-semibold text-slate-900">{formatTdsPercent(form.tdsRate)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">TDS Amount</p>
-                          <p className={`text-base font-semibold ${totals.tdsAmount < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatMoney(totals.tdsAmount, country)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Available Advance</p>
-                          <p className={`text-base font-semibold ${availableAdvanceBalance < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatMoney(availableAdvanceBalance, country)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Advance Used</p>
-                          <p className={`text-base font-semibold ${advanceWalletUsable < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatMoney(advanceWalletUsable, country)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Total Settled</p>
-                          <p className="text-base font-semibold text-slate-900">{formatMoney(totals.totalSettled, country)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Remaining Wallet Balance</p>
-                          <p className={`text-base font-semibold ${remainingWalletBalance < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatMoney(remainingWalletBalance, country)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Final Payable Amount</p>
-                          <p className={`text-base font-semibold ${remainingPayableAfterPayment < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatMoney(remainingPayableAfterPayment, country)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Advance Balance</p>
-                          <p className="text-base font-semibold text-slate-900">{formatMoney(totals.unappliedAmount, country)}</p>
-                          <p className="mt-1 text-[11px] text-slate-500">
-                            Extra received amount stays on the customer account.
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">Payment Mode</p>
-                          <p className="text-base font-semibold text-slate-900">{formatPaymentModeLabel(form.paymentMode)}</p>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-3">
-                          <p className="text-slate-500">
-                            {form.allocationMode === "linked" ? "Selected Document" : "Payment Flow"}
-                          </p>
-                          <p className="text-base font-semibold text-slate-900">
-                            {selectedCustomerDocument
-                              ? `${documentTypeLabel(selectedCustomerDocument.documentType)} - ${selectedCustomerDocument.invoiceNo}`
-                              : "Normal Payment Entry"}
-                          </p>
-                          <p className="mt-1 text-[11px] text-slate-500">
-                            {selectedCustomerDocument
-                              ? `Pending ${formatMoney(effectiveSelectedDocumentBalance, country)} | Settled ${formatMoney(totals.totalSettled, country)}`
-                              : "Saved without linking to any invoice or proforma invoice."}
-                          </p>
-                        </div>
-                      </div>
-                      {totals.unappliedAmount > 0 ? (
-                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                          {form.allocationMode === "linked"
-                            ? "Pending balance on the selected document updates automatically. Any excess amount is retained as advance."
-                            : "This receipt is stored as a normal payment entry without invoice allocation."}
-                        </div>
-                      ) : null}
-                    </div>
-                  </FlowCard>
-
-                  <FlowCard title="Receipt Snapshot" subtitle="Country wording + legal labels">
-                    <div className="space-y-3">
-                      <p className="text-xs text-slate-500">{COUNTRY_CONFIG[country].receiptLabel}</p>
-                  <p className="text-3xl font-bold tracking-tight text-slate-900">{formatMoney(totals.totalSettled, country)}</p>
-                  <p className="text-xs text-slate-500">
-                    Received {formatMoney(totals.amountReceived, country)} | TDS {formatMoney(totals.tdsAmount, country)}
-                  </p>
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                        <p>{COUNTRY_CONFIG[country].legalWording}</p>
-                        <p className="mt-2">
-                          {COUNTRY_CONFIG[country].registrationLabel}:{" "}
-                          <span className="font-semibold text-slate-800">{form.registrationNumber || "-"}</span>
-                        </p>
-                      </div>
-                      {activePayment ? (
-                        <button
-                          type="button"
-                          onClick={() => exportSinglePaymentInPdf(activePayment)}
-                          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"
-                        >
-                          <FileDown className="h-3.5 w-3.5" />
-                          Download Current PDF
-                        </button>
-                      ) : null}
-                    </div>
-                  </FlowCard>
-                </div>
-              ) : null}
-
-              {errorMessage ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  {errorMessage}
-                </div>
-              ) : null}
-              {successMessage ? (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                  {successMessage}
-                </div>
-              ) : null}
-
-              {!readOnly ? (
-                <div className="flex items-center justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setActiveStep((current) => Math.max(0, current - 1))}
-                    disabled={!hasPreviousStep}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveStep((current) => Math.min(STEPS.length - 1, current + 1))}
-                    disabled={!hasNextStep}
-                    className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </div>
-              ) : null}
-            </>
-          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="bg-slate-100/90 border-t border-slate-300 font-bold text-slate-900 text-xs">
+                  <tr>
+                    <td colSpan={4} className="py-3 px-3 uppercase text-slate-500 tracking-wider">Total</td>
+                    <td className="py-3 px-3 text-right">
+                      {formatINR(receivablesData.reduce((sum: number, i: any) => sum + (i.grand_total ?? i.total_amount ?? 0), 0))}
+                    </td>
+                    <td className="py-3 px-3 text-right">
+                      {formatINR(receivablesData.reduce((sum: number, i: any) => sum + (i.paid_amount || 0), 0))}
+                    </td>
+                    <td className="py-3 px-3 text-right text-blue-700">
+                      {formatINR(receivablesData.reduce((sum: number, i: any) => sum + (i.advance_applied || 0), 0))}
+                    </td>
+                    <td className="py-3 px-3 text-right text-emerald-700">
+                      {formatINR(receivablesData.reduce((sum: number, i: any) => sum + (i.balance_due || 0), 0))}
+                    </td>
+                    <td colSpan={2} />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
-      {panelMode === "flow" && form && !readOnly ? (
-        <div className="app-floating-action-bar fixed bottom-4 right-4 z-40 flex flex-wrap items-center justify-end gap-3 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
-          <button
-            type="button"
-            onClick={() => persist(saveStatus)}
-            disabled={!canSaveCurrentFlow}
-            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Save className="h-3.5 w-3.5" />
-            {saving ? "Saving..." : saveStatus === "Draft" ? "Save Draft" : saveStatus === "Applied" ? "Save & Apply" : "Save Received"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (activePayment) {
-                exportSinglePaymentInPdf(activePayment);
-                return;
-              }
-              persist(saveStatus, { download: true });
-            }}
-            disabled={!canSaveCurrentFlow}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <FileDown className="h-3.5 w-3.5" />
-            {saving ? "Saving..." : "Download PDF"}
-          </button>
-        </div>
-      ) : null}
+      {/* 5B. VIEW MODE = "customers" (CUSTOMER-WISE RECEIVABLES WITH EXPANDABLE SUB-TABLE) */}
+      {viewMode === "customers" && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-5 space-y-4">
+          <div className="border-b border-slate-200 pb-3">
+            <h2 className="text-base font-bold text-slate-900">Customer-wise Receivables Summary</h2>
+            <p className="text-xs text-slate-500">Aggregated invoiced, collected, advance available, and outstanding balance by customer</p>
+          </div>
 
-      <AuditDrawer open={showAudit} record={activePayment} onClose={() => setShowAudit(false)} />
+          {isCustomerReceivablesLoading ? (
+            <div className="py-6 space-y-3">
+              {[1, 2, 3, 4].map((n) => (
+                <div key={n} className="h-12 bg-slate-100 animate-pulse rounded" />
+              ))}
+            </div>
+          ) : isCustomerReceivablesError ? (
+            <div className="py-12 text-center space-y-3">
+              <AlertCircle className="w-10 h-10 text-red-500 mx-auto" />
+              <p className="text-sm text-slate-700 font-medium">Failed to load customer receivables.</p>
+              <button
+                onClick={() => refetchCustomerReceivables()}
+                className="px-4 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700"
+              >
+                Retry
+              </button>
+            </div>
+          ) : filteredCustomerReceivables.length === 0 ? (
+            <div className="py-12 text-center text-xs text-slate-400">
+              No customer receivables found matching active filters.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-700 border-collapse">
+                <thead className="bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="py-3 px-3">Customer</th>
+                    <th className="py-3 px-3 text-right">Invoiced (₹)</th>
+                    <th className="py-3 px-3 text-right">Received (₹)</th>
+                    <th className="py-3 px-3 text-right">Unapplied Adv (₹)</th>
+                    <th className="py-3 px-3 text-right">Balance Due (₹)</th>
+                    <th className="py-3 px-3 text-right">Overdue (₹)</th>
+                    <th className="py-3 px-3">Oldest Due Date</th>
+                    <th className="py-3 px-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredCustomerReceivables.map((cr: any) => {
+                    const isExpanded = !!expandedCustomers[cr.customer_id];
+
+                    return (
+                      <React.Fragment key={cr.customer_id || cr.customer_name}>
+                        <tr
+                          onClick={() => setExpandedCustomers(prev => ({ ...prev, [cr.customer_id]: !prev[cr.customer_id] }))}
+                          className="hover:bg-slate-50 cursor-pointer transition-colors"
+                        >
+                          <td className="py-3 px-3 font-bold text-slate-900">
+                            <div className="flex items-center space-x-2">
+                              {isExpanded ? (
+                                <ChevronDown className="w-4 h-4 text-emerald-600 shrink-0" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+                              )}
+                              <span>{cr.customer_name}</span>
+                              <span className="text-[11px] text-slate-400 font-normal">({cr.invoices?.length || 0} invoices)</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 text-right font-medium">{formatINR(cr.invoiced)}</td>
+                          <td className="py-3 px-3 text-right font-medium text-slate-600">{formatINR(cr.received)}</td>
+                          <td className="py-3 px-3 text-right font-semibold text-purple-700">{formatINR(cr.advance)}</td>
+                          <td className="py-3 px-3 text-right font-bold text-emerald-700">{formatINR(cr.balance)}</td>
+                          <td className="py-3 px-3 text-right font-bold text-red-600">
+                            {cr.overdue_amount > 0 ? formatINR(cr.overdue_amount) : "-"}
+                          </td>
+                          <td className="py-3 px-3 text-slate-600">{formatDate(cr.oldest_due_date)}</td>
+                          <td className="py-3 px-3 text-right" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => {
+                                const found = customers.find((c: any) => c.id === cr.customer_id) || {
+                                  id: cr.customer_id,
+                                  name: cr.customer_name
+                                };
+                                setWizCustomer(found);
+                                setWizAmount(cr.balance || 0);
+                                setWizAllocations({});
+                                setWizAdvance(cr.balance <= 0);
+                                setWizardStep(2);
+                                setWizardOpen(true);
+                              }}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-semibold transition-colors"
+                            >
+                              Receive Payment
+                            </button>
+                          </td>
+                        </tr>
+
+                        {/* EXPANDED INVOICES ACCORDION ROW */}
+                        {isExpanded && cr.invoices?.length > 0 && (
+                          <tr className="bg-slate-50/80">
+                            <td colSpan={8} className="p-3 pl-8">
+                              <div className="bg-white rounded-lg border border-slate-200 p-3 space-y-2">
+                                <h4 className="text-xs font-bold text-slate-700">Open & Historical Invoices for {cr.customer_name}</h4>
+                                <table className="w-full text-left text-[11px] text-slate-600">
+                                  <thead className="bg-slate-100 font-semibold text-slate-600 border-b border-slate-200">
+                                    <tr>
+                                      <th className="py-1.5 px-2">Invoice No</th>
+                                      <th className="py-1.5 px-2">Date</th>
+                                      <th className="py-1.5 px-2">Due Date</th>
+                                      <th className="py-1.5 px-2 text-right">Total (₹)</th>
+                                      <th className="py-1.5 px-2 text-right">Paid (₹)</th>
+                                      <th className="py-1.5 px-2 text-right">Balance (₹)</th>
+                                      <th className="py-1.5 px-2">Status</th>
+                                      <th className="py-1.5 px-2 text-right">Action</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100">
+                                    {cr.invoices.map((inv: any) => (
+                                      <tr key={inv.invoice_id} className="hover:bg-slate-50">
+                                        <td className="py-1.5 px-2 font-bold text-slate-900">{inv.invoice_no}</td>
+                                        <td className="py-1.5 px-2">{formatDate(inv.invoice_date)}</td>
+                                        <td className="py-1.5 px-2">{formatDate(inv.due_date)}</td>
+                                        <td className="py-1.5 px-2 text-right font-medium">{formatINR(inv.grand_total ?? inv.total_amount)}</td>
+                                        <td className="py-1.5 px-2 text-right">{formatINR(inv.paid_amount)}</td>
+                                        <td className="py-1.5 px-2 text-right font-bold text-emerald-700">{formatINR(inv.balance_due)}</td>
+                                        <td className="py-1.5 px-2">
+                                          <StatusBadge status={inv.status} />
+                                        </td>
+                                        <td className="py-1.5 px-2 text-right">
+                                          {inv.balance_due > 0.01 && (
+                                            <button
+                                              onClick={() => handleOpenWizardWithDoc(inv)}
+                                              className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-semibold"
+                                            >
+                                              Pay
+                                            </button>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 5C. VIEW MODE = "receipts" (PAYMENT RECEIPTS HISTORY) */}
+      {viewMode === "receipts" && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          {isPaymentsError ? (
+            <div className="p-8 text-center space-y-3">
+              <AlertCircle className="w-10 h-10 text-red-500 mx-auto" />
+              <p className="text-sm text-slate-700 font-medium">Failed to load payment records.</p>
+              <button
+                onClick={() => refetchPayments()}
+                className="px-4 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700"
+              >
+                Retry
+              </button>
+            </div>
+          ) : isPaymentsLoading ? (
+            <div className="p-6 space-y-4">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <div key={n} className="h-10 bg-slate-100 animate-pulse rounded" />
+              ))}
+            </div>
+          ) : paymentsData?.items?.length === 0 ? (
+            <div className="p-12 text-center space-y-4">
+              <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto text-emerald-600">
+                <FileText className="w-8 h-8" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">No payment receipts found</h3>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                  No payment receipts match your active filter criteria. Try resetting filters or create a new payment.
+                </p>
+              </div>
+              <button
+                onClick={handleOpenWizardEmpty}
+                className="inline-flex items-center px-4 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700"
+              >
+                <Plus className="w-4 h-4 mr-1.5" />
+                + New Payment
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                <table className="w-full text-left text-xs text-slate-700 border-collapse">
+                  <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 text-slate-500 font-semibold uppercase tracking-wider">
+                    <tr>
+                      <th className="py-3 px-4">Receipt No</th>
+                      <th
+                        className="py-3 px-4 cursor-pointer hover:bg-slate-100"
+                        onClick={() => updateFilter("sortDir", sortDir === "asc" ? "desc" : "asc")}
+                      >
+                        <div className="flex items-center space-x-1">
+                          <span>Date</span>
+                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th className="py-3 px-4">Customer</th>
+                      <th className="py-3 px-4">Applied To</th>
+                      <th className="py-3 px-4">Mode</th>
+                      <th className="py-3 px-4 text-right">Received (₹)</th>
+                      <th className="py-3 px-4 text-right">TDS (₹)</th>
+                      <th className="py-3 px-4 text-right">Applied (₹)</th>
+                      <th className="py-3 px-4 text-right">Unapplied (₹)</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {paymentsData?.items?.map((item: any) => {
+                      const isRev = item.is_reversed || item.status === "Reversed";
+                      const allocs = item.allocations || [];
+                      const firstDoc = allocs[0]?.invoice_no || "-";
+                      const extraDocsCount = allocs.length > 1 ? allocs.length - 1 : 0;
+                      const allDocNos = allocs.map((a: any) => a.invoice_no).join(", ");
+
+                      return (
+                        <tr
+                          key={item.id}
+                          onClick={() => setSelectedPayment(item)}
+                          className={`hover:bg-slate-50/80 cursor-pointer transition-colors ${
+                            isRev ? "bg-red-50/40 text-slate-400 line-through" : ""
+                          }`}
+                        >
+                          <td className="py-3 px-4 font-semibold text-slate-900 whitespace-nowrap">
+                            {item.receipt_no}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            {formatDate(item.payment_date)}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="font-semibold text-slate-800">{item.customer_name}</div>
+                            {item.customer_gstin && (
+                              <div className="text-[10px] text-slate-400 font-mono">GSTIN: {item.customer_gstin}</div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="font-medium text-slate-700" title={allDocNos}>
+                              {firstDoc}
+                            </span>
+                            {extraDocsCount > 0 && (
+                              <span
+                                className="ml-1 text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded font-semibold border border-slate-200"
+                                title={allDocNos}
+                              >
+                                +{extraDocsCount} more
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="font-medium text-slate-800">{item.payment_mode}</div>
+                            {item.reference_no && (
+                              <div className="text-[10px] text-slate-400 font-mono">Ref: {item.reference_no}</div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right font-medium text-emerald-700 whitespace-nowrap">
+                            {formatINR(item.amount_received)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-medium text-slate-600 whitespace-nowrap">
+                            {formatINR(item.tds_amount)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-medium text-blue-700 whitespace-nowrap">
+                            {formatINR(item.amount_applied)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-medium text-amber-700 whitespace-nowrap">
+                            {formatINR(item.unapplied_amount)}
+                          </td>
+                          <td className="py-3 px-4">
+                            <StatusBadge status={item.status} isReversed={item.is_reversed} />
+                          </td>
+                          <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
+                            <div className="relative group inline-block text-left">
+                              <button className="p-1.5 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100">
+                                <MoreVertical className="w-4 h-4" />
+                              </button>
+                              <div className="absolute right-0 mt-1 w-44 bg-white border border-slate-200 rounded-lg shadow-xl hidden group-hover:block z-30 py-1 text-xs">
+                                <button
+                                  onClick={() => setSelectedPayment(item)}
+                                  className="w-full text-left px-3 py-1.5 hover:bg-slate-100 flex items-center"
+                                >
+                                  <Eye className="w-3.5 h-3.5 mr-2 text-slate-500" />
+                                  View receipt
+                                </button>
+                                <button
+                                  onClick={() => exportSinglePaymentInPdf(item)}
+                                  className="w-full text-left px-3 py-1.5 hover:bg-slate-100 flex items-center"
+                                >
+                                  <Download className="w-3.5 h-3.5 mr-2 text-emerald-600" />
+                                  Download PDF
+                                </button>
+                                <button
+                                  onClick={() => window.print()}
+                                  className="w-full text-left px-3 py-1.5 hover:bg-slate-100 flex items-center"
+                                >
+                                  <Printer className="w-3.5 h-3.5 mr-2 text-slate-500" />
+                                  Print
+                                </button>
+                                {!isRev && (
+                                  <button
+                                    onClick={() => { setReverseModalPayment(item); setReversalReason(""); }}
+                                    className="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-600 flex items-center"
+                                  >
+                                    <ShieldAlert className="w-3.5 h-3.5 mr-2 text-red-500" />
+                                    Reverse payment
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="bg-slate-100/80 border-t border-slate-300 font-bold text-slate-900 text-xs">
+                    <tr>
+                      <td colSpan={5} className="py-3 px-4 uppercase text-slate-500 tracking-wider">Page Total</td>
+                      <td className="py-3 px-4 text-right text-emerald-700">
+                        {formatINR(paymentsData?.items?.reduce((sum: number, i: any) => sum + (i.amount_received || 0), 0))}
+                      </td>
+                      <td className="py-3 px-4 text-right text-slate-700">
+                        {formatINR(paymentsData?.items?.reduce((sum: number, i: any) => sum + (i.tds_amount || 0), 0))}
+                      </td>
+                      <td className="py-3 px-4 text-right text-blue-700">
+                        {formatINR(paymentsData?.items?.reduce((sum: number, i: any) => sum + (i.amount_applied || 0), 0))}
+                      </td>
+                      <td className="py-3 px-4 text-right text-amber-700">
+                        {formatINR(paymentsData?.items?.reduce((sum: number, i: any) => sum + (i.unapplied_amount || 0), 0))}
+                      </td>
+                      <td colSpan={2} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              {/* Pagination Controls */}
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+                <div className="flex items-center space-x-2">
+                  <span>Showing</span>
+                  <span className="font-semibold text-slate-900">
+                    {((page - 1) * pageSize) + 1} - {Math.min(page * pageSize, paymentsData?.total || 0)}
+                  </span>
+                  <span>of</span>
+                  <span className="font-semibold text-slate-900">{paymentsData?.total || 0}</span>
+                  <span>items</span>
+                </div>
+
+                <div className="flex items-center space-x-4">
+                  <div className="flex items-center space-x-1">
+                    <span>Per page:</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => updateFilter("pageSize", e.target.value)}
+                      className="border border-slate-300 rounded py-1 px-1.5 bg-white text-xs font-semibold"
+                    >
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center space-x-1">
+                    <button
+                      disabled={page <= 1}
+                      onClick={() => updateFilter("page", page - 1)}
+                      className="px-2.5 py-1 border border-slate-300 rounded bg-white hover:bg-slate-100 disabled:opacity-40 font-semibold"
+                    >
+                      Prev
+                    </button>
+                    <span className="px-2 font-bold text-slate-800">{page}</span>
+                    <button
+                      disabled={page * pageSize >= (paymentsData?.total || 0)}
+                      onClick={() => updateFilter("page", page + 1)}
+                      className="px-2.5 py-1 border border-slate-300 rounded bg-white hover:bg-slate-100 disabled:opacity-40 font-semibold"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* 6. CUSTOMER TDS HISTORY (COLLAPSIBLE) */}
+      {tdsEnabled && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-5">
+          <div
+            onClick={() => setTdsCollapsed(!tdsCollapsed)}
+            className="flex items-center justify-between cursor-pointer select-none"
+          >
+            <div className="flex items-center space-x-2">
+              <h2 className="text-base font-bold text-slate-900">Customer TDS History</h2>
+              <span className="text-xs text-slate-400">({tdsHistory.length} entries)</span>
+            </div>
+            {tdsCollapsed ? <ChevronDown className="w-5 h-5 text-slate-400" /> : <ChevronUp className="w-5 h-5 text-slate-400" />}
+          </div>
+
+          {!tdsCollapsed && (
+            <div className="mt-4 pt-4 border-t border-slate-100 overflow-x-auto">
+              {tdsHistory.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-4">No TDS entries found.</p>
+              ) : (
+                <table className="w-full text-left text-xs text-slate-700">
+                  <thead className="bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider">
+                    <tr>
+                      <th className="py-2 px-3">Date</th>
+                      <th className="py-2 px-3">Receipt No</th>
+                      <th className="py-2 px-3">Invoice No</th>
+                      <th className="py-2 px-3">Customer</th>
+                      <th className="py-2 px-3 text-right">TDS %</th>
+                      <th className="py-2 px-3 text-right">TDS Amount (₹)</th>
+                      <th className="py-2 px-3">Section</th>
+                      <th className="py-2 px-3">Certificate Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {tdsHistory.map((item: any) => (
+                      <tr key={item.id} className="hover:bg-slate-50">
+                        <td className="py-2 px-3">{formatDate(item.payment_date)}</td>
+                        <td className="py-2 px-3 font-semibold">{item.receipt_no}</td>
+                        <td className="py-2 px-3">{item.invoice_no || "-"}</td>
+                        <td className="py-2 px-3 font-medium">{item.customer_name}</td>
+                        <td className="py-2 px-3 text-right font-medium">{item.tds_rate}%</td>
+                        <td className="py-2 px-3 text-right font-bold text-slate-800">{formatINR(item.tds_amount)}</td>
+                        <td className="py-2 px-3 font-mono text-[11px]">{item.tds_section || "194C"}</td>
+                        <td className="py-2 px-3">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800">
+                            {item.certificate_status || "Pending"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 7. DETAIL DRAWER */}
+      {selectedPayment && (
+        <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900/40 backdrop-blur-xs flex justify-end">
+          <div className="w-full max-w-lg bg-white h-full shadow-2xl overflow-y-auto p-6 space-y-6 flex flex-col justify-between">
+            <div className="space-y-6">
+              <div className="flex items-center justify-between border-b pb-4 border-slate-200">
+                <div>
+                  <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Payment Details</span>
+                  <h3 className="text-xl font-bold text-slate-900">{selectedPayment.receipt_no}</h3>
+                </div>
+                <button
+                  onClick={() => setSelectedPayment(null)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div className="flex justify-between py-1.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Customer</span>
+                  <span className="font-bold text-slate-900">{selectedPayment.customer_name}</span>
+                </div>
+                <div className="flex justify-between py-1.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Payment Date</span>
+                  <span className="font-semibold text-slate-900">{formatDate(selectedPayment.payment_date)}</span>
+                </div>
+                <div className="flex justify-between py-1.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Payment Mode</span>
+                  <span className="font-semibold text-slate-900">{selectedPayment.payment_mode}</span>
+                </div>
+                {selectedPayment.reference_no && (
+                  <div className="flex justify-between py-1.5 border-b border-slate-100">
+                    <span className="text-slate-500 font-medium">Reference No</span>
+                    <span className="font-mono text-slate-900">{selectedPayment.reference_no}</span>
+                  </div>
+                )}
+                <div className="flex justify-between py-1.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Amount Received</span>
+                  <span className="font-bold text-emerald-700 text-sm">{formatINR(selectedPayment.amount_received)}</span>
+                </div>
+                <div className="flex justify-between py-1.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">TDS Deducted</span>
+                  <span className="font-semibold text-slate-800">{formatINR(selectedPayment.tds_amount)}</span>
+                </div>
+                <div className="flex justify-between py-1.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Amount Applied</span>
+                  <span className="font-semibold text-blue-700">{formatINR(selectedPayment.amount_applied)}</span>
+                </div>
+                <div className="flex justify-between py-1.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Unapplied Advance</span>
+                  <span className="font-semibold text-amber-700">{formatINR(selectedPayment.unapplied_amount)}</span>
+                </div>
+                <div className="flex justify-between py-1.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Status</span>
+                  <StatusBadge status={selectedPayment.status} isReversed={selectedPayment.is_reversed} />
+                </div>
+              </div>
+
+              {/* Document Allocations */}
+              {selectedPayment.allocations?.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-slate-800">Document Allocations</h4>
+                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                    <table className="w-full text-left text-[11px] text-slate-700">
+                      <thead className="bg-slate-50 font-semibold text-slate-500 border-b border-slate-200">
+                        <tr>
+                          <th className="py-1.5 px-2.5">Doc No</th>
+                          <th className="py-1.5 px-2.5 text-right">Applied (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {selectedPayment.allocations.map((alloc: any, idx: number) => (
+                          <tr key={idx}>
+                            <td className="py-1.5 px-2.5 font-medium">{alloc.invoice_no || alloc.document_id || "-"}</td>
+                            <td className="py-1.5 px-2.5 text-right font-bold text-blue-700">{formatINR(alloc.amount || alloc.amount_allocated)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-slate-200 flex justify-between space-x-2">
+              <button
+                onClick={() => exportSinglePaymentInPdf(selectedPayment)}
+                className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>PDF</span>
+              </button>
+              <button
+                onClick={() => setSelectedPayment(null)}
+                className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. REVERSAL CONFIRMATION MODAL */}
+      {reverseModalPayment && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center space-x-3 text-red-600">
+              <ShieldAlert className="w-6 h-6" />
+              <h3 className="text-base font-bold text-slate-900">Reverse Payment</h3>
+            </div>
+            <p className="text-xs text-slate-600">
+              Are you sure you want to reverse payment <strong>{reverseModalPayment.receipt_no}</strong> for <strong>{formatINR(reverseModalPayment.amount_received)}</strong>? Document balances will be restored.
+            </p>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Reason for Reversal *</label>
+              <textarea
+                value={reversalReason}
+                onChange={(e) => setReversalReason(e.target.value)}
+                placeholder="e.g. Cheque bounce, wrong entry, customer dispute..."
+                rows={3}
+                className="w-full border border-slate-300 rounded-lg p-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-red-500 focus:outline-none"
+              />
+            </div>
+            {reversalError && (
+              <p className="text-xs text-red-600 font-semibold">{reversalError}</p>
+            )}
+            <div className="flex justify-end space-x-2 pt-2">
+              <button
+                onClick={() => setReverseModalPayment(null)}
+                className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={!reversalReason.trim() || reverseMutation.isPending}
+                onClick={() => reverseMutation.mutate({ paymentId: reverseModalPayment.id, reason: reversalReason })}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold"
+              >
+                {reverseMutation.isPending ? "Reversing..." : "Confirm Reversal"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 9. NEW PAYMENT WIZARD MODAL (WITH ADVANCE HANDLING) */}
+      {wizardOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-2xl w-full p-6 shadow-2xl space-y-6">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between border-b pb-3 border-slate-200">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">New Payment Receipt</h3>
+                <p className="text-xs text-slate-500">Step {wizardStep} of 3</p>
+              </div>
+              <button onClick={() => setWizardOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Steps Indicator */}
+            <div className="flex items-center justify-between text-xs font-semibold border-b pb-3">
+              <span className={wizardStep === 1 ? "text-emerald-600 font-bold" : "text-slate-400"}>1. Customer</span>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+              <span className={wizardStep === 2 ? "text-emerald-600 font-bold" : "text-slate-400"}>2. Details</span>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+              <span className={wizardStep === 3 ? "text-emerald-600 font-bold" : "text-slate-400"}>3. Review</span>
+            </div>
+
+            {/* STEP 1: CUSTOMER */}
+            {wizardStep === 1 && (
+              <div className="space-y-4">
+                <label className="block text-xs font-semibold text-slate-700">Select Customer *</label>
+                <select
+                  value={wizCustomer?.id || ""}
+                  onChange={(e) => {
+                    const found = customers.find((c: any) => c.id === e.target.value);
+                    setWizCustomer(found);
+                  }}
+                  className="w-full border border-slate-300 rounded-lg p-2.5 text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">-- Choose Customer --</option>
+                  {customers.map((c: any) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+
+                <div className="flex justify-end pt-4">
+                  <button
+                    disabled={!wizCustomer}
+                    onClick={() => setWizardStep(2)}
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold"
+                  >
+                    Next: Details
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 2: DETAILS */}
+            {wizardStep === 2 && (
+              <div className="space-y-4 max-h-[480px] overflow-y-auto pr-1 text-xs">
+                
+                {/* PROMINENT AVAILABLE ADVANCE BANNER / ACTION */}
+                {wizCustomerAdvanceAvailable > 0.01 && (
+                  <div className="bg-purple-50 border border-purple-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div className="flex items-center space-x-2">
+                      <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
+                      <div>
+                        <p className="text-xs font-bold text-purple-900">Unapplied Advance Available: {formatINR(wizCustomerAdvanceAvailable)}</p>
+                        <p className="text-[11px] text-purple-700">You can apply available advance to pending invoices without recording a new cash flow.</p>
+                      </div>
+                    </div>
+                    {Object.keys(wizAllocations).length > 0 && (
+                      <button
+                        type="button"
+                        disabled={applyAdvanceMutation.isPending}
+                        onClick={() => {
+                          const firstDoc = Object.keys(wizAllocations)[0];
+                          const allocAmt = wizAllocations[firstDoc] || Number(wizAmount || 0);
+                          const amtToApply = Math.min(allocAmt, wizCustomerAdvanceAvailable);
+                          if (firstDoc && amtToApply > 0) {
+                            applyAdvanceMutation.mutate({
+                              customerId: wizCustomer.id,
+                              invoiceId: firstDoc,
+                              amount: amtToApply
+                            });
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded text-xs font-semibold shrink-0"
+                      >
+                        {applyAdvanceMutation.isPending ? "Applying..." : "Apply Advance Now"}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Payment Date *</label>
+                    <input
+                      type="date"
+                      value={wizDate}
+                      onChange={(e) => setWizDate(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg p-2 font-medium"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Amount Received (₹) *</label>
+                    <input
+                      type="number"
+                      value={wizAmount}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value) || 0;
+                        setWizAmount(val);
+                      }}
+                      className="w-full border border-slate-300 rounded-lg p-2 font-bold text-emerald-700"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Payment Mode *</label>
+                    <select
+                      value={wizMode}
+                      onChange={(e) => setWizMode(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg p-2 font-medium"
+                    >
+                      <option value="Cash">Cash</option>
+                      <option value="UPI">UPI</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Cheque">Cheque</option>
+                      <option value="Card">Card</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Reference No {["UPI", "Bank Transfer", "Cheque", "Card"].includes(wizMode) && "*"}
+                    </label>
+                    <input
+                      type="text"
+                      value={wizRefNo}
+                      onChange={(e) => setWizRefNo(e.target.value)}
+                      placeholder="Transaction / Ref ID"
+                      className="w-full border border-slate-300 rounded-lg p-2"
+                    />
+                  </div>
+                </div>
+
+                {wizMode === "Cheque" && (
+                  <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Cheque No</label>
+                      <input
+                        type="text"
+                        value={wizChequeNo}
+                        onChange={(e) => setWizChequeNo(e.target.value)}
+                        className="w-full border border-slate-300 rounded p-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Cheque Date</label>
+                      <input
+                        type="date"
+                        value={wizChequeDate}
+                        onChange={(e) => setWizChequeDate(e.target.value)}
+                        className="w-full border border-slate-300 rounded p-1.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Bank Name</label>
+                      <input
+                        type="text"
+                        value={wizBankName}
+                        onChange={(e) => setWizBankName(e.target.value)}
+                        className="w-full border border-slate-300 rounded p-1.5"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Open Documents Allocation Section */}
+                <div className="border border-slate-200 rounded-lg p-3 space-y-3 bg-slate-50/50">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-xs">Document Allocations</h4>
+                      <p className="text-[11px] text-slate-500">Apply payment amount against pending invoices / proformas</p>
+                    </div>
+                    <label className="flex items-center space-x-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={wizAdvance}
+                        onChange={(e) => setWizAdvance(e.target.checked)}
+                        className="rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Record as Advance</span>
+                    </label>
+                  </div>
+
+                  {isWizDocsLoading ? (
+                    <div className="py-3 text-center text-xs text-slate-400">Loading pending documents...</div>
+                  ) : wizCustomerDocs.length === 0 ? (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start space-x-2 text-blue-800">
+                      <AlertCircle className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-semibold">No pending documents, recording as advance</p>
+                        <p className="text-[11px] text-blue-600">This customer has no unpaid tax invoices or unconverted proformas. Payment will be stored as an unapplied advance balance.</p>
+                      </div>
+                    </div>
+                  ) : wizAdvance ? (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-800">
+                      <p className="font-semibold">Advance Payment Mode Active</p>
+                      <p className="text-[11px] text-amber-600">Entire amount of {formatINR(wizAmount)} will be credited to customer's unapplied balance.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto bg-white rounded-lg border border-slate-200">
+                      <table className="w-full text-left text-[11px] text-slate-700">
+                        <thead className="bg-slate-100 font-semibold text-slate-600 uppercase border-b border-slate-200">
+                          <tr>
+                            <th className="py-2 px-2">Doc No</th>
+                            <th className="py-2 px-2">Type</th>
+                            <th className="py-2 px-2">Date</th>
+                            <th className="py-2 px-2 text-right">Balance Due (₹)</th>
+                            <th className="py-2 px-2 text-right">Allocate (₹)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {wizCustomerDocs.map((doc: any) => {
+                            const did = doc.id || doc.document_id;
+                            const bal = Number(doc.balance_due || 0);
+                            const currentAlloc = wizAllocations[did] ?? 0;
+                            return (
+                              <tr key={did} className="hover:bg-slate-50">
+                                <td className="py-2 px-2 font-semibold text-slate-900">{doc.document_no}</td>
+                                <td className="py-2 px-2">
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                    doc.document_type === "proforma" ? "bg-purple-100 text-purple-800" : "bg-blue-100 text-blue-800"
+                                  }`}>
+                                    {doc.document_type === "proforma" ? "Pro Forma" : "Tax Invoice"}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-2">{formatDate(doc.document_date)}</td>
+                                <td className="py-2 px-2 text-right font-semibold text-slate-700">{formatINR(bal)}</td>
+                                <td className="py-2 px-2 text-right">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={bal}
+                                    value={currentAlloc}
+                                    onChange={(e) => {
+                                      const val = Math.min(bal, Math.max(0, parseFloat(e.target.value) || 0));
+                                      setWizAllocations(prev => ({ ...prev, [did]: val }));
+                                    }}
+                                    className="w-24 border border-slate-300 rounded px-2 py-1 text-right font-bold text-emerald-700 text-xs"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* TDS Section */}
+                <div className="border border-slate-200 rounded-lg p-3 space-y-2 bg-slate-50">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-700">Deduct TDS</span>
+                    <input
+                      type="checkbox"
+                      checked={wizTdsEnabled}
+                      onChange={(e) => setWizTdsEnabled(e.target.checked)}
+                      className="rounded text-emerald-600 focus:ring-emerald-500"
+                    />
+                  </div>
+                  {wizTdsEnabled && (
+                    <div className="grid grid-cols-3 gap-2 pt-2">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600">Rate %</label>
+                        <input
+                          type="number"
+                          value={wizTdsRate}
+                          onChange={(e) => {
+                            const r = parseFloat(e.target.value) || 0;
+                            setWizTdsRate(r);
+                            setWizTdsAmount((Number(wizAmount || 0) * r) / 100);
+                          }}
+                          className="w-full border border-slate-300 rounded p-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600">Amount (₹)</label>
+                        <input
+                          type="number"
+                          value={wizTdsAmount}
+                          onChange={(e) => setWizTdsAmount(parseFloat(e.target.value) || 0)}
+                          className="w-full border border-slate-300 rounded p-1.5 font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600">Section</label>
+                        <select
+                          value={wizTdsSection}
+                          onChange={(e) => setWizTdsSection(e.target.value)}
+                          className="w-full border border-slate-300 rounded p-1.5"
+                        >
+                          <option value="194C">194C (Contractor)</option>
+                          <option value="194J">194J (Professional)</option>
+                          <option value="194H">194H (Commission)</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {wizError && <p className="text-xs text-red-600 font-semibold">{wizError}</p>}
+
+                <div className="flex justify-between pt-4 border-t border-slate-200">
+                  <button
+                    onClick={() => setWizardStep(1)}
+                    className="px-4 py-2 border border-slate-300 rounded-lg font-semibold text-slate-700"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={() => setWizardStep(3)}
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold"
+                  >
+                    Next: Review
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 3: REVIEW */}
+            {wizardStep === 3 && (
+              <div className="space-y-4 text-xs">
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Customer</span>
+                    <span className="font-bold text-slate-900">{wizCustomer?.name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Payment Date</span>
+                    <span className="font-semibold text-slate-900">{formatDate(wizDate)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Payment Mode</span>
+                    <span className="font-semibold text-slate-900">{wizMode}</span>
+                  </div>
+                  {wizRefNo && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-medium">Reference No</span>
+                      <span className="font-mono text-slate-900">{wizRefNo}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between border-t border-slate-200 pt-2">
+                    <span className="text-slate-700 font-bold">Total Amount Received</span>
+                    <span className="font-bold text-emerald-700 text-sm">{formatINR(wizAmount)}</span>
+                  </div>
+                </div>
+
+                {wizError && <p className="text-xs text-red-600 font-semibold">{wizError}</p>}
+
+                <div className="flex justify-between pt-4 border-t border-slate-200">
+                  <button
+                    disabled={wizSaveLoading}
+                    onClick={() => setWizardStep(2)}
+                    className="px-4 py-2 border border-slate-300 rounded-lg font-semibold text-slate-700 disabled:opacity-50"
+                  >
+                    Back
+                  </button>
+                  <button
+                    disabled={wizSaveLoading}
+                    onClick={handleSavePayment}
+                    className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg font-bold shadow-md flex items-center space-x-2"
+                  >
+                    {wizSaveLoading ? (
+                      <span>Creating Receipt...</span>
+                    ) : (
+                      <span>Confirm & Create Receipt</span>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
