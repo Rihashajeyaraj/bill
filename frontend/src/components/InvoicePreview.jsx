@@ -1,1217 +1,633 @@
 import React from "react";
 import clsx from "clsx";
-import { formatDecimalByPreference, formatNumberByPreference } from "../lib/formatPreferences";
-import { getCustomTemplateByKey } from "../services/templateService";
 
-function money(n, currencySymbol) {
-  const formatted = formatDecimalByPreference(Number(n || 0));
-  if (!currencySymbol) return formatted;
-  return `${currencySymbol}${formatted}`;
-}
-
-function qty(n) {
-  return formatNumberByPreference(Number(n || 0), { maximumFractionDigits: 3 });
+export function formatAddress(address) {
+  if (!address) return "";
+  if (typeof address === "string") return address;
+  if (typeof address === "object") {
+    const parts = [
+      address.line1 || address.billing_address_line1 || address.street || address.address_line1,
+      address.line2 || address.billing_address_line2 || address.address_line2,
+      address.city,
+      address.state || address.state_name,
+      address.postalCode || address.postal_code || address.zip || address.pincode,
+      address.country || address.country_name
+    ].filter(Boolean);
+    return parts.join(", ");
+  }
+  return String(address);
 }
 
 function formatDayMonthYear(value) {
-  if (!value) return "-";
+  if (!value) return "";
   const text = String(value).trim();
-  const isoDateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (text.includes("1111") || text === "-" || text === "null" || text === "undefined") return "";
+  const isoDateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (isoDateMatch) {
     const [, year, month, day] = isoDateMatch;
+    const yNum = Number(year);
+    if (yNum < 1900 || yNum > 2100) return "";
     return `${day}/${month}/${year}`;
   }
   const parsed = new Date(text);
   if (Number.isNaN(parsed.getTime())) return text;
+  const year = parsed.getFullYear();
+  if (year < 1900 || year > 2100) return "";
   const day = String(parsed.getDate()).padStart(2, "0");
   const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  const year = parsed.getFullYear();
   return `${day}/${month}/${year}`;
 }
 
-function renderCustomHtmlTemplate(htmlContent, invoiceData) {
-  if (!htmlContent) return "";
+function formatIndianCurrency(n) {
+  if (n === null || n === undefined || n === "" || isNaN(Number(n))) return "0.00";
+  return Number(n).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
 
-  const seller = invoiceData.seller || invoiceData.company || {};
-  const buyer = invoiceData.buyer || invoiceData.customer || {};
-  const items = Array.isArray(invoiceData.items) ? invoiceData.items : [];
-  const totals = invoiceData.totals || {};
-  const currencySymbol = invoiceData.currencySymbol || (invoiceData.currencyCode === "EUR" ? "€" : invoiceData.currencyCode === "GBP" ? "£" : invoiceData.currencyCode === "USD" ? "$" : "₹");
+function numberToWordsINR(num) {
+  const val = Number(num || 0);
+  if (val <= 0) return "ZERO RUPEES ONLY";
 
-  const totalBeforeTax = totals.subTotal ?? totals.taxable_total ?? invoiceData.taxable_total ?? 0;
-  const cgstTotal = totals.cgstTotal ?? totals.cgst_total ?? invoiceData.cgst_total ?? 0;
-  const sgstTotal = totals.sgstTotal ?? totals.sgst_total ?? invoiceData.sgst_total ?? 0;
-  const igstTotal = totals.igstTotal ?? totals.igst_total ?? invoiceData.igst_total ?? 0;
-  const totalAfterTax = totals.total ?? totals.grand_total ?? invoiceData.grand_total ?? 0;
-  const grandTotalInWords = invoiceData.grand_total_in_words || invoiceData.grandTotalInWords || "";
+  const rupees = Math.floor(val);
+  const paise = Math.round((val - rupees) * 100);
 
-  let processedHtml = htmlContent;
+  const a = [
+    "", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN",
+    "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN", "SIXTEEN", "SEVENTEEN", "EIGHTEEN", "NINETEEN"
+  ];
+  const b = ["", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY", "SEVENTY", "EIGHTY", "NINETY"];
 
-  // 1. Process items block {{#items}}...{{/items}}
-  const itemsBlockRegex = /\{\{#items\}\}([\s\S]*?)\{\{\/items\}\}/gi;
-  if (itemsBlockRegex.test(processedHtml)) {
-    processedHtml = processedHtml.replace(itemsBlockRegex, (_, rowTemplate) => {
-      if (items.length === 0) {
-        return `<tr><td colSpan="10" style="text-align:center; padding: 12px; color: #94a3b8;">No line items added yet.</td></tr>`;
-      }
-      return items.map((item, idx) => {
-        const qtyVal = Number(item.qty || 0);
-        const rateVal = Number(item.rate || item.unit_price || 0);
-        const taxableVal = Number(item.taxableValue || item.taxable_amount || (qtyVal * rateVal));
-        const amountVal = Number(item.amountInr || item.net || (qtyVal * rateVal));
-
-        return rowTemplate
-          .replace(/\{\{index\}\}/g, String(idx + 1))
-          .replace(/\{\{description\}\}/g, String(item.name || item.description || ""))
-          .replace(/\{\{hsn\}\}/g, String(item.hsn || item.hsn_sac || "-"))
-          .replace(/\{\{qty\}\}/g, String(qtyVal))
-          .replace(/\{\{rate\}\}/g, formatDecimalByPreference(rateVal))
-          .replace(/\{\{taxableValue\}\}/g, formatDecimalByPreference(taxableVal))
-          .replace(/\{\{cgstRate\}\}/g, `${item.cgstRate || item.cgst_rate || "0"}%`)
-          .replace(/\{\{sgstRate\}\}/g, `${item.sgstRate || item.sgst_rate || "0"}%`)
-          .replace(/\{\{igstRate\}\}/g, `${item.igstRate || item.igst_rate || "0"}%`)
-          .replace(/\{\{amount\}\}/g, formatDecimalByPreference(amountVal));
-      }).join("\n");
-    });
+  function inWords(n) {
+    if (n < 20) return a[n];
+    if (n < 100) return b[Math.floor(n / 10)] + (n % 10 !== 0 ? (b[Math.floor(n / 10)] ? "-" : "") + a[n % 10] : "");
+    if (n < 1000) return a[Math.floor(n / 100)] + " HUNDRED" + (n % 100 !== 0 ? " " + inWords(n % 100) : "");
+    if (n < 100000) return inWords(Math.floor(n / 1000)) + " THOUSAND" + (n % 1000 !== 0 ? " " + inWords(n % 1000) : "");
+    if (n < 10000000) return inWords(Math.floor(n / 100000)) + " LAKH" + (n % 100000 !== 0 ? " " + inWords(n % 100000) : "");
+    return inWords(Math.floor(n / 10000000)) + " CRORE" + (n % 10000000 !== 0 ? " " + inWords(n % 10000000) : "");
   }
 
-  // 2. Map standard placeholder tags
-  const replacements = {
-    "seller.name": seller.name || "",
-    "company_name": seller.name || "",
-    "seller_name": seller.name || "",
-    "seller.address": seller.address || "",
-    "company_address": seller.address || "",
-    "seller_address": seller.address || "",
-    "seller.gstin": seller.gstin || "",
-    "company_gstin": seller.gstin || "",
-    "seller_gstin": seller.gstin || "",
-    "seller.state": seller.state || "",
-    "company_state": seller.state || "",
-    "seller.country": seller.country || "",
-    "company_country": seller.country || "",
+  let result = rupees > 0 ? inWords(rupees) : "";
+  if (paise > 0) {
+    result = result ? `${result} AND ${inWords(paise)}` : inWords(paise);
+  }
+  return `${result.trim()} ONLY`;
+}
 
-    "buyer.name": buyer.name || "",
-    "customer_name": buyer.name || "",
-    "buyer_name": buyer.name || "",
-    "buyer.address": buyer.address || "",
-    "customer_address": buyer.address || "",
-    "buyer_address": buyer.address || "",
-    "buyer.gstin": buyer.gstin || "",
-    "customer_gstin": buyer.gstin || "",
-    "buyer_gstin": buyer.gstin || "",
-    "buyer.state": buyer.state || "",
-    "customer_state": buyer.state || "",
-    "buyer.country": buyer.country || "",
-    "customer_country": buyer.country || "",
+function getStateWithCode(stateName, stateCode, gstin) {
+  const code = stateCode || (gstin && /^\d{2}/.test(gstin) ? gstin.slice(0, 2) : "");
+  if (!stateName && !code) return "";
+  if (stateName && code) return `${stateName} (${code})`;
+  return stateName || code;
+}
 
-    "invoiceNo": invoiceData.invoiceNo || invoiceData.proformaNo || "",
-    "proforma_no": invoiceData.invoiceNo || invoiceData.proformaNo || "",
-    "invoice_number": invoiceData.invoiceNo || invoiceData.proformaNo || "",
-    "invoiceDate": formatDayMonthYear(invoiceData.invoiceDate || invoiceData.proformaDate),
-    "proforma_date": formatDayMonthYear(invoiceData.invoiceDate || invoiceData.proformaDate),
-    "invoice_date": formatDayMonthYear(invoiceData.invoiceDate || invoiceData.proformaDate),
-    "validTill": formatDayMonthYear(invoiceData.validTill || invoiceData.valid_till),
-    "valid_till": formatDayMonthYear(invoiceData.validTill || invoiceData.valid_till),
-    "dueDate": formatDayMonthYear(invoiceData.dueDate || invoiceData.due_date),
-    "due_date": formatDayMonthYear(invoiceData.dueDate || invoiceData.due_date),
-    "customerRef": invoiceData.customerRef || invoiceData.customer_ref || "",
-    "customer_ref": invoiceData.customerRef || invoiceData.customer_ref || "",
-    "placeOfSupply": invoiceData.placeOfSupply || invoiceData.place_of_supply || buyer.state || "",
-    "place_of_supply": invoiceData.placeOfSupply || invoiceData.place_of_supply || buyer.state || "",
-    "currencySymbol": currencySymbol,
-    "currencyCode": invoiceData.currencyCode || "INR",
-    "exchangeRate": invoiceData.exchangeRate || invoiceData.exchange_rate || invoiceData.roe || "1.00",
-    "roe": invoiceData.exchangeRate || invoiceData.exchange_rate || invoiceData.roe || "1.00",
+export default function InvoicePreview({
+  templateId,
+  styleConfig,
+  invoiceData = {},
+  documentType
+}) {
+  const { logoUrl } = styleConfig || {};
+  const resolvedLogoUrl =
+    logoUrl ||
+    invoiceData?.company?.logo_url ||
+    invoiceData?.company?.logoBase64 ||
+    invoiceData?.companyLogoUrl ||
+    invoiceData?.seller?.logoUrl ||
+    invoiceData?.logoUrl ||
+    "";
 
-    "shipperName": invoiceData.shipperName || invoiceData.shipper_name || "",
-    "shipper_name": invoiceData.shipperName || invoiceData.shipper_name || "",
-    "consigneeName": invoiceData.consigneeName || invoiceData.consignee_name || "",
-    "consignee_name": invoiceData.consigneeName || invoiceData.consignee_name || "",
-    "origin": invoiceData.origin || "",
-    "destination": invoiceData.destination || "",
-    "packsQty": invoiceData.packsQty || invoiceData.packs_qty || "",
-    "packs_qty": invoiceData.packsQty || invoiceData.packs_qty || "",
-    "weightKgs": invoiceData.weightKgs || invoiceData.weight_kgs || "",
-    "weight_kgs": invoiceData.weightKgs || invoiceData.weight_kgs || "",
-    "volumeCbm": invoiceData.volumeCbm || invoiceData.volume_cbm || "",
-    "volume_cbm": invoiceData.volumeCbm || invoiceData.volume_cbm || "",
-    "freightTerms": invoiceData.freightTerms || invoiceData.freight_terms || "",
-    "freight_terms": invoiceData.freightTerms || invoiceData.freight_terms || "",
+  // Determine Title: ONLY "PRO FORMA INVOICE" or "TAX INVOICE"
+  const docTypeStr = String(
+    documentType ||
+    invoiceData.document_type ||
+    invoiceData.documentType ||
+    (invoiceData.isProforma || invoiceData.proforma_no || invoiceData.proformaNo ? "PRO FORMA INVOICE" : "TAX INVOICE")
+  ).toUpperCase();
+  const isTaxInvoice = docTypeStr.includes("TAX") && !docTypeStr.includes("PRO");
+  const documentTitle = isTaxInvoice ? "TAX INVOICE" : "PRO FORMA INVOICE";
 
-    "blNumber": invoiceData.blNumber || invoiceData.bl_number || "",
-    "bl_number": invoiceData.blNumber || invoiceData.bl_number || "",
-    "thblNumber": invoiceData.thblNumber || invoiceData.thbl_number || "",
-    "thbl_number": invoiceData.thblNumber || invoiceData.thbl_number || "",
-    "mblNumber": invoiceData.mblNumber || invoiceData.mbl_number || "",
-    "mbl_number": invoiceData.mblNumber || invoiceData.mbl_number || "",
-    "oceanBlNo": invoiceData.oceanBlNo || invoiceData.ocean_bl_no || "",
-    "ocean_bl_no": invoiceData.oceanBlNo || invoiceData.ocean_bl_no || "",
-    "vesselName": invoiceData.vesselName || invoiceData.vessel_name || "",
-    "vessel_name": invoiceData.vesselName || invoiceData.vessel_name || "",
-    "voyageNo": invoiceData.voyageNo || invoiceData.voyage_no || "",
-    "voyage_no": invoiceData.voyageNo || invoiceData.voyage_no || "",
-    "etdDate": formatDayMonthYear(invoiceData.etdDate || invoiceData.etd_date),
-    "etd_date": formatDayMonthYear(invoiceData.etdDate || invoiceData.etd_date),
-    "etaDate": formatDayMonthYear(invoiceData.etaDate || invoiceData.eta_date),
-    "eta_date": formatDayMonthYear(invoiceData.etaDate || invoiceData.eta_date),
-
-    "igmNo": invoiceData.igmNo || invoiceData.igm_no || "",
-    "igm_no": invoiceData.igmNo || invoiceData.igm_no || "",
-    "igmItemNo": invoiceData.igmItemNo || invoiceData.igm_item_no || "",
-    "igm_item_no": invoiceData.igmItemNo || invoiceData.igm_item_no || "",
-    "fileNo": invoiceData.fileNo || invoiceData.file_no || "",
-    "file_no": invoiceData.fileNo || invoiceData.file_no || "",
-    "salesRep": invoiceData.salesRep || invoiceData.sales_rep || "",
-    "sales_rep": invoiceData.salesRep || invoiceData.sales_rep || "",
-    "containerDetails": invoiceData.containerDetails || invoiceData.container_details || "",
-    "container_details": invoiceData.containerDetails || invoiceData.container_details || "",
-    "rcmApplicable": invoiceData.rcmApplicable || invoiceData.rcm_applicable ? "YES" : "NO",
-    "rcm_applicable": invoiceData.rcmApplicable || invoiceData.rcm_applicable ? "YES" : "NO",
-
-    "terms": invoiceData.terms || invoiceData.paymentTerms || "",
-    "notes": invoiceData.notes || "",
-
-    "totalBeforeTax": formatDecimalByPreference(totalBeforeTax),
-    "subtotal": formatDecimalByPreference(totalBeforeTax),
-    "taxable_amount": formatDecimalByPreference(totalBeforeTax),
-    "cgstTotal": formatDecimalByPreference(cgstTotal),
-    "cgst_total": formatDecimalByPreference(cgstTotal),
-    "sgstTotal": formatDecimalByPreference(sgstTotal),
-    "sgst_total": formatDecimalByPreference(sgstTotal),
-    "igstTotal": formatDecimalByPreference(igstTotal),
-    "igst_total": formatDecimalByPreference(igstTotal),
-    "totalAfterTax": formatDecimalByPreference(totalAfterTax),
-    "grandTotal": formatDecimalByPreference(totalAfterTax),
-    "grand_total": formatDecimalByPreference(totalAfterTax),
-    "grandTotalInWords": grandTotalInWords,
-    "grand_total_in_words": grandTotalInWords
+  // Seller Details
+  const rawSeller = invoiceData.company || invoiceData.seller || {};
+  const sellerGstin = rawSeller.gstin || invoiceData.companyGstin || invoiceData.company_gstin || "";
+  const seller = {
+    name: invoiceData.companyName || invoiceData.company_name || rawSeller.legal_name || rawSeller.name || "COMPANY NAME",
+    address: formatAddress(rawSeller.address || rawSeller.billing_address_line1 || invoiceData.companyAddress || invoiceData.company_address),
+    pan: rawSeller.pan || invoiceData.companyPan || invoiceData.company_pan || "",
+    cin: rawSeller.cin || invoiceData.companyCin || invoiceData.company_cin || "",
+    iec: rawSeller.iec || invoiceData.companyIec || invoiceData.company_iec || "",
+    gstin: sellerGstin,
+    stateWithCode: getStateWithCode(
+      rawSeller.state_name || rawSeller.state || invoiceData.companyState || invoiceData.company_state,
+      rawSeller.state_code || invoiceData.company_state_code,
+      sellerGstin
+    ),
+    country: rawSeller.country_name || rawSeller.country || invoiceData.companyCountry || invoiceData.company_country || "India",
+    phone: rawSeller.phone || invoiceData.companyPhone || invoiceData.company_phone || ""
   };
 
-  Object.entries(replacements).forEach(([key, value]) => {
-    const escapedKey = key.replace(".", "\\.");
-    const regex = new RegExp(`\\{\\{\\s*${escapedKey}\\s*\\}\\}`, "gi");
-    processedHtml = processedHtml.replace(regex, value);
+  // Buyer / Customer Details
+  const rawBuyer = invoiceData.customer || invoiceData.buyer || {};
+  const buyerGstin = invoiceData.bill_gstin || rawBuyer.gstin || invoiceData.customerGstin || invoiceData.customer_gstin || "";
+  const buyerAddress = formatAddress(
+    invoiceData.bill_address_line1
+      ? {
+          line1: invoiceData.bill_address_line1,
+          line2: invoiceData.bill_address_line2,
+          city: invoiceData.bill_city,
+          state: invoiceData.bill_state,
+          pincode: invoiceData.bill_pincode || invoiceData.customer_pincode,
+          country: invoiceData.bill_country
+        }
+      : (rawBuyer.billing_address_line1 || rawBuyer.address || invoiceData.customerAddress || invoiceData.customer_address)
+  );
+  const buyerCity = invoiceData.bill_city || rawBuyer.city || invoiceData.customer_city || "";
+  const buyerPincode = invoiceData.bill_pincode || rawBuyer.pincode || invoiceData.customer_pincode || "";
+  const buyerState = invoiceData.bill_state || rawBuyer.state || rawBuyer.state_name || invoiceData.customerState || invoiceData.customer_state || "";
+  const buyerStateCode = invoiceData.bill_state_code || rawBuyer.state_code || invoiceData.customer_state_code || "";
+  const buyerStateWithCode = getStateWithCode(buyerState, buyerStateCode, buyerGstin);
+  const buyerCountry = invoiceData.bill_country || rawBuyer.country || rawBuyer.country_name || invoiceData.customerCountry || invoiceData.customer_country || "India";
+
+  const buyer = {
+    name: invoiceData.bill_name || invoiceData.customerName || invoiceData.customer_name || rawBuyer.display_name || rawBuyer.legal_name || rawBuyer.name || "CUSTOMER NAME",
+    address: buyerAddress,
+    city: buyerCity,
+    stateWithCode: buyerStateWithCode,
+    pincode: buyerPincode,
+    country: buyerCountry,
+    gstin: buyerGstin
+  };
+
+  // Header Reference Fields
+  const docNo = invoiceData.invoice_no || invoiceData.invoiceNo || invoiceData.proforma_no || invoiceData.proformaNo || "-";
+  const docDate = formatDayMonthYear(invoiceData.invoice_date || invoiceData.invoiceDate || invoiceData.proforma_date || invoiceData.proformaDate);
+  const blNumber = invoiceData.bl_number || invoiceData.blNumber || invoiceData.hbl_number || invoiceData.hblNumber || "";
+  const thblNumber = invoiceData.thbl_number || invoiceData.thblNumber || "";
+  const mblNumber = invoiceData.mbl_number || invoiceData.mblNumber || invoiceData.ocean_bl_no || invoiceData.oceanBlNo || "";
+  const customerRef = invoiceData.customer_ref || invoiceData.customerRef || invoiceData.cust_ref || "";
+
+  const packsQty = invoiceData.packs_qty || invoiceData.packsQty;
+  const weightKgs = invoiceData.weight_kgs || invoiceData.weightKgs;
+  const volumeCbm = invoiceData.volume_cbm || invoiceData.volumeCbm;
+  const qtyParts = [
+    packsQty ? `${packsQty} Packs` : null,
+    weightKgs ? `${weightKgs} Kgs` : null,
+    volumeCbm ? `${volumeCbm} CBM` : null
+  ].filter(Boolean);
+  const quantityDisplay = qtyParts.join(" / ");
+
+  const freightTerms = invoiceData.freight_terms || invoiceData.freightTerms || "";
+  const roeVal = invoiceData.roe || invoiceData.exchange_rate || invoiceData.exchangeRate;
+  const roeCurrency = invoiceData.currency_code || invoiceData.currencyCode || "USD";
+  const roeDisplay = roeVal && Number(roeVal) !== 1 ? `${roeCurrency} @ ${formatIndianCurrency(roeVal)}` : (roeVal && roeVal !== "1" ? String(roeVal) : null);
+
+  const igmNo = invoiceData.igm_no || invoiceData.igmNo || "";
+  const igmDate = formatDayMonthYear(invoiceData.igm_date || invoiceData.igmDate);
+  const igmItemNo = invoiceData.igm_item_no || invoiceData.igmItemNo || "";
+  const fileNo = invoiceData.file_no || invoiceData.fileNo || "";
+  const salesRep = invoiceData.sales_rep || invoiceData.salesRep || "";
+  const rcmApplicable = invoiceData.rcm_applicable ?? invoiceData.rcmApplicable ?? invoiceData.reverse_charge;
+  const rcmDisplay = (rcmApplicable === true || rcmApplicable === "Y" || rcmApplicable === "Yes") ? "Yes" : ((rcmApplicable === false || rcmApplicable === "N" || rcmApplicable === "No") ? "No" : null);
+  const remarks = invoiceData.remarks || invoiceData.notes || "";
+
+  // Shipment Reference Fields
+  const shipperName = invoiceData.shipper_name || invoiceData.shipperName || "";
+  const consigneeName = invoiceData.consignee_name || invoiceData.consigneeName || "";
+  const origin = invoiceData.origin || "";
+  const destination = invoiceData.destination || "";
+  const vessel = invoiceData.vessel_name || invoiceData.vesselName || "";
+  const voyageNo = invoiceData.voyage_no || invoiceData.voyageNo || "";
+  const oceanBlNo = invoiceData.ocean_bl_no || invoiceData.oceanBlNo || "";
+  const etd = formatDayMonthYear(invoiceData.etd_date || invoiceData.etdDate);
+  const eta = formatDayMonthYear(invoiceData.eta_date || invoiceData.etaDate);
+
+  // Line Items
+  const items = (Array.isArray(invoiceData.items) ? invoiceData.items : []).map(item => {
+    const rate = Number(item.rate ?? item.unit_price ?? item.unitPrice ?? 0);
+    const qty = Number(item.qty || 1);
+    const amountInr = Number(item.amount_inr ?? item.amountInr ?? item.taxable_amount ?? item.taxable_value ?? (rate * qty));
+    const taxableAmount = Number(item.taxable_amount ?? item.taxableAmount ?? item.taxable_value ?? amountInr);
+    const cgstRate = Number(item.cgst_rate ?? item.cgstRate ?? 0);
+    const sgstRate = Number(item.sgst_rate ?? item.sgstRate ?? 0);
+    const igstRate = Number(item.igst_rate ?? item.igstRate ?? 0);
+    const cgstAmt = Number(item.cgst_amount ?? item.cgstAmount ?? 0);
+    const sgstAmt = Number(item.sgst_amount ?? item.sgstAmount ?? 0);
+    const igstAmt = Number(item.igst_amount ?? item.igstAmount ?? 0);
+    const gstTotal = Number(item.tax_amount ?? item.taxAmount ?? (cgstAmt + sgstAmt + igstAmt));
+
+    return {
+      description: item.description || item.name || item.itemName || "Item",
+      sac: item.hsn_sac || item.hsnSac || item.hsn || "",
+      cgst_rate: cgstRate,
+      sgst_rate: sgstRate,
+      igst_rate: igstRate,
+      place_of_supply: item.place_of_supply || item.placeOfSupply || invoiceData.place_of_supply_state || "",
+      currency: item.currency || invoiceData.currency_code || invoiceData.currencyCode || "INR",
+      rate,
+      qty,
+      unit: item.unit || "PCS",
+      amount_inr: amountInr,
+      taxable_amount: taxableAmount,
+      gst_total: gstTotal
+    };
   });
 
-  return processedHtml;
-}
-
-function LogisticsMetadataGrid({ data }) {
-  if (!data) return null;
-  const items = [
-    { label: "Shipper", val: data.shipperName || data.shipper_name },
-    { label: "Consignee", val: data.consigneeName || data.consignee_name },
-    { label: "POL (Origin)", val: data.origin },
-    { label: "POD (Destination)", val: data.destination },
-    { label: "Packages", val: data.packsQty || data.packs_qty },
-    { label: "Gross Wt (KGS)", val: data.weightKgs || data.weight_kgs },
-    { label: "Volume (CBM)", val: data.volumeCbm || data.volume_cbm },
-    { label: "Freight Terms", val: data.freightTerms || data.freight_terms },
-    { label: "MBL No", val: data.mblNumber || data.mbl_number },
-    { label: "HBL No", val: data.blNumber || data.bl_number },
-    { label: "THBL No", val: data.thblNumber || data.thbl_number },
-    { label: "Ocean BL No", val: data.oceanBlNo || data.ocean_bl_no },
-    { label: "Vessel & Voyage", val: [data.vesselName || data.vessel_name, data.voyageNo || data.voyage_no].filter(Boolean).join(" / ") },
-    { label: "ETD", val: formatDayMonthYear(data.etdDate || data.etd_date) },
-    { label: "ETA", val: formatDayMonthYear(data.etaDate || data.eta_date) },
-    { label: "IGM No & Item", val: [data.igmNo || data.igm_no, data.igmItemNo || data.igm_item_no].filter(Boolean).join(" / ") },
-    { label: "File No", val: data.fileNo || data.file_no },
-    { label: "Sales Rep", val: data.salesRep || data.sales_rep },
-    { label: "Container / Vehicle", val: data.containerDetails || data.container_details },
-    { label: "RCM Applicable", val: (data.rcmApplicable || data.rcm_applicable) ? "YES" : "" },
-    { label: "Place of Supply", val: data.placeOfSupply || data.place_of_supply },
-    { label: "ROE", val: (data.exchangeRate || data.exchange_rate) && (data.exchangeRate || data.exchange_rate) !== "1.00" && (data.exchangeRate || data.exchange_rate) !== "1" ? data.exchangeRate || data.exchange_rate : "" }
-  ].filter(f => Boolean(f.val) && f.val !== "-");
-
-  if (items.length === 0) return null;
-
-  return (
-    <div className="my-2.5 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px]">
-      <span className="font-bold text-slate-800 uppercase block mb-1 tracking-wide">LOGISTICS & SHIPMENT DETAILS</span>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1">
-        {items.map((it, idx) => (
-          <div key={idx}>
-            <span className="text-slate-500">{it.label}: </span>
-            <strong className="text-slate-900">{it.val}</strong>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export default function InvoicePreview({ templateId = "new_globe_export", styleConfig, invoiceData = {} }) {
-  const { primaryColor, bgColor, fontFamily, logoUrl } = styleConfig || {};
-  const resolvedLogoUrl =
-    logoUrl || invoiceData?.companyLogoUrl || invoiceData?.seller?.logoUrl || invoiceData?.logoUrl || "";
-  const font = fontFamily
-    ? `"${fontFamily}", "Helvetica Neue", Arial, sans-serif`
-    : "var(--invoice-font-family, var(--app-font-family))";
-
-  const rawTitle = invoiceData.title || (invoiceData.isProforma ? "PRO FORMA INVOICE" : "TAX INVOICE");
-  const isProforma = rawTitle.toUpperCase().includes("PRO FORMA");
-  const currencySymbol = invoiceData.currencySymbol || (invoiceData.currencyCode === "EUR" ? "€" : invoiceData.currencyCode === "GBP" ? "£" : invoiceData.currencyCode === "USD" ? "$" : "₹");
-  const normTemplateKey = String(templateId || "").toLowerCase();
-
-  const seller = invoiceData.seller || invoiceData.company || {
-    name: invoiceData.companyName || invoiceData.company_name || "",
-    address: invoiceData.companyAddress || invoiceData.company_address || "",
-    pan: invoiceData.companyPan || invoiceData.company_pan || "",
-    iec: invoiceData.companyIec || invoiceData.company_iec || "",
-    gstin: invoiceData.companyGstin || invoiceData.company_gstin || "",
-    state: invoiceData.companyState || invoiceData.company_state || "",
-    country: invoiceData.companyCountry || invoiceData.company_country || "",
-    phone: invoiceData.companyPhone || invoiceData.company_phone || "",
-    cin: invoiceData.companyCin || invoiceData.company_cin || ""
-  };
-
-  const buyer = invoiceData.buyer || invoiceData.customer || {
-    name: invoiceData.customerName || invoiceData.customer_name || "",
-    address: invoiceData.customerAddress || invoiceData.customer_address || "",
-    state: invoiceData.customerState || invoiceData.customer_state || "",
-    country: invoiceData.customerCountry || invoiceData.customer_country || "",
-    gstin: invoiceData.customerGstin || invoiceData.customer_gstin || ""
-  };
-
-  const bankDetails = invoiceData.bankDetails || {
-    accountName: seller.name || "",
-    bankName: invoiceData.bankName || seller.bankName || "",
-    address: invoiceData.bankAddress || seller.bankAddress || "",
-    accountNo: invoiceData.accountNo || seller.accountNo || "",
-    ifsc: invoiceData.ifsc || seller.ifsc || "",
-    swift: invoiceData.swift || seller.swift || "",
-    iban: invoiceData.iban || seller.iban || ""
-  };
-
-  const items = Array.isArray(invoiceData.items) ? invoiceData.items : [];
+  // Totals
   const totals = invoiceData.totals || {};
+  const totalAmountInr = items.reduce((acc, it) => acc + it.amount_inr, 0);
+  const totalBeforeTax = Number(totals.taxable_total ?? totals.subTotal ?? invoiceData.taxable_total ?? invoiceData.taxable_subtotal ?? items.reduce((acc, it) => acc + it.taxable_amount, 0));
+  const cgstTotal = Number(totals.cgst_total ?? totals.cgstTotal ?? invoiceData.cgst_total ?? invoiceData.total_cgst ?? 0);
+  const sgstTotal = Number(totals.sgst_total ?? totals.sgstTotal ?? invoiceData.sgst_total ?? invoiceData.total_sgst ?? 0);
+  const igstTotal = Number(totals.igst_total ?? totals.igstTotal ?? invoiceData.igst_total ?? invoiceData.total_igst ?? 0);
+  const totalGst = Number(cgstTotal + sgstTotal + igstTotal);
+  const totalAfterTax = Number(totals.grand_total ?? totals.total ?? invoiceData.grand_total ?? (totalBeforeTax + totalGst));
 
-  const totalBeforeTax = totals.subTotal ?? totals.taxable_total ?? invoiceData.taxable_total ?? 0;
-  const cgstTotal = totals.cgstTotal ?? totals.cgst_total ?? invoiceData.cgst_total ?? 0;
-  const sgstTotal = totals.sgstTotal ?? totals.sgst_total ?? invoiceData.sgst_total ?? 0;
-  const igstTotal = totals.igstTotal ?? totals.igst_total ?? invoiceData.igst_total ?? 0;
-  const totalAfterTax = totals.total ?? totals.grand_total ?? invoiceData.grand_total ?? 0;
-  const grandTotalInWords = invoiceData.grand_total_in_words || invoiceData.grandTotalInWords || "";
+  const amountInWords = invoiceData.grand_total_in_words || invoiceData.grandTotalInWords || numberToWordsINR(totalAfterTax);
+  const tdsNote = invoiceData.tds_note || invoiceData.tdsNote || "* Kindly deduct T.D.S on Invoice amount excluding GST amount.";
 
-  const notes = invoiceData.notes || "";
-  const terms = invoiceData.terms || invoiceData.paymentTerms || "";
-  const placeOfSupply = invoiceData.placeOfSupply || invoiceData.place_of_supply || buyer.state || "";
-  const validTill = invoiceData.validTill || invoiceData.valid_till || "";
-  const dueDate = invoiceData.dueDate || invoiceData.due_date || "";
-  const customerRef = invoiceData.customerRef || invoiceData.customer_ref || "";
-  const roe = invoiceData.exchangeRate || invoiceData.exchange_rate || invoiceData.roe || "1.00";
-  const rcmApplicable = invoiceData.rcmApplicable || invoiceData.rcm_applicable;
+  // Settings & Footer
+  const sgstHeaderLabel = invoiceData.sgst_label || invoiceData.sgstLabel || "SGST Rate %";
+  const containerDetails = invoiceData.container_details || invoiceData.containerDetails || invoiceData.container_vehicle_no || "";
+  const rawTerms = invoiceData.terms || invoiceData.payment_terms || invoiceData.paymentTerms || "";
+  const termsList = rawTerms
+    ? (Array.isArray(rawTerms) ? rawTerms : String(rawTerms).split("\n")).map(t => t.trim()).filter(Boolean)
+    : [];
 
-  // Template Variant Matching
-  const isNewGlobe = normTemplateKey.includes("new_globe");
-  const isAnvase = normTemplateKey.includes("anvase");
-  const isUprichard = normTemplateKey.includes("uprichard");
-  const isPga = normTemplateKey.includes("pga");
-  const isClassic = normTemplateKey.includes("classic");
-  const isProfessional = normTemplateKey.includes("professional");
-  const isCompact = normTemplateKey.includes("compact");
-  const isExportStd = normTemplateKey.includes("export") && !isNewGlobe;
-  const isCustom = normTemplateKey.startsWith("custom_") || normTemplateKey.includes("custom");
+  // Bank Details
+  const rawBank = invoiceData.bank || invoiceData.bankDetails || rawSeller?.bankDetails || {};
+  const bankDetails = {
+    accountName: rawBank.account_name || rawBank.accountName || invoiceData.accountName || seller.name || "",
+    bankName: rawBank.bank_name || rawBank.bankName || invoiceData.bankName || "",
+    branch: rawBank.branch || rawBank.bankAddress || rawBank.address || "",
+    accountNo: rawBank.account_no || rawBank.accountNo || rawBank.accountNumber || "",
+    ifsc: rawBank.ifsc_code || rawBank.ifsc || ""
+  };
+  const hasBank = Boolean(bankDetails.bankName || bankDetails.accountNo || bankDetails.ifsc);
 
-  // ---------------------------------------------------------------------------
-  // TEMPLATE 5: CUSTOM UPLOADED INVOICE TEMPLATE
-  // ---------------------------------------------------------------------------
-  if (isCustom) {
-    const customTpl = invoiceData.customTemplate || getCustomTemplateByKey(templateId);
-    if (customTpl && customTpl.file_content) {
-      const isHtmlType = customTpl.template_type === "html" || (customTpl.file_name && (customTpl.file_name.endsWith(".html") || customTpl.file_name.endsWith(".htm")));
-      const isPdfType = customTpl.template_type === "pdf" || (customTpl.file_name && customTpl.file_name.endsWith(".pdf"));
-
-      if (isHtmlType) {
-        const renderedHtml = renderCustomHtmlTemplate(customTpl.file_content, invoiceData);
-        return (
-          <div
-            className="invoice-master-template bg-white rounded-2xl p-4 sm:p-6 border border-slate-300 shadow-xl overflow-hidden text-xs transition-all"
-            style={{ fontFamily: font, backgroundColor: bgColor || "#ffffff" }}
-            dangerouslySetInnerHTML={{ __html: renderedHtml }}
-          />
-        );
-      }
-
-      if (isPdfType) {
-        return (
-          <div className="invoice-master-template bg-white rounded-2xl p-6 border-2 border-indigo-200 shadow-lg text-xs">
-            <div className="bg-amber-50 border border-amber-300 text-amber-900 px-4 py-3 rounded-xl mb-4 font-medium flex items-center justify-between">
-              <div>
-                <strong>PDF Template Uploaded: {customTpl.name || customTpl.file_name}</strong>
-                <p className="text-[11px] text-amber-800 mt-0.5">
-                  Static Reference Layout (Dynamic placeholder data binding requires HTML template format).
-                </p>
-              </div>
-              <span className="bg-amber-200 text-amber-900 font-bold text-[10px] px-2 py-0.5 rounded-full uppercase">
-                PDF Reference
-              </span>
-            </div>
-            {customTpl.file_content && customTpl.file_content.startsWith("data:application/pdf") ? (
-              <iframe
-                src={customTpl.file_content}
-                title={customTpl.name || "PDF Template"}
-                className="w-full h-[600px] border border-slate-300 rounded-xl"
-              />
-            ) : (
-              <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-xl text-slate-600">
-                <p className="font-semibold text-slate-800">{customTpl.name || customTpl.file_name}</p>
-                <p className="text-xs text-slate-500 mt-1">Uploaded PDF template reference layout preview.</p>
-              </div>
-            )}
-          </div>
-        );
-      }
-    }
-
-    return (
-      <div
-        className="invoice-master-template bg-white rounded-2xl p-6 sm:p-8 border-2 border-indigo-600/40 shadow-xl text-slate-800 text-xs leading-relaxed transition-all"
-        style={{ fontFamily: font, backgroundColor: bgColor || "#ffffff" }}
-      >
-        {/* Custom Header Bar */}
-        <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-purple-900 text-white p-4 rounded-t-xl flex flex-wrap justify-between items-center gap-3">
-          <div className="flex items-center gap-3">
-            {resolvedLogoUrl ? (
-              <img src={resolvedLogoUrl} alt="Company Logo" className="max-h-12 bg-white p-1.5 rounded-lg object-contain" />
-            ) : (
-              <div className="h-10 w-10 bg-indigo-700 rounded-lg flex items-center justify-center font-bold text-white text-base">
-                {seller.name?.slice(0, 2).toUpperCase() || "CST"}
-              </div>
-            )}
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base font-extrabold tracking-wider uppercase text-white">{seller.name}</h1>
-                <span className="bg-indigo-700 text-indigo-100 text-[9px] font-extrabold px-2 py-0.5 rounded-full border border-indigo-500">
-                  CUSTOM TEMPLATE
-                </span>
-              </div>
-              <p className="text-[10px] text-indigo-200">{seller.address}</p>
-            </div>
-          </div>
-          <div className="text-right">
-            <span className="inline-block px-3 py-1 bg-indigo-950 text-indigo-100 rounded-md text-[10px] font-bold tracking-widest uppercase border border-indigo-700">
-              {rawTitle}
-            </span>
-            <p className="mt-1 text-sm font-bold text-white">{invoiceData.invoiceNo || invoiceData.proformaNo || "INV-CUSTOM-001"}</p>
-            <p className="text-[10px] text-indigo-200">Date: {formatDayMonthYear(invoiceData.invoiceDate || invoiceData.proformaDate)}</p>
-          </div>
-        </div>
-
-        {/* Dynamic Seller Identifiers */}
-        <div className="bg-indigo-50 px-4 py-2 border-x border-b border-indigo-200 text-[10px] grid grid-cols-4 gap-2 text-indigo-950 font-medium">
-          <div>GSTIN: <strong>{seller.gstin || "-"}</strong></div>
-          <div>PAN: <strong>{seller.pan || "-"}</strong></div>
-          <div>State: <strong>{seller.state || "-"}</strong></div>
-          <div>Country: <strong>{seller.country || "INDIA"}</strong></div>
-        </div>
-
-        {/* Customer & Billing Metadata Block */}
-        <div className="my-3 grid grid-cols-2 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl text-[10px]">
-          <div>
-            <span className="font-bold text-slate-900 uppercase block mb-0.5">BILLED TO:</span>
-            <p className="font-bold text-slate-900 text-[11px]">{buyer.name}</p>
-            <p className="text-slate-600">{buyer.address}</p>
-            <p className="mt-0.5 font-medium">GSTIN: {buyer.gstin || "-"}</p>
-          </div>
-          <div>
-            <span className="font-bold text-slate-900 uppercase block mb-0.5">INVOICE METADATA:</span>
-            <p><span className="text-slate-500">Customer Ref:</span> <strong>{invoiceData.customerRef || "-"}</strong></p>
-            <p><span className="text-slate-500">Currency:</span> <strong>{invoiceData.currencyCode || "INR"}</strong></p>
-            <p><span className="text-slate-500">Place of Supply:</span> <strong>{buyer.state || "-"}</strong></p>
-          </div>
-        </div>
-
-        {/* Dynamic Item Table */}
-        <div className="my-3 overflow-x-auto">
-          <table className="w-full text-left border-collapse text-[10px]">
-            <thead>
-              <tr className="bg-indigo-900 text-white font-bold">
-                <th className="py-2 px-2 text-center w-8">#</th>
-                <th className="py-2 px-2">Description</th>
-                <th className="py-2 px-1 text-center">HSN/SAC</th>
-                <th className="py-2 px-1 text-center">Qty</th>
-                <th className="py-2 px-1 text-right">Rate ({currencySymbol})</th>
-                <th className="py-2 px-1 text-right">Taxable Amt</th>
-                <th className="py-2 px-1 text-center">CGST</th>
-                <th className="py-2 px-1 text-center">SGST</th>
-                <th className="py-2 px-1 text-center">IGST</th>
-                <th className="py-2 px-2 text-right">Total Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 border-b border-slate-300">
-              {items.length > 0 ? (
-                items.map((item, idx) => (
-                  <tr key={idx} className="hover:bg-indigo-50/20">
-                    <td className="py-2 px-2 text-center font-medium">{idx + 1}</td>
-                    <td className="py-2 px-2 font-semibold text-slate-900">{item.name || item.description || "-"}</td>
-                    <td className="py-2 px-1 text-center">{item.hsn || item.hsn_sac || "-"}</td>
-                    <td className="py-2 px-1 text-center">{qty(item.qty)}</td>
-                    <td className="py-2 px-1 text-right tabular-nums">{money(item.rate || item.unit_price, "")}</td>
-                    <td className="py-2 px-1 text-right tabular-nums font-medium">{money(item.taxableValue || item.taxable_amount || (item.qty * item.rate), "")}</td>
-                    <td className="py-2 px-1 text-center">{item.cgstRate || "0.00"}%</td>
-                    <td className="py-2 px-1 text-center">{item.sgstRate || "0.00"}%</td>
-                    <td className="py-2 px-1 text-center">{item.igstRate || "0.00"}%</td>
-                    <td className="py-2 px-2 text-right tabular-nums font-bold text-indigo-950">{money(item.amountInr || item.net || (item.qty * item.rate), "")}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={10} className="py-4 text-center text-slate-400 italic">No line items added yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Dynamic Financial Totals */}
-        <div className="grid grid-cols-12 gap-4 py-2 border-t border-slate-300">
-          <div className="col-span-7 space-y-2">
-            <div className="bg-indigo-50 p-2.5 rounded-xl border border-indigo-200 text-[10px]">
-              <span className="font-bold text-indigo-900 block uppercase">Amount in Words:</span>
-              <span className="font-black text-indigo-950 text-[11px] block mt-0.5">{grandTotalInWords}</span>
-            </div>
-          </div>
-
-          <div className="col-span-5 text-[11px] space-y-1.5 border-l border-slate-200 pl-3">
-            <div className="flex justify-between text-slate-600"><span>Taxable Subtotal:</span><span>{money(totalBeforeTax, currencySymbol)}</span></div>
-            <div className="flex justify-between text-slate-600"><span>CGST Total:</span><span>{money(cgstTotal, currencySymbol)}</span></div>
-            <div className="flex justify-between text-slate-600"><span>SGST Total:</span><span>{money(sgstTotal, currencySymbol)}</span></div>
-            <div className="flex justify-between text-slate-600"><span>IGST Total:</span><span>{money(igstTotal, currencySymbol)}</span></div>
-            <div className="pt-2 flex justify-between border-t border-indigo-900 text-sm font-black text-indigo-950">
-              <span>Grand Total:</span><span>{money(totalAfterTax, currencySymbol)}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Bank Details & Authorised Signatory */}
-        <div className="mt-4 pt-3 border-t border-slate-300 text-[9px] grid grid-cols-12 gap-3 text-slate-700">
-          <div className="col-span-7">
-            <p className="font-bold text-indigo-950 uppercase">Bank Wire Instructions:</p>
-            <p>Bank: <strong>{bankDetails.bankName}</strong> | A/C: <strong>{bankDetails.accountNo}</strong> | IFSC: <strong>{bankDetails.ifsc}</strong></p>
-          </div>
-          <div className="col-span-5 text-right flex flex-col justify-between">
-            <p className="font-bold text-indigo-950 uppercase">For {seller.name}</p>
-            <div className="mt-6 pt-1 border-t border-dashed border-slate-400 font-bold text-slate-800">
-              Authorised Signatory
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // TEMPLATE 1: NEW GLOBE – EXPORT TAX INVOICE
-  // ---------------------------------------------------------------------------
-  if (isNewGlobe) {
-    return (
-      <div
-        className="invoice-master-template bg-white rounded-2xl p-6 sm:p-8 border-2 border-blue-900/40 shadow-xl text-slate-800 text-xs leading-relaxed transition-all"
-        style={{ fontFamily: font, backgroundColor: bgColor || "#ffffff" }}
-      >
-        {/* Top Header Bar */}
-        <div className="bg-blue-950 text-white p-4 rounded-t-xl flex flex-wrap justify-between items-center gap-3">
-          <div className="flex items-center gap-3">
-            {resolvedLogoUrl ? (
-              <img src={resolvedLogoUrl} alt="Logo" className="max-h-12 bg-white p-1.5 rounded-lg" />
-            ) : (
-              <div className="h-10 w-10 bg-blue-800 rounded-lg flex items-center justify-center font-bold text-white text-base">
-                NG
-              </div>
-            )}
-            <div>
-              <h1 className="text-base font-extrabold tracking-wider uppercase text-white">{seller.name}</h1>
-              <p className="text-[10px] text-blue-200">{seller.address}</p>
-            </div>
-          </div>
-          <div className="text-right">
-            <span className="inline-block px-3 py-1 bg-blue-800 text-blue-100 rounded-md text-[10px] font-bold tracking-widest uppercase border border-blue-700">
-              {isProforma ? "PRO FORMA EXPORT" : "EXPORT TAX INVOICE"}
-            </span>
-            <p className="mt-1 text-sm font-bold text-white">{invoiceData.invoiceNo || invoiceData.proformaNo || "-"}</p>
-            <p className="text-[10px] text-blue-200">Date: {formatDayMonthYear(invoiceData.invoiceDate || invoiceData.proformaDate)} {validTill ? `| Valid Till: ${formatDayMonthYear(validTill)}` : ""}</p>
-            {(customerRef || placeOfSupply || (roe && roe !== "1.00" && roe !== "1")) && (
-              <p className="text-[9px] text-blue-300">
-                {[customerRef && `Ref: ${customerRef}`, placeOfSupply && `POS: ${placeOfSupply}`, roe && roe !== "1.00" && roe !== "1" && `ROE: ${roe}`].filter(Boolean).join(" | ")}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Company Tax Identifiers Grid */}
-        <div className="bg-blue-50/80 px-4 py-2 border-x border-b border-blue-200 text-[10px] grid grid-cols-4 gap-2 text-blue-950 font-medium">
-          <div>GSTIN: <strong>{seller.gstin || "-"}</strong></div>
-          <div>PAN: <strong>{seller.pan || "-"}</strong></div>
-          <div>IE Code: <strong>{seller.iec || "-"}</strong></div>
-          <div>CIN: <strong>{seller.cin || "-"}</strong></div>
-        </div>
-
-        {/* Logistics & Shipping Metadata Box */}
-        <div className="mt-3 border border-slate-300 rounded-xl p-3 bg-slate-50/50 space-y-2 text-[10px]">
-          <div className="grid grid-cols-2 gap-3 pb-2 border-b border-slate-200">
-            <div>
-              <span className="font-bold text-slate-900 uppercase block mb-0.5">EXPORTER / SHIPPER:</span>
-              <p className="font-semibold text-slate-800">{invoiceData.shipperName || invoiceData.shipper_name || "-"}</p>
-              {buyer.address ? <p className="text-slate-600">{buyer.address}</p> : null}
-              <p className="mt-0.5 font-medium">GSTIN: {buyer.gstin || "-"}</p>
-            </div>
-            <div>
-              <span className="font-bold text-slate-900 uppercase block mb-0.5">CONSIGNEE / OVERSEAS BUYER:</span>
-              <p className="font-semibold text-slate-800">{invoiceData.consigneeName || invoiceData.consignee_name || "-"}</p>
-              {invoiceData.consigneeAddress || invoiceData.consignee_address ? (
-                <p className="text-slate-600">{invoiceData.consigneeAddress || invoiceData.consignee_address}</p>
-              ) : null}
-              <p className="mt-0.5 font-medium">Country: {buyer.country || invoiceData.customerCountry || invoiceData.customer_country || "-"}</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-4 gap-2 text-[10px]">
-            <div><span className="text-slate-500">MAWB / MBL:</span> <strong>{invoiceData.mawbNo || invoiceData.mawb_no || invoiceData.mblNumber || invoiceData.mbl_number || "-"}</strong></div>
-            <div><span className="text-slate-500">HAWB / HBL:</span> <strong>{invoiceData.hawbNo || invoiceData.hawb_no || invoiceData.blNumber || invoiceData.bl_number || "-"}</strong></div>
-            <div><span className="text-slate-500">POL (Origin):</span> <strong>{invoiceData.origin || "-"}</strong></div>
-            <div><span className="text-slate-500">POD (Discharge):</span> <strong>{invoiceData.destination || "-"}</strong></div>
-            <div><span className="text-slate-500">Gross Wt (KGS):</span> <strong>{invoiceData.weightKgs || invoiceData.weight_kgs || "-"}</strong></div>
-            <div><span className="text-slate-500">Chg Wt (KGS):</span> <strong>{invoiceData.chargeableWeightKgs || invoiceData.chargeable_weight_kgs || invoiceData.weightKgs || invoiceData.weight_kgs || "-"}</strong></div>
-            <div><span className="text-slate-500">Volume (CBM):</span> <strong>{invoiceData.volumeCbm || invoiceData.volume_cbm || "-"}</strong></div>
-            <div><span className="text-slate-500">Packages:</span> <strong>{invoiceData.packsQty || invoiceData.packs_qty || "-"}</strong></div>
-          </div>
-        </div>
-
-        <LogisticsMetadataGrid data={invoiceData} />
-
-        {/* Item Table */}
-        <div className="my-3 overflow-x-auto">
-          <table className="w-full text-left border-collapse text-[10px]">
-            <thead>
-              <tr className="bg-blue-900 text-white font-bold">
-                <th className="py-2 px-2 text-center w-8">Sr</th>
-                <th className="py-2 px-2">Description of Services / Export Charges</th>
-                <th className="py-2 px-1 text-center">SAC/HSN</th>
-                <th className="py-2 px-1 text-center">Qty</th>
-                <th className="py-2 px-1 text-right">Rate ({currencySymbol})</th>
-                <th className="py-2 px-1 text-right">Taxable Amt</th>
-                <th className="py-2 px-1 text-center">IGST %</th>
-                <th className="py-2 px-1 text-right">IGST Amt</th>
-                <th className="py-2 px-[10px] text-right">Total ({currencySymbol})</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 border-b border-slate-300">
-              {items.length > 0 ? (
-                items.map((item, idx) => (
-                  <tr key={idx} className="hover:bg-blue-50/30">
-                    <td className="py-2 px-2 text-center font-medium">{idx + 1}</td>
-                    <td className="py-2 px-2 font-semibold text-slate-900">{item.name || item.description || "-"}</td>
-                    <td className="py-2 px-1 text-center">{item.hsn || item.hsn_sac || "-"}</td>
-                    <td className="py-2 px-1 text-center">{qty(item.qty)}</td>
-                    <td className="py-2 px-1 text-right tabular-nums">{money(item.rate || item.unit_price, "")}</td>
-                    <td className="py-2 px-1 text-right tabular-nums font-medium">{money(item.taxableValue || item.taxable_amount || (item.qty * item.rate), "")}</td>
-                    <td className="py-2 px-1 text-center font-medium">{item.igstRate ?? item.igst_rate ?? "0.00"}%</td>
-                    <td className="py-2 px-1 text-right tabular-nums">{money(item.igstAmount || item.igst_amount || 0, "")}</td>
-                    <td className="py-2 px-[10px] text-right tabular-nums font-bold text-blue-950">{money(item.amountInr || item.net || (item.qty * item.rate), "")}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={9} className="py-4 text-center text-slate-400 italic">No line items added yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Totals & Word Summary */}
-        <div className="grid grid-cols-12 gap-4 py-2 border-t border-slate-300">
-          <div className="col-span-7 space-y-2">
-            <div className="bg-blue-50 p-2.5 rounded-xl border border-blue-200 text-[10px]">
-              <span className="font-bold text-blue-900 block uppercase tracking-wide">Amount in Words:</span>
-              <span className="font-extrabold text-blue-950 text-[11px] block mt-0.5">{grandTotalInWords}</span>
-            </div>
-            <p className="text-[9px] text-slate-500 italic">* Supply Meant For Export Under LUT / Bond Without Payment of Integrated Tax (IGST).</p>
-          </div>
-
-          <div className="col-span-5 text-[11px] space-y-1.5 border-l border-slate-200 pl-3">
-            <div className="flex justify-between text-slate-600"><span>Taxable Value:</span><span>{money(totalBeforeTax, currencySymbol)}</span></div>
-            <div className="flex justify-between text-slate-600"><span>IGST Total:</span><span>{money(igstTotal, currencySymbol)}</span></div>
-            <div className="pt-2 flex justify-between border-t border-blue-900 text-sm font-black text-blue-950">
-              <span>Grand Total:</span><span>{money(totalAfterTax, currencySymbol)}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Bank & Signatory Footer */}
-        <div className="mt-4 pt-3 border-t border-slate-300 text-[9px] grid grid-cols-12 gap-3 text-slate-700">
-          <div className="col-span-7 space-y-1">
-            <p className="font-bold text-blue-950 uppercase">Bank Remittance Details:</p>
-            <p>Bank: <strong>{bankDetails.bankName}</strong> | Account No: <strong>{bankDetails.accountNo}</strong></p>
-            <p>IFSC: <strong>{bankDetails.ifsc}</strong> | SWIFT Code: <strong>{bankDetails.swift}</strong></p>
-            {terms ? <p className="text-slate-600 mt-1"><strong>Terms:</strong> {terms}</p> : <p className="text-slate-500 mt-1">Terms: Payment due within 15 days of invoice date.</p>}
-            {rcmApplicable && <p className="text-blue-900 font-bold">Reverse Charge Mechanism (RCM): Applicable</p>}
-          </div>
-          <div className="col-span-5 text-right flex flex-col justify-between">
-            <p className="font-bold text-blue-950 uppercase">For {seller.name}</p>
-            <div className="mt-6 pt-1 border-t border-dashed border-slate-400 font-bold text-slate-800">
-              Authorised Signatory
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // TEMPLATE 2: ANVASE EXIM – IMPORT TAX INVOICE
-  // ---------------------------------------------------------------------------
-  if (isAnvase) {
-    return (
-      <div
-        className="invoice-master-template bg-white rounded-2xl p-6 sm:p-8 border-2 border-red-900/40 shadow-xl text-slate-800 text-xs leading-relaxed transition-all"
-        style={{ fontFamily: font, backgroundColor: bgColor || "#ffffff" }}
-      >
-        {/* Header */}
-        <div className="border-b-2 border-red-900 pb-3 flex justify-between items-start">
-          <div>
-            <h1 className="text-lg font-black tracking-tight text-red-950 uppercase">{seller.name}</h1>
-            <p className="text-[10px] text-slate-600 max-w-lg">{seller.address}</p>
-            <p className="text-[10px] font-semibold text-red-900 mt-1">{seller.customsBrokerRegNo ? `CUSTOMS BROKER REGN NO: ${seller.customsBrokerRegNo} | ` : ""}GSTIN: {seller.gstin || "-"}</p>
-          </div>
-          <div className="text-right bg-red-900 text-white p-3 rounded-xl min-w-[150px]">
-            <span className="text-[9px] font-extrabold tracking-wider uppercase block text-red-200">IMPORT & CUSTOMS</span>
-            <p className="text-sm font-black text-white">{invoiceData.invoiceNo || invoiceData.proformaNo || "-"}</p>
-            <p className="text-[10px] text-red-100">Date: {formatDayMonthYear(invoiceData.invoiceDate || invoiceData.proformaDate)}</p>
-          </div>
-        </div>
-
-        {/* Customs & BE Metadata Block */}
-        <div className="my-3 bg-red-50/60 border border-red-200 rounded-xl p-3 text-[10px] grid grid-cols-4 gap-2 text-red-950">
-          <div>Job No & Date: <strong>{invoiceData.jobNo || invoiceData.job_no || "-"}</strong></div>
-          <div>BE No & Date: <strong>{invoiceData.beNo || invoiceData.be_no || "-"}</strong></div>
-          <div>BE Type: <strong>{invoiceData.beType || invoiceData.be_type || "-"}</strong></div>
-          <div>MBL / HBL: <strong>{[invoiceData.mblNumber || invoiceData.mbl_number, invoiceData.blNumber || invoiceData.bl_number].filter(Boolean).join(" / ") || "-"}</strong></div>
-          <div>CIF Value: <strong>{invoiceData.cifValue || invoiceData.cif_value ? money(invoiceData.cifValue || invoiceData.cif_value, "₹") : "-"}</strong></div>
-          <div>Assessable Value: <strong>{invoiceData.assessableValue || invoiceData.assessable_value ? money(invoiceData.assessableValue || invoiceData.assessable_value, "₹") : "-"}</strong></div>
-          <div>Total Duty Paid: <strong>{invoiceData.customsDutyPaid || invoiceData.customs_duty_paid ? money(invoiceData.customsDutyPaid || invoiceData.customs_duty_paid, "₹") : "-"}</strong></div>
-          <div>Overseas Shipper: <strong>{invoiceData.shipperName || invoiceData.shipper_name || "-"}</strong></div>
-        </div>
-
-        {/* Importer Party Info */}
-        <div className="mb-3 p-3 border border-slate-200 rounded-xl bg-slate-50 text-[10px] grid grid-cols-2 gap-3">
-          <div>
-            <span className="font-bold text-slate-900 uppercase">IMPORTER / CUSTOMER:</span>
-            <p className="font-bold text-slate-900 text-[11px]">{buyer.name || "-"}</p>
-            {buyer.address ? <p className="text-slate-600">{buyer.address}</p> : null}
-            <p className="font-medium mt-0.5">GSTIN: {buyer.gstin || "-"}</p>
-            {customerRef ? <p className="text-slate-600">Cust Ref: <strong>{customerRef}</strong></p> : null}
-            {placeOfSupply ? <p className="text-slate-600">Place of Supply: <strong>{placeOfSupply}</strong></p> : null}
-          </div>
-          <div>
-            <span className="font-bold text-slate-900 uppercase">PORT OF DISCHARGE & CLEARANCE:</span>
-            <p className="font-semibold text-slate-800">{invoiceData.destination || "-"}</p>
-            <p className="text-slate-600">Container Details: {invoiceData.containerDetails || invoiceData.container_details || "-"}</p>
-            {validTill ? <p className="text-slate-600">Valid Till: <strong>{formatDayMonthYear(validTill)}</strong></p> : null}
-          </div>
-        </div>
-
-        <LogisticsMetadataGrid data={invoiceData} />
-
-        {/* Charges Table */}
-        <div className="my-3 overflow-x-auto">
-          <table className="w-full text-left border-collapse text-[10px]">
-            <thead>
-              <tr className="bg-red-900 text-white font-bold">
-                <th className="py-2 px-1 text-center w-8">Sl</th>
-                <th className="py-2 px-2">Customs Clearance & Logistics Charges</th>
-                <th className="py-2 px-1 text-center">HSN/SAC</th>
-                <th className="py-2 px-1 text-right">Taxable Value</th>
-                <th className="py-2 px-1 text-center">CGST</th>
-                <th className="py-2 px-1 text-center">SGST</th>
-                <th className="py-2 px-1 text-center">IGST</th>
-                <th className="py-2 px-2 text-right">Total Amount (₹)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 border-b border-slate-300">
-              {items.length > 0 ? (
-                items.map((item, idx) => (
-                  <tr key={idx} className="hover:bg-red-50/30">
-                    <td className="py-2 px-1 text-center font-medium">{idx + 1}</td>
-                    <td className="py-2 px-2 font-semibold text-slate-900">{item.name || item.description || "-"}</td>
-                    <td className="py-2 px-1 text-center">{item.hsn || item.hsn_sac || "-"}</td>
-                    <td className="py-2 px-1 text-right tabular-nums">{money(item.taxableValue || item.taxable_amount || (item.qty * item.rate), "")}</td>
-                    <td className="py-2 px-1 text-center">{item.cgstRate != null ? `${item.cgstRate}%` : "0%"}</td>
-                    <td className="py-2 px-1 text-center">{item.sgstRate != null ? `${item.sgstRate}%` : "0%"}</td>
-                    <td className="py-2 px-1 text-center">{item.igstRate != null ? `${item.igstRate}%` : "0%"}</td>
-                    <td className="py-2 px-2 text-right tabular-nums font-bold text-red-950">{money(item.amountInr || item.net || (item.qty * item.rate), "")}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={8} className="py-4 text-center text-slate-400 italic">No charges added yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Financial Summary */}
-        <div className="grid grid-cols-12 gap-4 py-2 border-t border-slate-300">
-          <div className="col-span-7 space-y-2">
-            <div className="bg-red-50 p-2.5 rounded-xl border border-red-200 text-[10px]">
-              <span className="font-bold text-red-900 block uppercase">Total Invoice Value in Words:</span>
-              <span className="font-black text-red-950 text-[11px] block mt-0.5">{grandTotalInWords}</span>
-            </div>
-          </div>
-
-          <div className="col-span-5 text-[11px] space-y-1.5 border-l border-slate-200 pl-3">
-            <div className="flex justify-between text-slate-600"><span>Taxable Subtotal:</span><span>{money(totalBeforeTax, "₹")}</span></div>
-            <div className="flex justify-between text-slate-600"><span>CGST Total:</span><span>{money(cgstTotal, "₹")}</span></div>
-            <div className="flex justify-between text-slate-600"><span>SGST Total:</span><span>{money(sgstTotal, "₹")}</span></div>
-            <div className="flex justify-between text-slate-600"><span>IGST Total:</span><span>{money(igstTotal, "₹")}</span></div>
-            <div className="pt-2 flex justify-between border-t border-red-900 text-sm font-black text-red-950">
-              <span>Grand Total:</span><span>{money(totalAfterTax, "₹")}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Declaration & Signatory */}
-        <div className="mt-4 pt-3 border-t border-slate-300 text-[9px] grid grid-cols-12 gap-3 text-slate-700">
-          <div className="col-span-7">
-            <p className="font-bold text-red-950 uppercase">Statutory GST Declaration & Bank Details:</p>
-            {bankDetails.bankName && <p>Bank: <strong>{bankDetails.bankName}</strong> | Account No: <strong>{bankDetails.accountNo}</strong> | IFSC: <strong>{bankDetails.ifsc}</strong></p>}
-            <p className="text-slate-600 leading-tight mt-1">We declare that this invoice shows the actual price of the services described and that all particulars are true and correct.</p>
-            {terms && <p className="text-slate-600 mt-1"><strong>Terms:</strong> {terms}</p>}
-            {notes && <p className="text-slate-600"><strong>Notes:</strong> {notes}</p>}
-            {rcmApplicable && <p className="text-red-900 font-bold">Reverse Charge (RCM): Applicable</p>}
-          </div>
-          <div className="col-span-5 text-right flex flex-col justify-between">
-            <p className="font-bold text-red-950 uppercase">For {seller.name}</p>
-            <div className="mt-6 pt-1 border-t border-dashed border-slate-400 font-bold text-slate-800">
-              Authorised Signatory
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // TEMPLATE 3: UPRICHARD – INTERNATIONAL INVOICE
-  // ---------------------------------------------------------------------------
-  if (isUprichard) {
-    return (
-      <div
-        className="invoice-master-template bg-white rounded-2xl p-6 sm:p-8 border border-slate-300 shadow-lg text-slate-800 text-xs leading-relaxed transition-all"
-        style={{ fontFamily: font, backgroundColor: bgColor || "#ffffff" }}
-      >
-        {/* Minimal Clean Header */}
-        <div className="flex justify-between items-start pb-6 border-b border-slate-200">
-          <div>
-            <h1 className="text-2xl font-light tracking-tight text-slate-900 uppercase font-sans">{seller.name}</h1>
-            <p className="text-xs text-slate-500 mt-1 max-w-sm">{seller.address}</p>
-            <p className="text-xs text-slate-500">VAT / Tax ID: {seller.gstin || "-"}</p>
-          </div>
-          <div className="text-right">
-            <h2 className="text-xl font-bold tracking-widest text-teal-800 uppercase">{isProforma ? "PRO FORMA" : "INVOICE"}</h2>
-            <p className="mt-2 text-sm font-semibold text-slate-900"># {invoiceData.invoiceNo || invoiceData.proformaNo || "-"}</p>
-            <p className="text-xs text-slate-500">Date: {formatDayMonthYear(invoiceData.invoiceDate || invoiceData.proformaDate)} {validTill ? `| Valid Till: ${formatDayMonthYear(validTill)}` : ""}</p>
-          </div>
-        </div>
-
-        {/* Bill To & Ship To Grid */}
-        <div className="grid grid-cols-2 gap-6 my-6 text-xs">
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-            <span className="text-xs font-bold uppercase tracking-wider text-teal-900 block mb-2">BILL TO:</span>
-            <p className="font-bold text-slate-900">{buyer.name || "-"}</p>
-            {buyer.address ? <p className="text-slate-600 mt-1">{buyer.address}</p> : null}
-            {buyer.country ? <p className="text-slate-600 mt-1">{buyer.country}</p> : null}
-          </div>
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-            <span className="text-xs font-bold uppercase tracking-wider text-teal-900 block mb-2">DETAILS:</span>
-            <p><span className="text-slate-500">Customer Ref / PO:</span> <strong>{customerRef || "-"}</strong></p>
-            <p className="mt-1"><span className="text-slate-500">Currency:</span> <strong className="uppercase">{invoiceData.currencyCode || "INR"}</strong> {roe && roe !== "1.00" && roe !== "1" ? `(ROE: ${roe})` : ""}</p>
-            <p className="mt-1"><span className="text-slate-500">Payment Terms:</span> <strong>{terms || invoiceData.paymentTerms || "-"}</strong></p>
-            {placeOfSupply ? <p className="mt-1"><span className="text-slate-500">Place of Supply:</span> <strong>{placeOfSupply}</strong></p> : null}
-          </div>
-        </div>
-
-        <LogisticsMetadataGrid data={invoiceData} />
-
-        {/* Minimal Item Table */}
-        <div className="my-6 overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="border-b-2 border-slate-900 font-semibold text-slate-900">
-                <th className="py-3 px-2">Description</th>
-                <th className="py-3 px-2 text-center w-16">Qty</th>
-                <th className="py-3 px-2 text-right">Unit Price</th>
-                <th className="py-3 px-2 text-right">VAT %</th>
-                <th className="py-3 px-2 text-right">Net Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 border-b border-slate-200">
-              {items.length > 0 ? (
-                items.map((item, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50">
-                    <td className="py-3 px-2 font-medium text-slate-900">{item.name || item.description || "-"}</td>
-                    <td className="py-3 px-2 text-center">{qty(item.qty)}</td>
-                    <td className="py-3 px-2 text-right tabular-nums">{money(item.rate || item.unit_price, currencySymbol)}</td>
-                    <td className="py-3 px-2 text-right tabular-nums">{item.taxRate ?? item.vatRate ?? "0"}%</td>
-                    <td className="py-3 px-2 text-right tabular-nums font-bold text-slate-900">{money(item.amountInr || item.net || (item.qty * item.rate), currencySymbol)}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={5} className="py-6 text-center text-slate-400 italic">No line items added yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* International Currency Totals */}
-        <div className="flex justify-end my-6">
-          <div className="w-72 space-y-2 text-xs">
-            <div className="flex justify-between text-slate-600"><span>Subtotal Net:</span><span>{money(totalBeforeTax, currencySymbol)}</span></div>
-            <div className="flex justify-between text-slate-600"><span>VAT Total:</span><span>{money(igstTotal || cgstTotal + sgstTotal, currencySymbol)}</span></div>
-            <div className="pt-2 flex justify-between border-t-2 border-slate-900 text-base font-bold text-slate-900">
-              <span>Total Payable:</span><span>{money(totalAfterTax, currencySymbol)}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Wire & Bank Instructions */}
-        <div className="mt-8 pt-4 border-t border-slate-200 text-xs text-slate-600 grid grid-cols-2 gap-6">
-          <div>
-            <p className="font-bold text-slate-900 uppercase mb-1">WIRE TRANSFER DETAILS:</p>
-            <p>Bank: <strong>{bankDetails.bankName}</strong></p>
-            <p>Account No: <strong>{bankDetails.accountNo}</strong> {bankDetails.ifsc ? `| IFSC: ${bankDetails.ifsc}` : ""}</p>
-            {bankDetails.iban ? <p>IBAN: <strong>{bankDetails.iban}</strong></p> : null}
-            {bankDetails.swift ? <p>SWIFT/BIC: <strong>{bankDetails.swift}</strong></p> : null}
-            {notes ? <p className="mt-2 text-slate-500"><strong>Notes:</strong> {notes}</p> : null}
-          </div>
-          <div className="text-right flex flex-col justify-end">
-            <p className="text-slate-400 text-[10px]">Thank you for your business!</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // TEMPLATE 4: PGA SHIPPING – DRAFT TAX INVOICE
-  // ---------------------------------------------------------------------------
-  if (isPga) {
-    return (
-      <div
-        className="invoice-master-template bg-white rounded-2xl p-6 sm:p-8 border-2 border-slate-700/40 shadow-xl text-slate-800 text-xs leading-relaxed transition-all"
-        style={{ fontFamily: font, backgroundColor: bgColor || "#ffffff" }}
-      >
-        {/* Header */}
-        <div className="bg-slate-900 text-white p-4 rounded-xl flex justify-between items-center">
-          <div>
-            <h1 className="text-lg font-black tracking-wide text-white uppercase">{seller.name}</h1>
-            <p className="text-[10px] text-slate-300">{seller.address}</p>
-          </div>
-          <div className="text-right border-l border-slate-700 pl-4">
-            <span className="inline-block px-3 py-1 bg-amber-500 text-slate-950 font-black rounded text-[10px] tracking-wider uppercase">
-              {isProforma ? "DRAFT PRO FORMA" : "DRAFT TAX INVOICE"}
-            </span>
-            <p className="mt-1 text-sm font-bold text-white">{invoiceData.invoiceNo || invoiceData.proformaNo || "-"}</p>
-            <p className="text-[10px] text-slate-300">Date: {formatDayMonthYear(invoiceData.invoiceDate || invoiceData.proformaDate)} {validTill ? `| Valid Till: ${formatDayMonthYear(validTill)}` : ""}</p>
-          </div>
-        </div>
-
-        {/* Routing & Container Grid */}
-        <div className="my-3 p-3 bg-slate-100 border border-slate-300 rounded-xl text-[10px] grid grid-cols-3 gap-3">
-          <div><span className="text-slate-500 block">CUSTOMER / BILL TO:</span><strong className="text-slate-900 text-[11px]">{buyer.name || "-"}</strong></div>
-          <div><span className="text-slate-500 block">SHIPPER:</span><strong className="text-slate-900">{invoiceData.shipperName || invoiceData.shipper_name || "-"}</strong></div>
-          <div><span className="text-slate-500 block">CONSIGNEE:</span><strong className="text-slate-900">{invoiceData.consigneeName || invoiceData.consignee_name || "-"}</strong></div>
-          <div><span className="text-slate-500 block">PORT OF ORIGIN:</span><strong className="text-slate-900">{invoiceData.origin || "-"}</strong></div>
-          <div><span className="text-slate-500 block">FINAL DESTINATION:</span><strong className="text-slate-900">{invoiceData.destination || "-"}</strong></div>
-          <div><span className="text-slate-500 block">VESSEL & VOYAGE:</span><strong className="text-slate-900">{[invoiceData.vesselName || invoiceData.vessel_name, invoiceData.voyageNo || invoiceData.voyage_no].filter(Boolean).join(" / ") || "-"}</strong></div>
-          <div><span className="text-slate-500 block">CONTAINER NO:</span><strong className="text-slate-900">{invoiceData.containerDetails || invoiceData.container_details || "-"}</strong></div>
-          <div><span className="text-slate-500 block">FREIGHT TERMS:</span><strong className="text-slate-900">{invoiceData.freightTerms || invoiceData.freight_terms || "-"}</strong></div>
-          <div><span className="text-slate-500 block">RATE OF EXCHANGE (ROE):</span><strong className="text-slate-900">{invoiceData.exchangeRate || invoiceData.exchange_rate || invoiceData.roe || "-"}</strong></div>
-        </div>
-
-        <LogisticsMetadataGrid data={invoiceData} />
-
-        {/* Charges Table */}
-        <div className="my-3 overflow-x-auto">
-          <table className="w-full text-left border-collapse text-[10px]">
-            <thead>
-              <tr className="bg-slate-800 text-white font-bold">
-                <th className="py-2 px-1 text-center w-8">Sl</th>
-                <th className="py-2 px-2">Freight & Logistics Charges</th>
-                <th className="py-2 px-1 text-center">HSN/SAC</th>
-                <th className="py-2 px-1 text-center">Qty</th>
-                <th className="py-2 px-1 text-right">Rate</th>
-                <th className="py-2 px-1 text-right">Taxable Amt</th>
-                <th className="py-2 px-1 text-center">CGST</th>
-                <th className="py-2 px-1 text-center">SGST</th>
-                <th className="py-2 px-1 text-center">IGST</th>
-                <th className="py-2 px-2 text-right">Total Amount (₹)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 border-b border-slate-300">
-              {items.length > 0 ? (
-                items.map((item, idx) => (
-                  <tr key={idx} className="hover:bg-slate-100">
-                    <td className="py-2 px-1 text-center font-medium">{idx + 1}</td>
-                    <td className="py-2 px-2 font-semibold text-slate-900">{item.name || item.description || "-"}</td>
-                    <td className="py-2 px-1 text-center">{item.hsn || item.hsn_sac || "-"}</td>
-                    <td className="py-2 px-1 text-center">{qty(item.qty)}</td>
-                    <td className="py-2 px-1 text-right tabular-nums">{money(item.rate || item.unit_price, "")}</td>
-                    <td className="py-2 px-1 text-right tabular-nums font-medium">{money(item.taxableValue || item.taxable_amount || (item.qty * item.rate), "")}</td>
-                    <td className="py-2 px-1 text-center">{item.cgstRate != null ? `${item.cgstRate}%` : "0%"}</td>
-                    <td className="py-2 px-1 text-center">{item.sgstRate != null ? `${item.sgstRate}%` : "0%"}</td>
-                    <td className="py-2 px-1 text-center">{item.igstRate != null ? `${item.igstRate}%` : "0%"}</td>
-                    <td className="py-2 px-2 text-right tabular-nums font-bold text-slate-950">{money(item.amountInr || item.net || (item.qty * item.rate), "")}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={10} className="py-4 text-center text-slate-400 italic">No line items added yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Totals Summary */}
-        <div className="grid grid-cols-12 gap-4 py-2 border-t border-slate-300">
-          <div className="col-span-7 space-y-2">
-            <div className="bg-slate-100 p-2.5 rounded-xl border border-slate-300 text-[10px]">
-              <span className="font-bold text-slate-800 block uppercase">Grand Total in Words:</span>
-              <span className="font-black text-slate-950 text-[11px] block mt-0.5">{grandTotalInWords}</span>
-            </div>
-          </div>
-
-          <div className="col-span-5 text-[11px] space-y-1.5 border-l border-slate-200 pl-3">
-            <div className="flex justify-between text-slate-600"><span>Taxable Value:</span><span>{money(totalBeforeTax, "₹")}</span></div>
-            <div className="flex justify-between text-slate-600"><span>CGST Total:</span><span>{money(cgstTotal, "₹")}</span></div>
-            <div className="flex justify-between text-slate-600"><span>SGST Total:</span><span>{money(sgstTotal, "₹")}</span></div>
-            <div className="flex justify-between text-slate-600"><span>IGST Total:</span><span>{money(igstTotal, "₹")}</span></div>
-            <div className="pt-2 flex justify-between border-t border-slate-900 text-sm font-black text-slate-950">
-              <span>Grand Total:</span><span>{money(totalAfterTax, "₹")}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Bank & Signatory */}
-        <div className="mt-4 pt-3 border-t border-slate-300 text-[9px] grid grid-cols-12 gap-3 text-slate-700">
-          <div className="col-span-7 space-y-1">
-            <p className="font-bold text-slate-900 uppercase">Bank Details for Wire Payment:</p>
-            <p>Bank: <strong>{bankDetails.bankName}</strong> | Account No: <strong>{bankDetails.accountNo}</strong> | IFSC: <strong>{bankDetails.ifsc}</strong></p>
-            {terms ? <p className="text-slate-600 mt-1"><strong>Terms:</strong> {terms}</p> : null}
-            {notes ? <p className="text-slate-600"><strong>Notes:</strong> {notes}</p> : null}
-            {rcmApplicable && <p className="text-slate-900 font-bold">Reverse Charge (RCM): Applicable</p>}
-          </div>
-          <div className="col-span-5 text-right flex flex-col justify-between">
-            <p className="font-bold text-slate-900 uppercase">For {seller.name}</p>
-            <div className="mt-6 pt-1 border-t border-dashed border-slate-400 font-bold text-slate-800">
-              Authorised Signatory
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // DEFAULT / FALLBACK TEMPLATES (Modern GST, Classic, Professional, Compact, Export Standard)
-  // ---------------------------------------------------------------------------
   return (
-    <div
-      className={clsx(
-        "invoice-master-template bg-white rounded-2xl text-slate-800 text-xs leading-relaxed transition-all",
-        isCompact ? "p-4 sm:p-5 text-[10px]" : "p-6 sm:p-8",
-        isClassic ? "border-4 border-double border-slate-800 shadow-lg font-serif" : "border border-slate-300 shadow-md"
-      )}
-      style={{ fontFamily: font, backgroundColor: bgColor || "#ffffff" }}
-    >
-      {/* ACCENT BARS */}
-      {isExportStd && <div className="h-2 rounded-t-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-400 mb-4 -mt-2 -mx-2" />}
-      {!isClassic && !isProfessional && !isExportStd && (
-        <div className="h-2 rounded-t-xl bg-gradient-to-r from-emerald-600 via-teal-500 to-emerald-400 mb-4 -mt-2 -mx-2" />
-      )}
+    <div className="invoice-master-template bg-white text-slate-900 text-xs leading-tight p-4 sm:p-6 max-w-[210mm] mx-auto border border-slate-300 shadow-sm print:border-none print:shadow-none print:p-0">
+      <style>{`
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 8mm;
+          }
+          body {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            background: #ffffff !important;
+          }
+          .invoice-master-template {
+            width: 100% !important;
+            max-width: 100% !important;
+            border: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+          thead {
+            display: table-header-group !important;
+          }
+          tr {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+          .print-avoid-break {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+        }
+      `}</style>
 
-      {/* HEADER BANNER FOR PROFESSIONAL */}
-      {isProfessional ? (
-        <div className="bg-slate-900 text-white p-5 rounded-2xl mb-5 flex flex-wrap items-center justify-between gap-4 shadow-md">
-          <div className="flex items-center gap-4">
-            {resolvedLogoUrl ? (
-              <img src={resolvedLogoUrl} alt="Logo" className="max-h-16 max-w-[140px] object-contain bg-white p-2 rounded-xl" />
-            ) : (
-              <div className="h-14 w-28 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-white font-bold tracking-wider text-sm">
-                {seller.name?.slice(0, 8).toUpperCase() || "LOGO"}
-              </div>
-            )}
-            <div>
-              <h1 className="text-xl font-bold tracking-tight uppercase text-white">{seller.name}</h1>
-              <p className="text-xs text-slate-300 max-w-md">{seller.address}</p>
+      {/* TOP HEADER */}
+      <div className="grid grid-cols-12 gap-2 pb-3 border-b border-slate-400 items-start">
+        {/* LOGO */}
+        <div className="col-span-3 flex items-center justify-start">
+          {resolvedLogoUrl ? (
+            <img src={resolvedLogoUrl} alt="Logo" className="max-h-20 max-w-[150px] object-contain" />
+          ) : (
+            <div className="h-14 w-28 rounded border border-dashed border-slate-300 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase">
+              {seller.name?.slice(0, 8) || "LOGO"}
             </div>
+          )}
+        </div>
+
+        {/* SELLER DETAILS (CENTER) */}
+        <div className="col-span-6 text-center px-1">
+          <h1 className="text-sm sm:text-base font-extrabold uppercase tracking-tight text-slate-950">
+            {seller.name}
+          </h1>
+          {seller.address && <p className="text-[10px] text-slate-700 whitespace-pre-line mt-0.5">{seller.address}</p>}
+          <div className="text-[9.5px] text-slate-800 space-y-0.2 mt-0.5">
+            {seller.stateWithCode && <span>State: <strong>{seller.stateWithCode}</strong> </span>}
+            {seller.country && <span>| Country: <strong>{seller.country}</strong> </span>}
+            {seller.phone && <span>| Phone: <strong>{seller.phone}</strong></span>}
           </div>
-          <div className="text-right border-l border-slate-700 pl-4">
-            <span className="inline-block px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-bold uppercase tracking-wider border border-blue-400/30">
-              {rawTitle}
-            </span>
-            <p className="mt-2 text-sm font-bold text-white">{invoiceData.invoiceNo || invoiceData.proformaNo || "-"}</p>
-            <p className="text-xs text-slate-300">Date: {formatDayMonthYear(invoiceData.invoiceDate || invoiceData.proformaDate)} {validTill ? `| Valid Till: ${formatDayMonthYear(validTill)}` : ""}</p>
+          <div className="text-[9.5px] text-slate-800 mt-0.5 font-medium">
+            {seller.pan && <span>PAN: <strong>{seller.pan}</strong> </span>}
+            {seller.iec && <span>| IEC: <strong>{seller.iec}</strong> </span>}
+            {seller.gstin && <span>| GSTIN: <strong>{seller.gstin}</strong></span>}
           </div>
         </div>
-      ) : (
-        /* STANDARD HEADER */
-        <div className="grid grid-cols-12 gap-4 pb-4 border-b border-slate-300">
-          <div className="col-span-3 flex items-center justify-center border-r border-slate-200 pr-3">
-            {resolvedLogoUrl ? (
-              <img src={resolvedLogoUrl} alt="Company Logo" className="max-h-20 max-w-full object-contain" />
-            ) : (
-              <div className="h-16 w-full rounded-lg bg-slate-100 flex items-center justify-center text-slate-400 font-bold tracking-wider">
-                {seller.name?.slice(0, 8).toUpperCase() || "LOGO"}
-              </div>
-            )}
-          </div>
-          <div className="col-span-7 px-2">
-            <h1 className={clsx("font-bold tracking-tight uppercase text-slate-900", isClassic ? "text-xl font-serif" : "text-lg")}>
-              {seller.name}
-            </h1>
-            <p className="text-[11px] text-slate-600">{seller.address}</p>
-            <div className="mt-1 grid grid-cols-2 gap-x-2 text-[11px] text-slate-700 font-medium">
-              <p>PAN NO: <span className="font-semibold text-slate-900">{seller.pan || "-"}</span></p>
-              <p>CIN No: <span className="font-semibold text-slate-900">{seller.cin || "-"}</span></p>
-              <p>IEC NO: <span className="font-semibold text-slate-900">{seller.iec || "-"}</span></p>
-              <p>GSTN: <span className="font-semibold text-slate-900">{seller.gstin || "-"}</span></p>
-              <p>State: <span className="font-semibold text-slate-900">{seller.state || "-"}</span></p>
-              <p>Phone: <span className="font-semibold text-slate-900">{seller.phone || "-"}</span></p>
-            </div>
-          </div>
-          <div className="col-span-2 flex flex-col items-center justify-center pl-2">
-            <div className="h-20 w-20 border border-emerald-300 bg-emerald-50 text-emerald-700 flex items-center justify-center text-[9px] text-center font-semibold rounded-lg">
-              {isProforma ? "PRO FORMA" : "OFFICIAL"}
-            </div>
-          </div>
+
+        {/* SELLER REGISTRATION NUMBERS (RIGHT) */}
+        <div className="col-span-3 text-right text-[10px] space-y-0.5 text-slate-800 border-l border-slate-200 pl-2">
+          {seller.cin ? <div>CIN: <span className="font-bold">{seller.cin}</span></div> : null}
+          {seller.pan ? <div>PAN: <span className="font-bold">{seller.pan}</span></div> : null}
+          {seller.gstin ? <div>GSTN: <span className="font-bold">{seller.gstin}</span></div> : null}
         </div>
-      )}
+      </div>
 
       {/* DOCUMENT TITLE */}
-      {!isProfessional && (
-        <div className="my-3 text-center">
-          <span className={clsx("uppercase tracking-wider font-extrabold text-slate-900", isClassic ? "text-lg font-serif border-y-2 border-slate-800 py-1 inline-block px-8" : "text-base underline decoration-2 underline-offset-4")}>
-            {rawTitle}
-          </span>
-        </div>
-      )}
+      <div className="py-2 text-center">
+        <h2 className="text-sm font-extrabold underline underline-offset-4 tracking-widest text-slate-950">
+          {documentTitle}
+        </h2>
+      </div>
 
-      {/* METADATA GRID */}
-      <div className="grid grid-cols-12 gap-3 pb-3 border-b border-slate-300 text-[11px]">
-        <div className="col-span-6 pr-2">
-          <p className="font-bold text-slate-900 uppercase">TO : {buyer.name}</p>
-          <p className="text-slate-600 leading-tight">{buyer.address}</p>
-          <p className="mt-1 font-medium text-slate-800">{buyer.state} {buyer.country ? `, ${buyer.country}` : ""}</p>
-          <p className="font-bold text-slate-900">GSTN NO. : {buyer.gstin || "-"}</p>
+      {/* TWO COLUMNS: CUSTOMER/SHIPMENT (LEFT) & DOCUMENT/HEADER (RIGHT) */}
+      <div className="grid grid-cols-12 gap-3 pb-2 text-[10px] border-b border-slate-300">
+        {/* LEFT COLUMN: CUSTOMER + SHIPMENT */}
+        <div className="col-span-6 space-y-2 pr-2 border-r border-slate-200">
+          {/* CUSTOMER (TO) */}
+          <div className="space-y-0.5">
+            <span className="font-extrabold text-slate-900 block text-[10.5px]">TO:</span>
+            <div className="font-bold text-slate-950">{buyer.name}</div>
+            {buyer.address && <div className="text-slate-700 whitespace-pre-line">{buyer.address}</div>}
+            <div className="text-slate-700">
+              {buyer.city ? `${buyer.city}, ` : ""}
+              {buyer.stateWithCode}
+              {buyer.pincode ? ` - ${buyer.pincode}` : ""}
+            </div>
+            {buyer.country && <div className="text-slate-700">{buyer.country}</div>}
+            {buyer.gstin && <div>GSTIN: <span className="font-bold text-slate-900">{buyer.gstin}</span></div>}
+          </div>
+
+          {/* SHIPMENT BLOCK */}
+          {(shipperName || consigneeName || origin || destination || vessel || voyageNo || oceanBlNo || etd || eta) ? (
+            <div className="pt-2 border-t border-dashed border-slate-200 space-y-0.5 text-[9.5px]">
+              <span className="font-bold text-slate-800 uppercase tracking-wider block text-[9px]">Shipment Details</span>
+              {shipperName ? <div className="flex justify-between"><span className="text-slate-600">Shipper:</span> <span className="font-medium text-slate-900 text-right">{shipperName}</span></div> : null}
+              {consigneeName ? <div className="flex justify-between"><span className="text-slate-600">Consignee:</span> <span className="font-medium text-slate-900 text-right">{consigneeName}</span></div> : null}
+              {origin ? <div className="flex justify-between"><span className="text-slate-600">Origin:</span> <span className="font-medium text-slate-900 text-right">{origin}</span></div> : null}
+              {destination ? <div className="flex justify-between"><span className="text-slate-600">Destination:</span> <span className="font-medium text-slate-900 text-right">{destination}</span></div> : null}
+              {vessel ? <div className="flex justify-between"><span className="text-slate-600">Vessel:</span> <span className="font-medium text-slate-900 text-right">{vessel}</span></div> : null}
+              {voyageNo ? <div className="flex justify-between"><span className="text-slate-600">Voyage No:</span> <span className="font-medium text-slate-900 text-right">{voyageNo}</span></div> : null}
+              {oceanBlNo ? <div className="flex justify-between"><span className="text-slate-600">Ocean BL No:</span> <span className="font-medium text-slate-900 text-right">{oceanBlNo}</span></div> : null}
+              {etd ? <div className="flex justify-between"><span className="text-slate-600">ETD:</span> <span className="font-medium text-slate-900 text-right">{etd}</span></div> : null}
+              {eta ? <div className="flex justify-between"><span className="text-slate-600">ETA:</span> <span className="font-medium text-slate-900 text-right">{eta}</span></div> : null}
+            </div>
+          ) : null}
         </div>
-        <div className="col-span-6 space-y-0.5 border-l border-slate-200 pl-3">
+
+        {/* RIGHT COLUMN: DOCUMENT INFO + HEADER REFS */}
+        <div className="col-span-6 space-y-0.5 pl-1">
           <div className="flex justify-between">
-            <span className="font-semibold text-slate-700">{isProforma ? "Pro Forma No:" : "Invoice No:"}</span>
-            <span className="font-bold text-slate-900">{invoiceData.invoiceNo || invoiceData.proformaNo || "-"}</span>
+            <span className="font-semibold text-slate-700">{isTaxInvoice ? "Invoice No:" : "Pro Forma No:"}</span>
+            <span className="font-bold text-slate-950">{docNo}</span>
           </div>
           <div className="flex justify-between">
             <span className="font-semibold text-slate-700">Date:</span>
-            <span className="font-medium text-slate-900">{formatDayMonthYear(invoiceData.invoiceDate || invoiceData.proformaDate)}</span>
+            <span className="font-medium text-slate-900">{docDate}</span>
           </div>
-          {validTill && (
+          {blNumber ? (
             <div className="flex justify-between">
-              <span className="font-semibold text-slate-700">Valid Till:</span>
-              <span className="font-medium text-slate-900">{formatDayMonthYear(validTill)}</span>
+              <span className="text-slate-600">BL No:</span>
+              <span className="font-medium text-slate-900">{blNumber}</span>
             </div>
-          )}
-          <div className="flex justify-between">
-            <span className="font-semibold text-slate-700">Cust. Ref:</span>
-            <span className="font-medium text-slate-900">{customerRef || "-"}</span>
-          </div>
-          {placeOfSupply && (
+          ) : null}
+          {thblNumber ? (
             <div className="flex justify-between">
-              <span className="font-semibold text-slate-700">Place of Supply:</span>
-              <span className="font-medium text-slate-900">{placeOfSupply}</span>
+              <span className="text-slate-600">ThBL:</span>
+              <span className="font-medium text-slate-900">{thblNumber}</span>
             </div>
-          )}
-          {roe && roe !== "1.00" && roe !== "1" && (
+          ) : null}
+          {mblNumber ? (
             <div className="flex justify-between">
-              <span className="font-semibold text-slate-700">ROE:</span>
-              <span className="font-medium text-slate-900">{roe} ({currencySymbol})</span>
+              <span className="text-slate-600">MBL:</span>
+              <span className="font-medium text-slate-900">{mblNumber}</span>
             </div>
-          )}
+          ) : null}
+          {customerRef ? (
+            <div className="flex justify-between">
+              <span className="text-slate-600">Cust. Ref:</span>
+              <span className="font-medium text-slate-900">{customerRef}</span>
+            </div>
+          ) : null}
+          {quantityDisplay ? (
+            <div className="flex justify-between">
+              <span className="text-slate-600">Quantity:</span>
+              <span className="font-medium text-slate-900">{quantityDisplay}</span>
+            </div>
+          ) : null}
+          {freightTerms ? (
+            <div className="flex justify-between">
+              <span className="text-slate-600">Freight Terms:</span>
+              <span className="font-medium text-slate-900">{freightTerms}</span>
+            </div>
+          ) : null}
+          {roeDisplay ? (
+            <div className="flex justify-between">
+              <span className="text-slate-600">ROE:</span>
+              <span className="font-medium text-slate-900">{roeDisplay}</span>
+            </div>
+          ) : null}
+          {(igmNo || igmDate) ? (
+            <div className="flex justify-between">
+              <span className="text-slate-600">IGM No / Date:</span>
+              <span className="font-medium text-slate-900">{igmNo}{igmDate ? ` / ${igmDate}` : ""}</span>
+            </div>
+          ) : null}
+          {igmItemNo ? (
+            <div className="flex justify-between">
+              <span className="text-slate-600">Item No:</span>
+              <span className="font-medium text-slate-900">{igmItemNo}</span>
+            </div>
+          ) : null}
+          {fileNo ? (
+            <div className="flex justify-between">
+              <span className="text-slate-600">File No:</span>
+              <span className="font-medium text-slate-900">{fileNo}</span>
+            </div>
+          ) : null}
+          {salesRep ? (
+            <div className="flex justify-between">
+              <span className="text-slate-600">SalesRep:</span>
+              <span className="font-medium text-slate-900">{salesRep}</span>
+            </div>
+          ) : null}
+          {rcmDisplay ? (
+            <div className="flex justify-between">
+              <span className="text-slate-600">RCM:</span>
+              <span className="font-bold text-slate-900">{rcmDisplay}</span>
+            </div>
+          ) : null}
+          {remarks ? (
+            <div className="pt-1 border-t border-slate-100">
+              <span className="text-slate-600 block font-semibold">Remarks:</span>
+              <span className="text-slate-800 italic block">{remarks}</span>
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <LogisticsMetadataGrid data={invoiceData} />
-
-      {/* ITEM TABLE */}
-      <div className="my-3 overflow-x-auto">
-        <table className="w-full text-left border-collapse text-[10px]">
+      {/* LINE ITEMS TABLE */}
+      <div className="my-2 overflow-x-auto">
+        <table className="w-full text-left border-collapse text-[9.5px]">
           <thead>
-            <tr className="font-bold border-y bg-teal-700 text-white border-teal-800">
-              <th className="py-1.5 px-1 w-6 text-center">No</th>
-              <th className="py-1.5 px-2">Description</th>
-              <th className="py-1.5 px-1 text-center">SAC/HSN</th>
-              <th className="py-1.5 px-1 text-center">CGST %</th>
-              <th className="py-1.5 px-1 text-center">SGST %</th>
-              <th className="py-1.5 px-1 text-center">IGST %</th>
-              <th className="py-1.5 px-1 text-right">Per Unit</th>
-              <th className="py-1.5 px-1 text-right">Unit</th>
-              <th className="py-1.5 px-1 text-right">Amount ({currencySymbol})</th>
+            <tr className="font-bold border-y-2 border-slate-400 bg-slate-100 text-slate-900">
+              <th className="py-1 px-1 w-5 text-center">No</th>
+              <th className="py-1 px-1.5">Description</th>
+              <th className="py-1 px-1 text-center">SAC</th>
+              <th className="py-1 px-1 text-center">CGST Rate %</th>
+              <th className="py-1 px-1 text-center">{sgstHeaderLabel}</th>
+              <th className="py-1 px-1 text-center">IGST Rate %</th>
+              <th className="py-1 px-1 text-center">Place Of Supply</th>
+              <th className="py-1 px-1 text-center">Curr.</th>
+              <th className="py-1 px-1 text-right">Per Unit</th>
+              <th className="py-1 px-1 text-center">Unit</th>
+              <th className="py-1 px-1 text-right">Amount in INR</th>
+              <th className="py-1 px-1 text-right">Taxable Amount</th>
+              <th className="py-1 px-1 text-right">GST Total</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-200">
+          <tbody className="divide-y divide-slate-200 border-b border-slate-400">
             {items.length > 0 ? (
               items.map((item, idx) => (
-                <tr key={idx} className="hover:bg-slate-50">
-                  <td className="py-1.5 px-1 text-center font-medium">{idx + 1}</td>
-                  <td className="py-1.5 px-2 font-medium text-slate-900">{item.name || item.description || "-"}</td>
-                  <td className="py-1.5 px-1 text-center">{item.hsn || item.hsn_sac || "-"}</td>
-                  <td className="py-1.5 px-1 text-center">{item.cgstRate || "0.00"}%</td>
-                  <td className="py-1.5 px-1 text-center">{item.sgstRate || "0.00"}%</td>
-                  <td className="py-1.5 px-1 text-center">{item.igstRate || "0.00"}%</td>
-                  <td className="py-1.5 px-1 text-right tabular-nums">{money(item.rate || item.unit_price, "")}</td>
-                  <td className="py-1.5 px-1 text-right tabular-nums">{qty(item.qty)}</td>
-                  <td className="py-1.5 px-1 text-right tabular-nums font-semibold">{money(item.taxableValue || item.taxable_amount || (item.qty * item.rate), "")}</td>
+                <tr key={idx} className="hover:bg-slate-50/50">
+                  <td className="py-1 px-1 text-center font-medium text-slate-700">{idx + 1}</td>
+                  <td className="py-1 px-1.5 font-medium text-slate-900 break-words max-w-[140px]">{item.description}</td>
+                  <td className="py-1 px-1 text-center text-slate-700">{item.sac || "-"}</td>
+                  <td className="py-1 px-1 text-center text-slate-800">{item.cgst_rate ? `${item.cgst_rate}%` : "0%"}</td>
+                  <td className="py-1 px-1 text-center text-slate-800">{item.sgst_rate ? `${item.sgst_rate}%` : "0%"}</td>
+                  <td className="py-1 px-1 text-center text-slate-800">{item.igst_rate ? `${item.igst_rate}%` : "0%"}</td>
+                  <td className="py-1 px-1 text-center text-slate-700">{item.place_of_supply || "-"}</td>
+                  <td className="py-1 px-1 text-center font-semibold text-slate-800">{item.currency}</td>
+                  <td className="py-1 px-1 text-right tabular-nums text-slate-900">{formatIndianCurrency(item.rate)}</td>
+                  <td className="py-1 px-1 text-center text-slate-700 uppercase">{item.unit}</td>
+                  <td className="py-1 px-1 text-right tabular-nums text-slate-900">{formatIndianCurrency(item.amount_inr)}</td>
+                  <td className="py-1 px-1 text-right tabular-nums font-medium text-slate-950">{formatIndianCurrency(item.taxable_amount)}</td>
+                  <td className="py-1 px-1 text-right tabular-nums font-semibold text-slate-950">{formatIndianCurrency(item.gst_total)}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={9} className="py-4 text-center text-slate-400 italic">No line items added yet.</td>
+                <td colSpan={13} className="py-3 text-center text-slate-400 italic">No line items.</td>
               </tr>
             )}
+            {/* TOTAL ROW */}
+            <tr className="font-bold border-t border-slate-400 bg-slate-50 text-slate-950">
+              <td colSpan={10} className="py-1 px-2 text-right uppercase tracking-wider text-[9px]">Total:</td>
+              <td className="py-1 px-1 text-right tabular-nums font-bold">{formatIndianCurrency(totalAmountInr)}</td>
+              <td className="py-1 px-1 text-right tabular-nums font-bold">{formatIndianCurrency(totalBeforeTax)}</td>
+              <td className="py-1 px-1 text-right tabular-nums font-bold">{formatIndianCurrency(totalGst)}</td>
+            </tr>
           </tbody>
         </table>
       </div>
 
-      {/* SUMMARY */}
-      <div className="grid grid-cols-12 gap-4 py-3 border-t-2 border-slate-300">
-        <div className="col-span-7 text-[10px] space-y-2 pr-2">
-          <div className="p-2 rounded-lg border bg-emerald-50 border-emerald-200">
-            <span className="font-bold text-slate-700 block uppercase text-[9px]">Total in Words:</span>
-            <span className="font-extrabold text-slate-900 text-[11px] block mt-0.5">{grandTotalInWords}</span>
-          </div>
-          {bankDetails.bankName && (
-            <div className="text-[9px] text-slate-600">
-              <span className="font-bold block uppercase">Bank Details:</span>
-              <p>Bank: {bankDetails.bankName} | A/C: {bankDetails.accountNo} | IFSC: {bankDetails.ifsc}</p>
+      {/* TOTALS SECTION: TDS / WORDS (LEFT) & TOTALS BOX (RIGHT) */}
+      <div className="grid grid-cols-12 gap-3 py-2 border-b border-slate-300 print-avoid-break">
+        {/* LEFT: TDS NOTE & AMOUNT IN WORDS */}
+        <div className="col-span-7 flex flex-col justify-between pr-2 text-[10px]">
+          <div className="space-y-1.5">
+            {tdsNote ? (
+              <p className="text-slate-700 italic font-medium">{tdsNote}</p>
+            ) : null}
+            <div className="p-2 rounded bg-slate-50 border border-slate-200">
+              <span className="font-bold text-slate-700 uppercase block text-[9px]">Total (Including Taxes) in Words:</span>
+              <span className="font-extrabold text-slate-950 text-[10.5px] block mt-0.5 leading-snug">{amountInWords}</span>
             </div>
-          )}
-          {terms && <p className="text-[9px] text-slate-600"><strong>Terms:</strong> {terms}</p>}
-          {notes && <p className="text-[9px] text-slate-600"><strong>Notes:</strong> {notes}</p>}
-          {rcmApplicable && <p className="text-[9px] text-emerald-900 font-bold">Reverse Charge (RCM): Applicable</p>}
-        </div>
-        <div className="col-span-5 text-[11px] space-y-1 border-l border-slate-200 pl-3">
-          <div className="flex justify-between"><span className="text-slate-600 font-medium">Subtotal:</span><span className="font-semibold text-slate-900">{money(totalBeforeTax, currencySymbol)}</span></div>
-          <div className="flex justify-between"><span className="text-slate-600 font-medium">CGST:</span><span className="font-semibold text-slate-900">{money(cgstTotal, currencySymbol)}</span></div>
-          <div className="flex justify-between"><span className="text-slate-600 font-medium">SGST:</span><span className="font-semibold text-slate-900">{money(sgstTotal, currencySymbol)}</span></div>
-          <div className="flex justify-between"><span className="text-slate-600 font-medium">IGST:</span><span className="font-semibold text-slate-900">{money(igstTotal, currencySymbol)}</span></div>
-          <div className="pt-1.5 flex justify-between border-t border-slate-300 text-sm font-bold text-teal-800">
-            <span>Grand Total:</span><span>{money(totalAfterTax, currencySymbol)}</span>
           </div>
+        </div>
+
+        {/* RIGHT: TOTALS BOX */}
+        <div className="col-span-5 border-l border-slate-300 pl-3 space-y-1 text-[10.5px]">
+          <div className="flex justify-between text-slate-700">
+            <span>Total Before Tax:</span>
+            <span className="tabular-nums font-semibold">{formatIndianCurrency(totalBeforeTax)}</span>
+          </div>
+          {cgstTotal > 0 ? (
+            <div className="flex justify-between text-slate-700">
+              <span>CGST Total:</span>
+              <span className="tabular-nums font-semibold">{formatIndianCurrency(cgstTotal)}</span>
+            </div>
+          ) : null}
+          {sgstTotal > 0 ? (
+            <div className="flex justify-between text-slate-700">
+              <span>SGST Total:</span>
+              <span className="tabular-nums font-semibold">{formatIndianCurrency(sgstTotal)}</span>
+            </div>
+          ) : null}
+          {igstTotal > 0 ? (
+            <div className="flex justify-between text-slate-700">
+              <span>IGST Total:</span>
+              <span className="tabular-nums font-semibold">{formatIndianCurrency(igstTotal)}</span>
+            </div>
+          ) : null}
+          <div className="pt-1 flex justify-between border-t border-slate-400 text-xs font-black text-slate-950">
+            <span>Total After Tax:</span>
+            <span className="tabular-nums">₹{formatIndianCurrency(totalAfterTax)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* FOOTER DETAILS */}
+      <div className="pt-2 space-y-2 text-[9.5px] text-slate-800 print-avoid-break">
+        {/* CONTAINER / TYPE / VEHICLE NO */}
+        {containerDetails ? (
+          <div className="text-slate-800">
+            <span className="font-bold">Container No / Type / Vehicle No:</span> {containerDetails}
+          </div>
+        ) : null}
+
+        {/* NUMBERED TERMS */}
+        {termsList.length > 0 ? (
+          <div>
+            <span className="font-bold block uppercase text-[9px] text-slate-700 mb-0.5">Terms & Conditions:</span>
+            <ol className="list-decimal list-inside space-y-0.5 text-slate-600 text-[9px]">
+              {termsList.map((term, i) => (
+                <li key={i}>{term.replace(/^\d+[\.\)]\s*/, "")}</li>
+              ))}
+            </ol>
+          </div>
+        ) : null}
+
+        {/* BANK DETAILS BOX & SIGNATURE */}
+        <div className="grid grid-cols-12 gap-3 pt-2 items-end">
+          {/* BANK DETAILS BOX */}
+          <div className="col-span-7">
+            {hasBank ? (
+              <div className="p-2 border border-slate-300 rounded text-[9.5px] bg-slate-50/60 space-y-0.5">
+                <span className="font-extrabold uppercase tracking-wider block text-[9px] text-slate-800 border-b border-slate-200 pb-0.5 mb-1">
+                  Bank Details
+                </span>
+                {bankDetails.accountName ? <div><span className="text-slate-600">A/c Name:</span> <strong>{bankDetails.accountName}</strong></div> : null}
+                {bankDetails.bankName ? <div><span className="text-slate-600">Bank Name:</span> <strong>{bankDetails.bankName}</strong></div> : null}
+                {bankDetails.branch ? <div><span className="text-slate-600">Branch Address:</span> <strong>{bankDetails.branch}</strong></div> : null}
+                {bankDetails.accountNo ? <div><span className="text-slate-600">A/c No:</span> <strong>{bankDetails.accountNo}</strong></div> : null}
+                {bankDetails.ifsc ? <div><span className="text-slate-600">IFSC Code:</span> <strong>{bankDetails.ifsc}</strong></div> : null}
+              </div>
+            ) : null}
+          </div>
+
+          {/* FOR COMPANY & AUTHORIZED SIGNATORY */}
+          <div className="col-span-5 text-right flex flex-col justify-end items-end h-full">
+            <div className="font-bold text-slate-900 text-[10px]">For {seller.name}</div>
+            <div className="h-10"></div>
+            <div className="border-t border-slate-400 pt-0.5 font-semibold text-slate-800 text-[9.5px] w-36 text-center">
+              Authorized Signatory
+            </div>
+          </div>
+        </div>
+
+        {/* PAYMENT METHODS, E. & O.E, DISCLAIMER */}
+        <div className="pt-2 border-t border-slate-200 flex flex-wrap justify-between items-center text-[9px] text-slate-600">
+          <div>Payment Modes: RTGS / NEFT / IMPS / Cheque / Bank Transfer</div>
+          <div className="font-bold text-slate-800">E. & O.E.</div>
+        </div>
+        <div className="text-center text-[8.5px] text-slate-500 italic">
+          This is a computer generated document.
         </div>
       </div>
     </div>
