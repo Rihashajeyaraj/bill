@@ -1,0 +1,359 @@
+============================================================
+BACKFILL CONVERTED INVOICES - DRY RUN
+============================================================
+Found 176 converted invoices requiring backfill:
+------------------------------------------------------------
+1. Invoice INV-0001 [62865b46-aa93-4632-921a-be3fd94fdbf9] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+2. Invoice INV-0005 [d5e46575-8a3a-4329-82f2-5cda0584397b] (from Pro Forma PI-0008):
+   - due_date: None -> 2026-11-09
+3. Invoice INV-0006 [ecb52614-8608-4c07-b3ee-08fa65f23975] (from Pro Forma PI-0009):
+   - due_date: None -> 2026-11-09
+4. Invoice INV-0007 [1243b8e4-74e9-4184-b3ef-7917de7a507e] (from Pro Forma PI-0010):
+   - due_date: None -> 2026-11-09
+5. Invoice INV-0008 [0f0a5934-85cb-4e0f-bd5d-82d52f4e235d] (from Pro Forma PI-0011):
+   - due_date: None -> 2026-11-09
+6. Invoice INV-0009 [c444db24-f75b-49fa-aea5-55e6c651f692] (from Pro Forma PI-0012):
+   - due_date: None -> 2026-11-09
+7. Invoice INV-0010 [8850f329-6a86-4583-b6fd-17789bb2b17d] (from Pro Forma PI-0013):
+   - due_date: None -> 2026-11-09
+8. Invoice INV-0011 [ddaf647d-3b0e-4881-9e92-cd0d74c4238c] (from Pro Forma PI-0014):
+   - due_date: None -> 2026-11-09
+9. Invoice INV-0004 [de8b932f-b829-4836-87ea-3e98727150de] (from Pro Forma PI-0004):
+   - due_date: None -> 2026-10-09
+10. Invoice INV-0001 [fd5db381-4ce8-4072-9a3f-4e7b3d1e9998] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+11. Invoice INV-0001 [fdd4501c-5473-4b17-b079-b69a8624c8ba] (from Pro Forma PI-PAR-C9D684):
+   - due_date: None -> 2026-10-10
+12. Invoice INV-0002 [0f2c994e-1ab7-4ac9-9857-93120d7be7e6] (from Pro Forma PI-0002):
+   - due_date: None -> 2026-10-11
+13. Invoice INV-0013 [6edf45d7-6cbe-4bb9-9d57-e54fdd6950a3] (from Pro Forma PI-0011):
+   - due_date: None -> 2026-10-11
+14. Invoice INV-0015 [3d202f2b-ea22-463d-9a08-b35b0b4c8dcd] (from Pro Forma PI-0015):
+   - due_date: None -> 2026-10-11
+15. Invoice INV-0020 [2dbc20b3-a424-4c27-bd22-787ce65e59ee] (from Pro Forma PI-0019):
+   - due_date: None -> 2026-10-11
+16. Invoice INV-0001 [4220f843-98f7-4bfb-b40c-1a2ac2a46359] (from Pro Forma PI-0003):
+   - due_date: None -> 2026-10-11
+17. Invoice INV-0003 [d4787038-565e-49cd-8d62-5ed0d3500965] (from Pro Forma PI-0004):
+   - due_date: None -> 2026-10-11
+18. Invoice INV-0004 [b5c452cb-16c0-4ae0-b400-a916476fc68c] (from Pro Forma PI-0006):
+   - due_date: None -> 2026-10-11
+19. Invoice INV-0005 [33e7b4c3-f42b-4bc8-be12-7e17ee6792c3] (from Pro Forma PI-0008):
+   - due_date: None -> 2026-10-11
+20. Invoice INV-0006 [d1602752-728a-45f9-96a5-b62f886af5c5] (from Pro Forma PI-0007):
+   - due_date: None -> 2026-10-11
+21. Invoice INV-0007 [989d0019-5574-485a-bcc8-6668804f0cd3] (from Pro Forma PI-0009):
+   - due_date: None -> 2026-10-11
+22. Invoice INV-0008 [e1131c6f-69b6-4d42-9fa4-99cc2d78191e] (from Pro Forma PI-0010):
+   - due_date: None -> 2026-10-11
+23. Invoice INV-0009 [0150e7de-c226-4e0e-9ad7-d3a54c1a7fc2] (from Pro Forma PI-0011):
+   - due_date: None -> 2026-10-11
+24. Invoice INV-0010 [7e61cd32-f7ca-461e-87b7-bef27a329192] (from Pro Forma PI-0012):
+   - due_date: None -> 2026-10-11
+25. Invoice INV-0011 [4d920415-729a-447f-ad09-060eab42fd33] (from Pro Forma PI-0013):
+   - due_date: None -> 2026-10-11
+26. Invoice INV-0012 [18be8178-bbac-4ae3-a831-2067c51b505b] (from Pro Forma PI-0014):
+   - due_date: None -> 2026-10-11
+27. Invoice INV-0013 [dbed65a2-0dfd-41a1-b23c-f959afc85053] (from Pro Forma PI-0015):
+   - due_date: None -> 2026-10-11
+28. Invoice INV-0014 [9ca038ae-d728-4627-bbbd-befaff569d63] (from Pro Forma PI-0016):
+   - due_date: None -> 2026-10-11
+29. Invoice INV-0015 [42a28820-fe28-45a0-ba2f-98d6a9037303] (from Pro Forma PI-0017):
+   - due_date: None -> 2026-10-11
+30. Invoice INV-0016 [1b453d0e-f1d2-4ec5-a760-03353ffb5464] (from Pro Forma PI-0018):
+   - due_date: None -> 2026-10-11
+31. Invoice INV-0017 [264579c7-a0ff-4757-b0a2-877260e8e59e] (from Pro Forma PI-0019):
+   - due_date: None -> 2026-10-11
+32. Invoice INV-0018 [5bb12a2d-7943-4b2b-a46a-aeca6cf62e6d] (from Pro Forma PI-0020):
+   - due_date: None -> 2026-10-11
+33. Invoice INV-0006 [76bb534f-216c-41fe-8f52-5b9e5b6ac4b8] (from Pro Forma PI-0010):
+   - due_date: None -> 2026-10-11
+34. Invoice INV-0009 [0507c2d2-c716-4ada-ae26-2f59bcc3e95b] (from Pro Forma PI-0006):
+   - due_date: None -> 2026-10-11
+35. Invoice INV-0011 [773bb084-a513-4288-bf56-a52d705554ad] (from Pro Forma PI-0012):
+   - due_date: None -> 2026-10-11
+36. Invoice INV-0014 [a0392923-99c1-43b6-a978-a15dc9d0e806] (from Pro Forma PI-0014):
+   - due_date: None -> 2026-10-11
+37. Invoice INV-0016 [4c442968-ab01-4515-aef7-d3bbb3ee8a8d] (from Pro Forma PI-0016):
+   - due_date: None -> 2026-10-11
+38. Invoice INV-0001 [fe22dfd0-5edf-423a-a71d-998ef923b1f8] (from Pro Forma PI-0002):
+   - due_date: None -> 2026-10-11
+39. Invoice INV-0002 [e2bca3b2-df07-44f2-99c4-f5b8f6ee94aa] (from Pro Forma PI-0003):
+   - due_date: None -> 2026-10-11
+40. Invoice INV-0003 [59da3528-c0d1-4d9f-90eb-c8cc9ca77133] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+41. Invoice INV-0004 [a95c9c9d-0c56-426f-87c1-fcc5a1053d8f] (from Pro Forma PI-0005):
+   - due_date: None -> 2026-10-11
+42. Invoice INV-0005 [a30f76b7-4ceb-4ef4-86c6-a49a3dd984f3] (from Pro Forma PI-0004):
+   - due_date: None -> 2026-10-11
+43. Invoice INV-0007 [a4574c98-a174-448c-b953-3a3deb1623cb] (from Pro Forma PI-0008):
+   - due_date: None -> 2026-10-11
+44. Invoice INV-0008 [9f250d08-6a39-4de0-88eb-fbed0d0ee45b] (from Pro Forma PI-0007):
+   - due_date: None -> 2026-10-11
+45. Invoice INV-0010 [5fbc56f3-29ff-49dd-be8c-eb34e7ef13ac] (from Pro Forma PI-0009):
+   - due_date: None -> 2026-10-11
+46. Invoice INV-0012 [93bd5703-158b-49b3-8fc8-43c8255b7571] (from Pro Forma PI-0013):
+   - due_date: None -> 2026-10-11
+47. Invoice INV-0017 [c8847d3f-9dcd-4c68-82eb-2a732ac24fdb] (from Pro Forma PI-0017):
+   - due_date: None -> 2026-10-11
+48. Invoice INV-0019 [a7ab64e6-9f7b-4ece-b2c6-761f5080d5f1] (from Pro Forma PI-0020):
+   - due_date: None -> 2026-10-11
+49. Invoice INV-0001 [fceb9a1f-2fe2-474e-8465-10f647976840] (from Pro Forma PI-0015):
+   - due_date: None -> 2026-10-11
+50. Invoice INV-0003 [6e9cbc11-6f01-4e19-840a-2f01d6660974] (from Pro Forma PI-0010):
+   - due_date: None -> 2026-10-11
+51. Invoice INV-0009 [98b09f2f-9db0-454c-88e3-ce61e525d282] (from Pro Forma PI-0005):
+   - due_date: None -> 2026-10-11
+52. Invoice INV-0020 [81f47514-5715-4d08-806d-4ee4ca7ce4d1] (from Pro Forma PI-0020):
+   - due_date: None -> 2026-10-11
+53. Invoice INV-0015 [a4ab6d3c-c67d-4fd0-a43a-346775ef7583] (from Pro Forma PI-0020):
+   - due_date: None -> 2026-10-11
+54. Invoice INV-0006 [97997827-d6a6-42db-8c40-750f40313a03] (from Pro Forma PI-0016):
+   - due_date: None -> 2026-10-11
+55. Invoice INV-0011 [315bb359-01f3-44a9-b662-9660d5e3655d] (from Pro Forma PI-0011):
+   - due_date: None -> 2026-10-11
+56. Invoice INV-0014 [08c1f2b1-0860-4048-ba89-813c729a2520] (from Pro Forma PI-0006):
+   - due_date: None -> 2026-10-11
+57. Invoice INV-0015 [ee5960be-db7d-494e-b252-6b5a26fd25cd] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+58. Invoice INV-0001 [4ddafaab-8b79-4b9a-9799-d9e5026457c3] (from Pro Forma PI-0013):
+   - due_date: None -> 2026-10-11
+59. Invoice INV-0004 [2fcb11ee-c137-4e86-86f8-fb21829e9fee] (from Pro Forma PI-0003):
+   - due_date: None -> 2026-10-11
+60. Invoice INV-0008 [3dc4e072-655f-4c9e-b96b-a247c5656e4e] (from Pro Forma PI-0012):
+   - due_date: None -> 2026-10-11
+61. Invoice INV-0010 [83371d90-394a-434e-8e31-600e01f87711] (from Pro Forma PI-0017):
+   - due_date: None -> 2026-10-11
+62. Invoice INV-0016 [ca662a53-87ba-4e80-93a0-3d6ece53cfff] (from Pro Forma PI-0007):
+   - due_date: None -> 2026-10-11
+63. Invoice INV-0019 [b57fba49-1d2d-48ea-a3f6-e0fa32342257] (from Pro Forma PI-0013):
+   - due_date: None -> 2026-10-11
+64. Invoice INV-0001 [3a671dcd-8d2c-4d67-b214-fd314a704766] (from Pro Forma PI-PAR-67C89F):
+   - due_date: None -> 2026-10-10
+65. Invoice INV-0012 [9932af73-5dbd-4153-945b-fd93f35c80c2] (from Pro Forma PI-0008):
+   - due_date: None -> 2026-10-11
+66. Invoice INV-0018 [1851028f-3aa4-4e9d-a42a-256dd8ca888f] (from Pro Forma PI-0002):
+   - due_date: None -> 2026-10-11
+67. Invoice INV-0001 [a79f9ef9-2582-4d50-80eb-41bbc036fcf9] (from Pro Forma PI-0014):
+   - due_date: None -> 2026-10-11
+68. Invoice INV-0002 [0d888ee1-6e6f-4e89-8712-fb5f52ca41c4] (from Pro Forma PI-0003):
+   - due_date: None -> 2026-10-11
+69. Invoice INV-0003 [001933a3-a437-4131-a98a-bbe3fff27c88] (from Pro Forma PI-0020):
+   - due_date: None -> 2026-10-11
+70. Invoice INV-0004 [5c0030fc-e867-475c-ac32-93271b792e41] (from Pro Forma PI-0008):
+   - due_date: None -> 2026-10-11
+71. Invoice INV-0005 [a3a6c448-455a-43ac-a32b-d9c46b751ee5] (from Pro Forma PI-0009):
+   - due_date: None -> 2026-10-11
+72. Invoice INV-0006 [92289e8a-1d0e-4be7-b3e4-eb8625ebf13e] (from Pro Forma PI-0002):
+   - due_date: None -> 2026-10-11
+73. Invoice INV-0007 [0d8cce54-2df2-4936-b58a-a68aba742a97] (from Pro Forma PI-0015):
+   - due_date: None -> 2026-10-11
+74. Invoice INV-0008 [feeae5bd-3a1d-4b19-9861-60dcf4ef084c] (from Pro Forma PI-0005):
+   - due_date: None -> 2026-10-11
+75. Invoice INV-0009 [d3914429-c351-4c92-bee5-0ee2e0ca8338] (from Pro Forma PI-0010):
+   - due_date: None -> 2026-10-11
+76. Invoice INV-0010 [e925a351-a3a5-405d-8b7c-d4ce21ee2e00] (from Pro Forma PI-0011):
+   - due_date: None -> 2026-10-11
+77. Invoice INV-0011 [5d747ab4-5896-4192-be9a-dfce075bbe09] (from Pro Forma PI-0016):
+   - due_date: None -> 2026-10-11
+78. Invoice INV-0012 [89270bd5-e864-4b28-ba3a-ba1e889a735e] (from Pro Forma PI-0017):
+   - due_date: None -> 2026-10-11
+79. Invoice INV-0013 [ea1a9779-e0a9-4210-be9d-4e0fc080f237] (from Pro Forma PI-0004):
+   - due_date: None -> 2026-10-11
+80. Invoice INV-0014 [9b3146b5-b79b-44b0-9bbe-1ab52244f214] (from Pro Forma PI-0007):
+   - due_date: None -> 2026-10-11
+81. Invoice INV-0015 [7b933520-f9af-4cc8-9c22-30069b1b5106] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+82. Invoice INV-0016 [df4e6e42-bb2f-4473-b07c-d80c001f4659] (from Pro Forma PI-0006):
+   - due_date: None -> 2026-10-11
+83. Invoice INV-0017 [957fbe84-6c5c-4cff-8c88-8b8330ec16b1] (from Pro Forma PI-0013):
+   - due_date: None -> 2026-10-11
+84. Invoice INV-0018 [3505a781-1486-4246-8b28-c6df8ed9ee27] (from Pro Forma PI-0012):
+   - due_date: None -> 2026-10-11
+85. Invoice INV-0019 [3392e504-975f-440f-a16f-93d47e5e6efc] (from Pro Forma PI-0019):
+   - due_date: None -> 2026-10-11
+86. Invoice INV-0020 [a67662eb-9558-4760-9ea4-c5ab87c8cde9] (from Pro Forma PI-0018):
+   - due_date: None -> 2026-10-11
+87. Invoice INV-0009 [91acb7ac-3da4-4bee-9adb-febca3a88276] (from Pro Forma PI-0014):
+   - due_date: None -> 2026-10-11
+88. Invoice INV-0012 [79f99498-1f53-43e4-86ce-4daef200dfe3] (from Pro Forma PI-0004):
+   - due_date: None -> 2026-10-11
+89. Invoice INV-0013 [fa88c62e-2bf9-476b-92f0-ef4716de3753] (from Pro Forma PI-0009):
+   - due_date: None -> 2026-10-11
+90. Invoice INV-0002 [7a268216-bd77-48bd-a15f-305793b26abc] (from Pro Forma PI-0004):
+   - due_date: None -> 2026-10-11
+91. Invoice INV-0005 [8b9299f2-f0dc-45e0-8f40-f686cee43241] (from Pro Forma PI-0009):
+   - due_date: None -> 2026-10-11
+92. Invoice INV-0007 [f21626b8-e0b8-4d59-a1f4-57a7ce1a1b57] (from Pro Forma PI-0018):
+   - due_date: None -> 2026-10-11
+93. Invoice INV-0013 [bf75deb5-db92-4249-b52c-17331b3396a0] (from Pro Forma PI-0014):
+   - due_date: None -> 2026-10-11
+94. Invoice INV-0017 [623de72e-e8fe-419d-b442-72a6e474c7b2] (from Pro Forma PI-0019):
+   - due_date: None -> 2026-10-11
+95. Invoice INV-0001 [c646fb15-23b4-4229-be9c-3ad881e095c1] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+96. Invoice INV-0001 [301cd9de-eb4f-404c-a8a1-bfc312cba6ac] (from Pro Forma PI-0005):
+   - due_date: None -> 2026-10-11
+97. Invoice INV-0014 [013f9be9-972c-4140-a883-2744ea6651cb] (from Pro Forma PI-0015):
+   - due_date: None -> 2026-10-11
+98. Invoice INV-0015 [1fa65061-e5a6-4bf0-84f1-c922d98ffdc7] (from Pro Forma PI-0010):
+   - due_date: None -> 2026-10-11
+99. Invoice INV-0004 [f6350d3d-e293-4360-90cc-9aac1055c533] (from Pro Forma PI-0006):
+   - due_date: None -> 2026-10-11
+100. Invoice INV-0006 [05f41c9b-f1ed-4548-9378-b1972663e8ce] (from Pro Forma PI-0011):
+   - due_date: None -> 2026-10-11
+101. Invoice INV-0016 [a854e2ec-1540-4e63-a70c-4335e2bc39a2] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+102. Invoice INV-0006 [643c59ae-c752-4e41-b7f6-ef07c2634d94] (from Pro Forma PI-0012):
+   - due_date: None -> 2026-10-11
+103. Invoice INV-0007 [d60dd275-ea50-4dd5-8538-a82009d36116] (from Pro Forma PI-0002):
+   - due_date: None -> 2026-10-11
+104. Invoice INV-0017 [bd5246d0-9136-478c-abd4-9593dc5adbdc] (from Pro Forma PI-0007):
+   - due_date: None -> 2026-10-11
+105. Invoice INV-0003 [453de8c7-7210-4a8b-a69d-824c31dc5d4d] (from Pro Forma PI-0012):
+   - due_date: None -> 2026-10-11
+106. Invoice INV-0017 [62a31226-1f32-449d-9eab-dc68c04ac2eb] (from Pro Forma PI-0002):
+   - due_date: None -> 2026-10-11
+107. Invoice INV-0019 [15ffc67d-7ee3-4fda-984f-c2e4b793d503] (from Pro Forma PI-0007):
+   - due_date: None -> 2026-10-11
+108. Invoice INV-0004 [cd068a14-f951-4850-a1f3-673d49c9fbbb] (from Pro Forma PI-0006):
+   - due_date: None -> 2026-10-11
+109. Invoice INV-0005 [3a5a73f9-f563-4e19-9648-12499bbd4565] (from Pro Forma PI-0011):
+   - due_date: None -> 2026-10-11
+110. Invoice INV-0010 [5659d4e5-c042-462f-8dff-7f46add743f2] (from Pro Forma PI-0016):
+   - due_date: None -> 2026-10-11
+111. Invoice INV-0018 [b9f6bc3d-6a64-4820-863d-a98d9b905818] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+112. Invoice INV-0013 [04e61e81-dbed-4752-846a-e702a19e2d79] (from Pro Forma PI-0008):
+   - due_date: None -> 2026-10-11
+113. Invoice INV-0014 [4bb3eada-e034-484e-acbc-77b2c4f78aee] (from Pro Forma PI-0013):
+   - due_date: None -> 2026-10-11
+114. Invoice INV-0018 [7d234241-6a56-42b2-b4f3-b07a51d9e702] (from Pro Forma PI-0003):
+   - due_date: None -> 2026-10-11
+115. Invoice INV-0002 [eefae25f-2101-4566-9fe7-04792e348ca6] (from Pro Forma PI-0018):
+   - due_date: None -> 2026-10-11
+116. Invoice INV-0003 [d64dd3e1-25f3-458b-a575-6d81569b2dfe] (from Pro Forma PI-0017):
+   - due_date: None -> 2026-10-11
+117. Invoice INV-0008 [c7f3d33e-0116-4ffe-b739-a070c7eb5081] (from Pro Forma PI-0003):
+   - due_date: None -> 2026-10-11
+118. Invoice INV-0011 [231d64f3-8fae-439e-b7d0-582c5d0cc086] (from Pro Forma PI-0013):
+   - due_date: None -> 2026-10-11
+119. Invoice INV-0016 [d73e5047-85ee-4364-a547-029a7dc69ef4] (from Pro Forma PI-0020):
+   - due_date: None -> 2026-10-11
+120. Invoice INV-0019 [aa330d77-781f-4ec8-a14b-5fdce69692c9] (from Pro Forma PI-0008):
+   - due_date: None -> 2026-10-11
+121. Invoice INV-0020 [cf93c07a-fd92-41fe-9bae-c29041521d97] (from Pro Forma PI-0019):
+   - due_date: None -> 2026-10-11
+122. Invoice INV-0002 [e357856e-43be-4ba9-abe2-74205f9e6529] (from Pro Forma PI-0004):
+   - due_date: None -> 2026-10-11
+123. Invoice INV-0011 [4e9e80b9-37cd-46bc-9a9b-5a9d9b06fac5] (from Pro Forma PI-0014):
+   - due_date: None -> 2026-10-11
+124. Invoice INV-0010 [1c35de9a-130c-47b2-80e7-f6bd649ded9c] (from Pro Forma PI-0009):
+   - due_date: None -> 2026-10-11
+125. Invoice INV-0001 [d789071d-f6aa-4d0e-9525-a6b51b394b19] (from Pro Forma PI-DUP-897054):
+   - due_date: None -> 2026-10-09
+126. Invoice INV-0001 [51eda793-9ea9-42b0-8096-39cfe4be0f8f] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+127. Invoice INV-0002 [451e6feb-39d8-4f1c-b1a8-d62b7408b607] (from Pro Forma PI-0011):
+   - due_date: None -> 2026-10-11
+128. Invoice INV-0005 [80d7ff3c-d442-4325-b682-437f1a4837e1] (from Pro Forma PI-0002):
+   - due_date: None -> 2026-10-11
+129. Invoice INV-0008 [892e4501-977d-4ef7-809b-f5973ff8382f] (from Pro Forma PI-0016):
+   - due_date: None -> 2026-10-11
+130. Invoice INV-0012 [7009ceba-d6e4-458d-97c2-0d9b2b9647d7] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+131. Invoice INV-0017 [32143810-38bd-46c6-9271-6f9497c31d4b] (from Pro Forma PI-0006):
+   - due_date: None -> 2026-10-11
+132. Invoice INV-0007 [acdb6873-9cb0-4353-86f8-90bcb9450702] (from Pro Forma PI-0005):
+   - due_date: None -> 2026-10-11
+133. Invoice INV-0008 [0752646d-6209-4c39-838e-32c963e3e811] (from Pro Forma PI-0010):
+   - due_date: None -> 2026-10-11
+134. Invoice INV-0004 [f8b2040c-d964-4ccd-949b-8cc651a0bce5] (from Pro Forma PI-0010):
+   - due_date: None -> 2026-10-11
+135. Invoice INV-0009 [96ccf38d-ada4-4e41-908f-699d9d356cfb] (from Pro Forma PI-0005):
+   - due_date: None -> 2026-10-11
+136. Invoice INV-0010 [69b7f6d9-bc97-4a34-957c-0c20ed0cf6a8] (from Pro Forma PI-0020):
+   - due_date: None -> 2026-10-11
+137. Invoice INV-0018 [d17a9de8-19e2-4104-be8e-1c8d2f05e357] (from Pro Forma PI-0015):
+   - due_date: None -> 2026-10-11
+138. Invoice INV-0009 [54a19169-6697-4833-91cf-535b6797c6c3] (from Pro Forma PI-0015):
+   - due_date: None -> 2026-10-11
+139. Invoice INV-0014 [f3508dd2-ac3b-4bbb-8f4c-1da9f9a448b0] (from Pro Forma PI-0019):
+   - due_date: None -> 2026-10-11
+140. Invoice INV-0016 [073efcd4-bd33-44ad-bf9b-1e619b0c5ece] (from Pro Forma PI-0004):
+   - due_date: None -> 2026-10-11
+141. Invoice INV-0019 [d5d4581e-49e4-4136-b750-a6c327e08403] (from Pro Forma PI-0009):
+   - due_date: None -> 2026-10-11
+142. Invoice INV-0020 [65982a84-2164-471f-85e6-e60b16ab20a1] (from Pro Forma PI-0016):
+   - due_date: None -> 2026-10-11
+143. Invoice INV-0001 [b8c1eab4-980f-4e34-8097-13c3ca195cab] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+144. Invoice INV-0008 [8b4a5858-f12f-4ff6-94fb-bee16e4d6f0b] (from Pro Forma PI-0003):
+   - due_date: None -> 2026-10-11
+145. Invoice INV-0017 [b120a4a3-3bf7-4253-9c34-cc3896b4ee2e] (from Pro Forma PI-0001):
+   - due_date: None -> 2026-10-11
+146. Invoice INV-0001 [9751d7a0-228c-4bcc-9d30-3de088dfa743] (from Pro Forma PI-PAR-769F1C):
+   - due_date: None -> 2026-10-10
+147. Invoice INV-0001 [1ead8b45-bf52-4c18-8721-0567191d782a] (from Pro Forma PI-0018):
+   - due_date: None -> 2026-10-11
+148. Invoice INV-0001 [7a242883-7423-48e2-b5aa-0aeac04432ee] (from Pro Forma PI-0006):
+   - due_date: None -> 2026-10-11
+149. Invoice INV-0003 [756c3f98-69b0-4cd1-a3bb-9f3dd77c25fc] (from Pro Forma PI-0015):
+   - due_date: None -> 2026-10-11
+150. Invoice INV-0004 [3d5b4eca-9ef0-4812-a686-d81c6a18b2f2] (from Pro Forma PI-0010):
+   - due_date: None -> 2026-10-11
+151. Invoice INV-0005 [0d70251b-254c-4797-ba1d-8a607c3ea0e6] (from Pro Forma PI-0011):
+   - due_date: None -> 2026-10-11
+152. Invoice INV-0006 [1c0ad159-e129-48ad-aec0-d5f3d9a2c598] (from Pro Forma PI-0002):
+   - due_date: None -> 2026-10-11
+153. Invoice INV-0010 [5d0f320b-3af7-4039-8084-bc1415cb252c] (from Pro Forma PI-0020):
+   - due_date: None -> 2026-10-11
+154. Invoice INV-0011 [38b7d15d-0cd4-4529-b81e-80e8efbbbf13] (from Pro Forma PI-0014):
+   - due_date: None -> 2026-10-11
+155. Invoice INV-0012 [b1c736e5-29b1-480f-a0ba-03035c4507db] (from Pro Forma PI-0019):
+   - due_date: None -> 2026-10-11
+156. Invoice INV-0014 [93bf2c3e-8486-48bc-9742-342a5544e19f] (from Pro Forma PI-0009):
+   - due_date: None -> 2026-10-11
+157. Invoice INV-0015 [df83aec0-8fdb-4c22-a500-9dcdbaea859c] (from Pro Forma PI-0004):
+   - due_date: None -> 2026-10-11
+158. Invoice INV-0018 [de8f9d01-3c34-4663-8e03-009646029e94] (from Pro Forma PI-0016):
+   - due_date: None -> 2026-10-11
+159. Invoice INV-0019 [5d7ac9ee-403d-4740-abd1-7eddb36a2818] (from Pro Forma PI-0005):
+   - due_date: None -> 2026-10-11
+160. Invoice INV-0006 [672484b2-75da-41a5-86bf-7a6e44a82fc7] (from Pro Forma PI-0003):
+   - due_date: None -> 2026-10-11
+161. Invoice INV-0007 [96b4264a-ef41-413d-948d-7052287effd2] (from Pro Forma PI-0008):
+   - due_date: None -> 2026-10-11
+162. Invoice INV-0013 [678e6614-b2c4-47d1-9574-1818c1cba661] (from Pro Forma PI-0013):
+   - due_date: None -> 2026-10-11
+163. Invoice INV-0001 [ab875a37-7083-4eef-a78d-1a45fe6b5d18] (from Pro Forma PI-0017):
+   - due_date: None -> 2026-10-11
+164. Invoice INV-0002 [07167289-bdf0-4938-8f4d-7b9e7774fca4] (from Pro Forma PI-0017):
+   - due_date: None -> 2026-10-11
+165. Invoice INV-0013 [612fd0cb-fbcd-4a02-a6fe-6a9ed9d5ba82] (from Pro Forma PI-0012):
+   - due_date: None -> 2026-10-11
+166. Invoice INV-0016 [dc8ac6a9-d4dc-4101-8519-a362a57d0702] (from Pro Forma PI-0007):
+   - due_date: None -> 2026-10-11
+167. Invoice INV-0003 [d088e125-0ed3-40e0-8545-724750a52a3e] (from Pro Forma PI-0017):
+   - due_date: None -> 2026-10-11
+168. Invoice INV-0011 [2fdc4446-d3ed-496d-ba48-be67162fa532] (from Pro Forma PI-0007):
+   - due_date: None -> 2026-10-11
+169. Invoice INV-0015 [7c58c254-9ebc-45a2-9fc1-2dc74f3d8d3d] (from Pro Forma PI-0012):
+   - due_date: None -> 2026-10-11
+170. Invoice INV-0005 [b0f38972-290c-4869-a023-a10892c8e47f] (from Pro Forma PI-0018):
+   - due_date: None -> 2026-10-11
+171. Invoice INV-0001 [9e614846-379d-42eb-ae55-fabbbf942a22] (from Pro Forma PI-DUP-867CE5):
+   - due_date: None -> 2026-10-09
+172. Invoice INV-0007 [1f5278fe-fc64-422e-8502-3acd85ae3068] (from Pro Forma PI-0008):
+   - due_date: None -> 2026-10-11
+173. Invoice INV-0009 [3fc32df3-bb8c-469b-aba6-89107fcc6190] (from Pro Forma PI-0018):
+   - due_date: None -> 2026-10-11
+174. Invoice INV-0020 [d703909a-1aee-486c-901c-a0c66ae55cc8] (from Pro Forma PI-0013):
+   - due_date: None -> 2026-10-11
+175. Invoice INV-0001 [8141e0d1-19b8-4622-8192-adf98d2056ce] (from Pro Forma PI-DUP-56C583):
+   - due_date: None -> 2026-10-09
+176. Invoice INV-0012 [fb0ff736-bffe-4b1f-8b6c-0d517d855b0d] (from Pro Forma PI-0019):
+   - due_date: None -> 2026-10-11
+------------------------------------------------------------
+DRY RUN COMPLETE. 176 row(s) identified. No changes made.

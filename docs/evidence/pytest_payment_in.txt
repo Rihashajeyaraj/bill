@@ -1,0 +1,30 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.12.9, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\RIHASHA\OneDrive\Desktop\bill-riha\backend\venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\RIHASHA\OneDrive\Desktop\bill-riha
+plugins: anyio-4.15.1
+collecting ... collected 11 items
+
+backend/tests/test_payment_flow.py::test_advance_payment_without_allocations PASSED [  9%]
+backend/tests/test_payment_flow.py::test_payment_with_allocations_across_two_documents PASSED [ 18%]
+backend/tests/test_payment_flow.py::test_overpayment_rejected PASSED     [ 27%]
+backend/tests/test_payment_flow.py::test_partial_payment PASSED          [ 36%]
+backend/tests/test_payment_flow.py::test_advance_on_proforma_and_conversion_balance PASSED [ 45%]
+backend/tests/test_payment_flow.py::test_converted_invoice_keeps_party_and_due_date PASSED [ 54%]
+backend/tests/test_payment_flow.py::test_apply_unapplied_advance_to_invoice PASSED [ 63%]
+backend/tests/test_payment_flow.py::test_delete_or_edit_payment_restores_balance PASSED [ 72%]
+backend/tests/test_payment_flow.py::test_tenant_b_cannot_pay_tenant_a_invoice PASSED [ 81%]
+backend/tests/test_payment_flow.py::test_receivables_total_column_and_badges PASSED [ 90%]
+backend/tests/test_payment_flow.py::test_reconciliation_balance PASSED   [100%]
+
+============================== warnings summary ===============================
+backend/tests/test_payment_flow.py: 97 warnings
+  C:\Users\RIHASHA\OneDrive\Desktop\bill-riha\backend\venv\Lib\site-packages\supabase\_sync\client.py:309: DeprecationWarning: The 'timeout' parameter is deprecated. Please configure it in the http client instead.
+    return SyncPostgrestClient(
+
+backend/tests/test_payment_flow.py: 97 warnings
+  C:\Users\RIHASHA\OneDrive\Desktop\bill-riha\backend\venv\Lib\site-packages\supabase\_sync\client.py:309: DeprecationWarning: The 'verify' parameter is deprecated. Please configure it in the http client instead.
+    return SyncPostgrestClient(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================ 11 passed, 194 warnings in 233.69s (0:03:53) =================

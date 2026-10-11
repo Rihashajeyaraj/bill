@@ -1,0 +1,20 @@
+--- 1. Testing RPC endpoints via OpenAPI & Direct RPC ---
+Deployed RPC Paths in PostgREST:
+  /rpc/convert_proforma_to_invoice
+  /rpc/is_org_admin
+  /rpc/is_org_member
+  /rpc/is_super_admin
+  /rpc/peek_sales_proforma_no
+  /rpc/set_default_invoice_template
+
+--- 2. Checking if public.payment_allocations exists in schema ---
+Is 'payment_allocations' in tables? False
+
+--- 3. Testing direct RPC call for convert_proforma_to_invoice ---
+convert_proforma_to_invoice error: {'message': 'Pro Forma invoice not found or unauthorized.', 'code': 'P0001', 'hint': None, 'details': None}
+
+--- 4. Testing direct RPC call for convert_sales_proforma_to_invoice ---
+convert_sales_proforma_to_invoice error: {'message': 'Could not find the function public.convert_sales_proforma_to_invoice(p_proforma_id) in the schema cache', 'code': 'PGRST202', 'hint': 'Perhaps you meant to call the function public.convert_proforma_to_invoice', 'details': 'Searched for the function public.convert_sales_proforma_to_invoice with parameter p_proforma_id or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.'}
+
+--- 5. Checking direct query on payment_allocations table ---
+payment_allocations query error: {'message': "Could not find the table 'public.payment_allocations' in the schema cache", 'code': 'PGRST205', 'hint': "Perhaps you meant the table 'public.payments'", 'details': None}
