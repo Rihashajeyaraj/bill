@@ -280,6 +280,14 @@ class ProformaRepository:
                 party_res = self.db.table("parties").select("display_name").eq("id", party_id).limit(1).execute()
                 if party_res.data:
                     p_unpacked["party_name"] = party_res.data[0]["display_name"]
+            conv_id = p_unpacked.get("converted_document_id")
+            if conv_id:
+                try:
+                    inv_res = self.db.table("invoices").select("invoice_no").eq("id", conv_id).limit(1).execute()
+                    if inv_res.data:
+                        p_unpacked["converted_invoice_no"] = inv_res.data[0].get("invoice_no")
+                except Exception:
+                    pass
             unpacked.append(p_unpacked)
         return unpacked
 
@@ -297,6 +305,14 @@ class ProformaRepository:
             party_res = self.db.table("parties").select("display_name").eq("id", party_id).limit(1).execute()
             if party_res.data:
                 proforma["party_name"] = party_res.data[0]["display_name"]
+        conv_id = proforma.get("converted_document_id")
+        if conv_id:
+            try:
+                inv_res = self.db.table("invoices").select("invoice_no").eq("id", conv_id).limit(1).execute()
+                if inv_res.data:
+                    proforma["converted_invoice_no"] = inv_res.data[0].get("invoice_no")
+            except Exception:
+                pass
         
         items_res = self.db.table("proforma_invoice_items").select("*").eq("proforma_id", proforma_id).order("line_no").execute()
         items = items_res.data or []

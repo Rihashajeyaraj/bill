@@ -327,7 +327,7 @@ class ProformaService:
         curr_sym = "₹" if curr_code == "INR" else "$"
         proforma["currency_code"] = curr_code
         proforma["currency_symbol"] = curr_sym
-        prefix = "INDIAN RUPEES" if curr_code == "INR" else f"{curr_code} DOLLARS"
+        prefix = None if curr_code == "INR" else f"{curr_code} DOLLARS"
         proforma["grand_total_in_words"] = number_to_words_indian(calc_res.grand_total, currency_prefix=prefix)
 
         proforma["company"] = company
@@ -449,137 +449,32 @@ class ProformaService:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Cannot convert a cancelled or rejected Pro Forma Invoice: {proforma.get('proforma_no')}"
-            )        # Pre-conversion sync: ensure party_id and due_date exist on proforma so stored procedure persists them
-        effective_party_id = proforma.get("party_id") or proforma.get("customer_id")
-        if not effective_party_id and (proforma.get("customer_name") or proforma.get("customer_company_name") or proforma.get("bill_name")):
-            try:
-                from app.schemas.party import PartyCreate
-                company = self.get_company_details(organization_id)
-                company_country = company.get("country_name") or company.get("country") or "India"
-                country_raw = str(proforma.get("customer_country") or company_country or "IN").strip().upper()
-                c_code = country_raw if len(country_raw) == 2 else "IN"
-
-                cust_name = proforma.get("customer_name") or proforma.get("customer_company_name") or proforma.get("bill_name") or "Customer"
-                party_payload = PartyCreate(
-                    party_type="customer",
-                    display_name=cust_name,
-                    legal_name=proforma.get("customer_company_name") or cust_name,
-                    contact_person=cust_name,
-                    billing_address_line1=proforma.get("customer_address") or proforma.get("bill_address_line1") or None,
-                    city=proforma.get("customer_city") or proforma.get("bill_city") or None,
-                    state_name=proforma.get("place_of_supply_state") or proforma.get("bill_state") or None,
-                    country_code=c_code,
-                    gstin=proforma.get("customer_gstin") or proforma.get("bill_gstin") or None,
-                    phone=proforma.get("customer_phone") or proforma.get("bill_phone") or None,
-                    email=proforma.get("customer_email") or proforma.get("bill_email") or None
-                )
-                created_party = self.party_repo.create(organization_id, party_payload, user_id=user_id)
-                if created_party and created_party.get("id"):
-                    effective_party_id = created_party["id"]
-                    self.proforma_repo.update(proforma_id, organization_id, {"party_id": effective_party_id})
-                    proforma["party_id"] = effective_party_id
-            except Exception as e:
-                logger.error(f"Error auto-creating party during invoice conversion: {e}")
-
-        # Ensure due_date is on proforma
-        effective_due_date = proforma.get("due_date") or proforma.get("valid_till") or proforma.get("proforma_date") or str(datetime.now().date())
-        if not proforma.get("due_date") and effective_due_date:
-            try:
-                self.proforma_repo.update(proforma_id, organization_id, {"due_date": str(effective_due_date)})
-            except Exception:
-                pass
-
-        # Execute ONE conversion path: database stored procedure convert_proforma_to_invoice
+            )        # Execute ONE conversion path: database stored procedure convert_sales_proforma_to_invoice
         try:
-            rpc_res = self.admin_db.rpc("convert_proforma_to_invoice", {
-                "p_proforma_id": proforma_id,
-                "p_org_id": organization_id,
-                "p_user_id": user_id
+            rpc_res = self.admin_db.rpc("convert_sales_proforma_to_invoice", {
+                "p_proforma_id": proforma_id
             }).execute()
         except Exception as rpc_err:
             err_str = str(rpc_err)
-            if "already converted" in err_str.lower() or "P0409" in err_str:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Sales Pro Forma {proforma.get('proforma_no')} is already converted.")
-            if "unauthorized" in err_str.lower() or "forbidden" in err_str.lower() or "P0403" in err_str:
+            if "P0404" in err_str or "not found" in err_str.lower():
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sales Pro Forma not found: {proforma_id}")
+            if "P0403" in err_str or "forbidden" in err_str.lower() or "unauthorized" in err_str.lower():
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: Pro Forma belongs to a different organization.")
-            if "not found" in err_str.lower() or "P0404" in err_str:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pro Forma Invoice not found.")
+            if "P0409" in err_str or "already converted" in err_str.lower():
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Sales Pro Forma {proforma.get('proforma_no')} is already converted.")
+            if "P0410" in err_str or "cancelled" in err_str.lower() or "rejected" in err_str.lower():
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Cannot convert a cancelled or rejected Pro Forma Invoice: {proforma.get('proforma_no')}")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Database conversion error: {err_str}")
 
         if not rpc_res.data:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stored procedure returned empty invoice ID.")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stored procedure returned empty result.")
 
-        new_inv_id = rpc_res.data.get("invoice_id") if isinstance(rpc_res.data, dict) else str(rpc_res.data)
+        rpc_dict = rpc_res.data if isinstance(rpc_res.data, dict) else {}
+        new_inv_id = rpc_dict.get("invoice_id") or (str(rpc_res.data) if isinstance(rpc_res.data, str) else None)
+        new_inv_no = rpc_dict.get("invoice_no")
 
-        # Carry forward advance payments and update invoice amounts
-        reallocated_total = 0.0
-        try:
-            p_res = self.admin_db.table("payments").select("id, amount, notes, invoice_id").eq("organization_id", organization_id).execute()
-            if p_res.data:
-                matched_pmts = [p for p in p_res.data if str(p.get("invoice_id")) == str(proforma_id) or f"[proforma:{proforma_id}]" in str(p.get("notes") or "")]
-                for p in matched_pmts:
-                    reallocated_total += float(p.get("amount") or 0.0)
-                    self.admin_db.table("payments").update({
-                        "invoice_id": new_inv_id
-                    }).eq("id", p["id"]).execute()
-        except Exception as alloc_err:
-            logger.warning(f"Payment reallocation notice: {alloc_err}")
-
-        pf_advance = float(proforma.get("advance_paid") or proforma.get("advance_received") or proforma.get("amount_paid") or 0.0)
-        final_paid = max(reallocated_total, pf_advance)
-        gt = float(proforma.get("grand_total") or 0.0)
-        final_balance = max(0.0, gt - final_paid)
-        final_status = "paid" if final_balance <= 0.005 else ("partial" if final_paid > 0 else "issued")
-
-        # Update converted invoice header with party, due_date, advance, and metadata
-        now_iso = datetime.now(timezone.utc).isoformat()
-        inv_update_data = {
-            "due_date": str(effective_due_date),
-            "amount_paid": final_paid,
-            "balance_due": final_balance,
-            "status": final_status,
-            "source_proforma_id": proforma_id,
-            "source_proforma_no": proforma.get("proforma_no"),
-            "source_proforma_date": proforma.get("proforma_date"),
-            "metadata": proforma
-        }
-        if effective_party_id:
-            inv_update_data["party_id"] = effective_party_id
-            inv_update_data["customer_id"] = effective_party_id
-
-        try:
-            self.admin_db.table("invoices").update(inv_update_data).eq("id", new_inv_id).execute()
-        except Exception as inv_up_err:
-            logger.warning(f"Invoice sync notice: {inv_up_err}")
-
-        # Update proforma status
-        try:
-            self.admin_db.table("proforma_invoices").update({
-                "status": "CONVERTED",
-                "converted_document_id": new_inv_id,
-                "converted_at": now_iso
-            }).eq("id", proforma_id).execute()
-        except Exception:
-            pass
-
-        # Write audit log entry
-        try:
-            self.db.table("audit_logs").insert({
-                "organization_id": organization_id,
-                "user_id": user_id,
-                "action": "CONVERT_PROFORMA_TO_TAX_INVOICE",
-                "entity_type": "proforma_invoices",
-                "entity_id": proforma_id,
-                "details": {
-                    "proforma_id": proforma_id,
-                    "proforma_no": proforma.get("proforma_no"),
-                    "invoice_id": new_inv_id,
-                    "grand_total": gt,
-                    "converted_at": now_iso
-                }
-            }).execute()
-        except Exception:
-            pass
+        if not new_inv_id:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stored procedure returned no invoice_id.")
 
         inv = self.invoice_repo.get_by_id(new_inv_id, organization_id)
         if not inv:
@@ -588,22 +483,18 @@ class ProformaService:
                 from app.repositories.invoice_repository import unpack_invoice_header_result
                 inv = unpack_invoice_header_result(admin_res.data[0])
         if inv:
-            inv["source_proforma_id"] = proforma_id
-            inv["source_proforma_no"] = proforma.get("proforma_no")
-            inv["source_proforma_date"] = proforma.get("proforma_date")
-            inv["due_date"] = str(effective_due_date)
-            inv["amount_paid"] = final_paid
-            inv["balance_due"] = final_balance
-            inv["status"] = final_status
-            if effective_party_id:
-                inv["party_id"] = effective_party_id
-                inv["customer_id"] = effective_party_id
-            for k, v in proforma.items():
-                if k not in inv or inv[k] is None or (inv[k] == 0 and v):
-                    inv[k] = v
+            inv["invoice_id"] = new_inv_id
+            if new_inv_no:
+                inv["invoice_no"] = new_inv_no
             return inv
 
-        return {"id": new_inv_id, "status": final_status, "amount_paid": final_paid, "balance_due": final_balance}
+        return {
+            "id": new_inv_id,
+            "invoice_id": new_inv_id,
+            "invoice_no": new_inv_no or "INV-UNKNOWN",
+            "organization_id": organization_id,
+            "status": "issued"
+        }
 
     def delete_proforma(self, proforma_id: str, organization_id: str) -> bool:
         proforma = self.proforma_repo.get_by_id(proforma_id, organization_id)

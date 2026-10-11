@@ -8,6 +8,7 @@ import DateInput from "../../components/DateInput";
 import { useFinancialYears } from "../../context/FinancialYearContext";
 import { useToast } from "../../context/ToastContext";
 import { invoicesList, invoicesSyncFromRemote } from "../../services/invoices.service";
+import { apiClient } from "../../services/apiClient";
 import { formatDateByPreference, formatNumberByPreference } from "../../lib/formatPreferences";
 import { compareHistoryDatesDesc, sortHistoryRowsByDate } from "../../lib/historySort";
 
@@ -65,7 +66,10 @@ export default function InvoiceHistory() {
   const toast = useToast();
   const { activeRange, selectedYear } = useFinancialYears();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [warning, setWarning] = useState(null);
   const [invoices, setInvoices] = useState(() => invoicesList(activeRange));
+  const [reloadKey, setReloadKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -77,6 +81,14 @@ export default function InvoiceHistory() {
     message: "",
     tone: "success"
   });
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const previewId = params.get("preview");
+    if (previewId) {
+      navigate(`/app/sales/invoice?preview=${encodeURIComponent(previewId)}`, { replace: true });
+    }
+  }, [location.search, navigate]);
 
   const sortedInvoices = useMemo(
     () => {
@@ -147,25 +159,99 @@ export default function InvoiceHistory() {
 
   useEffect(() => {
     let mounted = true;
-    async function load() {
+    const timeoutMs = 8000;
+
+    async function fetchInvoicesWithTimeout() {
       setLoading(true);
+      setError(null);
+      setWarning(null);
+
+      const fetchPromise = (async () => {
+        const results = await Promise.allSettled([
+          apiClient.getInvoices(),
+          invoicesSyncFromRemote(activeRange)
+        ]);
+
+        const fastApiResult = results[0];
+        const remoteSyncResult = results[1];
+
+        let loadedInvoices = [];
+        let hasData = false;
+
+        // 1. Primary: FastAPI backend (uses JWT tenant_id, bypasses anon RLS issues)
+        if (fastApiResult.status === "fulfilled" && Array.isArray(fastApiResult.value)) {
+          hasData = true;
+          loadedInvoices = fastApiResult.value.map((inv) => ({
+            id: inv.id,
+            invoiceNo: inv.invoice_no || inv.invoiceNo || inv.id,
+            invoiceDate: inv.invoice_date || inv.invoiceDate || "",
+            dueDate: inv.due_date || inv.dueDate || "",
+            partyName: inv.customer_name || (inv.customer && (inv.customer.display_name || inv.customer.name)) || inv.party_name || "-",
+            buyer: {
+              name: inv.customer_name || (inv.customer && (inv.customer.display_name || inv.customer.name)) || inv.party_name || "-",
+              phone: inv.customer_phone || (inv.customer && inv.customer.phone) || ""
+            },
+            totals: {
+              grandTotal: Number(inv.grand_total ?? inv.subtotal ?? 0)
+            },
+            remainingBalance: Number(inv.balance_due ?? inv.balance_amount ?? 0),
+            status: inv.status || "issued",
+            lines: Array.isArray(inv.items) ? inv.items : []
+          }));
+        }
+
+        // 2. Fallback: remote sync or local storage
+        if (!hasData && remoteSyncResult.status === "fulfilled" && Array.isArray(remoteSyncResult.value)) {
+          hasData = true;
+          loadedInvoices = remoteSyncResult.value;
+        }
+
+        if (!hasData) {
+          loadedInvoices = invoicesList(activeRange);
+        }
+
+        if (remoteSyncResult.status === "rejected" && fastApiResult.status === "rejected") {
+          throw new Error(fastApiResult.reason?.message || remoteSyncResult.reason?.message || "Failed to load tax invoices");
+        }
+
+        if (remoteSyncResult.status === "rejected" && hasData) {
+          setWarning(`Notice: Secondary sync notice (${remoteSyncResult.reason?.message || "Credit notes lookup"}). Invoices loaded successfully.`);
+        }
+
+        return loadedInvoices;
+      })();
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Request timed out while loading invoice history.")), timeoutMs)
+      );
+
       try {
-        const synced = await invoicesSyncFromRemote(activeRange);
-        if (!mounted) return;
-        setInvoices(Array.isArray(synced) ? synced : invoicesList(activeRange));
-      } catch (error) {
-        if (!mounted) return;
-        setInvoices(invoicesList(activeRange));
-        toast.error("Failed to load invoice history", error?.message || "Showing local data.");
+        const data = await Promise.race([fetchPromise, timeoutPromise]);
+        if (mounted) {
+          setInvoices(data);
+          setError(null);
+        }
+      } catch (err) {
+        if (mounted) {
+          console.warn("Invoice history load error:", err);
+          const fallbackData = invoicesList(activeRange);
+          if (fallbackData.length > 0) {
+            setInvoices(fallbackData);
+            setWarning("Showing local cached data due to network notice.");
+          } else {
+            setError(err?.message || "Failed to load invoice history.");
+          }
+        }
       } finally {
         if (mounted) setLoading(false);
       }
     }
-    void load();
+
+    fetchInvoicesWithTimeout();
     return () => {
       mounted = false;
     };
-  }, [toast, activeRange?.fromDate, activeRange?.toDate]);
+  }, [reloadKey, activeRange?.fromDate, activeRange?.toDate]);
 
   useEffect(() => {
     const dialogState = location.state?.statusDialog;
@@ -211,6 +297,33 @@ export default function InvoiceHistory() {
           New Tax Invoice
         </button>
       </div>
+
+      {warning ? (
+        <div className="flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">
+          <span>{warning}</span>
+          <button
+            type="button"
+            onClick={() => setWarning(null)}
+            className="font-semibold text-amber-900 hover:underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {error ? (
+        <Card className="border-rose-200 bg-rose-50 p-6 text-center">
+          <p className="text-sm font-semibold text-rose-800">Failed to load Tax Invoice History</p>
+          <p className="mt-1 text-xs text-rose-600">{error}</p>
+          <button
+            type="button"
+            onClick={() => setReloadKey((prev) => prev + 1)}
+            className="mt-4 inline-flex items-center rounded-xl border border-rose-300 bg-white px-4 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+          >
+            Retry
+          </button>
+        </Card>
+      ) : null}
 
       <Card className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -291,14 +404,22 @@ export default function InvoiceHistory() {
             <tbody>
               {loading ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
-                    Loading invoice history...
+                  <td className="px-3 py-8 text-center text-slate-500" colSpan={10}>
+                    <div className="inline-flex items-center gap-2">
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+                      <span>Loading invoice history...</span>
+                    </div>
                   </td>
                 </tr>
               ) : filteredInvoices.length === 0 ? (
                 <tr className="border-t border-slate-100">
-                  <td className="px-3 py-6 text-center text-slate-500" colSpan={10}>
-                    {searchQuery ? "No matching invoices found." : "No invoices yet."}
+                  <td className="px-3 py-10 text-center text-slate-500" colSpan={10}>
+                    <p className="text-sm font-semibold text-slate-700">No tax invoices yet</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {searchQuery || fromDate || toDate || statusFilter || customerFilter
+                        ? "No matching tax invoices found for the applied filters."
+                        : "Create your first Tax Invoice to see it listed here."}
+                    </p>
                   </td>
                 </tr>
               ) : (
@@ -330,7 +451,7 @@ export default function InvoiceHistory() {
                           </span>
                         </td>
                         <td className="px-3 py-3 align-top">
-                          <div className="grid min-w-[300px] grid-cols-2 gap-2 lg:grid-cols-3">
+                          <div className="grid min-w-[280px] grid-cols-3 gap-2">
                             <button
                               type="button"
                               onClick={() =>
@@ -339,15 +460,6 @@ export default function InvoiceHistory() {
                               className={neutralActionButtonClass}
                             >
                               View
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                navigate(`/app/sales/invoice?edit=${encodeURIComponent(invoice.id)}`)
-                              }
-                              className={neutralActionButtonClass}
-                            >
-                              Edit
                             </button>
                             <button
                               type="button"

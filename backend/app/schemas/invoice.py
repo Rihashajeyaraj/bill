@@ -10,12 +10,16 @@ class InvoiceItemBase(BaseModel):
     qty: float = 1.0
     unit: str = "PCS"
     unit_price: float = 0.0
+    rate: Optional[float] = None
     discount_percent: float = 0.0
     discount_amount: float = 0.0
     tax_rate: float = 0.0
     taxable_amount: float = 0.0
+    cgst_rate: float = 0.0
     cgst_amount: float = 0.0
+    sgst_rate: float = 0.0
     sgst_amount: float = 0.0
+    igst_rate: float = 0.0
     igst_amount: float = 0.0
     place_of_supply: Optional[str] = None
     currency: Optional[str] = "INR"
@@ -90,8 +94,10 @@ from typing import List, Optional, Any, Union
 
 class InvoiceResponse(BaseModel):
     id: str
+    invoice_id: Optional[str] = None
     organization_id: str
     template_id: Optional[str] = "modern_gst"
+    document_type: Optional[str] = "TAX_INVOICE"
     invoice_no: str
     invoice_date: Union[date, str]
     due_date: Optional[Union[date, str]] = None
@@ -106,13 +112,29 @@ class InvoiceResponse(BaseModel):
     customer_company_name: Optional[str] = None
     customer_address: Optional[str] = None
     customer_city: Optional[str] = None
+    customer_state: Optional[str] = None
     customer_country: Optional[str] = None
     customer_gstin: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_email: Optional[str] = None
 
+    bill_name: Optional[str] = None
+    bill_address_line1: Optional[str] = None
+    bill_address_line2: Optional[str] = None
+    bill_city: Optional[str] = None
+    bill_state: Optional[str] = None
+    bill_state_code: Optional[str] = None
+    bill_pincode: Optional[str] = None
+    bill_country: Optional[str] = None
+    bill_gstin: Optional[str] = None
+    bill_pan: Optional[str] = None
+    bill_phone: Optional[str] = None
+    bill_email: Optional[str] = None
+
     currency_code: str = "INR"
     exchange_rate: Optional[float] = 1.0
+    roe: Optional[float] = 1.0
+    cust_ref: Optional[str] = None
     export_type: Optional[str] = None
     lut_number: Optional[str] = None
     lut_bond_no: Optional[str] = None

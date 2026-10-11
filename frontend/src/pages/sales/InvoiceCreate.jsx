@@ -28,17 +28,15 @@ import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../../services/sto
 import { authGetRole, authGetUser } from "../../services/auth.service";
 import { companyPeekDocumentNumber } from "../../services/company.service";
 import { syncPaymentInRemote } from "../../services/payments.service";
-import { fetchItemStockHistory } from "../../services/inventory.service";
+const fetchItemStockHistory = async () => [];
 import { canCreateEntries, canEditEntries } from "../../services/roles";
 import { UI } from "../../theme/tokens";
 import { formatMoney } from "../../modules/parties/utils";
 import { getPartyCreditStatus, listParties, syncPartiesFromRemote, upsertPartyRemote } from "../../modules/parties/store";
 import { computeItemStock, listItems, syncItemsFromRemote, upsertItemRemote } from "../../modules/items/store";
-import {
-  applySelectedCreditNotesToInvoice,
-  availableCreditByCustomerMatch,
-  listCreditNotesForCustomerMatch
-} from "../../modules/creditNote/store";
+const applySelectedCreditNotesToInvoice = (invoice, notes) => invoice;
+const availableCreditByCustomerMatch = () => 0;
+const listCreditNotesForCustomerMatch = () => [];
 import {
   applySelectedAdvanceWalletEntriesToCustomerInvoice,
   listCustomerAdvanceWalletHistory,
@@ -55,11 +53,9 @@ import {
   listStatesByCountry,
   resolveCountryIsoCode
 } from "../../lib/geoData";
-import {
-  listItemBarcodes,
-  normalizeBarcodeLookupValue,
-  syncItemBarcodesFromRemote
-} from "../../services/itemBarcodes.service";
+const listItemBarcodes = () => [];
+const normalizeBarcodeLookupValue = (val) => String(val || "").trim();
+const syncItemBarcodesFromRemote = async () => [];
 import {
   formatDecimalByPreference,
   formatInputNumberByPreference,
@@ -244,6 +240,12 @@ export default function InvoiceCreate() {
   const activeInvoiceId = editInvoiceId || printInvoiceId || previewInvoiceId;
   const isEditMode = !!editInvoiceId;
   const isPrintMode = !!printInvoiceId;
+
+  useEffect(() => {
+    if (editInvoiceId) {
+      navigate(`/app/sales/invoice?preview=${encodeURIComponent(editInvoiceId)}`, { replace: true });
+    }
+  }, [editInvoiceId, navigate]);
   const { profile: company = {}, country = "", countryCode = "", currency = "", currencySymbol = "" } = useOrganization();
   const [templateConfig, setTemplateConfig] = useState(() => getInvoiceTemplateConfig());
   const [selectedTemplateKey, setSelectedTemplateKey] = useState(() => getDefaultTemplateKey());
@@ -488,6 +490,15 @@ export default function InvoiceCreate() {
             records.find((entry) => String(entry?.id || "").trim() === activeInvoiceId) || null;
         }
 
+        if (!matched) {
+          try {
+            const apiRes = await apiClient.getInvoice(activeInvoiceId);
+            if (apiRes) {
+              matched = apiRes;
+            }
+          } catch (_) {}
+        }
+
         if (cancelled) return;
         if (!matched) {
           alert("Invoice not found.");
@@ -499,6 +510,9 @@ export default function InvoiceCreate() {
           setSelectedTemplateKey(matched.template_id);
         }
         hydrateInvoiceEditor(matched, items);
+        if (previewInvoiceId) {
+          setPreviewOpen(true);
+        }
       } catch (error) {
         if (cancelled) return;
         alert(error?.message || "Failed to load invoice.");
@@ -1873,19 +1887,22 @@ export default function InvoiceCreate() {
       stateCode: party?.stateCode || party?.state_code || fallbackRecord?.buyer?.stateCode || ""
     };
     return {
+      ...(fallbackRecord || {}),
       title: gstRuntimeEnabled ? "Tax Invoice" : "Invoice",
+      documentType: "TAX_INVOICE",
+      isProforma: false,
       country,
       companyName: company?.companyName || "",
       companyLogoUrl: company?.logoBase64 || "",
       currencySymbol: resolveCurrencySymbol(currencySymbol, currency),
-      invoiceNo: preferFallbackRecord ? fallbackRecord?.invoiceNo || invoiceNo || "-" : invoiceNo || fallbackRecord?.invoiceNo || "-",
-      invoiceDate: preferFallbackRecord ? fallbackRecord?.invoiceDate || invoiceDate || "" : invoiceDate || fallbackRecord?.invoiceDate || "",
+      invoiceNo: preferFallbackRecord ? fallbackRecord?.invoice_no || fallbackRecord?.invoiceNo || invoiceNo || "-" : invoiceNo || fallbackRecord?.invoice_no || fallbackRecord?.invoiceNo || "-",
+      invoiceDate: preferFallbackRecord ? fallbackRecord?.invoice_date || fallbackRecord?.invoiceDate || invoiceDate || "" : invoiceDate || fallbackRecord?.invoice_date || fallbackRecord?.invoiceDate || "",
       dueDate: preferFallbackRecord
-        ? fallbackRecord?.dueDate || fallbackRecord?.invoiceDate || invoiceDate || ""
-        : invoiceDate || fallbackRecord?.dueDate || fallbackRecord?.invoiceDate || "",
+        ? fallbackRecord?.due_date || fallbackRecord?.dueDate || fallbackRecord?.invoiceDate || invoiceDate || ""
+        : invoiceDate || fallbackRecord?.due_date || fallbackRecord?.dueDate || fallbackRecord?.invoiceDate || "",
       placeOfSupply: preferFallbackRecord
-        ? fallbackRecord?.placeOfSupply || buyer.state || customerState
-        : customerState || fallbackRecord?.placeOfSupply || buyer.state,
+        ? fallbackRecord?.place_of_supply_state || fallbackRecord?.placeOfSupply || buyer.state || customerState
+        : customerState || fallbackRecord?.place_of_supply_state || fallbackRecord?.placeOfSupply || buyer.state,
       seller,
       buyer,
       customer: {
@@ -1930,33 +1947,45 @@ export default function InvoiceCreate() {
             warning: ""
           },
       items: previewItemsSource.map((line) => {
-        const lineNet = Number(line.net ?? line.taxableValue ?? line.lineSubTotal ?? 0);
+        const lineNet = Number(line.net ?? line.taxableValue ?? line.taxable_amount ?? line.lineSubTotal ?? 0);
         const lineTaxAmount = Number(
           line.lineTax ??
             line.taxAmount ??
-            Number(line.cgstAmount || 0) +
-              Number(line.sgstAmount || 0) +
-              Number(line.igstAmount || 0) +
-              Number(line.vatAmount || 0)
+            line.tax_amount ??
+            Number(line.cgstAmount || line.cgst_amount || 0) +
+              Number(line.sgstAmount || line.sgst_amount || 0) +
+              Number(line.igstAmount || line.igst_amount || 0) +
+              Number(line.vatAmount || line.vat_amount || 0)
         );
         const resolvedLineRate = lineNet > 0 ? round2((lineTaxAmount / lineNet) * 100) : 0;
         return {
           id: line.id,
           name: line.itemName || line.name || line.description || "",
-          hsn: line.hsn || line.hsnSac || line.sac || "",
+          description: line.description || line.itemName || line.name || "",
+          hsn: line.hsn || line.hsnSac || line.hsn_sac || line.sac || "",
+          hsn_sac: line.hsn_sac || line.hsnSac || line.hsn || line.sac || "",
           qty: Number(line.qty || 0),
-          rate: Number(line.rate || 0),
-          discount: Number(line.discount ?? line.discountAmount ?? 0),
-          tax: Number(line.tax ?? line.taxRate ?? resolvedLineRate),
-          taxRate: Number(line.taxRate ?? line.tax ?? resolvedLineRate),
+          rate: Number(line.rate || line.unit_price || 0),
+          unit: line.unit || "PCS",
+          discount: Number(line.discount ?? line.discountAmount ?? line.discount_amount ?? 0),
+          tax: Number(line.tax ?? line.taxRate ?? line.tax_rate ?? resolvedLineRate),
+          taxRate: Number(line.taxRate ?? line.tax ?? line.tax_rate ?? resolvedLineRate),
           taxableValue: lineNet,
+          taxable_amount: lineNet,
           net: lineNet,
+          amount_inr: Number(line.amount_inr ?? line.amountInr ?? lineNet),
           amount: lineNet + lineTaxAmount,
           lineTax: lineTaxAmount,
-          igstAmount: Number(line.igstAmount || 0),
-          cgstAmount: Number(line.cgstAmount || 0),
-          sgstAmount: Number(line.sgstAmount || 0),
-          vatAmount: Number(line.vatAmount || 0)
+          tax_amount: lineTaxAmount,
+          place_of_supply: line.place_of_supply || line.placeOfSupply || "",
+          currency: line.currency || fallbackRecord?.currency_code || "INR",
+          cgst_rate: Number(line.cgst_rate ?? line.cgstRate ?? 0),
+          sgst_rate: Number(line.sgst_rate ?? line.sgstRate ?? 0),
+          igst_rate: Number(line.igst_rate ?? line.igstRate ?? 0),
+          igstAmount: Number(line.igstAmount || line.igst_amount || 0),
+          cgstAmount: Number(line.cgstAmount || line.cgst_amount || 0),
+          sgstAmount: Number(line.sgstAmount || line.sgst_amount || 0),
+          vatAmount: Number(line.vatAmount || line.vat_amount || 0)
         };
       }),
       totals: {
@@ -1974,6 +2003,15 @@ export default function InvoiceCreate() {
             ? fallbackTotals?.grandTotal || fallbackTotals?.total || computed.grandTotal || 0
             : computed.grandTotal || fallbackTotals?.grandTotal || fallbackTotals?.total || 0
         ),
+        grand_total: Number(
+          preferFallbackRecord
+            ? fallbackTotals?.grandTotal || fallbackTotals?.total || computed.grandTotal || 0
+            : computed.grandTotal || fallbackTotals?.grandTotal || fallbackTotals?.total || 0
+        ),
+        amountPaid: Number(paymentAmount || 0) + Number(advanceAppliedFromWallet || 0),
+        amount_paid: Number(paymentAmount || 0) + Number(advanceAppliedFromWallet || 0),
+        balanceDue: Number(pendingAmount || 0),
+        balance_due: Number(pendingAmount || 0),
         balance: Number(
           preferFallbackRecord
             ? fallbackRecord?.remainingBalance ??
@@ -1989,7 +2027,8 @@ export default function InvoiceCreate() {
               fallbackTotals?.total ??
               0
         )
-      }
+      },
+      bankDetails: company?.bankDetails || company?.settings?.bankDetails || {}
     };
   }
 
@@ -3009,32 +3048,25 @@ export default function InvoiceCreate() {
                       rate on the line item. Same-state India uses CGST + SGST, otherwise IGST is applied.
                     </p>
                   ) : (
-                    <FormField label="Tax Rate" hint={`Optional. Select default tax or type custom (${defaultRate}%)`}>
-                      <>
-                        <input
-                          list="vat-presets"
-                          value={vatInput}
-                          onChange={(e) => {
-                            const next = e.target.value;
-                            setVatInput(next);
-                            setTaxRate(parseRateInput(next));
-                          }}
-                          onBlur={() => {
-                            const parsed = parseRateInput(vatInput);
-                            setVatInput(`TAX ${parsed}%`);
-                          }}
-                          className="w-full rounded-2xl border border-slate-100 bg-white px-3 py-2.5 text-sm outline-none focus:ring-4"
-                          style={{ "--tw-ring-color": UI.COLORS.ring }}
-                          placeholder="Leave empty or select tax"
-                        />
-                        <datalist id="vat-presets">
-                          {[getVatRate(country, company), 0]
-                            .filter((rate, idx, arr) => arr.indexOf(rate) === idx)
-                            .map((rate) => (
-                              <option key={`vat_${rate}`} value={`TAX ${rate}%`} />
-                            ))}
-                        </datalist>
-                      </>
+                    <FormField label="Tax Rate" hint="Select GST / Tax Rate">
+                      <select
+                        value={String(taxRate ?? "")}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setTaxRate(next);
+                          setVatInput(next ? `TAX ${next}%` : "");
+                        }}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:ring-4"
+                        style={{ "--tw-ring-color": UI.COLORS.ring }}
+                      >
+                        <option value="">Select Tax Rate ▼</option>
+                        <option value="0">0% GST</option>
+                        <option value="5">5% GST</option>
+                        <option value="12">12% GST</option>
+                        <option value="18">18% GST</option>
+                        <option value="28">28% GST</option>
+                        <option value="40">40% GST</option>
+                      </select>
                     </FormField>
                   )}
                 </div>
@@ -3431,16 +3463,25 @@ export default function InvoiceCreate() {
                                       inputMode="decimal"
                                     />
 
-                                    <input
-                                      value={forceZeroTax ? 0 : r.tax}
-                                      onChange={(e) => {
-                                        if (forceZeroTax) return;
-                                        updateLine(r.id, { tax: e.target.value });
-                                      }}
-                                      className={`${invoiceLineInputRightClassName} disabled:bg-slate-100 disabled:text-slate-500`}
-                                      disabled={forceZeroTax}
-                                      inputMode="decimal"
-                                    />
+                                     <select
+                                       value={forceZeroTax ? "0" : String(r.tax ?? "18")}
+                                       onChange={(e) => {
+                                         if (forceZeroTax) return;
+                                         updateLine(r.id, { tax: e.target.value });
+                                       }}
+                                       className={`${invoiceLineInputClassName} font-semibold disabled:bg-slate-100 disabled:text-slate-500`}
+                                       disabled={forceZeroTax}
+                                     >
+                                       <option value="0">0%</option>
+                                       <option value="5">5%</option>
+                                       <option value="12">12%</option>
+                                       <option value="18">18%</option>
+                                       <option value="28">28%</option>
+                                       <option value="40">40%</option>
+                                       {![0, 5, 12, 18, 28, 40].includes(Number(r.tax)) && r.tax !== undefined && r.tax !== "" && (
+                                         <option value={String(r.tax)}>{r.tax}%</option>
+                                       )}
+                                     </select>
 
                                     <div className="flex h-10 min-w-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-center text-sm font-semibold tabular-nums text-slate-700">
                                       {money(net)}

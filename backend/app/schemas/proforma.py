@@ -501,6 +501,7 @@ class ProFormaResponse(BaseModel):
     terms: Optional[str] = None
     bank_account_id: Optional[str] = None
     converted_document_id: Optional[str] = None
+    converted_invoice_no: Optional[str] = None
     converted_at: Optional[datetime] = None
 
     # Nested Complete Payloads for Single Source of Truth
