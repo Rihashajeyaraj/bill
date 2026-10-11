@@ -269,9 +269,106 @@ create table if not exists public.invoices (
   invoice_date date not null,
   due_date date,
   party_id uuid references public.parties(id) on delete set null,
+  customer_id uuid references public.parties(id) on delete set null,
+  source_proforma_id uuid unique references public.proforma_invoices(id) on delete restrict,
+  source_proforma_no text,
+  source_proforma_date date,
+  document_type text not null default 'TAX_INVOICE',
+  template_id text default 'modern_gst',
+
+  -- Customer & Bill-to Snapshot
+  customer_name text,
+  customer_company_name text,
+  customer_country text,
+  customer_address text,
+  customer_city text,
+  customer_gstin text,
+  customer_phone text,
+  customer_email text,
+  bill_name text,
+  bill_address_line1 text,
+  bill_address_line2 text,
+  bill_city text,
+  bill_state text,
+  bill_state_code text,
+  bill_pincode text,
+  bill_country text,
+  bill_gstin text,
+  bill_pan text,
+  bill_phone text,
+  bill_email text,
+  bill_contact_person text,
+
+  -- Ship-to Snapshot
+  ship_same_as_bill boolean default true,
+  ship_name text,
+  ship_address_line1 text,
+  ship_address_line2 text,
+  ship_city text,
+  ship_state text,
+  ship_state_code text,
+  ship_pincode text,
+  ship_country text,
+  ship_gstin text,
+  ship_phone text,
+  ship_contact_person text,
+
+  -- Tax & Export Details
   place_of_supply_state text,
+  place_of_supply_code text,
+  supply_type text,
+  reverse_charge boolean default false,
+  export_type text default 'DOMESTIC',
+  lut_number text,
+  lut_bond_no text,
   currency_code text not null default 'INR',
+  currency_symbol text default '₹',
   exchange_rate numeric(14,6) not null default 1,
+  roe numeric(14,6) default 1,
+  price_mode text,
+
+  -- Shipping & Logistics Details
+  shipper_name text,
+  consignee_name text,
+  origin text,
+  destination text,
+  packs_qty numeric(14,3),
+  weight_kgs numeric(14,3),
+  volume_cbm numeric(14,3),
+  freight_terms text,
+  bl_number text,
+  hbl_number text,
+  thbl_number text,
+  mbl_number text,
+  ocean_bl_no text,
+  vessel_name text,
+  voyage_no text,
+  vessel_voyage text,
+  etd_date date,
+  eta_date date,
+
+  -- Operations, Customs & PO Details
+  igm_no text,
+  igm_date date,
+  igm_item_no text,
+  file_no text,
+  sales_rep text,
+  rcm_applicable boolean default false,
+  container_details text,
+  container_vehicle_no text,
+  freight_charge numeric(14,2) default 0,
+  packing_charge numeric(14,2) default 0,
+  insurance_charge numeric(14,2) default 0,
+  other_charge numeric(14,2) default 0,
+  customer_po_no text,
+  customer_po_date date,
+  cust_ref text,
+  customer_ref text,
+  bank_account_id uuid,
+  bank_details jsonb,
+  discount_type text,
+  discount_value numeric(14,2) default 0,
+
   subtotal numeric(14,2) not null default 0,
   discount_total numeric(14,2) not null default 0,
   taxable_total numeric(14,2) not null default 0,
@@ -283,6 +380,11 @@ create table if not exists public.invoices (
   tax_total numeric(14,2) not null default 0,
   round_off numeric(14,2) not null default 0,
   grand_total numeric(14,2) not null default 0,
+  tds_note text default '* Kindly deduct T.D.S on Invoice amount excluding GST amount.',
+  remarks text,
+  customer_pincode text,
+  amount_paid numeric(14,2) not null default 0,
+  balance_due numeric(14,2) not null default 0,
   status public.document_status not null default 'draft',
   notes text,
   terms text,
@@ -293,6 +395,7 @@ create table if not exists public.invoices (
   unique (organization_id, invoice_no)
 );
 create index if not exists idx_invoices_org_id on public.invoices(organization_id);
+create index if not exists idx_invoices_source_proforma_id on public.invoices(source_proforma_id);
 create index if not exists idx_invoices_party_id on public.invoices(party_id);
 create index if not exists idx_invoices_date on public.invoices(invoice_date);
 create trigger trg_invoices_updated_at
@@ -309,15 +412,24 @@ create table if not exists public.invoice_items (
   qty numeric(14,3) not null default 0,
   unit text,
   unit_price numeric(14,2) not null default 0,
+  discount_type text,
+  discount_value numeric(14,2) default 0,
   discount_percent numeric(6,3) not null default 0,
   discount_amount numeric(14,2) not null default 0,
   taxable_amount numeric(14,2) not null default 0,
   tax_rate numeric(6,3) not null default 0,
+  cgst_rate numeric(6,3) default 0,
   cgst_amount numeric(14,2) not null default 0,
+  sgst_rate numeric(6,3) default 0,
   sgst_amount numeric(14,2) not null default 0,
+  igst_rate numeric(6,3) default 0,
   igst_amount numeric(14,2) not null default 0,
+  cess_rate numeric(6,3) default 0,
   cess_amount numeric(14,2) not null default 0,
   vat_amount numeric(14,2) not null default 0,
+  place_of_supply text,
+  currency text,
+  amount_inr numeric(14,2) default 0,
   line_total numeric(14,2) not null default 0
 );
 create index if not exists idx_invoice_items_invoice_id on public.invoice_items(invoice_id);
@@ -1052,3 +1164,56 @@ with check (
       and public.current_user_is_org_member(n.organization_id)
   )
 );
+
+-- Schema compatibility and missing tables
+CREATE OR REPLACE VIEW public.customers AS
+SELECT 
+    id,
+    organization_id AS tenant_id,
+    organization_id,
+    display_name AS name,
+    display_name,
+    email,
+    phone,
+    gstin,
+    billing_address,
+    created_at,
+    updated_at
+FROM public.parties
+WHERE type = 'Customer' OR party_type = 'Customer' OR type IS NULL;
+
+CREATE OR REPLACE VIEW public.proforma_items AS
+SELECT * FROM public.proforma_invoice_items;
+
+CREATE OR REPLACE VIEW public.tax_invoice_items AS
+SELECT * FROM public.invoice_items;
+
+CREATE TABLE IF NOT EXISTS public.document_counters (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
+    organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
+    document_type VARCHAR(50) NOT NULL,
+    prefix VARCHAR(20),
+    next_number INTEGER NOT NULL DEFAULT 1,
+    financial_year_id UUID,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE public.document_counters ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
+    organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+    action VARCHAR(100) NOT NULL,
+    entity_type VARCHAR(100),
+    entity_id UUID,
+    details JSONB DEFAULT '{}'::jsonb,
+    ip_address VARCHAR(45),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+
+NOTIFY pgrst, 'reload schema';
+
