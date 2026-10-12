@@ -761,18 +761,18 @@ class PaymentRepository:
                         if pf_res.data:
                             pf = pf_res.data[0]
                             grand_total = float(pf.get("grand_total", 0))
-                            curr_paid = float(pf.get("amount_paid") or pf.get("advance_paid") or 0)
+                            curr_bal = float(pf.get("balance_due") if pf.get("balance_due") is not None else grand_total)
+                            curr_paid = max(0.0, grand_total - curr_bal)
                             new_paid = curr_paid + alloc_amt
                             new_status = "partial" if new_paid < grand_total - 0.01 else "paid"
-                            pf_update = {"status": new_status}
-                            if "amount_paid" in pf:
-                                pf_update["amount_paid"] = new_paid
-                            if "advance_paid" in pf:
-                                pf_update["advance_paid"] = new_paid
+                            pf_update = {
+                                "status": new_status,
+                                "balance_due": max(0.0, grand_total - new_paid)
+                            }
                             try:
                                 self.admin_db.table("proforma_invoices").update(pf_update).eq("id", doc_id).execute()
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.warning(f"Error updating proforma balance_due: {e}")
                     else:
                         inv_res = self.admin_db.table("invoices").select("*").eq("id", doc_id).eq("organization_id", organization_id).limit(1).execute()
                         if inv_res.data:

@@ -5,13 +5,16 @@ from app.repositories.party_repository import PartyRepository
 from app.schemas.party import PartyCreate, PartyUpdate, PartyResponse
 
 router = APIRouter(prefix="/parties", tags=["Parties"])
-repo = PartyRepository()
+def _get_repo(ctx: UserContext) -> PartyRepository:
+    token = ctx.token if ctx.token and ctx.token != "dev-token" else None
+    return PartyRepository(token=token)
 
 @router.get("", response_model=List[PartyResponse])
 def list_parties(
     party_type: Optional[str] = None,
     ctx: UserContext = Depends(get_current_user_context)
 ):
+    repo = _get_repo(ctx)
     return repo.get_all(ctx.company_id, party_type)
 
 @router.get("/{party_id}", response_model=PartyResponse)
@@ -19,6 +22,7 @@ def get_party(
     party_id: str,
     ctx: UserContext = Depends(get_current_user_context)
 ):
+    repo = _get_repo(ctx)
     party = repo.get_by_id(party_id, ctx.company_id)
     if not party:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Party not found")
@@ -29,6 +33,7 @@ def create_party(
     party_data: PartyCreate,
     ctx: UserContext = Depends(get_current_user_context)
 ):
+    repo = _get_repo(ctx)
     return repo.create(ctx.company_id, party_data, ctx.user_id)
 
 @router.put("/{party_id}", response_model=PartyResponse)
@@ -37,6 +42,7 @@ def update_party(
     party_data: PartyUpdate,
     ctx: UserContext = Depends(get_current_user_context)
 ):
+    repo = _get_repo(ctx)
     party = repo.update(party_id, ctx.company_id, party_data)
     if not party:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Party not found")
@@ -47,6 +53,7 @@ def delete_party(
     party_id: str,
     ctx: UserContext = Depends(get_current_user_context)
 ):
+    repo = _get_repo(ctx)
     success = repo.delete(party_id, ctx.company_id)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Party not found")

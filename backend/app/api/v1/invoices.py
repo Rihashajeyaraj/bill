@@ -1,15 +1,39 @@
-from fastapi import APIRouter, Depends, status, HTTPException
-from typing import List
-from app.core.auth import get_current_user_context, UserContext
+from fastapi import APIRouter, Depends, status, HTTPException, Header
+from fastapi.security import HTTPAuthorizationCredentials
+from typing import List, Optional
+from app.core.auth import get_current_user_context, UserContext, security
 from app.services.invoice_service import InvoiceService
-from app.schemas.invoice import InvoiceCreate, InvoiceUpdate, InvoiceResponse
+from app.schemas.invoice import InvoiceCreate, InvoiceUpdate, InvoiceResponse, InvoiceVerificationResponse
 
 router = APIRouter(prefix="/invoices", tags=["Tax Invoices"])
 service = InvoiceService()
 
+@router.get("/verify/{token}", response_model=InvoiceVerificationResponse)
+async def verify_tax_invoice(
+    token: str,
+    x_organization_id: Optional[str] = Header(None),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+):
+    """
+    Publicly or authentically resolves a Tax Invoice QR verification token.
+    Enforces tenant isolation: cross-tenant access from authenticated users of another org is blocked with 403.
+    """
+    caller_org_id = None
+    if credentials and credentials.credentials:
+        try:
+            ctx = await get_current_user_context(credentials=credentials, x_organization_id=x_organization_id)
+            caller_org_id = ctx.company_id
+        except Exception:
+            pass
+    elif x_organization_id:
+        caller_org_id = x_organization_id
+
+    return service.verify_invoice_by_token(token, caller_company_id=caller_org_id)
+
 @router.get("", response_model=List[InvoiceResponse])
 def list_invoices(ctx: UserContext = Depends(get_current_user_context)):
     return service.get_invoices(ctx.company_id)
+
 
 @router.get("/{invoice_id}", response_model=InvoiceResponse)
 def get_invoice(

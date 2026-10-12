@@ -128,12 +128,22 @@ export const apiClient = {
   createProforma: (data) => apiRequest("/proforma", "POST", data),
   updateProforma: (id, data) => apiRequest(`/proforma/${id}`, "PUT", data),
   convertProforma: (id, payload) => apiRequest(`/proforma/${id}/convert`, "POST", payload),
+  cancelProforma: (id) => apiRequest(`/proforma/${id}/cancel`, "POST"),
+  verifyProforma: (token) => apiRequest(`/proforma/verify/${token}`, "GET"),
+  verifyTaxInvoice: (token) => apiRequest(`/invoices/verify/${token}`, "GET"),
+  verifyDocument: (token) => {
+    if (token && (token.startsWith("txv_") || token.startsWith("inv_"))) {
+      return apiRequest(`/invoices/verify/${token}`, "GET");
+    }
+    return apiRequest(`/proforma/verify/${token}`, "GET");
+  },
   deleteProforma: (id) => apiRequest(`/proforma/${id}`, "DELETE"),
   deleteAllProformas: () => apiRequest("/proforma", "DELETE"),
 
   // Tax Invoices
   getInvoices: () => apiRequest("/invoices", "GET"),
   getInvoice: (id) => apiRequest(`/invoices/${id}`, "GET"),
+  verifyInvoice: (token) => apiRequest(`/invoices/verify/${token}`, "GET"),
   createInvoice: (data) => apiRequest("/invoices", "POST", data),
   updateInvoice: (id, data) => apiRequest(`/invoices/${id}`, "PUT", data),
 

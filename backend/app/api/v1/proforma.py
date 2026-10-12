@@ -1,11 +1,38 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, Header
+from fastapi.security import HTTPAuthorizationCredentials
 from typing import List, Optional
-from app.core.auth import get_current_user_context, UserContext
+from app.core.auth import get_current_user_context, UserContext, security
 from app.services.proforma_service import ProformaService
-from app.schemas.proforma import ProFormaCreate, ProFormaUpdate, ProFormaResponse, ProformaConvertRequest
+from app.schemas.proforma import (
+    ProFormaCreate, ProFormaUpdate, ProFormaResponse,
+    ProformaConvertRequest, ProformaVerificationResponse
+)
 from app.schemas.invoice import InvoiceResponse
 
 router = APIRouter(prefix="/proforma", tags=["Pro Forma Invoices"])
+
+@router.get("/verify/{token}", response_model=ProformaVerificationResponse)
+async def verify_proforma(
+    token: str,
+    x_organization_id: Optional[str] = Header(None),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+):
+    """
+    Publicly or authentically resolves a Pro Forma QR verification token.
+    Enforces tenant isolation: cross-tenant access from authenticated users of another org is blocked with 403.
+    """
+    caller_org_id = None
+    if credentials and credentials.credentials:
+        try:
+            ctx = await get_current_user_context(credentials=credentials, x_organization_id=x_organization_id)
+            caller_org_id = ctx.company_id
+        except Exception:
+            pass
+    elif x_organization_id:
+        caller_org_id = x_organization_id
+
+    service = ProformaService()
+    return service.verify_proforma_by_token(token, caller_company_id=caller_org_id)
 
 @router.get("", response_model=List[ProFormaResponse])
 def list_proformas(ctx: UserContext = Depends(get_current_user_context)):
@@ -24,6 +51,14 @@ def get_proforma(
 ):
     service = ProformaService(token=ctx.token)
     return service.get_proforma(proforma_id, ctx.company_id)
+
+@router.post("/{proforma_id}/cancel", response_model=ProFormaResponse)
+def cancel_proforma(
+    proforma_id: str,
+    ctx: UserContext = Depends(get_current_user_context)
+):
+    service = ProformaService(token=ctx.token)
+    return service.cancel_proforma(proforma_id, ctx.company_id)
 
 @router.post("", response_model=ProFormaResponse, status_code=status.HTTP_201_CREATED)
 def create_proforma(

@@ -97,11 +97,14 @@ class ItemCalculationResult:
             "qty": float(self.qty),
             "unit": self.unit,
             "unit_price": float(self.unit_price),
+            "rate": float(self.unit_price),
             "discount_percent": float(self.discount_percent),
             "discount_amount": float(self.discount_amount),
             "taxable_amount": float(self.taxable_amount),
             "taxable_value": float(self.taxable_amount),
+            "net": float(self.taxable_amount),
             "tax_rate": float(self.tax_rate),
+            "gst_rate": float(self.tax_rate),
             "cgst_rate": float(self.cgst_rate),
             "sgst_rate": float(self.sgst_rate),
             "igst_rate": float(self.igst_rate),
@@ -115,11 +118,15 @@ class ItemCalculationResult:
             "state_tax_amount": float(self.state_tax_amount),
             "local_tax_amount": float(self.local_tax_amount),
             "tax_amount": float(self.tax_amount),
+            "gst_total": float(self.tax_amount),
+            "line_tax": float(self.tax_amount),
             "amount_inr": float(self.amount_inr),
+            "amountInr": float(self.amount_inr),
             "place_of_supply": self.place_of_supply,
             "currency": self.currency,
             "tax_type": self.tax_type,
-            "line_total": float(self.line_total)
+            "line_total": float(self.line_total),
+            "total": float(self.line_total)
         }
 
 class DocumentCalculationResult:
@@ -252,7 +259,13 @@ def calculate_document_totals(
     for idx, raw_item in enumerate(raw_items, start=1):
         qty = round_qty(to_decimal(raw_item.get("qty", 1)))
         unit_price = round_money(to_decimal(raw_item.get("unit_price") or raw_item.get("rate") or 0))
-        currency = str(raw_item.get("currency") or doc_currency or "INR").upper()
+        raw_curr = str(raw_item.get("currency") or "").strip().upper()
+        if raw_curr and raw_curr != "INR":
+            currency = raw_curr
+        elif doc_currency and doc_currency.strip().upper() != "INR":
+            currency = doc_currency.strip().upper()
+        else:
+            currency = raw_curr or "INR"
 
         if currency != "INR" and dec_roe > Decimal("0"):
             amount_inr = round_money(qty * unit_price * dec_roe)

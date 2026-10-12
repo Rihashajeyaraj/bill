@@ -14,18 +14,27 @@ class InvoiceItemBase(BaseModel):
     discount_percent: float = 0.0
     discount_amount: float = 0.0
     tax_rate: float = 0.0
+    gst_rate: Optional[float] = None
     taxable_amount: float = 0.0
-    cgst_rate: float = 0.0
-    cgst_amount: float = 0.0
-    sgst_rate: float = 0.0
-    sgst_amount: float = 0.0
-    igst_rate: float = 0.0
-    igst_amount: float = 0.0
+    taxable_value: Optional[float] = None
+    net: Optional[float] = None
+    cgst_rate: Optional[float] = None
+    cgst_amount: Optional[float] = None
+    sgst_rate: Optional[float] = None
+    sgst_amount: Optional[float] = None
+    igst_rate: Optional[float] = None
+    igst_amount: Optional[float] = None
     place_of_supply: Optional[str] = None
-    currency: Optional[str] = "INR"
-    amount_inr: float = 0.0
-    tax_amount: float = 0.0
+    currency: Optional[str] = None
+    amount_inr: Optional[float] = None
+    amountInr: Optional[float] = None
+    tax_amount: Optional[float] = None
+    gst_total: Optional[float] = None
+    line_tax: Optional[float] = None
     line_total: float = 0.0
+    total: Optional[float] = None
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
 
 class InvoiceItemCreate(BaseModel):
     item_id: Optional[str] = None
@@ -38,7 +47,7 @@ class InvoiceItemCreate(BaseModel):
     discount_amount: float = 0.0
     tax_rate: float = 0.0
     place_of_supply: Optional[str] = None
-    currency: Optional[str] = "INR"
+    currency: Optional[str] = None
     amount_inr: Optional[float] = 0.0
     tax_amount: Optional[float] = 0.0
 
@@ -198,6 +207,10 @@ class InvoiceResponse(BaseModel):
     terms: Optional[str] = None
     metadata: Optional[dict] = Field(default_factory=dict)
     items: List[InvoiceItemBase] = []
+    verification_token: Optional[str] = None
+    verification_url: Optional[str] = None
+    qr_code_url: Optional[str] = None
+    seller: Optional[Dict[str, Any]] = None
     lines: Optional[List[Any]] = None
     totals: Optional[Dict[str, Any]] = None
     company: Optional[Dict[str, Any]] = None
@@ -208,3 +221,39 @@ class InvoiceResponse(BaseModel):
     updated_at: Optional[Union[datetime, str]] = None
 
     model_config = ConfigDict(from_attributes=True, extra="allow")
+
+class InvoiceVerificationResponse(BaseModel):
+    verified: bool = True
+    invoice_type: str = "TAX_INVOICE"
+    invoice_no: str
+    id: str
+    organization_id: str
+    company_name: str
+    company_gstin: Optional[str] = ""
+    invoice_date: str
+    due_date: Optional[str] = None
+    customer_name: str
+    customer_ref: Optional[str] = None
+    currency_code: str = "INR"
+    currency_symbol: str = "₹"
+    grand_total: float = 0.0
+    taxable_total: float = 0.0
+    tax_total: float = 0.0
+    advance_received: float = 0.0
+    amount_paid: float = 0.0
+    balance_due: float = 0.0
+    status: str = "ISSUED"
+    items_count: int = 0
+    verification_url: str
+    verification_token: str
+    is_cancelled: bool = False
+    verified_at: str
+    items: Optional[List[Dict[str, Any]]] = None
+    totals: Optional[Dict[str, Any]] = None
+    seller: Optional[Dict[str, Any]] = None
+    customer: Optional[Dict[str, Any]] = None
+    bank: Optional[Dict[str, Any]] = None
+    qr_code_image: Optional[str] = None
+
+    model_config = ConfigDict(extra="allow", from_attributes=True)
+

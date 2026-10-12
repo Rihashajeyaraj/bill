@@ -2,10 +2,12 @@ from typing import List, Dict, Any, Optional
 from fastapi import HTTPException, status
 from app.repositories.payment_repository import PaymentRepository
 from app.schemas.payment import PaymentCreate, PaymentCreateWizard
+from app.core.supabase import get_admin_supabase_client
 
 class PaymentService:
     def __init__(self, token: Optional[str] = None):
         self.payment_repo = PaymentRepository(token=token)
+        self.admin_db = get_admin_supabase_client()
 
     def get_customer_summary(self, customer_id: str, organization_id: str) -> Dict[str, Any]:
         return self.payment_repo.get_customer_summary(customer_id, organization_id)

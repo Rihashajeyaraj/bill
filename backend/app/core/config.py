@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: Optional[str] = "gYjop+/HGNc/YEMBpwT55Yo8KhD7r98rE4x/IrEFM1zM7c+oLme+m5rxlqtCtcIin9scHqn18SClrCsAX2WSHg=="
     ENVIRONMENT: str = "development"
     PORT: int = 8000
+    FRONTEND_URL: str = "http://localhost:5173"
 
     model_config = SettingsConfigDict(
         env_file=env_path,

@@ -342,32 +342,70 @@ function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
     taxAmount: parseNumber(row?.tax_total)
   };
 
-  const lines = (Array.isArray(itemRows) ? itemRows : []).map((line) => ({
-    id: line?.id || uid("invl_"),
-    itemId: line?.item_id || "",
-    itemName: line?.description || "",
-    qty: parseNumber(line?.qty),
-    rate: parseNumber(line?.unit_price),
-    discount: parseNumber(line?.discount_amount),
-    tax: parseNumber(line?.tax_rate),
-    taxRate: parseNumber(line?.tax_rate),
-    cgstAmount: parseNumber(line?.cgst_amount),
-    sgstAmount: parseNumber(line?.sgst_amount),
-    igstAmount: parseNumber(line?.igst_amount),
-    vatAmount: parseNumber(line?.vat_amount),
-    lineTax:
-      parseNumber(line?.cgst_amount) +
-      parseNumber(line?.sgst_amount) +
-      parseNumber(line?.igst_amount) +
-      parseNumber(line?.vat_amount) +
-      parseNumber(line?.cess_amount),
-    net: parseNumber(line?.taxable_amount),
-    cogsAmount: parseNumber(line?.cogs_amount),
-    cogsUnitCost: parseNumber(line?.cogs_unit_cost),
-    grossProfitAmount: parseNumber(line?.gross_profit_amount),
-    amount: parseNumber(line?.line_total),
-    hsn: line?.hsn_sac || ""
-  }));
+  const lines = (Array.isArray(itemRows) ? itemRows : []).map((line) => {
+    const cgstAmt = parseNumber(line?.cgst_amount);
+    const sgstAmt = parseNumber(line?.sgst_amount);
+    const igstAmt = parseNumber(line?.igst_amount);
+    const vatAmt = parseNumber(line?.vat_amount);
+    const cessAmt = parseNumber(line?.cess_amount);
+    const taxAmt = parseNumber(line?.tax_amount) || (cgstAmt + sgstAmt + igstAmt + vatAmt + cessAmt);
+    const unitPrice = parseNumber(line?.unit_price ?? line?.rate);
+    const qty = parseNumber(line?.qty ?? 1);
+    const taxable = parseNumber(line?.taxable_amount ?? line?.taxable_value ?? line?.net);
+    const lineTot = parseNumber(line?.line_total ?? line?.amount);
+    const inrAmt = parseNumber(line?.amount_inr) || lineTot || (unitPrice * qty);
+
+    return {
+      id: line?.id || uid("invl_"),
+      itemId: line?.item_id || "",
+      item_id: line?.item_id || "",
+      itemName: line?.description || "",
+      description: line?.description || "",
+      qty,
+      quantity: qty,
+      unit: line?.unit || "PCS",
+      rate: unitPrice,
+      unit_price: unitPrice,
+      unitPrice,
+      discount: parseNumber(line?.discount_amount),
+      discount_amount: parseNumber(line?.discount_amount),
+      discountPercent: parseNumber(line?.discount_percent),
+      discount_percent: parseNumber(line?.discount_percent),
+      tax: parseNumber(line?.tax_rate),
+      taxRate: parseNumber(line?.tax_rate),
+      tax_rate: parseNumber(line?.tax_rate),
+      cgst_rate: parseNumber(line?.cgst_rate),
+      sgst_rate: parseNumber(line?.sgst_rate),
+      igst_rate: parseNumber(line?.igst_rate || (line?.tax_rate && igstAmt ? line?.tax_rate : 0)),
+      cgstAmount: cgstAmt,
+      cgst_amount: cgstAmt,
+      sgstAmount: sgstAmt,
+      sgst_amount: sgstAmt,
+      igstAmount: igstAmt,
+      igst_amount: igstAmt,
+      vatAmount: vatAmt,
+      vat_amount: vatAmt,
+      lineTax: taxAmt,
+      tax_amount: taxAmt,
+      taxAmount: taxAmt,
+      net: taxable,
+      taxable_amount: taxable,
+      taxableAmount: taxable,
+      taxable_value: taxable,
+      amount_inr: inrAmt,
+      amountInr: inrAmt,
+      currency: line?.currency || row?.currency_code || "INR",
+      place_of_supply: line?.place_of_supply || row?.place_of_supply_state || "",
+      cogsAmount: parseNumber(line?.cogs_amount),
+      cogsUnitCost: parseNumber(line?.cogs_unit_cost),
+      grossProfitAmount: parseNumber(line?.gross_profit_amount),
+      amount: lineTot,
+      line_total: lineTot,
+      lineTotal: lineTot,
+      hsn: line?.hsn_sac || "",
+      hsn_sac: line?.hsn_sac || ""
+    };
+  });
 
   const effectiveBalance = Math.max(0, parseNumber(balanceAmount));
   const grandTotal = parseNumber(row?.grand_total);
@@ -379,17 +417,63 @@ function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
   const mapped = {
     id: row?.id || uid("inv_"),
     invoiceNo: row?.invoice_no || "",
+    invoice_no: row?.invoice_no || "",
     invoiceDate: row?.invoice_date || "",
+    invoice_date: row?.invoice_date || "",
     dueDate: row?.due_date || row?.invoice_date || "",
+    due_date: row?.due_date || row?.invoice_date || "",
     partyId: row?.party_id || "",
-    partyName: metadata?.partyName || metadata?.buyer?.name || "",
+    party_id: row?.party_id || "",
+    partyName: metadata?.partyName || metadata?.buyer?.name || row?.customer_name || "",
+    customer_name: row?.customer_name || metadata?.buyer?.name || "",
+    customer_company_name: row?.customer_company_name || "",
+    customer_address: row?.customer_address || "",
+    customer_city: row?.customer_city || "",
+    customer_state: row?.customer_state || "",
+    customer_country: row?.customer_country || "",
+    customer_gstin: row?.customer_gstin || "",
+    customer_phone: row?.customer_phone || "",
+    customer_email: row?.customer_email || "",
+    bill_name: row?.bill_name || row?.customer_name || "",
+    bill_address_line1: row?.bill_address_line1 || row?.customer_address || "",
+    bill_address_line2: row?.bill_address_line2 || "",
+    bill_city: row?.bill_city || row?.customer_city || "",
+    bill_state: row?.bill_state || row?.customer_state || "",
+    bill_country: row?.bill_country || row?.customer_country || "",
+    bill_gstin: row?.bill_gstin || row?.customer_gstin || "",
+    freight_terms: row?.freight_terms || metadata?.freight_terms || metadata?.freightTerms || "",
+    freightTerms: row?.freight_terms || metadata?.freight_terms || metadata?.freightTerms || "",
+    bl_number: row?.bl_number || metadata?.bl_number || "",
+    hbl_number: row?.hbl_number || metadata?.hbl_number || "",
+    thbl_number: row?.thbl_number || metadata?.thbl_number || "",
+    mbl_number: row?.mbl_number || metadata?.mbl_number || "",
+    ocean_bl_no: row?.ocean_bl_no || metadata?.ocean_bl_no || "",
+    vessel_name: row?.vessel_name || metadata?.vessel_name || "",
+    voyage_no: row?.voyage_no || metadata?.voyage_no || "",
+    etd_date: row?.etd_date || metadata?.etd_date || "",
+    eta_date: row?.eta_date || metadata?.eta_date || "",
+    igm_no: row?.igm_no || metadata?.igm_no || "",
+    igm_date: row?.igm_date || metadata?.igm_date || "",
+    igm_item_no: row?.igm_item_no || metadata?.igm_item_no || "",
+    file_no: row?.file_no || metadata?.file_no || "",
+    sales_rep: row?.sales_rep || metadata?.sales_rep || "",
+    rcm_applicable: row?.rcm_applicable ?? metadata?.rcm_applicable ?? false,
+    remarks: row?.remarks || row?.notes || metadata?.remarks || "",
+    advance_received: parseNumber(row?.advance_received || row?.amount_paid || metadata?.advance_received || 0),
+    advanceReceived: parseNumber(row?.advance_received || row?.amount_paid || metadata?.advance_received || 0),
+    balance_due: effectiveBalance,
+    balanceDue: effectiveBalance,
     placeOfSupply: row?.place_of_supply_state || metadata?.placeOfSupply || "",
-    country: metadata?.country || "",
+    country: metadata?.country || row?.customer_country || "",
     currency: String(row?.currency_code || metadata?.currencyCode || "").trim().toUpperCase(),
+    currency_code: String(row?.currency_code || metadata?.currencyCode || "").trim().toUpperCase(),
     taxMode: metadata?.taxMode || "",
     supplyType: metadata?.supplyType || taxBreakup?.supplyType || null,
-    seller: metadata?.seller || {},
-    buyer: metadata?.buyer || {},
+    seller: metadata?.seller || row?.company || {},
+    company: row?.company || metadata?.seller || {},
+    buyer: metadata?.buyer || row?.customer || {},
+    customer: row?.customer || metadata?.buyer || {},
+    bank: row?.bank || row?.bank_details || metadata?.bank || {},
     lines,
     items: lines,
     totals: {
@@ -397,8 +481,11 @@ function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
       tax,
       taxBreakup,
       grandTotal,
-      balance: effectiveBalance
+      grand_total: grandTotal,
+      balance: effectiveBalance,
+      advanceReceived: parseNumber(row?.advance_received || row?.amount_paid || 0)
     },
+    grand_total: grandTotal,
     remainingBalance: effectiveBalance,
     createdByUserId: row?.created_by || null,
     createdByName: String(metadata?.createdByName || "").trim(),

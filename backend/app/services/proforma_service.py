@@ -1,9 +1,16 @@
 from decimal import Decimal
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Tuple
 from datetime import datetime, timezone, timedelta, date
 import logging
 import uuid
+import hmac
+import hashlib
+import base64
+import io
+import qrcode
 from fastapi import HTTPException, status
+from app.core.config import settings
+from app.core.auth import is_valid_uuid
 from app.repositories.proforma_repository import ProformaRepository
 from app.repositories.invoice_repository import InvoiceRepository, KNOWN_INVOICE_COLUMNS, clean_invoice_item_payload, _safe_insert_invoice_item
 from app.repositories.party_repository import PartyRepository
@@ -13,6 +20,59 @@ from app.schemas.proforma import ProFormaCreate, ProFormaUpdate
 from app.utils.num2words import number_to_words_indian
 
 logger = logging.getLogger(__name__)
+
+def generate_proforma_verification_token(invoice_id: str, organization_id: str) -> str:
+    """
+    Generates a secure, deterministic, opaque verification token for a proforma invoice.
+    Uses HMAC-SHA256 over invoice_id and organization_id to ensure tamper resistance.
+    """
+    secret = (settings.SUPABASE_JWT_SECRET or "twite-proforma-verification-key").encode("utf-8")
+    message = f"twite_pfv:{invoice_id}:{organization_id}".encode("utf-8")
+    sig = hmac.new(secret, message, hashlib.sha256).digest()
+    sig_b64 = base64.urlsafe_b64encode(sig[:16]).decode("utf-8").rstrip("=")
+    return f"pfv_{invoice_id}_{sig_b64}"
+
+def verify_proforma_verification_token(token: str, organization_id: str) -> bool:
+    """
+    Verifies that the given token matches the expected HMAC for invoice_id and organization_id.
+    """
+    if not token or not token.startswith("pfv_"):
+        return False
+    parts = token.split("_", 2)
+    if len(parts) < 3:
+        return False
+    _, invoice_id, _ = parts
+    expected_token = generate_proforma_verification_token(invoice_id, organization_id)
+    return hmac.compare_digest(token, expected_token)
+
+def extract_invoice_id_from_token(token: str) -> Optional[str]:
+    """
+    Extracts the invoice UUID from an opaque verification token.
+    """
+    if not token or not token.startswith("pfv_"):
+        return None
+    parts = token.split("_", 2)
+    if len(parts) < 3:
+        return None
+    return parts[1]
+
+def generate_proforma_qr_image(data: str) -> str:
+    """
+    Generates a crisp, high-resolution square QR code image with white background
+    and quiet zone, returned as a PNG Data URI.
+    """
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=8,
+        border=2,
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode('utf-8')}"
 
 class ProformaService:
     def __init__(self, token: Optional[str] = None):
@@ -152,6 +212,13 @@ class ProformaService:
             proforma_no = self.proforma_repo.generate_proforma_no(organization_id)
         else:
             proforma_no = existing_pno
+        cust_ref = str(data.customer_ref or payload_dict.get("cust_ref") or "").strip()
+        raw_notes = str(payload_dict.get("notes") or "").strip()
+        if cust_ref and "[ref:" not in raw_notes:
+            header_notes = f"{raw_notes} [ref:{cust_ref}]".strip() if raw_notes else f"[ref:{cust_ref}]"
+        else:
+            header_notes = raw_notes or None
+
         header_data = {
             **payload_dict,
             "organization_id": organization_id,
@@ -166,6 +233,8 @@ class ProformaService:
             "party_id": data.party_id,
             "place_of_supply_state": customer_state,
             "customer_country": customer_country,
+            "bill_name": data.bill_name or data.customer_name or customer.get("display_name") or "Customer",
+            "notes": header_notes,
             
             "subtotal": float(calc_result.subtotal),
             "discount_total": float(calc_result.discount_total),
@@ -219,10 +288,21 @@ class ProformaService:
             except Exception as e:
                 logger.warning(f"Notice while recording advance on proforma creation: {e}")
 
-        return res
+        return self._build_full_proforma_payload(res, organization_id)
 
     def get_proformas(self, organization_id: str) -> List[Dict[str, Any]]:
-        return self.proforma_repo.get_all(organization_id)
+        records = self.proforma_repo.get_all(organization_id)
+        frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173").rstrip("/")
+        for r in records:
+            pf_id = str(r.get("id") or "")
+            if pf_id:
+                token = generate_proforma_verification_token(pf_id, organization_id)
+                v_url = f"{frontend_url}/verify/proforma/{token}"
+                r["verification_token"] = token
+                r["verification_url"] = v_url
+                r["qr_code_url"] = v_url
+                r["qr_code_data"] = v_url
+        return records
 
     def _build_hsn_summary(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         hsn_map: Dict[str, Dict[str, Any]] = {}
@@ -279,15 +359,24 @@ class ProformaService:
         bill_gstin = proforma.get("bill_gstin") or proforma.get("customer_gstin") or customer.get("gstin") or ""
         bill_phone = proforma.get("bill_phone") or proforma.get("customer_phone") or customer.get("phone") or ""
         bill_email = proforma.get("bill_email") or proforma.get("customer_email") or customer.get("email") or ""
+        bill_country = (
+            proforma.get("bill_country") or
+            proforma.get("customer_country") or
+            customer.get("country_name") or
+            customer.get("country") or
+            "India"
+        )
 
         proforma["bill_name"] = bill_name
         proforma["bill_address_line1"] = bill_address
         proforma["bill_city"] = bill_city
         proforma["bill_state"] = bill_state
+        proforma["bill_country"] = bill_country
         proforma["bill_gstin"] = bill_gstin
         proforma["bill_phone"] = bill_phone
         proforma["bill_email"] = bill_email
         proforma["customer_name"] = bill_name
+        proforma["customer_country"] = proforma.get("customer_country") or bill_country
 
         if proforma.get("ship_same_as_bill", True) or not proforma.get("ship_name"):
             proforma["ship_same_as_bill"] = True
@@ -295,6 +384,7 @@ class ProformaService:
             proforma["ship_address_line1"] = bill_address
             proforma["ship_city"] = bill_city
             proforma["ship_state"] = bill_state
+            proforma["ship_country"] = bill_country
             proforma["ship_gstin"] = bill_gstin
             proforma["ship_phone"] = bill_phone
 
@@ -387,16 +477,38 @@ class ProformaService:
                     break
             if not selected_bank:
                 selected_bank = bank_accounts[0]
-        else:
+        if not selected_bank:
+            comp_settings = company.get("settings") if isinstance(company.get("settings"), dict) else {}
+            settings_bank = comp_settings.get("bank") or comp_settings.get("bankDetails") or {}
+            bank_details_dict = company.get("bank_details") or company.get("bankDetails") or settings_bank or {}
             selected_bank = {
-                "bank_name": company.get("bank_name") or "",
-                "branch": company.get("bank_branch") or "",
-                "account_name": company.get("account_name") or company.get("name") or company.get("legal_name") or "",
-                "account_no": company.get("account_number") or "",
-                "ifsc": company.get("ifsc_code") or "",
-                "upi_id": company.get("upi_id") or ""
+                "bank_name": bank_details_dict.get("bankName") or bank_details_dict.get("bank_name") or company.get("bank_name") or "",
+                "branch": bank_details_dict.get("bankAddress") or bank_details_dict.get("branch") or company.get("bank_branch") or "",
+                "account_name": bank_details_dict.get("accountName") or bank_details_dict.get("account_name") or company.get("account_name") or company.get("name") or company.get("legal_name") or "",
+                "account_no": bank_details_dict.get("accountNo") or bank_details_dict.get("account_no") or bank_details_dict.get("accountNumber") or company.get("account_number") or "",
+                "ifsc": bank_details_dict.get("ifsc") or bank_details_dict.get("ifsc_code") or company.get("ifsc_code") or "",
+                "upi_id": bank_details_dict.get("upi_id") or bank_details_dict.get("upiId") or company.get("upi_id") or ""
             }
         proforma["bank"] = selected_bank
+
+        # Attach automatic internal verification QR code
+        pf_id = str(proforma.get("id") or "")
+        if pf_id:
+            token = generate_proforma_verification_token(pf_id, organization_id)
+            frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173").rstrip("/")
+            verification_url = f"{frontend_url}/verify/proforma/{token}"
+
+            try:
+                qr_image = generate_proforma_qr_image(verification_url)
+            except Exception as qre:
+                logger.warning(f"Error generating proforma QR image: {qre}")
+                qr_image = None
+
+            proforma["verification_token"] = token
+            proforma["verification_url"] = verification_url
+            proforma["qr_code_url"] = verification_url
+            proforma["qr_code_data"] = verification_url
+            proforma["qr_code_image"] = qr_image
 
         return proforma
 
@@ -513,7 +625,7 @@ class ProformaService:
             except Exception as e:
                 logger.warning(f"Notice while syncing advance on proforma update: {e}")
 
-        return updated
+        return self._build_full_proforma_payload(updated, organization_id)
 
     def get_next_proforma_no(self, organization_id: str) -> str:
         return self.proforma_repo.generate_proforma_no(organization_id)
@@ -746,6 +858,7 @@ class ProformaService:
         update_fields = {"invoice_date": assigned_inv_date}
         for col in [
             "source_proforma_id", "source_proforma_no", "source_proforma_date",
+            "currency_code", "currency_symbol", "exchange_rate", "roe", "export_type", "lut_number", "lut_bond_no",
             "bill_name", "bill_address_line1", "bill_address_line2", "bill_city", "bill_state", "bill_state_code", "bill_pincode", "bill_country", "bill_gstin", "bill_pan", "bill_phone", "bill_email",
             "ship_name", "ship_address_line1", "ship_address_line2", "ship_city", "ship_state", "ship_state_code", "ship_pincode", "ship_country", "ship_gstin", "ship_phone",
             "customer_name", "customer_company_name", "customer_address", "customer_city", "customer_state", "customer_country", "customer_gstin", "customer_phone", "customer_email", "customer_pincode",
@@ -791,6 +904,18 @@ class ProformaService:
 
         # Carry advance payment forward and link to Tax Invoice
         adv_amount = float(proforma.get("advance_received") or proforma.get("amount_paid") or 0.0)
+        if adv_amount <= 0.0:
+            gt_val = float(proforma.get("grand_total") or 0.0)
+            bal_val = float(proforma.get("balance_due") if proforma.get("balance_due") is not None else gt_val)
+            if gt_val > bal_val:
+                adv_amount = max(0.0, gt_val - bal_val)
+        if adv_amount <= 0.0 and actual_proforma_id:
+            try:
+                res_pf = self.admin_db.table("payments").select("amount").eq("organization_id", organization_id).or_(f"notes.ilike.%[proforma:{actual_proforma_id}]%,reference_no.eq.{actual_proforma_no}").execute()
+                if res_pf.data:
+                    adv_amount = sum(float(p.get("amount") or 0.0) for p in res_pf.data)
+            except Exception:
+                pass
         cust_id = proforma.get("customer_id") or proforma.get("party_id")
         if adv_amount > 0:
             try:
@@ -863,13 +988,27 @@ class ProformaService:
         inv["source_proforma_id"] = actual_proforma_id
         inv["source_proforma_no"] = actual_proforma_no
         inv["source_proforma_date"] = str(proforma.get("proforma_date") or date.today())
+        if adv_amount > 0:
+            inv["amount_paid"] = adv_amount
+            inv["advance_received"] = adv_amount
+            gt = float(inv.get("grand_total") or proforma.get("grand_total") or 0.0)
+            inv["balance_due"] = max(0.0, gt - adv_amount)
+            inv["status"] = "paid" if adv_amount >= gt - 0.01 and gt > 0 else "partial"
 
         # Enrich all customer, shipment, logistics, and metadata details from source proforma
         for pk, pv in proforma.items():
-            if pk in ("id", "created_at", "updated_at"):
+            if pk in ("id", "organization_id", "invoice_no", "status", "created_at", "updated_at", "converted_document_id", "converted_at"):
                 continue
-            if pk not in inv or inv[pk] is None or inv[pk] == "":
-                inv[pk] = pv
+            if pv is not None and pv != "":
+                if pk not in inv or inv[pk] is None or inv[pk] == "" or (pk == "customer_country" and inv.get(pk) == "India" and pv != "India"):
+                    inv[pk] = pv
+
+        if proforma.get("customer_country"):
+            inv["customer_country"] = proforma["customer_country"]
+        if proforma.get("bill_country"):
+            inv["bill_country"] = proforma["bill_country"]
+        if proforma.get("freight_terms"):
+            inv["freight_terms"] = proforma["freight_terms"]
 
         if not inv.get("items") and proforma.get("items"):
             inv["items"] = proforma["items"]
@@ -932,3 +1071,112 @@ class ProformaService:
 
     def delete_all_proformas(self, organization_id: str) -> int:
         return self.proforma_repo.delete_all(organization_id)
+
+    def cancel_proforma(self, proforma_id: str, organization_id: str) -> Dict[str, Any]:
+        """
+        Cancels a proforma invoice, updating its status to CANCELLED.
+        """
+        existing = self.get_proforma(proforma_id, organization_id)
+        if existing.get("status") == "CONVERTED":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot cancel a converted Pro Forma invoice"
+            )
+        self.db.table("proforma_invoices").update({
+            "status": "CANCELLED",
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("id", proforma_id).eq("organization_id", organization_id).execute()
+        return self.get_proforma(proforma_id, organization_id)
+
+    def verify_proforma_by_token(self, token: str, caller_company_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Resolves an opaque verification token into full, authoritative proforma verification metadata.
+        Enforces tenant isolation: if caller belongs to another organization, cross-tenant access is blocked with 403.
+        """
+        invoice_id = extract_invoice_id_from_token(token)
+        if not invoice_id or not is_valid_uuid(invoice_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid verification token format"
+            )
+
+        res = self.admin_db.table("proforma_invoices").select("*").eq("id", invoice_id).limit(1).execute()
+        if not res.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Pro Forma invoice not found or expired"
+            )
+
+        invoice = res.data[0]
+        organization_id = invoice.get("organization_id")
+
+        if not verify_proforma_verification_token(token, organization_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or forged verification token"
+            )
+
+        # Enforce company/tenant isolation
+        if caller_company_id and str(caller_company_id).strip():
+            if str(caller_company_id).strip() != str(organization_id).strip():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Cross-tenant invoice access is blocked"
+                )
+
+        full_pf = self.get_proforma(invoice_id, organization_id)
+        company = full_pf.get("company") or self.get_company_details(organization_id)
+        customer = full_pf.get("customer") or {}
+
+        customer_name = (
+            full_pf.get("customer_name") or
+            full_pf.get("bill_name") or
+            customer.get("display_name") or
+            customer.get("legal_name") or
+            customer.get("name") or
+            "Customer"
+        )
+
+        frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173").rstrip("/")
+        verification_url = f"{frontend_url}/verify/proforma/{token}"
+        inv_status = str(full_pf.get("status") or invoice.get("status") or "DRAFT").upper()
+
+        notes_text = str(full_pf.get("notes") or invoice.get("notes") or "")
+        extracted_ref = ""
+        if "[ref:" in notes_text:
+            try:
+                extracted_ref = notes_text.split("[ref:")[1].split("]")[0].strip()
+            except Exception:
+                pass
+        resolved_cust_ref = full_pf.get("customer_ref") or full_pf.get("cust_ref") or extracted_ref or full_pf.get("file_no") or ""
+
+        return {
+            "verified": True,
+            "invoice_type": "PRO_FORMA_INVOICE",
+            "proforma_no": full_pf.get("proforma_no") or "",
+            "id": invoice.get("id"),
+            "organization_id": organization_id,
+            "company_name": company.get("name") or company.get("legal_name") or company.get("company_name") or full_pf.get("company_name") or "Twite Billing",
+            "company_gstin": company.get("gstin") or "",
+            "proforma_date": str(full_pf.get("proforma_date") or full_pf.get("invoice_date") or ""),
+            "valid_till": str(full_pf.get("valid_till")) if full_pf.get("valid_till") else None,
+            "customer_name": customer_name,
+            "customer_ref": resolved_cust_ref,
+            "currency_code": str(full_pf.get("currency_code") or "INR").upper(),
+            "currency_symbol": full_pf.get("currency_symbol") or ("₹" if str(full_pf.get("currency_code") or "INR").upper() == "INR" else "€"),
+            "grand_total": float(full_pf.get("grand_total") or 0.0),
+            "taxable_total": float(full_pf.get("taxable_total") or 0.0),
+            "status": inv_status,
+            "items_count": len(full_pf.get("items") or []),
+            "items": full_pf.get("items") or [],
+            "totals": full_pf.get("totals") or {},
+            "seller": company,
+            "customer": customer,
+            "bank": full_pf.get("bank") or {},
+            "qr_code_image": full_pf.get("qr_code_image"),
+            "verification_url": verification_url,
+            "verification_token": token,
+            "is_cancelled": inv_status == "CANCELLED",
+            "verified_at": datetime.now(timezone.utc).isoformat()
+        }
+

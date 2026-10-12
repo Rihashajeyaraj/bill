@@ -159,6 +159,10 @@ export default function SalesProformaEditor() {
 
     status: "DRAFT",
     converted_document_id: "",
+    qr_code_image: "",
+    qr_code_data: "",
+    qr_code_url: "",
+    verification_url: "",
     discount_type: "AMOUNT",
     discount_value: "0",
     notes: "",
@@ -308,6 +312,10 @@ export default function SalesProformaEditor() {
               discount_value: String(proforma.discount_value ?? proforma.discount_amount ?? 0),
               status: proforma.status || "DRAFT",
               converted_document_id: proforma.converted_document_id || "",
+              qr_code_image: proforma.qr_code_image || "",
+              qr_code_data: proforma.qr_code_data || "",
+              qr_code_url: proforma.qr_code_url || proforma.verification_url || "",
+              verification_url: proforma.verification_url || proforma.qr_code_url || "",
               notes: proforma.notes || "",
               remarks: proforma.remarks || proforma.notes || "",
               terms: proforma.terms || "",
@@ -772,7 +780,11 @@ export default function SalesProformaEditor() {
       amount_paid: Number(form.amount_paid || 0),
       balanceDue: Math.max(0, grandTotal - Number(form.amount_paid || 0)),
       balancePayable: Math.max(0, grandTotal - Number(form.amount_paid || 0)),
-      grand_total_in_words: grandTotalInWords
+      grand_total_in_words: grandTotalInWords,
+      qr_code_image: form.qr_code_image,
+      qr_code_data: form.qr_code_data,
+      qr_code_url: form.qr_code_url || form.verification_url,
+      verification_url: form.verification_url || form.qr_code_url
     };
   }, [form, selectedCustomer, company, customerEntryMode]);
 
@@ -1747,13 +1759,30 @@ export default function SalesProformaEditor() {
                       </div>
                       <div>
                         <label className={labelStyle}>GST %</label>
-                        <input
-                          type="number"
-                          value={form.export_type === "LUT" ? "0" : line.tax_rate}
+                        <select
+                          value={form.export_type === "LUT" ? "0" : String(line.tax_rate ?? "0")}
                           onChange={(e) => handleLineItemChange(idx, "tax_rate", e.target.value)}
                           disabled={isReadOnly || form.export_type === "LUT"}
                           className={commonInputStyle}
-                        />
+                        >
+                          <option value="0">0%</option>
+                          <option value="0.1">0.1%</option>
+                          <option value="0.25">0.25%</option>
+                          <option value="1.5">1.5%</option>
+                          <option value="3">3%</option>
+                          <option value="5">5%</option>
+                          <option value="6">6%</option>
+                          <option value="7.5">7.5%</option>
+                          <option value="12">12%</option>
+                          <option value="18">18%</option>
+                          <option value="28">28%</option>
+                          <option value="40">40%</option>
+                          {line.tax_rate !== undefined &&
+                            line.tax_rate !== "" &&
+                            ![0, 0.1, 0.25, 1.5, 3, 5, 6, 7.5, 12, 18, 28, 40].includes(Number(line.tax_rate)) && (
+                              <option value={String(line.tax_rate)}>{line.tax_rate}%</option>
+                            )}
+                        </select>
                       </div>
                       <div>
                         <label className={labelStyle}>Total (₹)</label>
@@ -1765,9 +1794,9 @@ export default function SalesProformaEditor() {
 
                     {form.export_type !== "LUT" && (
                       <div className="flex items-center gap-4 text-[11px] font-semibold text-slate-500 bg-white p-2.5 rounded-xl border border-slate-200/60">
-                        <span>CGST: <strong className="text-slate-800">{line.cgst_rate || 0}%</strong></span>
-                        <span>SGST: <strong className="text-slate-800">{line.sgst_rate || 0}%</strong></span>
-                        <span>IGST: <strong className="text-slate-800">{line.igst_rate || 0}%</strong></span>
+                        <span>CGST: <strong className="text-slate-800">{previewData?.items?.[idx]?.cgstRate !== undefined ? previewData.items[idx].cgstRate : (line.cgst_rate || 0)}%</strong></span>
+                        <span>SGST: <strong className="text-slate-800">{previewData?.items?.[idx]?.sgstRate !== undefined ? previewData.items[idx].sgstRate : (line.sgst_rate || 0)}%</strong></span>
+                        <span>IGST: <strong className="text-slate-800">{previewData?.items?.[idx]?.igstRate !== undefined ? previewData.items[idx].igstRate : (line.igst_rate || 0)}%</strong></span>
                       </div>
                     )}
                   </div>

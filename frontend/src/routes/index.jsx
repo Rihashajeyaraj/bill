@@ -21,6 +21,7 @@ const InvoiceCreate = lazy(() => import("../pages/sales/InvoiceCreate"));
 const InvoiceReadOnlyView = lazy(() => import("../pages/sales/InvoiceReadOnlyView"));
 const SalesProformasList = lazy(() => import("../pages/sales/SalesProformasList"));
 const SalesProformaEditor = lazy(() => import("../pages/sales/SalesProformaEditor"));
+const ProformaVerificationView = lazy(() => import("../pages/sales/ProformaVerificationView"));
 const PaymentIn = lazy(() => import("../pages/sales/PaymentInPremium"));
 
 const Reports = lazy(() => import("../pages/Reports"));
@@ -68,7 +69,9 @@ function SalesInvoiceRoute() {
 export const routes = [
   { path: "/login", element: <Login /> },
   { path: "/forgot-password", element: <LazyWrapper component={ForgotPassword} /> },
-  { path: "/reset-password", element: <LazyWrapper component={ResetPassword} /> },
+  { path: "/verify/proforma/:token", element: <LazyWrapper component={ProformaVerificationView} /> },
+  { path: "/verify/invoice/:token", element: <LazyWrapper component={ProformaVerificationView} /> },
+  { path: "/verify/tax-invoice/:token", element: <LazyWrapper component={ProformaVerificationView} /> },
 
   {
     element: <AuthGuard />,

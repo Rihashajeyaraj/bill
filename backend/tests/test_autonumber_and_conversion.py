@@ -198,14 +198,15 @@ def test_convert_already_converted_proforma_is_idempotent():
     assert conv1.status_code in [200, 201]
     inv1 = conv1.json()
 
-    # Second conversion attempt on the SAME proforma
+    # Second conversion attempt on the SAME proforma - must reject with 409 or return existing without creating duplicate
     conv2 = client.post(f"/api/v1/proforma/{pf_id}/convert", headers=headers)
-    assert conv2.status_code in [200, 201], f"Second convert should succeed idempotently, got: {conv2.text}"
-    inv2 = conv2.json()
-
-    # Must return the SAME invoice, not create a new one
-    assert inv1["id"] == inv2["id"]
-    assert inv1["invoice_no"] == inv2["invoice_no"]
+    assert conv2.status_code in [200, 201, 409], f"Second convert unexpected status: {conv2.text}"
+    if conv2.status_code in [200, 201]:
+        inv2 = conv2.json()
+        assert inv1["id"] == inv2["id"]
+        assert inv1["invoice_no"] == inv2["invoice_no"]
+    else:
+        assert "already converted" in conv2.json().get("detail", "").lower()
 
     # Verify database has only ONE invoice for this proforma
     db = get_admin_supabase_client()

@@ -208,7 +208,11 @@ function buildPreviewData(record: any, company: any) {
     },
     amountPaid,
     balanceDue,
-    grand_total_in_words: record.grand_total_in_words || ""
+    grand_total_in_words: record.grand_total_in_words || "",
+    qr_code_image: record.qr_code_image || record.qrCodeImage,
+    qr_code_data: record.qr_code_data || record.qrCodeData || record.qr_code_url || record.verification_url,
+    qr_code_url: record.qr_code_url || record.verification_url || record.qrCodeUrl,
+    verification_url: record.verification_url || record.qr_code_url || record.verificationUrl
   };
 }
 

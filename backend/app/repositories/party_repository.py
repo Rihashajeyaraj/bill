@@ -15,8 +15,30 @@ VALID_PARTY_COLUMNS = {
     "created_by", "created_at", "updated_at"
 }
 
+def _enrich_party_row(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not row:
+        return row
+    enriched = dict(row)
+    if not enriched.get("name") and enriched.get("display_name"):
+        enriched["name"] = enriched["display_name"]
+    elif not enriched.get("display_name") and enriched.get("name"):
+        enriched["display_name"] = enriched["name"]
+    return enriched
+
 def _clean_party_data(data: Dict[str, Any]) -> Dict[str, Any]:
     cleaned = dict(data)
+    # Ensure display_name is populated if name was provided
+    if "name" in cleaned and not cleaned.get("display_name"):
+        cleaned["display_name"] = cleaned["name"]
+    # Normalize party_type to PostgreSQL enum: customer, supplier, both
+    if "party_type" in cleaned and cleaned["party_type"]:
+        pt = str(cleaned["party_type"]).strip().lower()
+        if pt in ("customer", "supplier", "both"):
+            cleaned["party_type"] = pt
+        elif pt in ("vendor",):
+            cleaned["party_type"] = "supplier"
+        else:
+            cleaned["party_type"] = "customer"
     # Map equivalent tax identifier fields to existing database columns
     if "tax_id" in cleaned and not cleaned.get("gstin"):
         cleaned["gstin"] = cleaned.pop("tax_id")
@@ -41,9 +63,20 @@ class PartyRepository:
         try:
             query = self.db.table("parties").select("*").eq("organization_id", organization_id).order("display_name")
             if party_type:
-                query = query.eq("party_type", party_type)
+                norm_type = str(party_type).strip().lower()
+                if norm_type in ("customer", "client"):
+                    query = query.in_("party_type", ["customer", "both"])
+                elif norm_type in ("supplier", "vendor"):
+                    query = query.in_("party_type", ["supplier", "both"])
+                elif norm_type == "both":
+                    query = query.eq("party_type", "both")
+                elif norm_type in ("all", "*"):
+                    pass
+                else:
+                    query = query.eq("party_type", "customer")
             res = query.execute()
-            return res.data or []
+            rows = res.data or []
+            return [_enrich_party_row(r) for r in rows if r]
         except Exception as e:
             logger.error(f"Error getting parties for org {organization_id}: {e}")
             return []
@@ -54,7 +87,7 @@ class PartyRepository:
         try:
             res = self.db.table("parties").select("*").eq("id", party_id).eq("organization_id", organization_id).limit(1).execute()
             if res.data and len(res.data) > 0:
-                return res.data[0]
+                return _enrich_party_row(res.data[0])
             return None
         except Exception as e:
             logger.error(f"Error getting party {party_id}: {e}")
@@ -72,7 +105,7 @@ class PartyRepository:
                 pass
         clean_data = _clean_party_data(data)
         res = self.db.table("parties").insert(clean_data).execute()
-        return res.data[0]
+        return _enrich_party_row(res.data[0])
 
     def update(self, party_id: str, organization_id: str, party_data: PartyUpdate) -> Optional[Dict[str, Any]]:
         data = party_data.model_dump(exclude_unset=True)
@@ -81,7 +114,7 @@ class PartyRepository:
         clean_data = _clean_party_data(data)
         res = self.db.table("parties").update(clean_data).eq("id", party_id).eq("organization_id", organization_id).execute()
         if res.data and len(res.data) > 0:
-            return res.data[0]
+            return _enrich_party_row(res.data[0])
         return None
 
     def delete(self, party_id: str, organization_id: str) -> bool:

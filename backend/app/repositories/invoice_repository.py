@@ -107,6 +107,8 @@ import re
 def clean_invoice_item_payload(item: Dict[str, Any], invoice_id: str) -> Dict[str, Any]:
     cleaned = {"invoice_id": invoice_id}
     for k, v in item.items():
+        if k == "id":
+            continue
         if k in KNOWN_INVOICE_ITEM_COLUMNS and v is not None:
             if k == "item_id" and not is_valid_uuid(str(v)):
                 continue
@@ -339,9 +341,12 @@ class InvoiceRepository:
             if party_res.data:
                 inv["party_name"] = party_res.data[0].get("display_name")
                 inv["customer"] = party_res.data[0]
+        items_res = None
         try:
             items_res = self.db.table("invoice_items").select("*").eq("invoice_id", invoice_id).order("line_no").execute()
         except Exception:
+            pass
+        if not items_res or not items_res.data:
             items_res = self.admin_db.table("invoice_items").select("*").eq("invoice_id", invoice_id).order("line_no").execute()
         inv["items"] = items_res.data or []
         try:
@@ -368,21 +373,27 @@ class InvoiceRepository:
                 if not inv.get("customer_state"):
                     inv["customer_state"] = pf_row.get("bill_state") or cust_obj.get("state_name")
                 if not inv.get("customer_country"):
-                    inv["customer_country"] = cust_obj.get("country_name") or cust_obj.get("country") or "India"
+                    inv["customer_country"] = pf_row.get("bill_country") or pf_row.get("customer_country") or cust_obj.get("country_name") or cust_obj.get("country") or "India"
                 if not inv.get("customer_gstin"):
                     inv["customer_gstin"] = pf_row.get("bill_gstin") or cust_obj.get("gstin")
                 if not inv.get("customer_phone"):
                     inv["customer_phone"] = cust_obj.get("phone")
                 if not inv.get("customer_email"):
                     inv["customer_email"] = cust_obj.get("email")
+                if not inv.get("freight_terms"):
+                    inv["freight_terms"] = pf_row.get("freight_terms") or ("Collect" if (inv.get("bl_number") or inv.get("vessel_name") or inv.get("ocean_bl_no") or pf_row.get("bl_number") or pf_row.get("vessel_name") or pf_row.get("ocean_bl_no")) else None)
                 # If invoice has no items, heal from proforma_invoice_items
                 if not inv["items"]:
-                    pf_items_res = self.admin_db.table("proforma_invoice_items").select("*").eq("proforma_id", pf_row["id"]).order("line_no").execute()
-                    if pf_items_res.data:
-                        inv["items"] = pf_items_res.data
-                        for it in pf_items_res.data:
-                            cleaned_it = clean_invoice_item_payload(it, invoice_id)
-                            _safe_insert_invoice_item(self.db, self.admin_db, cleaned_it)
+                    chk_items = self.admin_db.table("invoice_items").select("*").eq("invoice_id", invoice_id).order("line_no").execute()
+                    if chk_items.data:
+                        inv["items"] = chk_items.data
+                    else:
+                        pf_items_res = self.admin_db.table("proforma_invoice_items").select("*").eq("proforma_id", pf_row["id"]).order("line_no").execute()
+                        if pf_items_res.data:
+                            inv["items"] = pf_items_res.data
+                            for it in pf_items_res.data:
+                                cleaned_it = clean_invoice_item_payload(it, invoice_id)
+                                _safe_insert_invoice_item(self.db, self.admin_db, cleaned_it)
         except Exception as e:
             logger.warning(f"Notice while linking proforma details: {e}")
 

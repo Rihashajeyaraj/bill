@@ -11,6 +11,7 @@ import {
 import { apiClient } from "../../services/apiClient";
 import { useOrganization } from "../../context/OrganizationContext";
 import { exportPaymentInCsv, exportPaymentInSummaryPdf, exportSinglePaymentInPdf } from "../../modules/paymentIn/pdf";
+import { listParties } from "../../modules/parties/store";
 
 // --- Helper Functions ---
 function formatINR(val: number | string | null | undefined): string {
@@ -58,6 +59,10 @@ function getFinancialYearDates(fyKey: string) {
 }
 
 // Payment Status Badge Styling
+function getCustomerDisplayName(c: any): string {
+  if (!c) return "";
+  return c.display_name || c.name || c.legal_name || "Customer";
+}
 function StatusBadge({ status, isReversed }: { status: string; isReversed?: boolean }) {
   if (isReversed || status?.toLowerCase().includes("reverse") || status?.toLowerCase().includes("cancel")) {
     return (
@@ -199,8 +204,21 @@ export default function PaymentInPremium() {
   const { data: customers = [] } = useQuery<any[]>({
     queryKey: ["customers-list"],
     queryFn: async () => {
-      const res = await apiClient.getParties("customer");
-      return Array.isArray(res) ? res : res?.items || [];
+      try {
+        const res = await apiClient.getParties("customer");
+        const list = Array.isArray(res) ? res : res?.items || [];
+        if (list.length > 0) return list;
+      } catch (err) {
+        console.warn("apiClient.getParties error, falling back:", err);
+      }
+      try {
+        const local = listParties().filter((p: any) => {
+          const t = String(p.type || p.party_type || "customer").toLowerCase();
+          return t === "customer" || t === "both";
+        });
+        if (local.length > 0) return local;
+      } catch (_) {}
+      return [];
     }
   });
 
@@ -421,7 +439,8 @@ export default function PaymentInPremium() {
   const handleOpenWizardWithDoc = (doc: any) => {
     const cust = customers.find((c: any) => c.id === doc.customer_id) || {
       id: doc.customer_id,
-      name: doc.customer_name
+      name: doc.customer_name,
+      display_name: doc.customer_name
     };
     const did = doc.id || doc.document_id || doc.invoice_id;
     setWizCustomer(cust);
@@ -728,7 +747,7 @@ export default function PaymentInPremium() {
     if (search) chips.push({ label: `Search: "${search}"`, key: "search" });
     if (customerId !== "all") {
       const cust = customers.find((c: any) => c.id === customerId);
-      chips.push({ label: `Customer: ${cust?.name || customerId}`, key: "customerId" });
+      chips.push({ label: `Customer: ${getCustomerDisplayName(cust) || customerId}`, key: "customerId" });
     }
     if (paymentMode !== "all") chips.push({ label: `Mode: ${paymentMode}`, key: "paymentMode" });
     if (statusParam !== "all") chips.push({ label: `Status: ${statusParam}`, key: "status" });
@@ -987,7 +1006,7 @@ export default function PaymentInPremium() {
             >
               <option value="all">All Customers</option>
               {customers.map((c: any) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>{getCustomerDisplayName(c)}</option>
               ))}
             </select>
           </div>
@@ -1448,7 +1467,8 @@ export default function PaymentInPremium() {
                                 onClick={() => {
                                   const found = customers.find((c: any) => c.id === cr.customer_id) || {
                                     id: cr.customer_id,
-                                    name: cr.customer_name
+                                    name: cr.customer_name,
+                                    display_name: cr.customer_name
                                   };
                                   setWizCustomer(found);
                                   setWizAmount(cr.balance || 0);
@@ -1793,7 +1813,7 @@ export default function PaymentInPremium() {
                 >
                   {customers.map((c: any) => (
                     <option key={c.id} value={c.id}>
-                      {c.display_name || c.legal_name || c.name} {c.gstin ? `(${c.gstin})` : ""}
+                      {getCustomerDisplayName(c)} {c.gstin ? `(${c.gstin})` : ""}
                     </option>
                   ))}
                 </select>
@@ -1816,10 +1836,10 @@ export default function PaymentInPremium() {
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 font-bold flex items-center justify-center">
-                  {(ledgerData.customer.name || "C").charAt(0).toUpperCase()}
+                  {(getCustomerDisplayName(ledgerData.customer) || "C").charAt(0).toUpperCase()}
                 </div>
                 <div>
-                  <span className="font-bold text-slate-900 block">{ledgerData.customer.name}</span>
+                  <span className="font-bold text-slate-900 block">{getCustomerDisplayName(ledgerData.customer)}</span>
                   <span className="text-[11px] text-slate-500 font-mono">
                     GSTIN: {ledgerData.customer.gstin || "Unregistered"} | Phone: {ledgerData.customer.phone || "-"}
                   </span>
@@ -2255,7 +2275,7 @@ export default function PaymentInPremium() {
                 >
                   <option value="">-- Choose Customer --</option>
                   {customers.map((c: any) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                    <option key={c.id} value={c.id}>{getCustomerDisplayName(c)}</option>
                   ))}
                 </select>
 
@@ -2554,7 +2574,7 @@ export default function PaymentInPremium() {
                 <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2">
                   <div className="flex justify-between">
                     <span className="text-slate-500 font-medium">Customer</span>
-                    <span className="font-bold text-slate-900">{wizCustomer?.name}</span>
+                    <span className="font-bold text-slate-900">{getCustomerDisplayName(wizCustomer)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500 font-medium">Payment Date</span>

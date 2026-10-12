@@ -5,12 +5,14 @@ import { apiClient } from "../../services/apiClient";
 import { invoicesList, invoicesSyncFromRemote } from "../../services/invoices.service";
 import { formatNumberByPreference, formatDateByPreference } from "../../lib/formatPreferences";
 import { useToast } from "../../context/ToastContext";
+import { useOrganization } from "../../context/OrganizationContext";
 
 function money(val) {
   return "₹" + formatNumberByPreference(Number(val || 0), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export default function InvoiceReadOnlyView() {
+  const { profile: orgProfile = {} } = useOrganization();
   const { id: paramId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -83,6 +85,26 @@ export default function InvoiceReadOnlyView() {
   useEffect(() => {
     loadInvoiceData();
   }, [invoiceId]);
+
+  const previewInvoiceData = useMemo(() => {
+    if (!invoice) return null;
+    const invCompany = invoice.company || {};
+    const mergedCompany = {
+      ...orgProfile,
+      ...invCompany,
+      name: invCompany.name || invCompany.company_name || orgProfile.companyName || orgProfile.legalName || "RIHASHA PVT",
+      company_name: invCompany.company_name || invCompany.name || orgProfile.companyName || orgProfile.legalName || "RIHASHA PVT",
+      logo_base64: invCompany.logo_base64 || invCompany.logoBase64 || orgProfile.logoBase64 || orgProfile.logoUrl || "",
+      logoUrl: invCompany.logoUrl || invCompany.logo_url || orgProfile.logoUrl || orgProfile.logoBase64 || "",
+      bank: invoice.bank || invCompany.bank || orgProfile.bank || orgProfile.bankDetails || {},
+      settings: invCompany.settings || orgProfile.settings || {}
+    };
+    return {
+      ...invoice,
+      company: mergedCompany,
+      bank: invoice.bank || mergedCompany.bank
+    };
+  }, [invoice, orgProfile]);
 
   // Derived Financial Values for Payment Workflow
   const originalTotal = useMemo(() => {
@@ -323,7 +345,7 @@ export default function InvoiceReadOnlyView() {
       {/* MASTER A4 TEMPLATE CONTAINER (READ-ONLY DISPLAY) */}
       <div className="tax-invoice-view-container mx-auto max-w-[215mm] p-4 sm:p-6 print:p-0">
         <InvoicePreview
-          invoiceData={invoice}
+          invoiceData={previewInvoiceData || invoice}
           documentType="TAX INVOICE"
         />
       </div>

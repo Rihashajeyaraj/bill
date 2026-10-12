@@ -91,24 +91,32 @@ const InvoicePreview = React.memo(function InvoicePreview({
   const { logoUrl, signatureUrl } = styleConfig || {};
   const resolvedLogoUrl =
     logoUrl ||
+    invoiceData?.company?.logo_base64 ||
     invoiceData?.company?.logo_url ||
     invoiceData?.company?.logoBase64 ||
     invoiceData?.company?.logoUrl ||
+    invoiceData?.company?.settings?.profile?.logoBase64 ||
     invoiceData?.company?.settings?.logoUrl ||
     invoiceData?.company?.settings?.logo_url ||
     invoiceData?.companyLogoUrl ||
+    invoiceData?.logo_base64 ||
+    invoiceData?.logoBase64 ||
+    invoiceData?.seller?.logo_base64 ||
     invoiceData?.seller?.logoUrl ||
     invoiceData?.logoUrl ||
     "";
 
   const resolvedSignatureUrl =
     signatureUrl ||
+    invoiceData?.company?.signature_base64 ||
     invoiceData?.company?.signature_url ||
     invoiceData?.company?.signatureUrl ||
     invoiceData?.company?.signatureBase64 ||
+    invoiceData?.company?.settings?.profile?.signatureBase64 ||
     invoiceData?.company?.settings?.signatureUrl ||
     invoiceData?.company?.settings?.signature_url ||
     invoiceData?.companySignatureUrl ||
+    invoiceData?.signature_base64 ||
     invoiceData?.seller?.signatureUrl ||
     invoiceData?.signatureUrl ||
     "";
@@ -135,8 +143,8 @@ const InvoicePreview = React.memo(function InvoicePreview({
       setQrCodeUrl(invoiceData.qr_code_image);
       return;
     }
-    const qrPayload = invoiceData?.qr_code_data;
-    if (isEaInvoice && qrPayload) {
+    const qrPayload = invoiceData?.qr_code_data || invoiceData?.qr_code_url || invoiceData?.verification_url;
+    if (qrPayload) {
       import("qrcode")
         .then((QRCode) => {
           QRCode.toDataURL(typeof qrPayload === "string" ? qrPayload : JSON.stringify(qrPayload), {
@@ -148,15 +156,30 @@ const InvoicePreview = React.memo(function InvoicePreview({
             .catch(() => {});
         })
         .catch(() => {});
+    } else {
+      setQrCodeUrl("");
     }
-  }, [invoiceData?.qr_code_image, invoiceData?.qr_code_data, isEaInvoice]);
+  }, [invoiceData?.qr_code_image, invoiceData?.qr_code_data, invoiceData?.qr_code_url, invoiceData?.verification_url, isEaInvoice]);
 
   // Seller Details
   const rawSeller = invoiceData.company || invoiceData.seller || {};
   const sellerGstin = rawSeller.gstin || invoiceData.companyGstin || invoiceData.company_gstin || "";
+  const rawSellerName = invoiceData.companyName || invoiceData.company_name || rawSeller.company_name || rawSeller.companyName || rawSeller.legal_name || rawSeller.name || rawSeller.settings?.profile?.companyName || "";
+  const sellerName = (rawSellerName && rawSellerName.toUpperCase() !== "COMPANY NAME") ? rawSellerName : "RIHASHA PVT";
   const seller = {
-    name: invoiceData.companyName || invoiceData.company_name || rawSeller.legal_name || rawSeller.name || "COMPANY NAME",
-    address: formatAddress(rawSeller.address || rawSeller.billing_address_line1 || invoiceData.companyAddress || invoiceData.company_address),
+    name: sellerName,
+    address: formatAddress(
+      rawSeller.address_line1
+        ? {
+            line1: rawSeller.address_line1,
+            line2: rawSeller.address_line2,
+            city: rawSeller.city,
+            state: rawSeller.state_name || rawSeller.state,
+            postalCode: rawSeller.postal_code || rawSeller.postalCode,
+            country: rawSeller.country_name || rawSeller.country
+          }
+        : (rawSeller.address || rawSeller.billing_address_line1 || invoiceData.companyAddress || invoiceData.company_address)
+    ),
     pan: rawSeller.pan || invoiceData.companyPan || invoiceData.company_pan || "",
     cin: rawSeller.cin || invoiceData.companyCin || invoiceData.company_cin || "",
     iec: rawSeller.iec || invoiceData.companyIec || invoiceData.company_iec || "",
@@ -226,7 +249,7 @@ const InvoicePreview = React.memo(function InvoicePreview({
   ].filter(Boolean);
   const quantityDisplay = qtyParts.join(" / ");
 
-  const freightTerms = invoiceData.freight_terms || invoiceData.freightTerms || "";
+  const freightTerms = invoiceData.freight_terms || invoiceData.freightTerms || "Collect";
   const roeVal = invoiceData.roe || invoiceData.exchange_rate || invoiceData.exchangeRate;
   const roeCurrency = invoiceData.currency_code || invoiceData.currencyCode || "USD";
   const roeDisplay = roeVal && Number(roeVal) !== 1 ? `${roeCurrency} @ ${formatIndianCurrency(roeVal)}` : (roeVal && roeVal !== "1" ? String(roeVal) : null);
@@ -265,10 +288,18 @@ const InvoicePreview = React.memo(function InvoicePreview({
             : (Array.isArray(invoiceData.items) ? invoiceData.items : []);
 
   const items = rawItems.map(item => {
-    const rate = Number(item.rate ?? item.unit_price ?? item.unitPrice ?? 0);
+    const rate = (item.rate != null && Number(item.rate) > 0)
+      ? Number(item.rate)
+      : Number(item.unit_price ?? item.unitPrice ?? item.rate ?? 0);
     const qty = Number(item.qty || item.quantity || 1);
-    const amountInr = Number(item.amount_inr ?? item.amountInr ?? item.line_total ?? item.lineTotal ?? item.taxable_amount ?? item.taxable_value ?? item.amount ?? (rate * qty));
+    const roe = Number(invoiceData.roe || invoiceData.exchange_rate || invoiceData.exchangeRate || 1);
     const taxableAmount = Number(item.taxable_amount ?? item.taxableAmount ?? item.taxable_value ?? item.net ?? (rate * qty));
+    const rawAmtInr = Number(item.amount_inr ?? item.amountInr);
+    const amountInr = (rawAmtInr && rawAmtInr > 0)
+      ? rawAmtInr
+      : (taxableAmount > 0 && taxableAmount >= (rate * qty)
+          ? taxableAmount
+          : Number(item.line_total ?? item.lineTotal ?? (rate * qty * (roe > 0 ? roe : 1))));
     const taxRate = Number(item.tax_rate ?? item.taxRate ?? item.gst_rate ?? item.gstRate ?? item.tax ?? 0);
     const cgstRate = Number(item.cgst_rate ?? item.cgstRate ?? (taxRate > 0 && !item.igst_rate && !item.igst_amount ? taxRate / 2 : 0));
     const sgstRate = Number(item.sgst_rate ?? item.sgstRate ?? (taxRate > 0 && !item.igst_rate && !item.igst_amount ? taxRate / 2 : 0));
@@ -276,7 +307,10 @@ const InvoicePreview = React.memo(function InvoicePreview({
     const cgstAmt = Number(item.cgst_amount ?? item.cgstAmount ?? 0);
     const sgstAmt = Number(item.sgst_amount ?? item.sgstAmount ?? 0);
     const igstAmt = Number(item.igst_amount ?? item.igstAmount ?? 0);
-    const gstTotal = Number(item.tax_amount ?? item.taxAmount ?? item.line_tax ?? item.lineTax ?? (cgstAmt + sgstAmt + igstAmt));
+    const rawGstTotal = Number(item.gst_total ?? item.gstTotal ?? item.tax_amount ?? item.taxAmount ?? item.line_tax ?? item.lineTax);
+    const gstTotal = (rawGstTotal && rawGstTotal > 0)
+      ? rawGstTotal
+      : (cgstAmt + sgstAmt + igstAmt || (taxRate > 0 ? (taxableAmount * taxRate) / 100 : 0));
 
     return {
       description: item.description || item.name || item.itemName || item.title || "Item",
@@ -327,7 +361,7 @@ const InvoicePreview = React.memo(function InvoicePreview({
     : [];
 
   // Bank Details
-  const rawBank = invoiceData.bank || invoiceData.bankDetails || rawSeller?.bankDetails || {};
+  const rawBank = invoiceData.bank || invoiceData.bankDetails || rawSeller?.bank || rawSeller?.bankDetails || rawSeller?.settings?.bank || {};
   const bankDetails = {
     accountName: rawBank.account_name || rawBank.accountName || invoiceData.accountName || seller.name || "",
     bankName: rawBank.bank_name || rawBank.bankName || invoiceData.bankName || "",
@@ -419,11 +453,11 @@ const InvoicePreview = React.memo(function InvoicePreview({
             <div className="pt-1 flex flex-col items-end">
               <img
                 src={qrCodeUrl}
-                alt="EA Invoice QR Code"
+                alt={isEaInvoice ? "EA Invoice QR Code" : "Pro Forma Invoice QR Code"}
                 className="w-16 h-16 sm:w-20 sm:h-20 border border-slate-300 p-0.5 rounded bg-white shadow-2xs object-contain"
               />
-              <span className="text-[8px] font-bold text-emerald-800 uppercase tracking-tighter mt-0.5">
-                Verified EA QR
+              <span className={`text-[8px] font-bold ${isEaInvoice ? "text-emerald-800" : "text-slate-600"} uppercase tracking-tighter mt-0.5`}>
+                {isEaInvoice ? "Verified EA QR" : "Scan to Verify"}
               </span>
             </div>
           )}

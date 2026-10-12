@@ -30,7 +30,7 @@ class ProFormaItemBase(BaseModel):
     igst_amount: float = 0.0
     cess_amount: float = 0.0
     place_of_supply: Optional[str] = None
-    currency: str = "INR"
+    currency: Optional[str] = None
     amount_inr: float = 0.0
     tax_amount: float = 0.0
     line_total: float = 0.0
@@ -63,7 +63,7 @@ class ProFormaItemCreate(BaseModel):
     igst_amount: Optional[float] = 0.0
     cess_amount: Optional[float] = 0.0
     place_of_supply: Optional[str] = None
-    currency: Optional[str] = "INR"
+    currency: Optional[str] = None
     amount_inr: Optional[float] = 0.0
     tax_amount: Optional[float] = 0.0
 
@@ -504,6 +504,13 @@ class ProFormaResponse(BaseModel):
     converted_invoice_no: Optional[str] = None
     converted_at: Optional[datetime] = None
 
+    # Automatic Verification QR Code Fields
+    qr_code_data: Optional[str] = None
+    qr_code_image: Optional[str] = None
+    qr_code_url: Optional[str] = None
+    verification_url: Optional[str] = None
+    verification_token: Optional[str] = None
+
     # Nested Complete Payloads for Single Source of Truth
     company: Optional[Dict[str, Any]] = None
     bank: Optional[Dict[str, Any]] = None
@@ -518,3 +525,36 @@ class ProFormaResponse(BaseModel):
 class ProformaConvertRequest(BaseModel):
     invoice_type: Optional[str] = "TAX_INVOICE"  # "TAX_INVOICE" or "EA_INVOICE"
     invoice_date: Optional[Union[date, str]] = None
+
+class ProformaVerificationResponse(BaseModel):
+    verified: bool = True
+    invoice_type: str = "PRO_FORMA_INVOICE"
+    proforma_no: str
+    id: str
+    organization_id: str
+    company_name: str
+    company_gstin: Optional[str] = ""
+    proforma_date: str
+    valid_till: Optional[str] = None
+    customer_name: str
+    customer_ref: Optional[str] = None
+    currency_code: str = "INR"
+    currency_symbol: str = "₹"
+    grand_total: float = 0.0
+    taxable_total: float = 0.0
+    status: str = "DRAFT"
+    items_count: int = 0
+    verification_url: str
+    verification_token: str
+    is_cancelled: bool = False
+    verified_at: str
+    items: Optional[List[Dict[str, Any]]] = None
+    totals: Optional[Dict[str, Any]] = None
+    seller: Optional[Dict[str, Any]] = None
+    customer: Optional[Dict[str, Any]] = None
+    bank: Optional[Dict[str, Any]] = None
+    qr_code_image: Optional[str] = None
+
+    model_config = ConfigDict(extra="allow", from_attributes=True)
+
+
