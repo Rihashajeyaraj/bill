@@ -218,3 +218,49 @@ class ApplyAdvanceRequest(BaseModel):
     customer_id: str
     invoice_id: str
     amount: float = Field(..., gt=0)
+
+
+class CustomerLedgerEntry(BaseModel):
+    id: str
+    date: str
+    entry_type: str  # "TAX_INVOICE", "PROFORMA", "PAYMENT", "ADVANCE_APPLIED"
+    document_id: str
+    document_no: str
+    reference_no: Optional[str] = None
+    description: str
+    debit: float = 0.0
+    credit: float = 0.0
+    running_balance: float = 0.0
+    due_date: Optional[str] = None
+    is_overdue: bool = False
+    is_converted: bool = False
+    converted_document_id: Optional[str] = None
+    converted_document_no: Optional[str] = None
+    status: str
+    allocations: List[Dict[str, Any]] = []
+
+    model_config = ConfigDict(extra="ignore", from_attributes=True, populate_by_name=True)
+
+
+class CustomerLedgerSummary(BaseModel):
+    total_tax_invoices_amount: float = 0.0
+    total_open_proformas_amount: float = 0.0
+    total_payments_received: float = 0.0
+    total_allocated_payments: float = 0.0
+    unallocated_credits: float = 0.0
+    net_outstanding_balance: float = 0.0
+    overdue_amount: float = 0.0
+    invoices_count: int = 0
+    proformas_count: int = 0
+    payments_count: int = 0
+
+    model_config = ConfigDict(extra="ignore", from_attributes=True, populate_by_name=True)
+
+
+class CustomerLedgerResponse(BaseModel):
+    customer: Dict[str, Any]
+    summary: CustomerLedgerSummary
+    timeline: List[CustomerLedgerEntry] = []
+
+    model_config = ConfigDict(extra="ignore", from_attributes=True, populate_by_name=True)
+

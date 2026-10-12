@@ -1436,3 +1436,311 @@ class PaymentRepository:
             "allocations": created_allocations
         }
 
+    def get_customer_ledger(
+        self,
+        customer_id: str,
+        organization_id: str,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Consolidated chronological Customer Ledger with strict invoice-wise payment allocation,
+        advance tracking, and double-counting prevention between Pro Formas and converted Tax Invoices.
+        """
+        # 1. Fetch Party Information
+        party_info: Dict[str, Any] = {
+            "id": customer_id,
+            "name": "Customer",
+            "display_name": "Customer",
+            "legal_name": "",
+            "gstin": "",
+            "phone": "",
+            "email": "",
+            "address": ""
+        }
+        try:
+            p_res = self.admin_db.table("parties").select("*").eq("id", customer_id).limit(1).execute()
+            if p_res.data:
+                p = p_res.data[0]
+                party_info = {
+                    "id": customer_id,
+                    "name": p.get("display_name") or p.get("legal_name") or "Customer",
+                    "display_name": p.get("display_name") or "Customer",
+                    "legal_name": p.get("legal_name") or "",
+                    "gstin": p.get("gstin") or "",
+                    "phone": p.get("phone") or "",
+                    "email": p.get("email") or "",
+                    "address": p.get("billing_address_line1") or p.get("address") or ""
+                }
+        except Exception:
+            pass
+
+        # 2. Fetch Invoices
+        invoices = []
+        try:
+            inv_query = self.admin_db.table("invoices").select("*").eq("organization_id", organization_id).eq("party_id", customer_id)
+            inv_res = inv_query.execute()
+            invoices = [inv for inv in (inv_res.data or []) if str(inv.get("status") or "").lower() != "cancelled"]
+        except Exception:
+            pass
+
+        inv_map = {str(inv["id"]): inv for inv in invoices}
+
+        # 3. Fetch Pro Forma Invoices
+        proformas = []
+        try:
+            pf_query = self.admin_db.table("proforma_invoices").select("*").eq("organization_id", organization_id).eq("party_id", customer_id)
+            pf_res = pf_query.execute()
+            proformas = [pf for pf in (pf_res.data or []) if str(pf.get("status") or "").lower() != "cancelled"]
+        except Exception:
+            pass
+
+        pf_map = {str(pf["id"]): pf for pf in proformas}
+        pf_to_inv: Dict[str, str] = {}
+        inv_to_pf: Dict[str, str] = {}
+        for pf in proformas:
+            conv_id = str(pf.get("converted_document_id") or "").strip()
+            if conv_id:
+                pf_to_inv[str(pf["id"])] = conv_id
+                inv_to_pf[conv_id] = str(pf.get("proforma_no") or "Pro Forma")
+
+        # 4. Fetch Payments and Allocations
+        payments = []
+        try:
+            pmt_res = self.admin_db.table("payments").select("*").eq("organization_id", organization_id).eq("party_id", customer_id).eq("direction", "in").execute()
+            all_pmts = pmt_res.data or []
+            payments = [
+                p for p in all_pmts
+                if not ("[reversed:" in str(p.get("notes") or "").lower() or "[cancelled:" in str(p.get("notes") or "").lower())
+            ]
+        except Exception:
+            pass
+
+        allocations_by_payment: Dict[str, List[Dict[str, Any]]] = {}
+        try:
+            alloc_res = self.admin_db.table("payment_allocations").select("*").eq("organization_id", organization_id).execute()
+            for a in (alloc_res.data or []):
+                pmt_id = str(a.get("payment_id") or "")
+                doc_id = str(a.get("document_id") or a.get("invoice_id") or "")
+                amt = float(a.get("amount_allocated") or a.get("amount") or 0.0)
+                doc_type = str(a.get("document_type") or "invoice").lower()
+
+                doc_no = "-"
+                if doc_type == "proforma" and doc_id in pf_map:
+                    doc_no = pf_map[doc_id].get("proforma_no") or "Pro Forma"
+                elif doc_id in inv_map:
+                    doc_no = inv_map[doc_id].get("invoice_no") or "Invoice"
+
+                alloc_entry = {
+                    "document_id": doc_id,
+                    "document_no": doc_no,
+                    "document_type": doc_type,
+                    "amount": round(amt, 2)
+                }
+                allocations_by_payment.setdefault(pmt_id, []).append(alloc_entry)
+        except Exception:
+            pass
+
+        # 5. Build Timeline Entries
+        timeline = []
+        today = get_kolkata_today()
+
+        # Invoices (Debits)
+        for inv in invoices:
+            inv_date = str(inv.get("invoice_date") or inv.get("created_at") or "")[:10]
+            if from_date and inv_date < str(from_date):
+                continue
+            if to_date and inv_date > str(to_date):
+                continue
+
+            inv_id = str(inv["id"])
+            grand_total = round(float(inv.get("grand_total") or 0.0), 2)
+            balance_due = round(float(inv.get("balance_due") or 0.0), 2)
+            due_date = str(inv.get("due_date") or "")[:10] if inv.get("due_date") else None
+            is_overdue = False
+            if due_date and balance_due > 0.01:
+                try:
+                    is_overdue = today > date.fromisoformat(due_date)
+                except Exception:
+                    pass
+
+            conv_pf_no = inv_to_pf.get(inv_id)
+            inv_type_badge = "EA Invoice" if str(inv.get("invoice_type") or "").upper() == "EA_INVOICE" else "Tax Invoice"
+            desc = f"{inv_type_badge} #{inv.get('invoice_no')}"
+            if conv_pf_no:
+                desc += f" (Converted from Pro Forma {conv_pf_no})"
+
+            timeline.append({
+                "id": f"inv-{inv_id}",
+                "date": inv_date,
+                "order_priority": 1,
+                "entry_type": "TAX_INVOICE",
+                "document_id": inv_id,
+                "document_no": str(inv.get("invoice_no") or "-"),
+                "reference_no": None,
+                "description": desc,
+                "debit": grand_total,
+                "credit": 0.0,
+                "running_balance": 0.0,
+                "due_date": due_date,
+                "is_overdue": is_overdue,
+                "is_converted": False,
+                "converted_document_id": None,
+                "converted_document_no": None,
+                "status": str(inv.get("status") or "issued").capitalize(),
+                "allocations": []
+            })
+
+        # Pro Formas (Informational / Converted tracking, DEBIT = 0 to PREVENT DOUBLE COUNTING)
+        for pf in proformas:
+            pf_date = str(pf.get("proforma_date") or pf.get("created_at") or "")[:10]
+            if from_date and pf_date < str(from_date):
+                continue
+            if to_date and pf_date > str(to_date):
+                continue
+
+            pf_id = str(pf["id"])
+            pf_no = str(pf.get("proforma_no") or "-")
+            grand_total = round(float(pf.get("grand_total") or 0.0), 2)
+            due_date = str(pf.get("due_date") or pf.get("valid_till") or "")[:10] if (pf.get("due_date") or pf.get("valid_till")) else None
+            is_converted = pf_id in pf_to_inv or str(pf.get("status") or "").upper() == "CONVERTED"
+            conv_inv_id = pf_to_inv.get(pf_id)
+            conv_inv_no = inv_map.get(conv_inv_id, {}).get("invoice_no") if conv_inv_id else None
+
+            if is_converted:
+                desc = f"Pro Forma #{pf_no} (Converted & Superseded -> Tax Invoice #{conv_inv_no or 'INV'})"
+                status_label = "Converted"
+            else:
+                desc = f"Pro Forma #{pf_no} Issued (Pre-Tax Estimate)"
+                status_label = str(pf.get("status") or "Sent").capitalize()
+
+            # RULE: A Pro Forma and converted Tax Invoice represent the SAME transaction.
+            # To strictly prevent double counting, Pro Forma debit is 0.0 in legal financial ledger.
+            timeline.append({
+                "id": f"pf-{pf_id}",
+                "date": pf_date,
+                "order_priority": 0,
+                "entry_type": "PROFORMA",
+                "document_id": pf_id,
+                "document_no": pf_no,
+                "reference_no": None,
+                "description": desc,
+                "debit": 0.0,  # Never double counts against tax invoice
+                "credit": 0.0,
+                "running_balance": 0.0,
+                "due_date": due_date,
+                "is_overdue": False,
+                "is_converted": is_converted,
+                "converted_document_id": conv_inv_id,
+                "converted_document_no": conv_inv_no,
+                "status": status_label,
+                "allocations": []
+            })
+
+        # Payments (Credits)
+        for p in payments:
+            pmt_date = str(p.get("payment_date") or p.get("created_at") or "")[:10]
+            if from_date and pmt_date < str(from_date):
+                continue
+            if to_date and pmt_date > str(to_date):
+                continue
+
+            pmt_id = str(p["id"])
+            pmt_no = str(p.get("payment_no") or "-")
+            pmt_amt = round(float(p.get("amount_received") or p.get("amount") or 0.0), 2)
+            ref_no = p.get("reference_no")
+            mode = p.get("payment_mode") or "Bank Transfer"
+            allocs = allocations_by_payment.get(pmt_id, [])
+
+            # Direct fallback if single invoice_id was linked
+            if not allocs and p.get("invoice_id"):
+                direct_inv_id = str(p["invoice_id"])
+                allocs = [{
+                    "document_id": direct_inv_id,
+                    "document_no": inv_map.get(direct_inv_id, {}).get("invoice_no") or "Invoice",
+                    "document_type": "invoice",
+                    "amount": pmt_amt
+                }]
+
+            total_alloc_amt = sum(a["amount"] for a in allocs)
+            is_adv = bool(p.get("is_advance")) or "[advance]" in str(p.get("notes") or "").lower() or total_alloc_amt < pmt_amt - 0.01
+
+            if is_adv and total_alloc_amt <= 0.01:
+                desc = f"Advance Payment received via {mode}"
+            elif allocs:
+                alloc_details = ", ".join(f"{a['document_no']} (₹{a['amount']:,.2f})" for a in allocs)
+                desc = f"Payment received via {mode} [Allocated to: {alloc_details}]"
+            else:
+                desc = f"Payment received via {mode}"
+
+            if ref_no:
+                desc += f" (Ref: {ref_no})"
+
+            timeline.append({
+                "id": f"pmt-{pmt_id}",
+                "date": pmt_date,
+                "order_priority": 2,
+                "entry_type": "PAYMENT",
+                "document_id": pmt_id,
+                "document_no": pmt_no,
+                "reference_no": ref_no,
+                "description": desc,
+                "debit": 0.0,
+                "credit": pmt_amt,
+                "running_balance": 0.0,
+                "due_date": None,
+                "is_overdue": False,
+                "is_converted": False,
+                "converted_document_id": None,
+                "converted_document_no": None,
+                "status": "Advance" if is_adv and total_alloc_amt <= 0.01 else ("Partially Applied" if total_alloc_amt < pmt_amt - 0.01 else "Fully Applied"),
+                "allocations": allocs
+            })
+
+        # 6. Chronological Order & Running Balance
+        timeline.sort(key=lambda x: (x["date"] or "", x["order_priority"]))
+
+        running_bal = 0.0
+        for entry in timeline:
+            running_bal += entry["debit"] - entry["credit"]
+            entry["running_balance"] = round(running_bal, 2)
+
+        # 7. Aggregate Summary
+        total_tax_inv_amt = round(sum(inv.get("grand_total") or 0.0 for inv in invoices), 2)
+        total_open_pf_amt = round(sum(pf.get("grand_total") or 0.0 for pf in proformas if str(pf["id"]) not in pf_to_inv and str(pf.get("status") or "").upper() != "CONVERTED"), 2)
+        total_pmts = round(sum(p.get("amount_received") or p.get("amount") or 0.0 for p in payments), 2)
+        total_alloc = round(sum(sum(a["amount"] for a in allocations_by_payment.get(str(p["id"]), [])) for p in payments), 2)
+        unalloc_credits = round(max(0.0, total_pmts - total_alloc), 2)
+        net_outstanding = round(max(0.0, total_tax_inv_amt - total_alloc), 2)
+
+        overdue_amt = 0.0
+        for inv in invoices:
+            due_date = str(inv.get("due_date") or "")[:10] if inv.get("due_date") else None
+            bal = float(inv.get("balance_due") or 0.0)
+            if due_date and bal > 0.01:
+                try:
+                    if today > date.fromisoformat(due_date):
+                        overdue_amt += bal
+                except Exception:
+                    pass
+
+        summary_data = {
+            "total_tax_invoices_amount": total_tax_inv_amt,
+            "total_open_proformas_amount": total_open_pf_amt,
+            "total_payments_received": total_pmts,
+            "total_allocated_payments": total_alloc,
+            "unallocated_credits": unalloc_credits,
+            "net_outstanding_balance": net_outstanding,
+            "overdue_amount": round(overdue_amt, 2),
+            "invoices_count": len(invoices),
+            "proformas_count": len(proformas),
+            "payments_count": len(payments)
+        }
+
+        return {
+            "customer": party_info,
+            "summary": summary_data,
+            "timeline": timeline
+        }
+
+

@@ -14,10 +14,27 @@ from app.schemas.payment import (
     ReceivablesSummaryResponse,
     CustomerReceivableItem,
     ReceiptHistoryItem,
-    ApplyAdvanceRequest
+    ApplyAdvanceRequest,
+    CustomerLedgerResponse
 )
 
 router = APIRouter(prefix="/payments", tags=["Payments In"])
+
+@router.get("/ledger/{customer_id}", response_model=CustomerLedgerResponse)
+def get_customer_ledger(
+    customer_id: str,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    ctx: UserContext = Depends(get_current_user_context)
+):
+    service = PaymentService(token=ctx.token)
+    return service.get_customer_ledger(
+        customer_id=customer_id,
+        organization_id=ctx.company_id,
+        from_date=from_date,
+        to_date=to_date
+    )
+
 
 @router.get("", response_model=Dict[str, Any])
 def list_payments(

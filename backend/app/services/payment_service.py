@@ -161,6 +161,31 @@ class PaymentService:
             doc_map = {d["document_id"]: d for d in pending_docs}
             for alloc in data.allocations:
                 doc = doc_map.get(alloc.document_id)
+                if not doc:
+                    inv_check = self.admin_db.table("invoices").select("*").eq("id", alloc.document_id).eq("organization_id", organization_id).limit(1).execute()
+                    if inv_check.data:
+                        inv_row = inv_check.data[0]
+                        gt = float(inv_row.get("grand_total") or 0.0)
+                        pd = float(inv_row.get("amount_paid") or 0.0)
+                        bal = max(0.0, gt - pd)
+                        doc = {
+                            "document_id": inv_row["id"],
+                            "document_no": inv_row.get("invoice_no"),
+                            "balance_due": bal
+                        }
+                    else:
+                        pf_check = self.admin_db.table("proforma_invoices").select("*").eq("id", alloc.document_id).eq("organization_id", organization_id).limit(1).execute()
+                        if pf_check.data:
+                            pf_row = pf_check.data[0]
+                            gt = float(pf_row.get("grand_total") or 0.0)
+                            pd = float(pf_row.get("amount_paid") or pf_row.get("advance_received") or 0.0)
+                            bal = max(0.0, gt - pd)
+                            doc = {
+                                "document_id": pf_row["id"],
+                                "document_no": pf_row.get("proforma_no"),
+                                "balance_due": bal
+                            }
+
                 if doc:
                     bal = float(doc.get("balance_due", 0))
                     if alloc.amount > bal + 0.01:
@@ -295,4 +320,19 @@ class PaymentService:
             amount=amount,
             user_id=user_id
         )
+
+    def get_customer_ledger(
+        self,
+        customer_id: str,
+        organization_id: str,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None
+    ) -> Dict[str, Any]:
+        return self.payment_repo.get_customer_ledger(
+            customer_id=customer_id,
+            organization_id=organization_id,
+            from_date=from_date,
+            to_date=to_date
+        )
+
 

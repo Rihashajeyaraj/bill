@@ -6,7 +6,7 @@ import {
   FileText, Calendar, CheckCircle2, AlertCircle, Clock, Eye, Printer,
   FileSpreadsheet, ShieldAlert, ArrowUpDown, ChevronRight, User, MoreVertical,
   Check, CreditCard, Building, Building2, ExternalLink, RefreshCw, Users,
-  Layers, ArrowRight, Sparkles, AlertTriangle
+  Layers, ArrowRight, Sparkles, AlertTriangle, BookOpen
 } from "lucide-react";
 import { apiClient } from "../../services/apiClient";
 import { useOrganization } from "../../context/OrganizationContext";
@@ -100,8 +100,9 @@ export default function PaymentInPremium() {
   const { currentOrganization } = useOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // --- View Mode: invoices | customers | receipts ---
-  const [viewMode, setViewMode] = useState<"invoices" | "customers" | "receipts">("invoices");
+  // --- View Mode: invoices | customers | receipts | ledger ---
+  const [viewMode, setViewMode] = useState<"invoices" | "customers" | "receipts" | "ledger">("invoices");
+  const [selectedLedgerCustomerId, setSelectedLedgerCustomerId] = useState<string>("");
 
   // Status Tab for Invoice-wise view: all | overdue | partial | unpaid | paid
   const [statusTab, setStatusTab] = useState<"all" | "overdue" | "partial" | "unpaid" | "paid">("all");
@@ -287,6 +288,29 @@ export default function PaymentInPremium() {
     placeholderData: keepPreviousData,
     enabled: viewMode === "receipts"
   });
+
+  // 5B. Customer Ledger Statement Query
+  const {
+    data: ledgerData,
+    isLoading: isLedgerLoading,
+    isError: isLedgerError,
+    refetch: refetchLedger
+  } = useQuery<any>({
+    queryKey: ["customer-ledger", selectedLedgerCustomerId, fromDate, toDate],
+    queryFn: () => apiClient.getCustomerLedger(selectedLedgerCustomerId, { from: fromDate, to: toDate }),
+    enabled: Boolean(selectedLedgerCustomerId && viewMode === "ledger"),
+    staleTime: 15000
+  });
+
+  useEffect(() => {
+    if (!selectedLedgerCustomerId && Array.isArray(customers) && customers.length > 0) {
+      if (customerId && customerId !== "all") {
+        setSelectedLedgerCustomerId(customerId);
+      } else {
+        setSelectedLedgerCustomerId(customers[0].id);
+      }
+    }
+  }, [customers, customerId, selectedLedgerCustomerId]);
 
   // 6. Customer TDS History
   const [tdsCollapsed, setTdsCollapsed] = useState(true);
@@ -851,10 +875,10 @@ export default function PaymentInPremium() {
 
       {/* 3. VIEW MODE SWITCHER TABS */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs">
-        <div className="flex items-center space-x-1.5">
+        <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 sm:pb-0">
           <button
             onClick={() => setViewMode("invoices")}
-            className={`flex items-center px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+            className={`flex items-center px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
               viewMode === "invoices"
                 ? "bg-emerald-600 text-white shadow-xs"
                 : "bg-slate-50 text-slate-600 hover:bg-slate-100"
@@ -865,7 +889,7 @@ export default function PaymentInPremium() {
           </button>
           <button
             onClick={() => setViewMode("customers")}
-            className={`flex items-center px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+            className={`flex items-center px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
               viewMode === "customers"
                 ? "bg-emerald-600 text-white shadow-xs"
                 : "bg-slate-50 text-slate-600 hover:bg-slate-100"
@@ -876,7 +900,7 @@ export default function PaymentInPremium() {
           </button>
           <button
             onClick={() => setViewMode("receipts")}
-            className={`flex items-center px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+            className={`flex items-center px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
               viewMode === "receipts"
                 ? "bg-emerald-600 text-white shadow-xs"
                 : "bg-slate-50 text-slate-600 hover:bg-slate-100"
@@ -884,6 +908,17 @@ export default function PaymentInPremium() {
           >
             <Layers className="w-3.5 h-3.5 mr-2" />
             Payment Receipts History
+          </button>
+          <button
+            onClick={() => setViewMode("ledger")}
+            className={`flex items-center px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+              viewMode === "ledger"
+                ? "bg-emerald-600 text-white shadow-xs"
+                : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5 mr-2" />
+            Customer Ledger
           </button>
         </div>
 
@@ -893,7 +928,8 @@ export default function PaymentInPremium() {
             refetchSummary();
             if (viewMode === "invoices") refetchReceivables();
             else if (viewMode === "customers") refetchCustomerReceivables();
-            else refetchPayments();
+            else if (viewMode === "receipts") refetchPayments();
+            else if (viewMode === "ledger") refetchLedger();
           }}
           className="inline-flex items-center px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
           title="Refresh Data"
@@ -1397,23 +1433,35 @@ export default function PaymentInPremium() {
                           </td>
                           <td className="py-3 px-3 text-slate-600">{formatDate(cr.oldest_due_date)}</td>
                           <td className="py-3 px-3 text-right" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={() => {
-                                const found = customers.find((c: any) => c.id === cr.customer_id) || {
-                                  id: cr.customer_id,
-                                  name: cr.customer_name
-                                };
-                                setWizCustomer(found);
-                                setWizAmount(cr.balance || 0);
-                                setWizAllocations({});
-                                setWizAdvance(cr.balance <= 0);
-                                setWizardStep(2);
-                                setWizardOpen(true);
-                              }}
-                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-semibold transition-colors"
-                            >
-                              Receive Payment
-                            </button>
+                            <div className="flex items-center justify-end space-x-1.5">
+                              <button
+                                onClick={() => {
+                                  setSelectedLedgerCustomerId(cr.customer_id);
+                                  setViewMode("ledger");
+                                }}
+                                className="px-2 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded text-[11px] font-semibold transition-colors"
+                                title="View Customer Ledger Statement"
+                              >
+                                Ledger
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const found = customers.find((c: any) => c.id === cr.customer_id) || {
+                                    id: cr.customer_id,
+                                    name: cr.customer_name
+                                  };
+                                  setWizCustomer(found);
+                                  setWizAmount(cr.balance || 0);
+                                  setWizAllocations({});
+                                  setWizAdvance(cr.balance <= 0);
+                                  setWizardStep(2);
+                                  setWizardOpen(true);
+                                }}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-semibold transition-colors"
+                              >
+                                Receive Payment
+                              </button>
+                            </div>
                           </td>
                         </tr>
 
@@ -1714,6 +1762,252 @@ export default function PaymentInPremium() {
                 </div>
               </div>
             </>
+          )}
+        </div>
+      )}
+
+      {/* 5D. VIEW MODE = "ledger" (CUSTOMER LEDGER AND INVOICE-WISE ALLOCATION) */}
+      {viewMode === "ledger" && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-5 space-y-5">
+          {/* Header & Customer Picker */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+            <div>
+              <div className="flex items-center space-x-2">
+                <h2 className="text-base font-bold text-slate-900">Customer Ledger Statement</h2>
+                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  Strict Invoice-Wise
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Consolidated chronological statement with advance tracking and anti-double-counting protection.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="min-w-[240px]">
+                <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Select Customer</label>
+                <select
+                  value={selectedLedgerCustomerId}
+                  onChange={(e) => setSelectedLedgerCustomerId(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg py-2 px-3 text-xs font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                >
+                  {customers.map((c: any) => (
+                    <option key={c.id} value={c.id}>
+                      {c.display_name || c.legal_name || c.name} {c.gstin ? `(${c.gstin})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="mt-5 px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 transition-colors"
+                title="Print Customer Ledger Statement"
+              >
+                <Printer className="w-3.5 h-3.5 text-slate-500" />
+                Print
+              </button>
+            </div>
+          </div>
+
+          {/* Customer Info Card if available */}
+          {ledgerData?.customer && (
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 font-bold flex items-center justify-center">
+                  {(ledgerData.customer.name || "C").charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <span className="font-bold text-slate-900 block">{ledgerData.customer.name}</span>
+                  <span className="text-[11px] text-slate-500 font-mono">
+                    GSTIN: {ledgerData.customer.gstin || "Unregistered"} | Phone: {ledgerData.customer.phone || "-"}
+                  </span>
+                </div>
+              </div>
+              {ledgerData.customer.address && (
+                <div className="text-[11px] text-slate-600 max-w-sm truncate text-right">
+                  {ledgerData.customer.address}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Anti-Double-Counting Notice */}
+          <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-start space-x-2.5 text-xs text-sky-900">
+            <CheckCircle2 className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold">Anti-Duplication Active: </span>
+              A Pro Forma Invoice and its converted Tax Invoice represent the same transaction. Converted Pro Formas are clearly flagged as superseded and their debits are never double-counted against customer outstanding balance.
+            </div>
+          </div>
+
+          {/* Summary KPIs */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <span className="text-[10px] font-bold uppercase text-slate-500 block">Total Invoiced</span>
+              <span className="text-sm font-extrabold text-slate-900 block mt-1">
+                {formatINR(ledgerData?.summary?.total_tax_invoices_amount)}
+              </span>
+              <span className="text-[10px] text-slate-400 font-medium">({ledgerData?.summary?.invoices_count || 0} Tax Invoices)</span>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <span className="text-[10px] font-bold uppercase text-slate-500 block">Total Payments</span>
+              <span className="text-sm font-extrabold text-emerald-700 block mt-1">
+                {formatINR(ledgerData?.summary?.total_payments_received)}
+              </span>
+              <span className="text-[10px] text-slate-400 font-medium">({ledgerData?.summary?.payments_count || 0} Receipts)</span>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <span className="text-[10px] font-bold uppercase text-slate-500 block">Allocated to Invoices</span>
+              <span className="text-sm font-extrabold text-blue-700 block mt-1">
+                {formatINR(ledgerData?.summary?.total_allocated_payments)}
+              </span>
+              <span className="text-[10px] text-slate-400 font-medium">Applied to Sales</span>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <span className="text-[10px] font-bold uppercase text-slate-500 block">Unallocated Advances</span>
+              <span className="text-sm font-extrabold text-purple-700 block mt-1">
+                {formatINR(ledgerData?.summary?.unallocated_credits)}
+              </span>
+              <span className="text-[10px] text-purple-600 font-medium">Available Credit</span>
+            </div>
+
+            <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200">
+              <span className="text-[10px] font-bold uppercase text-amber-700 block">Net Outstanding</span>
+              <span className="text-sm font-extrabold text-amber-900 block mt-1">
+                {formatINR(ledgerData?.summary?.net_outstanding_balance)}
+              </span>
+              <span className="text-[10px] text-amber-600 font-medium">Balance Due</span>
+            </div>
+
+            <div className="p-3 bg-red-50/60 rounded-xl border border-red-200">
+              <span className="text-[10px] font-bold uppercase text-red-700 block">Overdue Amount</span>
+              <span className="text-sm font-extrabold text-red-700 block mt-1">
+                {formatINR(ledgerData?.summary?.overdue_amount)}
+              </span>
+              <span className="text-[10px] text-red-600 font-medium">Past Due Date</span>
+            </div>
+          </div>
+
+          {/* Timeline Table */}
+          {isLedgerLoading ? (
+            <div className="py-12 text-center text-slate-400 text-xs">Loading customer ledger timeline...</div>
+          ) : isLedgerError ? (
+            <div className="py-12 text-center text-red-500 text-xs">Failed to load customer ledger.</div>
+          ) : (!ledgerData?.timeline || ledgerData.timeline.length === 0) ? (
+            <div className="py-12 text-center text-slate-400 text-xs">No transactions recorded for this customer.</div>
+          ) : (
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left text-xs text-slate-700 border-collapse">
+                <thead className="bg-slate-50 font-bold text-slate-600 uppercase tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="py-3 px-3">Date</th>
+                    <th className="py-3 px-3">Type</th>
+                    <th className="py-3 px-3">Document #</th>
+                    <th className="py-3 px-3">Description & Allocations</th>
+                    <th className="py-3 px-3 text-right">Debit (+)</th>
+                    <th className="py-3 px-3 text-right">Credit (-)</th>
+                    <th className="py-3 px-3 text-right">Balance Due</th>
+                    <th className="py-3 px-3 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {ledgerData.timeline.map((entry: any) => {
+                    const isInvoice = entry.entry_type === "TAX_INVOICE";
+                    const isProforma = entry.entry_type === "PROFORMA";
+                    const isPayment = entry.entry_type === "PAYMENT";
+
+                    return (
+                      <tr key={entry.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
+                          {formatDate(entry.date)}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          {isInvoice && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800">
+                              Tax Invoice
+                            </span>
+                          )}
+                          {isProforma && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800">
+                              Pro Forma
+                            </span>
+                          )}
+                          {isPayment && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                              Payment
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 font-semibold text-slate-900 whitespace-nowrap font-mono text-[11px]">
+                          {entry.document_no}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <div className="font-medium text-slate-800">{entry.description}</div>
+                          {entry.allocations?.length > 0 && (
+                            <div className="text-[10px] text-slate-500 mt-0.5 flex flex-wrap gap-1">
+                              {entry.allocations.map((a: any, idx: number) => (
+                                <span key={idx} className="bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200">
+                                  {a.document_no}: {formatINR(a.amount)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {entry.due_date && (
+                            <span className={`text-[10px] block mt-0.5 ${entry.is_overdue ? "text-red-600 font-bold" : "text-slate-400"}`}>
+                              Due: {formatDate(entry.due_date)} {entry.is_overdue ? "• OVERDUE" : ""}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-medium text-slate-900 whitespace-nowrap">
+                          {entry.debit > 0 ? formatINR(entry.debit) : "-"}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-medium text-emerald-700 whitespace-nowrap">
+                          {entry.credit > 0 ? formatINR(entry.credit) : "-"}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-bold text-slate-900 whitespace-nowrap">
+                          {formatINR(entry.running_balance)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            entry.status === "Paid" || entry.status === "Fully Applied"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : entry.status === "Converted"
+                                ? "bg-slate-100 text-slate-600 border border-slate-200"
+                                : entry.status === "Advance"
+                                  ? "bg-purple-100 text-purple-800"
+                                  : "bg-amber-100 text-amber-800"
+                          }`}>
+                            {entry.status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="bg-slate-100 font-bold text-slate-900 text-xs border-t border-slate-300">
+                  <tr>
+                    <td colSpan={4} className="py-3 px-3 uppercase tracking-wider text-slate-600">
+                      Ledger Closing Balance
+                    </td>
+                    <td className="py-3 px-3 text-right text-slate-900">
+                      {formatINR(ledgerData?.summary?.total_tax_invoices_amount)}
+                    </td>
+                    <td className="py-3 px-3 text-right text-emerald-700">
+                      {formatINR(ledgerData?.summary?.total_payments_received)}
+                    </td>
+                    <td className="py-3 px-3 text-right font-extrabold text-slate-950">
+                      {formatINR(ledgerData?.summary?.net_outstanding_balance)}
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           )}
         </div>
       )}

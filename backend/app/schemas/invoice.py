@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Union
 from datetime import date, datetime
 
 class InvoiceItemBase(BaseModel):
@@ -101,6 +101,10 @@ class InvoiceResponse(BaseModel):
     organization_id: str
     template_id: Optional[str] = "modern_gst"
     document_type: Optional[str] = "TAX_INVOICE"
+    invoice_type: Optional[str] = "TAX_INVOICE"
+    qr_code_data: Optional[str] = None
+    qr_code_image: Optional[str] = None
+    irn_number: Optional[str] = None
     invoice_no: str
     invoice_date: Union[date, str]
     due_date: Optional[Union[date, str]] = None
@@ -194,7 +198,13 @@ class InvoiceResponse(BaseModel):
     terms: Optional[str] = None
     metadata: Optional[dict] = Field(default_factory=dict)
     items: List[InvoiceItemBase] = []
+    lines: Optional[List[Any]] = None
+    totals: Optional[Dict[str, Any]] = None
+    company: Optional[Dict[str, Any]] = None
+    customer: Optional[Dict[str, Any]] = None
+    bank: Optional[Dict[str, Any]] = None
+    hsn_summary: Optional[List[Dict[str, Any]]] = None
     created_at: Optional[Union[datetime, str]] = None
     updated_at: Optional[Union[datetime, str]] = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="allow")

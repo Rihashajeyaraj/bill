@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, status
-from typing import List
+from typing import List, Optional
 from app.core.auth import get_current_user_context, UserContext
 from app.services.proforma_service import ProformaService
-from app.schemas.proforma import ProFormaCreate, ProFormaUpdate, ProFormaResponse
+from app.schemas.proforma import ProFormaCreate, ProFormaUpdate, ProFormaResponse, ProformaConvertRequest
 from app.schemas.invoice import InvoiceResponse
 
 router = APIRouter(prefix="/proforma", tags=["Pro Forma Invoices"])
@@ -45,15 +45,21 @@ def update_proforma(
 @router.post("/{proforma_id}/convert", response_model=InvoiceResponse, status_code=status.HTTP_201_CREATED)
 def convert_proforma(
     proforma_id: str,
+    payload: Optional[ProformaConvertRequest] = None,
     ctx: UserContext = Depends(get_current_user_context)
 ):
     """
-    Converts Pro Forma invoice into a official Tax Invoice.
+    Converts Pro Forma invoice into a official Tax Invoice or EA Invoice.
     Recalculates financial values on FastAPI, generates a new Tax Invoice Number,
-    links the conversion, and sets status to CONVERTED.
+    links the conversion, generates EA QR code if applicable, and sets status to CONVERTED.
     """
     service = ProformaService(token=ctx.token)
-    return service.convert_to_invoice(proforma_id, ctx.company_id, ctx.user_id)
+    inv_type = payload.invoice_type if payload and payload.invoice_type else "TAX_INVOICE"
+    inv_date = payload.invoice_date if payload else None
+    return service.convert_to_invoice(
+        proforma_id, ctx.company_id, ctx.user_id,
+        invoice_type=inv_type, invoice_date=inv_date
+    )
 
 @router.delete("/all", status_code=status.HTTP_200_OK)
 @router.delete("", status_code=status.HTTP_200_OK)

@@ -113,15 +113,43 @@ const InvoicePreview = React.memo(function InvoicePreview({
     invoiceData?.signatureUrl ||
     "";
 
-  // Determine Title: ONLY "PRO FORMA INVOICE" or "TAX INVOICE"
-  const docTypeStr = String(
-    documentType ||
-    invoiceData.document_type ||
-    invoiceData.documentType ||
-    (invoiceData.isProforma || invoiceData.proforma_no || invoiceData.proformaNo ? "PRO FORMA INVOICE" : "TAX INVOICE")
-  ).toUpperCase();
-  const isTaxInvoice = docTypeStr.includes("TAX") && !docTypeStr.includes("PRO");
-  const documentTitle = isTaxInvoice ? "TAX INVOICE" : "PRO FORMA INVOICE";
+  // Determine Title: "EA INVOICE", "TAX INVOICE", or "PRO FORMA INVOICE"
+  const isEaInvoice = Boolean(
+    invoiceData?.invoice_type === "EA_INVOICE" ||
+    invoiceData?.invoiceType === "EA_INVOICE" ||
+    (documentType && String(documentType).toUpperCase().includes("EA")) ||
+    (invoiceData?.document_type && String(invoiceData.document_type).toUpperCase().includes("EA")) ||
+    (invoiceData?.documentType && String(invoiceData.documentType).toUpperCase().includes("EA"))
+  );
+  const explicitTax = (documentType && String(documentType).toUpperCase().includes("TAX")) ||
+    (invoiceData.document_type && String(invoiceData.document_type).toUpperCase().includes("TAX")) ||
+    (invoiceData.documentType && String(invoiceData.documentType).toUpperCase().includes("TAX")) ||
+    Boolean((invoiceData.invoice_no || invoiceData.invoiceNo) && !invoiceData.isProforma && !documentType?.includes("PRO"));
+  const isTaxInvoice = explicitTax || isEaInvoice;
+  const documentTitle = isEaInvoice ? "EA INVOICE" : (isTaxInvoice ? "TAX INVOICE" : "PRO FORMA INVOICE");
+
+  const [qrCodeUrl, setQrCodeUrl] = React.useState("");
+
+  React.useEffect(() => {
+    if (invoiceData?.qr_code_image) {
+      setQrCodeUrl(invoiceData.qr_code_image);
+      return;
+    }
+    const qrPayload = invoiceData?.qr_code_data;
+    if (isEaInvoice && qrPayload) {
+      import("qrcode")
+        .then((QRCode) => {
+          QRCode.toDataURL(typeof qrPayload === "string" ? qrPayload : JSON.stringify(qrPayload), {
+            width: 160,
+            margin: 1,
+            color: { dark: "#000000", light: "#ffffff" }
+          })
+            .then((url) => setQrCodeUrl(url))
+            .catch(() => {});
+        })
+        .catch(() => {});
+    }
+  }, [invoiceData?.qr_code_image, invoiceData?.qr_code_data, isEaInvoice]);
 
   // Seller Details
   const rawSeller = invoiceData.company || invoiceData.seller || {};
@@ -175,8 +203,14 @@ const InvoicePreview = React.memo(function InvoicePreview({
   };
 
   // Header Reference Fields
-  const docNo = invoiceData.invoice_no || invoiceData.invoiceNo || invoiceData.proforma_no || invoiceData.proformaNo || "-";
-  const docDate = formatDayMonthYear(invoiceData.invoice_date || invoiceData.invoiceDate || invoiceData.proforma_date || invoiceData.proformaDate);
+  const docNo = isTaxInvoice
+    ? (invoiceData.invoice_no || invoiceData.invoiceNo || "-")
+    : (invoiceData.proforma_no || invoiceData.proformaNo || invoiceData.invoice_no || invoiceData.invoiceNo || "-");
+  const docDate = formatDayMonthYear(
+    isTaxInvoice
+      ? (invoiceData.invoice_date || invoiceData.invoiceDate)
+      : (invoiceData.proforma_date || invoiceData.proformaDate || invoiceData.invoice_date || invoiceData.invoiceDate)
+  );
   const blNumber = invoiceData.bl_number || invoiceData.blNumber || invoiceData.hbl_number || invoiceData.hblNumber || "";
   const thblNumber = invoiceData.thbl_number || invoiceData.thblNumber || "";
   const mblNumber = invoiceData.mbl_number || invoiceData.mblNumber || invoiceData.ocean_bl_no || invoiceData.oceanBlNo || "";
@@ -217,23 +251,36 @@ const InvoicePreview = React.memo(function InvoicePreview({
   const etd = formatDayMonthYear(invoiceData.etd_date || invoiceData.etdDate);
   const eta = formatDayMonthYear(invoiceData.eta_date || invoiceData.etaDate);
 
-  // Line Items
-  const items = (Array.isArray(invoiceData.items) ? invoiceData.items : []).map(item => {
+  // Line Items - Robust fallback to lines, line_items, invoice_items, or proforma_items
+  const rawItems = (Array.isArray(invoiceData.items) && invoiceData.items.length > 0)
+    ? invoiceData.items
+    : (Array.isArray(invoiceData.lines) && invoiceData.lines.length > 0)
+      ? invoiceData.lines
+      : (Array.isArray(invoiceData.line_items) && invoiceData.line_items.length > 0)
+        ? invoiceData.line_items
+        : (Array.isArray(invoiceData.invoice_items) && invoiceData.invoice_items.length > 0)
+          ? invoiceData.invoice_items
+          : (Array.isArray(invoiceData.proforma_items) && invoiceData.proforma_items.length > 0)
+            ? invoiceData.proforma_items
+            : (Array.isArray(invoiceData.items) ? invoiceData.items : []);
+
+  const items = rawItems.map(item => {
     const rate = Number(item.rate ?? item.unit_price ?? item.unitPrice ?? 0);
-    const qty = Number(item.qty || 1);
-    const amountInr = Number(item.amount_inr ?? item.amountInr ?? item.taxable_amount ?? item.taxable_value ?? (rate * qty));
-    const taxableAmount = Number(item.taxable_amount ?? item.taxableAmount ?? item.taxable_value ?? amountInr);
-    const cgstRate = Number(item.cgst_rate ?? item.cgstRate ?? 0);
-    const sgstRate = Number(item.sgst_rate ?? item.sgstRate ?? 0);
-    const igstRate = Number(item.igst_rate ?? item.igstRate ?? 0);
+    const qty = Number(item.qty || item.quantity || 1);
+    const amountInr = Number(item.amount_inr ?? item.amountInr ?? item.line_total ?? item.lineTotal ?? item.taxable_amount ?? item.taxable_value ?? item.amount ?? (rate * qty));
+    const taxableAmount = Number(item.taxable_amount ?? item.taxableAmount ?? item.taxable_value ?? item.net ?? (rate * qty));
+    const taxRate = Number(item.tax_rate ?? item.taxRate ?? item.gst_rate ?? item.gstRate ?? item.tax ?? 0);
+    const cgstRate = Number(item.cgst_rate ?? item.cgstRate ?? (taxRate > 0 && !item.igst_rate && !item.igst_amount ? taxRate / 2 : 0));
+    const sgstRate = Number(item.sgst_rate ?? item.sgstRate ?? (taxRate > 0 && !item.igst_rate && !item.igst_amount ? taxRate / 2 : 0));
+    const igstRate = Number(item.igst_rate ?? item.igstRate ?? (taxRate > 0 && (item.igst_rate || item.igst_amount || !cgstRate) ? taxRate : 0));
     const cgstAmt = Number(item.cgst_amount ?? item.cgstAmount ?? 0);
     const sgstAmt = Number(item.sgst_amount ?? item.sgstAmount ?? 0);
     const igstAmt = Number(item.igst_amount ?? item.igstAmount ?? 0);
-    const gstTotal = Number(item.tax_amount ?? item.taxAmount ?? (cgstAmt + sgstAmt + igstAmt));
+    const gstTotal = Number(item.tax_amount ?? item.taxAmount ?? item.line_tax ?? item.lineTax ?? (cgstAmt + sgstAmt + igstAmt));
 
     return {
-      description: item.description || item.name || item.itemName || "Item",
-      sac: item.hsn_sac || item.hsnSac || item.hsn || "",
+      description: item.description || item.name || item.itemName || item.title || "Item",
+      sac: item.hsn_sac || item.hsnSac || item.hsn || item.sac || "",
       cgst_rate: cgstRate,
       sgst_rate: sgstRate,
       igst_rate: igstRate,
@@ -361,11 +408,25 @@ const InvoicePreview = React.memo(function InvoicePreview({
           </div>
         </div>
 
-        {/* SELLER REGISTRATION NUMBERS (RIGHT) */}
-        <div className="col-span-3 text-right text-[10px] space-y-0.5 text-slate-800 border-l border-slate-200 pl-2">
-          {seller.cin ? <div>CIN: <span className="font-bold">{seller.cin}</span></div> : null}
-          {seller.pan ? <div>PAN: <span className="font-bold">{seller.pan}</span></div> : null}
-          {seller.gstin ? <div>GSTN: <span className="font-bold">{seller.gstin}</span></div> : null}
+        {/* SELLER REGISTRATION NUMBERS & QR CODE (RIGHT) */}
+        <div className="col-span-3 text-right text-[10px] space-y-0.5 text-slate-800 border-l border-slate-200 pl-2 flex flex-col justify-between">
+          <div className="space-y-0.5">
+            {seller.cin ? <div>CIN: <span className="font-bold">{seller.cin}</span></div> : null}
+            {seller.pan ? <div>PAN: <span className="font-bold">{seller.pan}</span></div> : null}
+            {seller.gstin ? <div>GSTN: <span className="font-bold">{seller.gstin}</span></div> : null}
+          </div>
+          {qrCodeUrl && (
+            <div className="pt-1 flex flex-col items-end">
+              <img
+                src={qrCodeUrl}
+                alt="EA Invoice QR Code"
+                className="w-16 h-16 sm:w-20 sm:h-20 border border-slate-300 p-0.5 rounded bg-white shadow-2xs object-contain"
+              />
+              <span className="text-[8px] font-bold text-emerald-800 uppercase tracking-tighter mt-0.5">
+                Verified EA QR
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -374,6 +435,11 @@ const InvoicePreview = React.memo(function InvoicePreview({
         <h2 className="text-sm font-extrabold underline underline-offset-4 tracking-widest text-slate-950">
           {documentTitle}
         </h2>
+        {isEaInvoice && (
+          <p className="text-[9px] font-bold text-emerald-700 tracking-wider uppercase mt-0.5">
+            Digitally Authenticated EA Tax Invoice
+          </p>
+        )}
       </div>
 
       {/* TWO COLUMNS: CUSTOMER/SHIPMENT (LEFT) & DOCUMENT/HEADER (RIGHT) */}

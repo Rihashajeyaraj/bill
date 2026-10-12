@@ -323,15 +323,18 @@ export default function SalesProformasList() {
 
   const queryClient = useQueryClient();
 
-  const handleConvert = async (proformaId: string) => {
+  const [convertType, setConvertType] = useState<"TAX_INVOICE" | "EA_INVOICE">("TAX_INVOICE");
+  const [convertDate, setConvertDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
+
+  const handleConvert = async (proformaId: string, options?: { invoice_type?: string, invoice_date?: string }) => {
     if (!proformaId) return;
     setConvertingId(proformaId);
     try {
-      const res: any = await apiClient.convertProforma(proformaId);
+      const res: any = await apiClient.convertProforma(proformaId, options);
       const invNo = res?.invoice_no || res?.invoiceNo || "";
       const invId = res?.id || res?.invoice_id || res?.invoiceId;
 
-      toast.showSuccess(`Tax Invoice ${invNo ? invNo : ""} created successfully!`);
+      toast.showSuccess(`${res?.invoice_type === "EA_INVOICE" ? "EA Invoice" : "Tax Invoice"} ${invNo ? invNo : ""} created successfully!`);
 
       // Invalidate TanStack Query keys
       try {
@@ -348,7 +351,7 @@ export default function SalesProformasList() {
       await loadRows();
 
       if (invId) {
-        navigate(`/app/sales/invoice?preview=${encodeURIComponent(invId)}`);
+        navigate(`/app/sales/invoice/view/${encodeURIComponent(invId)}`);
       } else {
         navigate(`/app/sales/invoice/history`);
       }
@@ -592,7 +595,7 @@ export default function SalesProformasList() {
                             onClick={() => {
                               const docId = row.converted_document_id || row.convertedDocumentId;
                               if (docId) {
-                                navigate(`/app/sales/invoice?preview=${encodeURIComponent(docId)}`);
+                                navigate(`/app/sales/invoice/view/${encodeURIComponent(docId)}`);
                               } else {
                                 navigate("/app/sales/invoice/history");
                               }
@@ -758,26 +761,121 @@ export default function SalesProformasList() {
       {/* CONVERSION CONFIRMATION MODAL */}
       {confirmConvertModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4">
+          <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-slate-900 text-lg">Convert Pro Forma?</h3>
+              <div>
+                <h3 className="font-bold text-slate-900 text-lg">Convert Pro Forma to Tax Invoice</h3>
+                <p className="text-xs text-slate-500">Carry forward all items, taxes, and customer details</p>
+              </div>
               <button
                 type="button"
                 onClick={() => setConfirmConvertModal(null)}
-                className="text-slate-400 hover:text-slate-600 rounded-lg p-1"
+                className="text-slate-400 hover:text-slate-600 rounded-lg p-1.5 hover:bg-slate-100 transition-all"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="space-y-2 text-sm text-slate-700 bg-slate-50 p-4 rounded-xl border border-slate-200/80">
-              <p><strong className="text-slate-900 font-semibold">Pro Forma:</strong> {confirmConvertModal.proformaNo || "-"}</p>
-              <p><strong className="text-slate-900 font-semibold">Customer:</strong> {confirmConvertModal.partyName || "-"}</p>
-              <p><strong className="text-slate-900 font-semibold">Amount:</strong> {money(confirmConvertModal?.totals?.grandTotal ?? confirmConvertModal?.grandTotal)}</p>
+
+            <div className="space-y-2 text-sm text-slate-700 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-500">Pro Forma Document:</span>
+                <span className="font-mono font-bold text-slate-800">{confirmConvertModal.proformaNo || "-"}</span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-500">Customer:</span>
+                <span className="font-semibold text-slate-800">{confirmConvertModal.partyName || "-"}</span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-500">Total Amount:</span>
+                <span className="font-bold text-emerald-700">{money(confirmConvertModal?.totals?.grandTotal ?? confirmConvertModal?.grandTotal)}</span>
+              </div>
             </div>
-            <p className="text-xs text-slate-500">
-              This will generate an official Tax Invoice in Supabase and update the Pro Forma status to Converted.
-            </p>
-            <div className="flex items-center justify-end gap-3 pt-2">
+
+            {/* INVOICE TYPE SELECTION */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                Select Invoice Type
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setConvertType("TAX_INVOICE")}
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    convertType === "TAX_INVOICE"
+                      ? "border-sky-500 bg-sky-50/60 ring-2 ring-sky-500/20"
+                      : "border-slate-200 bg-white hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-slate-900">Standard Tax</span>
+                    {convertType === "TAX_INVOICE" && (
+                      <span className="w-2 h-2 rounded-full bg-sky-500"></span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-tight">
+                    Standard GST Tax Invoice with selectable invoice date.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConvertType("EA_INVOICE");
+                    setConvertDate(new Date().toISOString().split("T")[0]);
+                  }}
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    convertType === "EA_INVOICE"
+                      ? "border-emerald-500 bg-emerald-50/60 ring-2 ring-emerald-500/20"
+                      : "border-slate-200 bg-white hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1">
+                      EA Invoice
+                      <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-extrabold">QR</span>
+                    </span>
+                    {convertType === "EA_INVOICE" && (
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-tight">
+                    Auto-generated QR code; locked to today's date.
+                  </p>
+                </button>
+              </div>
+            </div>
+
+            {/* INVOICE DATE PICKER */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                  Invoice Date
+                </label>
+                {convertType === "EA_INVOICE" && (
+                  <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                    Locked to Issuance Date
+                  </span>
+                )}
+              </div>
+              <input
+                type="date"
+                value={convertDate}
+                disabled={convertType === "EA_INVOICE"}
+                onChange={(e) => setConvertDate(e.target.value)}
+                className={`w-full px-3 py-2 text-sm rounded-xl border transition-all ${
+                  convertType === "EA_INVOICE"
+                    ? "bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed"
+                    : "bg-white text-slate-800 border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                }`}
+              />
+              <p className="text-[11px] text-slate-500">
+                {convertType === "EA_INVOICE"
+                  ? "EA Invoice requires strict issuance date locking and QR verification."
+                  : "Defaults to today. You can select another valid invoice date before conversion."}
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => setConfirmConvertModal(null)}
@@ -790,12 +888,17 @@ export default function SalesProformasList() {
                 disabled={convertingId === confirmConvertModal.id}
                 onClick={async () => {
                   const targetId = confirmConvertModal.id;
+                  const chosenType = convertType;
+                  const chosenDate = chosenType === "EA_INVOICE" ? new Date().toISOString().split("T")[0] : convertDate;
                   setConfirmConvertModal(null);
-                  await handleConvert(targetId);
+                  await handleConvert(targetId, {
+                    invoice_type: chosenType,
+                    invoice_date: chosenDate,
+                  });
                 }}
-                className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                className="px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
               >
-                Convert to Tax Invoice
+                {convertingId === confirmConvertModal.id ? "Converting..." : "Confirm & Convert"}
               </button>
             </div>
           </div>

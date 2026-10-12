@@ -18,6 +18,7 @@ const ItemCreate = lazy(() => import("../pages/ItemCreate"));
 
 const InvoiceHistory = lazy(() => import("../pages/sales/InvoiceHistory"));
 const InvoiceCreate = lazy(() => import("../pages/sales/InvoiceCreate"));
+const InvoiceReadOnlyView = lazy(() => import("../pages/sales/InvoiceReadOnlyView"));
 const SalesProformasList = lazy(() => import("../pages/sales/SalesProformasList"));
 const SalesProformaEditor = lazy(() => import("../pages/sales/SalesProformaEditor"));
 const PaymentIn = lazy(() => import("../pages/sales/PaymentInPremium"));
@@ -52,8 +53,13 @@ function LazyWrapper({ component: Component }) {
 
 function SalesInvoiceRoute() {
   const [searchParams] = useSearchParams();
-  const hasPreviewOrEdit = searchParams.get("preview") || searchParams.get("edit") || searchParams.get("print");
-  if (hasPreviewOrEdit) {
+  const previewId = searchParams.get("preview") || searchParams.get("id");
+  if (previewId) {
+    return <LazyWrapper component={InvoiceReadOnlyView} />;
+  }
+  const editId = searchParams.get("edit");
+  const printId = searchParams.get("print");
+  if (editId || printId) {
     return <LazyWrapper component={InvoiceCreate} />;
   }
   return <Navigate to="/app/sales/invoice/history" replace />;
@@ -105,6 +111,8 @@ export const routes = [
                   { path: "/items/new", element: <LazyWrapper component={ItemCreate} /> },
 
                   { path: "/app/sales/invoice", element: <SalesInvoiceRoute /> },
+                  { path: "/app/sales/invoice/view/:id", element: <LazyWrapper component={InvoiceReadOnlyView} /> },
+                  { path: "/app/sales/invoice/view", element: <LazyWrapper component={InvoiceReadOnlyView} /> },
                   { path: "/app/sales/invoice/history", element: <LazyWrapper component={InvoiceHistory} /> },
                   { path: "/app/sales/proformas", element: <Navigate to="/app/sales/proformas/history" replace /> },
                   { path: "/app/sales/proformas/history", element: <LazyWrapper component={SalesProformasList} /> },

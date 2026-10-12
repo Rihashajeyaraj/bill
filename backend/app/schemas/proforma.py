@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from datetime import date, datetime
 
 class ProFormaItemBase(BaseModel):
@@ -514,3 +514,7 @@ class ProFormaResponse(BaseModel):
     updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(extra="ignore", from_attributes=True)
+
+class ProformaConvertRequest(BaseModel):
+    invoice_type: Optional[str] = "TAX_INVOICE"  # "TAX_INVOICE" or "EA_INVOICE"
+    invoice_date: Optional[Union[date, str]] = None

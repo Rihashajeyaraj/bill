@@ -1,31 +1,181 @@
 from decimal import Decimal
 from typing import List, Dict, Any, Optional
+from datetime import datetime, timezone, date
+import logging
 from fastapi import HTTPException, status
 from app.repositories.invoice_repository import InvoiceRepository
 from app.repositories.party_repository import PartyRepository
 from app.core.supabase import get_admin_supabase_client
 from app.services.calculation_service import calculate_document_totals, validate_advance_amount, to_decimal
 from app.schemas.invoice import InvoiceCreate, InvoiceUpdate
+from app.utils.num2words import number_to_words_indian
+
+logger = logging.getLogger(__name__)
 
 class InvoiceService:
-    def __init__(self):
-        self.invoice_repo = InvoiceRepository()
-        self.party_repo = PartyRepository()
+    def __init__(self, token: Optional[str] = None):
+        self.invoice_repo = InvoiceRepository(token=token)
+        self.party_repo = PartyRepository(token=token)
         self.db = get_admin_supabase_client()
+        self.admin_db = get_admin_supabase_client()
+
+    def get_company_details(self, organization_id: str) -> Dict[str, Any]:
+        res = self.db.table("organizations").select("*").eq("id", organization_id).limit(1).execute()
+        if res.data:
+            return res.data[0]
+        return {}
+
+    def get_customer_details(self, party_id: Optional[str], organization_id: str) -> Dict[str, Any]:
+        if not party_id:
+            return {}
+        party = self.party_repo.get_by_id(party_id, organization_id)
+        return party or {}
 
     def get_company_state(self, organization_id: str) -> str:
-        res = self.db.table("organizations").select("state_name").eq("id", organization_id).limit(1).execute()
-        if res.data:
-            return res.data[0].get("state_name") or ""
-        return ""
+        comp = self.get_company_details(organization_id)
+        return comp.get("state_name") or comp.get("state") or ""
 
     def get_customer_state(self, party_id: Optional[str], organization_id: str) -> str:
-        if not party_id:
-            return ""
-        party = self.party_repo.get_by_id(party_id, organization_id)
-        if party:
-            return party.get("state_name") or party.get("state_code") or ""
-        return ""
+        cust = self.get_customer_details(party_id, organization_id)
+        return cust.get("state_name") or cust.get("state_code") or ""
+
+    def _build_hsn_summary(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        hsn_map: Dict[str, Dict[str, Any]] = {}
+        for item in items:
+            hsn = str(item.get("hsn_sac") or "OTHER").strip()
+            if not hsn:
+                hsn = "OTHER"
+            if hsn not in hsn_map:
+                hsn_map[hsn] = {
+                    "hsn_sac": hsn,
+                    "taxable_value": 0.0,
+                    "gst_rate": float(item.get("gst_rate") or item.get("tax_rate") or 0.0),
+                    "cgst_rate": float(item.get("cgst_rate") or 0.0),
+                    "cgst_amount": 0.0,
+                    "sgst_rate": float(item.get("sgst_rate") or 0.0),
+                    "sgst_amount": 0.0,
+                    "igst_rate": float(item.get("igst_rate") or 0.0),
+                    "igst_amount": 0.0,
+                    "total_tax": 0.0
+                }
+            taxable = float(item.get("taxable_value") or item.get("taxable_amount") or 0.0)
+            cgst = float(item.get("cgst_amount") or 0.0)
+            sgst = float(item.get("sgst_amount") or 0.0)
+            igst = float(item.get("igst_amount") or 0.0)
+            hsn_map[hsn]["taxable_value"] += taxable
+            hsn_map[hsn]["cgst_amount"] += cgst
+            hsn_map[hsn]["sgst_amount"] += sgst
+            hsn_map[hsn]["igst_amount"] += igst
+            hsn_map[hsn]["total_tax"] += (cgst + sgst + igst)
+        return list(hsn_map.values())
+
+    def _build_full_invoice_payload(self, inv: Dict[str, Any], organization_id: str) -> Dict[str, Any]:
+        company = self.get_company_details(organization_id)
+        party_id = inv.get("party_id") or inv.get("customer_id")
+        customer = self.get_customer_details(party_id, organization_id) if party_id else {}
+
+        bill_name = (
+            inv.get("bill_name") or
+            inv.get("customer_name") or
+            customer.get("display_name") or
+            customer.get("legal_name") or
+            "Customer"
+        )
+        bill_address = (
+            inv.get("bill_address_line1") or
+            inv.get("customer_address") or
+            customer.get("billing_address_line1") or
+            ""
+        )
+        bill_city = inv.get("bill_city") or inv.get("customer_city") or customer.get("city") or ""
+        bill_state = inv.get("bill_state") or inv.get("place_of_supply_state") or customer.get("state_name") or ""
+        bill_gstin = inv.get("bill_gstin") or inv.get("customer_gstin") or customer.get("gstin") or ""
+        bill_phone = inv.get("bill_phone") or inv.get("customer_phone") or customer.get("phone") or ""
+        bill_email = inv.get("bill_email") or inv.get("customer_email") or customer.get("email") or ""
+
+        inv["bill_name"] = bill_name
+        inv["bill_address_line1"] = bill_address
+        inv["bill_city"] = bill_city
+        inv["bill_state"] = bill_state
+        inv["bill_gstin"] = bill_gstin
+        inv["bill_phone"] = bill_phone
+        inv["bill_email"] = bill_email
+        inv["customer_name"] = bill_name
+
+        if inv.get("ship_same_as_bill", True) or not inv.get("ship_name"):
+            inv["ship_same_as_bill"] = True
+            inv["ship_name"] = bill_name
+            inv["ship_address_line1"] = bill_address
+            inv["ship_city"] = bill_city
+            inv["ship_state"] = bill_state
+            inv["ship_gstin"] = bill_gstin
+            inv["ship_phone"] = bill_phone
+
+        inv["company"] = company
+        inv["customer"] = customer
+
+        # Bank details
+        bank_accounts = company.get("bank_accounts") or []
+        selected_bank = None
+        if bank_accounts:
+            target_id = str(inv.get("bank_account_id") or "")
+            for b in bank_accounts:
+                if str(b.get("id") or "") == target_id:
+                    selected_bank = b
+                    break
+            if not selected_bank:
+                selected_bank = bank_accounts[0]
+        else:
+            selected_bank = {
+                "bank_name": company.get("bank_name") or "",
+                "branch": company.get("bank_branch") or "",
+                "account_name": company.get("account_name") or company.get("name") or company.get("legal_name") or "",
+                "account_no": company.get("account_number") or "",
+                "ifsc": company.get("ifsc_code") or "",
+                "upi_id": company.get("upi_id") or ""
+            }
+        inv["bank"] = selected_bank
+
+        # HSN Summary
+        inv["hsn_summary"] = self._build_hsn_summary(inv.get("items", []))
+
+        # Currency and Grand total in words
+        curr_code = str(inv.get("currency_code") or "INR").upper()
+        inv["currency_code"] = curr_code
+        inv["currency_symbol"] = "₹" if curr_code == "INR" else "$"
+        prefix = None if curr_code == "INR" else f"{curr_code} DOLLARS"
+        gt = float(inv.get("grand_total") or 0.0)
+        inv["grand_total_in_words"] = number_to_words_indian(gt, currency_prefix=prefix)
+
+        adv = float(inv.get("advance_received") or inv.get("amount_paid") or 0.0)
+        bal = max(0.0, gt - adv)
+        inv["amount_paid"] = adv
+        inv["advance_received"] = adv
+        inv["balance_due"] = bal
+        inv["totals"] = {
+            "subTotal": float(inv.get("subtotal") or 0.0),
+            "taxable_total": float(inv.get("taxable_total") or 0.0),
+            "cgst_total": float(inv.get("cgst_total") or 0.0),
+            "sgst_total": float(inv.get("sgst_total") or 0.0),
+            "igst_total": float(inv.get("igst_total") or 0.0),
+            "tax_total": float(inv.get("tax_total") or 0.0),
+            "grand_total": gt,
+            "advance_received": adv,
+            "amount_paid": adv,
+            "balance": bal,
+            "balance_due": bal
+        }
+
+        if bal <= 0.01 and gt > 0:
+            inv["payment_status"] = "Paid"
+        elif adv > 0:
+            inv["payment_status"] = "Partially Paid"
+        else:
+            inv["payment_status"] = "Unpaid"
+
+        inv["document_type"] = "TAX_INVOICE"
+        inv["lines"] = inv.get("items", [])
+        return inv
 
     def create_invoice(self, organization_id: str, data: InvoiceCreate, user_id: str) -> Dict[str, Any]:
         company_state = self.get_company_state(organization_id)
@@ -117,7 +267,7 @@ class InvoiceService:
         inv = self.invoice_repo.get_by_id(invoice_id, organization_id)
         if not inv:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tax Invoice not found")
-        return inv
+        return self._build_full_invoice_payload(inv, organization_id)
 
     def update_invoice(self, invoice_id: str, organization_id: str, data: InvoiceUpdate) -> Dict[str, Any]:
         existing = self.get_invoice(invoice_id, organization_id)

@@ -86,7 +86,7 @@ export default function InvoiceHistory() {
     const params = new URLSearchParams(location.search);
     const previewId = params.get("preview");
     if (previewId) {
-      navigate(`/app/sales/invoice?preview=${encodeURIComponent(previewId)}`, { replace: true });
+      navigate(`/app/sales/invoice/view/${encodeURIComponent(previewId)}`, { replace: true });
     }
   }, [location.search, navigate]);
 
@@ -451,7 +451,7 @@ export default function InvoiceHistory() {
                             <button
                               type="button"
                               onClick={() =>
-                                navigate(`/app/sales/invoice?preview=${encodeURIComponent(invoice.id)}`)
+                                navigate(`/app/sales/invoice/view/${encodeURIComponent(invoice.id)}`)
                               }
                               className={neutralActionButtonClass}
                             >
@@ -460,7 +460,7 @@ export default function InvoiceHistory() {
                             <button
                               type="button"
                               onClick={() =>
-                                navigate(`/app/sales/payment-in?invoiceId=${encodeURIComponent(invoice.id)}`)
+                                navigate(`/app/sales/invoice/view/${encodeURIComponent(invoice.id)}?payment=true`)
                               }
                               className={neutralActionButtonClass}
                             >

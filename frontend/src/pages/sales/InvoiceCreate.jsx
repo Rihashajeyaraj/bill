@@ -1847,8 +1847,10 @@ export default function InvoiceCreate() {
       fallbackTotals?.taxBreakup && typeof fallbackTotals.taxBreakup === "object"
         ? fallbackTotals.taxBreakup
         : null;
-    const liveItems = computed.enriched.filter((line) => line?.itemId);
-    const fallbackItems = Array.isArray(fallbackRecord?.lines) ? fallbackRecord.lines : [];
+    const liveItems = computed.enriched.filter((line) => line?.itemId || line?.itemName || line?.itemInput || line?.description);
+    const fallbackItems = (Array.isArray(fallbackRecord?.items) && fallbackRecord.items.length > 0)
+      ? fallbackRecord.items
+      : (Array.isArray(fallbackRecord?.lines) ? fallbackRecord.lines : []);
     const previewItemsSource =
       preferFallbackRecord && fallbackItems.length ? fallbackItems : liveItems.length ? liveItems : fallbackItems;
     const subTotal = Number(

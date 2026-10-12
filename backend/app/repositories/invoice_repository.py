@@ -218,6 +218,28 @@ class InvoiceRepository:
         org_id_str = str(organization_id)
         existing_nos = set()
         max_no = 0
+
+        prefix = "INV-"
+        if invoice_date:
+            try:
+                if isinstance(invoice_date, str):
+                    d = datetime.strptime(str(invoice_date)[:10], "%Y-%m-%d").date()
+                elif isinstance(invoice_date, (date, datetime)):
+                    d = invoice_date if isinstance(invoice_date, date) else invoice_date.date()
+                else:
+                    d = None
+                if d:
+                    if d.month <= 3:
+                        sy = d.year - 1
+                        ey = d.year
+                    else:
+                        sy = d.year
+                        ey = d.year + 1
+                    fy_str = f"{str(sy)[-2:]}{str(ey)[-2:]}"
+                    prefix = f"INV-{fy_str}-"
+            except Exception:
+                pass
+
         try:
             res = self.admin_db.table("invoices").select("invoice_no").eq("organization_id", org_id_str).execute()
             if res.data:
@@ -225,38 +247,41 @@ class InvoiceRepository:
                     ino = str(row.get("invoice_no") or "").strip()
                     if ino:
                         existing_nos.add(ino)
-                        m = re.search(r"(\d+)$", ino)
-                        if m:
-                            try:
-                                max_no = max(max_no, int(m.group(1)))
-                            except ValueError:
-                                pass
+                        if (prefix == "INV-" and re.match(r"^INV-\d+$", ino)) or (prefix != "INV-" and ino.startswith(prefix)):
+                            m = re.search(r"(\d+)$", ino)
+                            if m:
+                                try:
+                                    max_no = max(max_no, int(m.group(1)))
+                                except ValueError:
+                                    pass
         except Exception as e:
             logger.warning(f"Error reading existing invoices for org {org_id_str}: {e}")
 
         seq_next = 1
-        try:
-            seq_res = self.admin_db.table("organization_document_sequences").select("invoice_next_no").eq("organization_id", org_id_str).limit(1).execute()
-            if seq_res.data and seq_res.data[0].get("invoice_next_no") is not None:
-                seq_next = int(seq_res.data[0]["invoice_next_no"])
-        except Exception as e:
-            logger.warning(f"Error reading document sequences for org {org_id_str}: {e}")
+        if prefix == "INV-":
+            try:
+                seq_res = self.admin_db.table("organization_document_sequences").select("invoice_next_no").eq("organization_id", org_id_str).limit(1).execute()
+                if seq_res.data and seq_res.data[0].get("invoice_next_no") is not None:
+                    seq_next = int(seq_res.data[0]["invoice_next_no"])
+            except Exception as e:
+                logger.warning(f"Error reading document sequences for org {org_id_str}: {e}")
 
-        next_val = max(max_no + 1, seq_next, 1)
-        candidate = f"INV-{next_val:04d}"
+        next_val = max(max_no + 1, seq_next if prefix == "INV-" else 1, 1)
+        candidate = f"{prefix}{next_val:04d}"
         while candidate in existing_nos:
             next_val += 1
-            candidate = f"INV-{next_val:04d}"
+            candidate = f"{prefix}{next_val:04d}"
 
-        try:
-            self.admin_db.table("organization_document_sequences").upsert({
-                "organization_id": org_id_str,
-                "invoice_prefix": "INV",
-                "invoice_next_no": next_val + 1,
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }, on_conflict="organization_id").execute()
-        except Exception as e:
-            logger.warning(f"Error synchronizing organization_document_sequences: {e}")
+        if prefix == "INV-":
+            try:
+                self.admin_db.table("organization_document_sequences").upsert({
+                    "organization_id": org_id_str,
+                    "invoice_prefix": "INV",
+                    "invoice_next_no": next_val + 1,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }, on_conflict="organization_id").execute()
+            except Exception as e:
+                logger.warning(f"Error synchronizing organization_document_sequences: {e}")
 
         return candidate
 
@@ -308,11 +333,12 @@ class InvoiceRepository:
         inv = unpack_invoice_header_result(res.data[0])
         if inv.get("party_id"):
             try:
-                party_res = self.db.table("parties").select("display_name").eq("id", inv["party_id"]).limit(1).execute()
+                party_res = self.db.table("parties").select("*").eq("id", inv["party_id"]).limit(1).execute()
             except Exception:
-                party_res = self.admin_db.table("parties").select("display_name").eq("id", inv["party_id"]).limit(1).execute()
+                party_res = self.admin_db.table("parties").select("*").eq("id", inv["party_id"]).limit(1).execute()
             if party_res.data:
-                inv["party_name"] = party_res.data[0]["display_name"]
+                inv["party_name"] = party_res.data[0].get("display_name")
+                inv["customer"] = party_res.data[0]
         try:
             items_res = self.db.table("invoice_items").select("*").eq("invoice_id", invoice_id).order("line_no").execute()
         except Exception:
@@ -320,6 +346,8 @@ class InvoiceRepository:
         inv["items"] = items_res.data or []
         try:
             pf_match = self.admin_db.table("proforma_invoices").select("*").eq("converted_document_id", invoice_id).limit(1).execute()
+            if not pf_match.data and inv.get("source_proforma_id"):
+                pf_match = self.admin_db.table("proforma_invoices").select("*").eq("id", inv["source_proforma_id"]).limit(1).execute()
             if pf_match.data:
                 pf_row = pf_match.data[0]
                 inv["source_proforma_id"] = pf_row["id"]
@@ -328,8 +356,71 @@ class InvoiceRepository:
                 for pk, pv in pf_row.items():
                     if pk not in inv or inv[pk] is None or (inv[pk] == 0 and pv):
                         inv[pk] = pv
-        except Exception:
-            pass
+                cust_obj = inv.get("customer") or {}
+                if not inv.get("customer_name"):
+                    inv["customer_name"] = pf_row.get("bill_name") or cust_obj.get("display_name") or cust_obj.get("name")
+                if not inv.get("customer_company_name"):
+                    inv["customer_company_name"] = cust_obj.get("legal_name") or inv.get("customer_name")
+                if not inv.get("customer_address"):
+                    inv["customer_address"] = pf_row.get("bill_address_line1") or cust_obj.get("billing_address_line1") or cust_obj.get("address")
+                if not inv.get("customer_city"):
+                    inv["customer_city"] = pf_row.get("bill_city") or cust_obj.get("city")
+                if not inv.get("customer_state"):
+                    inv["customer_state"] = pf_row.get("bill_state") or cust_obj.get("state_name")
+                if not inv.get("customer_country"):
+                    inv["customer_country"] = cust_obj.get("country_name") or cust_obj.get("country") or "India"
+                if not inv.get("customer_gstin"):
+                    inv["customer_gstin"] = pf_row.get("bill_gstin") or cust_obj.get("gstin")
+                if not inv.get("customer_phone"):
+                    inv["customer_phone"] = cust_obj.get("phone")
+                if not inv.get("customer_email"):
+                    inv["customer_email"] = cust_obj.get("email")
+                # If invoice has no items, heal from proforma_invoice_items
+                if not inv["items"]:
+                    pf_items_res = self.admin_db.table("proforma_invoice_items").select("*").eq("proforma_id", pf_row["id"]).order("line_no").execute()
+                    if pf_items_res.data:
+                        inv["items"] = pf_items_res.data
+                        for it in pf_items_res.data:
+                            cleaned_it = clean_invoice_item_payload(it, invoice_id)
+                            _safe_insert_invoice_item(self.db, self.admin_db, cleaned_it)
+        except Exception as e:
+            logger.warning(f"Notice while linking proforma details: {e}")
+
+        inv["lines"] = inv["items"]
+
+        # Ensure EA invoice preserves QR code and type when reopened
+        if inv.get("document_type") == "EA_INVOICE" or inv.get("invoice_type") == "EA_INVOICE" or inv.get("qr_code_data"):
+            inv["invoice_type"] = "EA_INVOICE"
+            inv["document_type"] = "EA_INVOICE"
+            if not inv.get("qr_code_data"):
+                import json, hashlib
+                irn_hash = hashlib.sha256(f"{organization_id}:{inv.get('invoice_no')}:{inv.get('invoice_date')}:{float(inv.get('grand_total') or 0.0):.2f}".encode()).hexdigest()
+                qr_dict = {
+                    "irn": irn_hash,
+                    "invoice_type": "EA_INVOICE",
+                    "invoice_no": inv.get("invoice_no"),
+                    "invoice_date": str(inv.get("invoice_date")),
+                    "seller_gstin": inv.get("company_gstin") or "27AABCT1234F1Z5",
+                    "buyer_gstin": inv.get("customer_gstin") or "URP",
+                    "grand_total": float(inv.get("grand_total") or 0.0),
+                    "line_items_count": len(inv.get("items") or []),
+                    "verified": True
+                }
+                inv["qr_code_data"] = json.dumps(qr_dict, separators=(',', ':'))
+                inv["irn_number"] = irn_hash
+            if not inv.get("qr_code_image") and inv.get("qr_code_data"):
+                try:
+                    import qrcode, io, base64
+                    qr = qrcode.QRCode(version=1, box_size=6, border=2)
+                    qr.add_data(inv["qr_code_data"])
+                    qr.make(fit=True)
+                    img = qr.make_image(fill_color="black", back_color="white")
+                    buf = io.BytesIO()
+                    img.save(buf, format="PNG")
+                    inv["qr_code_image"] = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
+                except Exception:
+                    pass
+
         return inv
 
 

@@ -127,7 +127,7 @@ export const apiClient = {
   getProforma: (id) => apiRequest(`/proforma/${id}`, "GET"),
   createProforma: (data) => apiRequest("/proforma", "POST", data),
   updateProforma: (id, data) => apiRequest(`/proforma/${id}`, "PUT", data),
-  convertProforma: (id) => apiRequest(`/proforma/${id}/convert`, "POST"),
+  convertProforma: (id, payload) => apiRequest(`/proforma/${id}/convert`, "POST", payload),
   deleteProforma: (id) => apiRequest(`/proforma/${id}`, "DELETE"),
   deleteAllProformas: () => apiRequest("/proforma", "DELETE"),
 
@@ -223,6 +223,16 @@ export const apiClient = {
     return apiRequest(`/payments/receipts${qs ? `?${qs}` : ""}`, "GET");
   },
   applyAdvance: (data) => apiRequest("/payments/apply-advance", "POST", data),
+  getCustomerLedger: (customerId, params) => {
+    const sp = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== "") sp.append(k, String(v));
+      });
+    }
+    const qs = sp.toString();
+    return apiRequest(`/payments/ledger/${encodeURIComponent(customerId)}${qs ? `?${qs}` : ""}`, "GET");
+  },
 
   // Dashboard
   getDashboard: () => apiRequest("/dashboard", "GET"),

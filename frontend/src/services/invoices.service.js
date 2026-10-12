@@ -391,6 +391,7 @@ function mapRemoteInvoiceRow(row, itemRows, balanceAmount) {
     seller: metadata?.seller || {},
     buyer: metadata?.buyer || {},
     lines,
+    items: lines,
     totals: {
       subTotal: parseNumber(row?.subtotal),
       tax,

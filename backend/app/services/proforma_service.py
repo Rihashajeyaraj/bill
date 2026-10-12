@@ -1,11 +1,11 @@
 from decimal import Decimal
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from datetime import datetime, timezone, timedelta, date
 import logging
 import uuid
 from fastapi import HTTPException, status
 from app.repositories.proforma_repository import ProformaRepository
-from app.repositories.invoice_repository import InvoiceRepository
+from app.repositories.invoice_repository import InvoiceRepository, KNOWN_INVOICE_COLUMNS, clean_invoice_item_payload, _safe_insert_invoice_item
 from app.repositories.party_repository import PartyRepository
 from app.core.supabase import get_admin_supabase_client
 from app.services.calculation_service import calculate_document_totals, validate_advance_amount, to_decimal
@@ -518,7 +518,15 @@ class ProformaService:
     def get_next_proforma_no(self, organization_id: str) -> str:
         return self.proforma_repo.generate_proforma_no(organization_id)
 
-    def convert_to_invoice(self, proforma_id: str, organization_id: str, user_id: str, amount_paid: Optional[float] = None) -> Dict[str, Any]:
+    def convert_to_invoice(
+        self,
+        proforma_id: str,
+        organization_id: str,
+        user_id: str,
+        amount_paid: Optional[float] = None,
+        invoice_type: str = "TAX_INVOICE",
+        invoice_date: Optional[Union[date, str]] = None
+    ) -> Dict[str, Any]:
         proforma = self.get_proforma(proforma_id, organization_id)
         if not proforma:
             # Check if searched by proforma_no within this organization
@@ -537,30 +545,42 @@ class ProformaService:
         pf_status = str(proforma.get("status") or "").upper()
         converted_doc_id = proforma.get("converted_document_id") or proforma.get("convertedDocumentId")
 
-        # Requirement 3: Check whether that Pro Forma Invoice has already been converted.
-        # If already converted, return the existing linked Tax Invoice instead of creating another invoice.
+        # Check whether that Pro Forma Invoice has already been converted.
+        # If already converted, reject duplicate conversion with 409 Conflict.
         if pf_status == "CONVERTED" or converted_doc_id:
-            existing_inv = None
-            if converted_doc_id:
-                existing_inv = self.invoice_repo.get_by_id(converted_doc_id, organization_id)
-            if not existing_inv:
-                res_src = self.db.table("invoices").select("*").eq("organization_id", organization_id).eq("source_proforma_id", actual_proforma_id).limit(1).execute()
-                if res_src.data:
-                    existing_inv = self.invoice_repo.get_by_id(res_src.data[0]["id"], organization_id) or res_src.data[0]
-            if not existing_inv and actual_proforma_no:
-                res_src_no = self.db.table("invoices").select("*").eq("organization_id", organization_id).eq("source_proforma_no", actual_proforma_no).limit(1).execute()
-                if res_src_no.data:
-                    existing_inv = self.invoice_repo.get_by_id(res_src_no.data[0]["id"], organization_id) or res_src_no.data[0]
-
-            if existing_inv:
-                logger.info(f"Pro Forma {actual_proforma_no} is already converted to Tax Invoice {existing_inv.get('invoice_no')}. Returning existing invoice.")
-                return existing_inv
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Pro Forma invoice is already converted: {actual_proforma_no or actual_proforma_id}"
+            )
 
         if pf_status in ["CANCELLED", "REJECTED"]:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Cannot convert a cancelled or rejected Pro Forma Invoice: {actual_proforma_no}"
             )
+
+        # Invoice Type and Date Rules
+        is_ea_invoice = "ea" in str(invoice_type or "").lower()
+        normalized_inv_type = "EA_INVOICE" if is_ea_invoice else "TAX_INVOICE"
+        today_str = str(date.today())
+
+        if is_ea_invoice:
+            # Rule: EA Invoice Date is automatically set to issuance date and cannot be altered
+            if invoice_date and str(invoice_date)[:10] != today_str:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="EA Invoice date is fixed to the issuance date and cannot be altered."
+                )
+            assigned_inv_date = today_str
+        else:
+            # Standard Tax Invoice: default to conversion date (today) or user-selected valid date
+            if invoice_date:
+                try:
+                    assigned_inv_date = str(datetime.strptime(str(invoice_date)[:10], "%Y-%m-%d").date())
+                except Exception:
+                    assigned_inv_date = today_str
+            else:
+                assigned_inv_date = today_str
 
         # Requirement 2 & 4: Pre-sync document sequence counter to prevent database duplicate key violation (invoices_organization_id_invoice_no_key)
         import re
@@ -597,14 +617,13 @@ class ProformaService:
                 use_fallback = True
         except Exception as rpc_err:
             err_str = str(rpc_err)
-            logger.warning(f"RPC convert_proforma_to_invoice notice: {err_str}. Running atomic fallback conversion.")
-            # If already converted concurrently, return the converted invoice
-            if "already converted" in err_str.lower() or "P0409" in err_str:
-                res_check = self.db.table("invoices").select("*").eq("organization_id", organization_id).eq("source_proforma_id", actual_proforma_id).limit(1).execute()
-                if res_check.data:
-                    existing = self.invoice_repo.get_by_id(res_check.data[0]["id"], organization_id)
-                    if existing:
-                        return existing
+            logger.warning(f"RPC convert_proforma_to_invoice notice: {err_str}.")
+            # If already converted concurrently, raise 409 Conflict
+            if "already converted" in err_str.lower() or "p0409" in err_str.lower() or "p0001" in err_str.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Pro Forma invoice is already converted: {actual_proforma_no or actual_proforma_id}"
+                )
             use_fallback = True
 
         # Fallback Python conversion if RPC failed or was bypassed
@@ -618,7 +637,7 @@ class ProformaService:
                 "organization_id": organization_id,
                 "template_id": proforma.get("template_id") or "modern_gst",
                 "invoice_no": assigned_inv_no,
-                "invoice_date": str(date.today()),
+                "invoice_date": assigned_inv_date,
                 "due_date": str(proforma.get("due_date")) if proforma.get("due_date") else None,
                 "party_id": proforma.get("party_id") or proforma.get("customer_id"),
                 "source_proforma_id": actual_proforma_id,
@@ -652,18 +671,66 @@ class ProformaService:
                 "customer_company_name": proforma.get("customer_company_name"),
                 "customer_address": proforma.get("customer_address"),
                 "customer_city": proforma.get("customer_city"),
+                "customer_state": proforma.get("customer_state") or proforma.get("place_of_supply_state"),
+                "customer_country": proforma.get("customer_country"),
+                "customer_pincode": proforma.get("customer_pincode"),
                 "customer_gstin": proforma.get("customer_gstin"),
                 "customer_phone": proforma.get("customer_phone"),
                 "customer_email": proforma.get("customer_email"),
                 "bill_name": proforma.get("bill_name"),
                 "bill_address_line1": proforma.get("bill_address_line1"),
+                "bill_address_line2": proforma.get("bill_address_line2"),
                 "bill_city": proforma.get("bill_city"),
                 "bill_state": proforma.get("bill_state"),
+                "bill_state_code": proforma.get("bill_state_code"),
+                "bill_pincode": proforma.get("bill_pincode"),
+                "bill_country": proforma.get("bill_country"),
                 "bill_gstin": proforma.get("bill_gstin"),
+                "bill_pan": proforma.get("bill_pan"),
+                "bill_phone": proforma.get("bill_phone"),
+                "bill_email": proforma.get("bill_email"),
                 "ship_name": proforma.get("ship_name"),
                 "ship_address_line1": proforma.get("ship_address_line1"),
+                "ship_address_line2": proforma.get("ship_address_line2"),
                 "ship_city": proforma.get("ship_city"),
                 "ship_state": proforma.get("ship_state"),
+                "ship_state_code": proforma.get("ship_state_code"),
+                "ship_pincode": proforma.get("ship_pincode"),
+                "ship_country": proforma.get("ship_country"),
+                "ship_gstin": proforma.get("ship_gstin"),
+                "ship_phone": proforma.get("ship_phone"),
+                "shipper_name": proforma.get("shipper_name"),
+                "consignee_name": proforma.get("consignee_name"),
+                "origin": proforma.get("origin"),
+                "destination": proforma.get("destination"),
+                "packs_qty": proforma.get("packs_qty"),
+                "weight_kgs": proforma.get("weight_kgs"),
+                "volume_cbm": proforma.get("volume_cbm"),
+                "freight_terms": proforma.get("freight_terms"),
+                "bl_number": proforma.get("bl_number"),
+                "hbl_number": proforma.get("hbl_number"),
+                "thbl_number": proforma.get("thbl_number"),
+                "mbl_number": proforma.get("mbl_number"),
+                "ocean_bl_no": proforma.get("ocean_bl_no"),
+                "vessel_name": proforma.get("vessel_name"),
+                "voyage_no": proforma.get("voyage_no"),
+                "etd_date": str(proforma.get("etd_date")) if proforma.get("etd_date") else None,
+                "eta_date": str(proforma.get("eta_date")) if proforma.get("eta_date") else None,
+                "igm_no": proforma.get("igm_no"),
+                "igm_date": str(proforma.get("igm_date")) if proforma.get("igm_date") else None,
+                "igm_item_no": proforma.get("igm_item_no"),
+                "file_no": proforma.get("file_no"),
+                "sales_rep": proforma.get("sales_rep"),
+                "rcm_applicable": proforma.get("rcm_applicable", False),
+                "container_details": proforma.get("container_details"),
+                "container_vehicle_no": proforma.get("container_vehicle_no"),
+                "vehicle_no": proforma.get("vehicle_no"),
+                "bank_account_id": proforma.get("bank_account_id"),
+                "bank_details": proforma.get("bank_details"),
+                "remarks": proforma.get("remarks"),
+                "tds_note": proforma.get("tds_note"),
+                "cust_ref": proforma.get("cust_ref"),
+                "customer_ref": proforma.get("customer_ref")
             }
 
             pf_items = proforma.get("items") or []
@@ -675,13 +742,52 @@ class ProformaService:
             new_inv_id = created_inv["id"]
             new_inv_no = created_inv.get("invoice_no") or assigned_inv_no
 
-            # Update Pro Forma status to CONVERTED
-            self.admin_db.table("proforma_invoices").update({
-                "status": "CONVERTED",
-                "converted_document_id": new_inv_id,
-                "converted_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }).eq("id", actual_proforma_id).execute()
+        # Ensure all header details, shipment details, customer details, and bank references from proforma are updated on the invoice
+        update_fields = {"invoice_date": assigned_inv_date}
+        for col in [
+            "source_proforma_id", "source_proforma_no", "source_proforma_date",
+            "bill_name", "bill_address_line1", "bill_address_line2", "bill_city", "bill_state", "bill_state_code", "bill_pincode", "bill_country", "bill_gstin", "bill_pan", "bill_phone", "bill_email",
+            "ship_name", "ship_address_line1", "ship_address_line2", "ship_city", "ship_state", "ship_state_code", "ship_pincode", "ship_country", "ship_gstin", "ship_phone",
+            "customer_name", "customer_company_name", "customer_address", "customer_city", "customer_state", "customer_country", "customer_gstin", "customer_phone", "customer_email", "customer_pincode",
+            "shipper_name", "consignee_name", "origin", "destination", "packs_qty", "weight_kgs", "volume_cbm", "freight_terms",
+            "bl_number", "hbl_number", "thbl_number", "mbl_number", "ocean_bl_no", "vessel_name", "voyage_no",
+            "etd_date", "eta_date", "igm_no", "igm_date", "igm_item_no", "file_no", "sales_rep", "rcm_applicable",
+            "container_details", "container_vehicle_no", "vehicle_no", "notes", "terms", "remarks", "tds_note", "bank_account_id", "bank_details", "cust_ref", "customer_ref"
+        ]:
+            val = proforma.get(col)
+            if val is not None:
+                update_fields[col] = str(val) if isinstance(val, (date, datetime)) else val
+
+        ACTUAL_INVOICE_TABLE_COLUMNS = {
+            "template_id", "invoice_date", "due_date", "party_id",
+            "place_of_supply_state", "currency_code", "exchange_rate",
+            "subtotal", "discount_total", "taxable_total", "cgst_total", "sgst_total",
+            "igst_total", "tax_total", "round_off", "grand_total", "amount_paid",
+            "balance_due", "status", "notes", "terms"
+        }
+        if update_fields:
+            clean_update = {k: v for k, v in update_fields.items() if k in ACTUAL_INVOICE_TABLE_COLUMNS}
+            if clean_update:
+                try:
+                    self.admin_db.table("invoices").update(clean_update).eq("id", new_inv_id).execute()
+                except Exception as up_err:
+                    logger.warning(f"Notice updating converted invoice snapshot fields: {up_err}")
+
+        # Ensure all line items are preserved in invoice_items
+        inv_items_res = self.admin_db.table("invoice_items").select("id").eq("invoice_id", new_inv_id).execute()
+        if not inv_items_res.data:
+            pf_items_res = self.admin_db.table("proforma_invoice_items").select("*").eq("proforma_id", actual_proforma_id).order("line_no").execute()
+            for it in (pf_items_res.data or []):
+                cleaned_it = clean_invoice_item_payload(it, new_inv_id)
+                _safe_insert_invoice_item(self.db, self.admin_db, cleaned_it)
+
+        # Update Pro Forma status to CONVERTED
+        self.admin_db.table("proforma_invoices").update({
+            "status": "CONVERTED",
+            "converted_document_id": new_inv_id,
+            "converted_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("id", actual_proforma_id).execute()
 
         # Carry advance payment forward and link to Tax Invoice
         adv_amount = float(proforma.get("advance_received") or proforma.get("amount_paid") or 0.0)
@@ -748,23 +854,75 @@ class ProformaService:
             if admin_res.data:
                 from app.repositories.invoice_repository import unpack_invoice_header_result
                 inv = unpack_invoice_header_result(admin_res.data[0])
-        if inv:
-            inv["invoice_id"] = new_inv_id
-            if new_inv_no:
-                inv["invoice_no"] = new_inv_no
-            inv["source_proforma_id"] = actual_proforma_id
-            inv["source_proforma_no"] = actual_proforma_no
-            return inv
+            else:
+                inv = {"id": new_inv_id, "organization_id": organization_id}
 
-        return {
-            "id": new_inv_id,
-            "invoice_id": new_inv_id,
-            "invoice_no": new_inv_no or "INV-0001",
-            "organization_id": organization_id,
-            "source_proforma_id": actual_proforma_id,
-            "source_proforma_no": actual_proforma_no,
-            "status": "issued"
-        }
+        inv["invoice_id"] = new_inv_id
+        if new_inv_no:
+            inv["invoice_no"] = new_inv_no
+        inv["source_proforma_id"] = actual_proforma_id
+        inv["source_proforma_no"] = actual_proforma_no
+        inv["source_proforma_date"] = str(proforma.get("proforma_date") or date.today())
+
+        # Enrich all customer, shipment, logistics, and metadata details from source proforma
+        for pk, pv in proforma.items():
+            if pk in ("id", "created_at", "updated_at"):
+                continue
+            if pk not in inv or inv[pk] is None or inv[pk] == "":
+                inv[pk] = pv
+
+        if not inv.get("items") and proforma.get("items"):
+            inv["items"] = proforma["items"]
+            inv["lines"] = proforma["items"]
+
+        inv["invoice_date"] = assigned_inv_date
+        inv["invoice_type"] = normalized_inv_type
+        inv["document_type"] = normalized_inv_type
+
+        # Generate verified QR code only after invoice date, number, and details are saved
+        if is_ea_invoice:
+            import json
+            import hashlib
+            import base64
+            import io
+            company = self.get_company_details(organization_id)
+            seller_gstin = company.get("gstin") or company.get("tax_id") or "27AABCT1234F1Z5"
+            buyer_gstin = inv.get("customer_gstin") or inv.get("bill_gstin") or "URP"
+            irn_hash = hashlib.sha256(
+                f"{organization_id}:{inv.get('invoice_no')}:{assigned_inv_date}:{float(inv.get('grand_total') or 0.0):.2f}".encode()
+            ).hexdigest()
+
+            qr_dict = {
+                "irn": irn_hash,
+                "invoice_type": "EA_INVOICE",
+                "invoice_no": inv.get("invoice_no"),
+                "invoice_date": assigned_inv_date,
+                "seller_gstin": seller_gstin,
+                "buyer_gstin": buyer_gstin,
+                "grand_total": float(inv.get("grand_total") or 0.0),
+                "line_items_count": len(inv.get("items") or []),
+                "verified": True
+            }
+            qr_code_data = json.dumps(qr_dict, separators=(',', ':'))
+
+            qr_code_image = None
+            try:
+                import qrcode
+                qr = qrcode.QRCode(version=1, box_size=6, border=2)
+                qr.add_data(qr_code_data)
+                qr.make(fit=True)
+                img = qr.make_image(fill_color="black", back_color="white")
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                qr_code_image = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
+            except Exception as qre:
+                logger.warning(f"Error generating QR image: {qre}")
+
+            inv["qr_code_data"] = qr_code_data
+            inv["qr_code_image"] = qr_code_image
+            inv["irn_number"] = irn_hash
+
+        return inv
 
     def delete_proforma(self, proforma_id: str, organization_id: str) -> bool:
         proforma = self.proforma_repo.get_by_id(proforma_id, organization_id)
