@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import Card from "../components/Card";
 import PageHeader from "../components/PageHeader";
 import GradientButton from "../components/GradientButton";
@@ -367,6 +368,17 @@ export default function CompanySetup() {
 
   return (
     <div className="px-5 py-6 max-w-6xl mx-auto">
+      <div className="mb-3">
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs"
+        >
+          <ArrowLeft className="w-4 h-4 text-slate-500" />
+          Back
+        </button>
+      </div>
+
       <PageHeader
         title={createMode ? "Create Company" : "Company Setup"}
         subtitle={
@@ -374,7 +386,19 @@ export default function CompanySetup() {
             ? "Create an additional organization profile."
             : "Create your organization and tax profile to unlock dashboards."
         }
-        right={<GradientButton onClick={save}>{saving ? "Saving..." : "Save & Continue"}</GradientButton>}
+        right={
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back
+            </button>
+            <GradientButton onClick={save}>{saving ? "Saving..." : "Save & Continue"}</GradientButton>
+          </div>
+        }
       />
 
       {saveError ? (

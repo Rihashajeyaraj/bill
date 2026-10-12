@@ -1,64 +1,80 @@
-import React from "react";
-import { Navigate } from "react-router-dom";
+import React, { Suspense, lazy } from "react";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { AppRouteAccessGuard, AuthGuard, CompanySetupGuard, InvoiceTemplateGuard, SetupGuard } from "./guards";
 
 import AppLayout from "../layouts/AppLayout";
 import Login from "../pages/Login";
-import ForgotPassword from "../pages/ForgotPassword";
-import ResetPassword from "../pages/ResetPassword";
-import CompanySetup from "../pages/CompanySetup";
-import OrganizationSelect from "../pages/OrganizationSelect";
-import InvoiceTemplateSetup from "../pages/InvoiceTemplateSetup";
-import Dashboard from "../pages/Dashboard";
-import Parties from "../pages/Parties";
-import PartyStatement from "../pages/PartyStatement";
-import Items from "../pages/Items";
-import ItemCreate from "../pages/ItemCreate";
 
-import InvoiceCreate from "../pages/sales/InvoiceCreate";
-import InvoiceHistory from "../pages/sales/InvoiceHistory";
-import SalesProformasList from "../pages/sales/SalesProformasList";
-import SalesProformaEditor from "../pages/sales/SalesProformaEditor";
-import CreditNote from "../pages/sales/CreditNotePremium";
-import PaymentIn from "../pages/sales/PaymentInPremium";
+const ForgotPassword = lazy(() => import("../pages/ForgotPassword"));
+const ResetPassword = lazy(() => import("../pages/ResetPassword"));
+const CompanySetup = lazy(() => import("../pages/CompanySetup"));
+const OrganizationSelect = lazy(() => import("../pages/OrganizationSelect"));
+const InvoiceTemplateSetup = lazy(() => import("../pages/InvoiceTemplateSetup"));
+const Dashboard = lazy(() => import("../pages/Dashboard"));
+const Parties = lazy(() => import("../pages/Parties"));
+const PartyStatement = lazy(() => import("../pages/PartyStatement"));
+const Items = lazy(() => import("../pages/Items"));
+const ItemCreate = lazy(() => import("../pages/ItemCreate"));
 
-import PurchaseBill from "../pages/purchases/PurchaseBill";
-import PurchaseHistory from "../pages/purchases/PurchaseHistory";
-import PurchaseProformasList from "../pages/purchases/PurchaseProformasList";
-import PurchaseProformaEditor from "../pages/purchases/PurchaseProformaEditor";
-import DebitNote from "../pages/purchases/DebitNotePremium";
-import PaymentOutPremium from "../pages/purchases/PaymentOutPremium";
-import Expense from "../pages/purchases/Expense";
+const InvoiceHistory = lazy(() => import("../pages/sales/InvoiceHistory"));
+const InvoiceCreate = lazy(() => import("../pages/sales/InvoiceCreate"));
+const SalesProformasList = lazy(() => import("../pages/sales/SalesProformasList"));
+const SalesProformaEditor = lazy(() => import("../pages/sales/SalesProformaEditor"));
+const PaymentIn = lazy(() => import("../pages/sales/PaymentInPremium"));
 
-import Reports from "../pages/Reports";
-import PartyWiseStatement from "../pages/reports/PartyWiseStatement";
-import AgingReport from "../pages/reports/AgingReport";
-import Notifications from "../pages/Notifications";
-import CompanySettings from "../pages/CompanySettings";
-import BackupUtilities from "../pages/BackupUtilities";
-import AuditHistory from "../pages/AuditHistory";
-import NotFound from "../pages/NotFound";
+const Reports = lazy(() => import("../pages/Reports"));
+const PartyWiseStatement = lazy(() => import("../pages/reports/PartyWiseStatement"));
+const AgingReport = lazy(() => import("../pages/reports/AgingReport"));
+const SettingsPage = lazy(() => import("../pages/Settings"));
+const CompanySettings = lazy(() => import("../pages/CompanySettings"));
+const TenantCompanyUsers = lazy(() => import("../pages/settings/TenantCompanyUsers"));
+const NotFound = lazy(() => import("../pages/NotFound"));
 
-import CashBank from "../pages/CashBank";
-import HelpSupport from "../pages/HelpSupport";
-import CurrentlyUnavailable from "../components/CurrentlyUnavailable";
+const SuperAdminDashboard = lazy(() => import("../pages/super-admin/SuperAdminDashboard"));
+const SuperAdminCompanies = lazy(() => import("../pages/super-admin/SuperAdminCompanies"));
+const SuperAdminActivity = lazy(() => import("../pages/super-admin/SuperAdminActivity"));
+const SuperAdminRequests = lazy(() => import("../pages/super-admin/SuperAdminRequests"));
+const SuperAdminLayout = lazy(() => import("../pages/super-admin/SuperAdminLayout"));
+
+function LazyWrapper({ component: Component }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+        </div>
+      }
+    >
+      <Component />
+    </Suspense>
+  );
+}
+
+function SalesInvoiceRoute() {
+  const [searchParams] = useSearchParams();
+  const hasPreviewOrEdit = searchParams.get("preview") || searchParams.get("edit") || searchParams.get("print");
+  if (hasPreviewOrEdit) {
+    return <LazyWrapper component={InvoiceCreate} />;
+  }
+  return <Navigate to="/app/sales/invoice/history" replace />;
+}
 
 export const routes = [
   { path: "/login", element: <Login /> },
-  { path: "/forgot-password", element: <ForgotPassword /> },
-  { path: "/reset-password", element: <ResetPassword /> },
+  { path: "/forgot-password", element: <LazyWrapper component={ForgotPassword} /> },
+  { path: "/reset-password", element: <LazyWrapper component={ResetPassword} /> },
 
   {
     element: <AuthGuard />,
     children: [
-      { path: "/organization-select", element: <OrganizationSelect /> },
+      { path: "/organization-select", element: <LazyWrapper component={OrganizationSelect} /> },
       {
         element: <InvoiceTemplateGuard />,
-        children: [{ path: "/invoice-template-setup", element: <InvoiceTemplateSetup /> }]
+        children: [{ path: "/invoice-template-setup", element: <LazyWrapper component={InvoiceTemplateSetup} /> }]
       },
       {
         element: <CompanySetupGuard />,
-        children: [{ path: "/company-setup", element: <CompanySetup /> }]
+        children: [{ path: "/company-setup", element: <LazyWrapper component={CompanySetup} /> }]
       }
     ]
   },
@@ -76,61 +92,41 @@ export const routes = [
                 element: <AppLayout />,
                 children: [
                   { path: "/", element: <Navigate to="/dashboard" replace /> },
-                  {
-                    path: "/dashboard",
-                    element: <Dashboard />
-                  },
-                  { path: "/app/dashboard", element: <Dashboard /> },
-                  { path: "/app/company-setup", element: <CompanySetup /> },
-                  { path: "/app/invoice-template-setup", element: <InvoiceTemplateSetup /> },
+                  { path: "/dashboard", element: <LazyWrapper component={Dashboard} /> },
+                  { path: "/app/dashboard", element: <LazyWrapper component={Dashboard} /> },
+                  { path: "/app/company-setup", element: <LazyWrapper component={CompanySetup} /> },
+                  { path: "/app/invoice-template-setup", element: <LazyWrapper component={InvoiceTemplateSetup} /> },
 
-                  { path: "/app/parties", element: <Parties /> },
-                  { path: "/app/parties/:id/statement", element: <PartyStatement /> },
+                  { path: "/app/parties", element: <LazyWrapper component={Parties} /> },
+                  { path: "/app/parties/:id/statement", element: <LazyWrapper component={PartyStatement} /> },
 
-                  { path: "/app/items", element: <Items /> },
-                  { path: "/items", element: <Items /> },
-                  { path: "/items/new", element: <ItemCreate /> },
+                  { path: "/app/items", element: <LazyWrapper component={Items} /> },
+                  { path: "/items", element: <LazyWrapper component={Items} /> },
+                  { path: "/items/new", element: <LazyWrapper component={ItemCreate} /> },
 
-                  { path: "/app/sales/invoice", element: <InvoiceCreate /> },
-                  { path: "/app/sales/invoice/history", element: <InvoiceHistory /> },
+                  { path: "/app/sales/invoice", element: <SalesInvoiceRoute /> },
+                  { path: "/app/sales/invoice/history", element: <LazyWrapper component={InvoiceHistory} /> },
                   { path: "/app/sales/proformas", element: <Navigate to="/app/sales/proformas/history" replace /> },
-                  { path: "/app/sales/proformas/history", element: <SalesProformasList /> },
-                  { path: "/app/sales/proformas/new", element: <SalesProformaEditor /> },
-                  { path: "/app/sales/proformas/:id", element: <SalesProformaEditor /> },
+                  { path: "/app/sales/proformas/history", element: <LazyWrapper component={SalesProformasList} /> },
+                  { path: "/app/sales/proformas/new", element: <LazyWrapper component={SalesProformaEditor} /> },
+                  { path: "/app/sales/proformas/:id", element: <LazyWrapper component={SalesProformaEditor} /> },
                   { path: "/sales/proformas", element: <Navigate to="/app/sales/proformas/history" replace /> },
-                  { path: "/sales/proformas/history", element: <SalesProformasList /> },
-                  { path: "/sales/proformas/new", element: <SalesProformaEditor /> },
-                  { path: "/sales/proformas/:id", element: <SalesProformaEditor /> },
-                  { path: "/app/sales/credit-note", element: <CurrentlyUnavailable moduleName="Credit Note" /> },
-                  { path: "/app/sales/payment-in", element: <PaymentIn /> },
+                  { path: "/sales/proformas/history", element: <LazyWrapper component={SalesProformasList} /> },
+                  { path: "/sales/proformas/new", element: <LazyWrapper component={SalesProformaEditor} /> },
+                  { path: "/sales/proformas/:id", element: <LazyWrapper component={SalesProformaEditor} /> },
+                  { path: "/app/sales/payment-in", element: <LazyWrapper component={PaymentIn} /> },
 
-                  { path: "/app/purchase/bill", element: <CurrentlyUnavailable moduleName="Purchase Bill" /> },
-                  { path: "/app/purchase/history", element: <CurrentlyUnavailable moduleName="Purchase History" /> },
-                  { path: "/app/purchase/proformas", element: <CurrentlyUnavailable moduleName="Purchase Proforma" /> },
-                  { path: "/app/purchase/proformas/history", element: <CurrentlyUnavailable moduleName="Purchase Proforma" /> },
-                  { path: "/app/purchase/proformas/new", element: <CurrentlyUnavailable moduleName="Purchase Proforma" /> },
-                  { path: "/app/purchase/proformas/:id", element: <CurrentlyUnavailable moduleName="Purchase Proforma" /> },
-                  { path: "/purchase/proformas", element: <CurrentlyUnavailable moduleName="Purchase Proforma" /> },
-                  { path: "/purchase/proformas/history", element: <CurrentlyUnavailable moduleName="Purchase Proforma" /> },
-                  { path: "/purchase/proformas/new", element: <CurrentlyUnavailable moduleName="Purchase Proforma" /> },
-                  { path: "/purchase/proformas/:id", element: <CurrentlyUnavailable moduleName="Purchase Proforma" /> },
-                  { path: "/app/purchase/debit-note", element: <CurrentlyUnavailable moduleName="Debit Note" /> },
-                  { path: "/app/purchases/payment-out", element: <CurrentlyUnavailable moduleName="Payment Out" /> },
-                  { path: "/app/purchase/payment-out", element: <CurrentlyUnavailable moduleName="Payment Out" /> },
-                  { path: "/app/purchase/expense", element: <CurrentlyUnavailable moduleName="Expense Management" /> },
+                  { path: "/app/reports", element: <LazyWrapper component={Reports} /> },
+                  { path: "/app/reports/customer-statement", element: <LazyWrapper component={PartyWiseStatement} /> },
+                  { path: "/app/reports/party-wise-statement", element: <LazyWrapper component={PartyWiseStatement} /> },
+                  { path: "/app/reports/aging-report", element: <LazyWrapper component={AgingReport} /> },
 
-                  { path: "/app/cash-bank", element: <CashBank /> },
-                  { path: "/app/reports", element: <Reports /> },
-                  { path: "/app/reports/customer-statement", element: <PartyWiseStatement /> },
-                  { path: "/app/reports/party-wise-statement", element: <PartyWiseStatement /> },
-                  { path: "/app/reports/aging-report", element: <AgingReport /> },
-                  { path: "/app/notifications", element: <Notifications /> },
-                  { path: "/app/company-settings", element: <CompanySettings /> },
-                  { path: "/app/backup", element: <BackupUtilities /> },
-                  { path: "/app/audit-history", element: <AuditHistory /> },
-                  { path: "/app/help", element: <HelpSupport /> },
+                  { path: "/app/settings", element: <LazyWrapper component={SettingsPage} /> },
+                  { path: "/settings", element: <Navigate to="/app/settings" replace /> },
+                  { path: "/app/company-settings", element: <LazyWrapper component={CompanySettings} /> },
+                  { path: "/app/settings/users", element: <LazyWrapper component={TenantCompanyUsers} /> },
 
-                  { path: "*", element: <NotFound /> }
+                  { path: "*", element: <LazyWrapper component={NotFound} /> }
                 ]
               }
             ]
@@ -140,6 +136,21 @@ export const routes = [
     ]
   },
 
+  // ── Super Admin Portal (standalone layout)
+  {
+    element: <AuthGuard />,
+    children: [
+      {
+        element: <LazyWrapper component={SuperAdminLayout} />,
+        children: [
+          { path: "/super-admin",           element: <LazyWrapper component={SuperAdminDashboard} /> },
+          { path: "/super-admin/companies", element: <LazyWrapper component={SuperAdminCompanies} /> },
+          { path: "/super-admin/requests",  element: <LazyWrapper component={SuperAdminRequests} /> },
+          { path: "/super-admin/activity",  element: <LazyWrapper component={SuperAdminActivity} /> },
+        ]
+      }
+    ]
+  },
+
   { path: "*", element: <Navigate to="/login" replace /> }
 ];
-

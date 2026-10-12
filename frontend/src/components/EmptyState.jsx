@@ -1,7 +1,7 @@
 import React from "react";
 import Card from "./Card";
 
-export default function EmptyState({ icon: Icon, title, description, action }) {
+export default function EmptyState({ icon: Icon = null, title = "", description = "", action = null }) {
   return (
     <Card className="p-8 text-center">
       <div className="app-empty-state-icon mx-auto h-14 w-14 rounded-2xl border flex items-center justify-center">

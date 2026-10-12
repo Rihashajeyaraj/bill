@@ -96,14 +96,14 @@ function parseLabelMeta(label) {
 }
 
 export default function FormField({
-  label,
-  hint,
-  children,
-  className,
-  required,
-  optional,
+  label = "",
+  hint = "",
+  children = null,
+  className = "",
+  required = undefined,
+  optional = undefined,
   showIndicator = true,
-  error
+  error = null
 }) {
   const labelMeta = parseLabelMeta(label);
   const isRequired = typeof required === "boolean" ? required : labelMeta.hasRequiredMarker;

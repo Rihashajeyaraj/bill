@@ -82,20 +82,35 @@ function getStateWithCode(stateName, stateCode, gstin) {
   return stateName || code;
 }
 
-export default function InvoicePreview({
+const InvoicePreview = React.memo(function InvoicePreview({
   templateId,
   styleConfig = {},
   invoiceData = {},
   documentType = ""
 }) {
-  const { logoUrl } = styleConfig || {};
+  const { logoUrl, signatureUrl } = styleConfig || {};
   const resolvedLogoUrl =
     logoUrl ||
     invoiceData?.company?.logo_url ||
     invoiceData?.company?.logoBase64 ||
+    invoiceData?.company?.logoUrl ||
+    invoiceData?.company?.settings?.logoUrl ||
+    invoiceData?.company?.settings?.logo_url ||
     invoiceData?.companyLogoUrl ||
     invoiceData?.seller?.logoUrl ||
     invoiceData?.logoUrl ||
+    "";
+
+  const resolvedSignatureUrl =
+    signatureUrl ||
+    invoiceData?.company?.signature_url ||
+    invoiceData?.company?.signatureUrl ||
+    invoiceData?.company?.signatureBase64 ||
+    invoiceData?.company?.settings?.signatureUrl ||
+    invoiceData?.company?.settings?.signature_url ||
+    invoiceData?.companySignatureUrl ||
+    invoiceData?.seller?.signatureUrl ||
+    invoiceData?.signatureUrl ||
     "";
 
   // Determine Title: ONLY "PRO FORMA INVOICE" or "TAX INVOICE"
@@ -242,6 +257,16 @@ export default function InvoicePreview({
   const igstTotal = Number(totals.igst_total ?? totals.igstTotal ?? invoiceData.igst_total ?? invoiceData.total_igst ?? 0);
   const totalGst = Number(cgstTotal + sgstTotal + igstTotal);
   const totalAfterTax = Number(totals.grand_total ?? totals.total ?? invoiceData.grand_total ?? (totalBeforeTax + totalGst));
+  const advanceReceived = Number(
+    invoiceData.advance_received ??
+    invoiceData.advanceReceived ??
+    totals.advanceReceived ??
+    invoiceData.amount_paid ??
+    invoiceData.amountPaid ??
+    totals.amountPaid ??
+    0
+  );
+  const balancePayable = Math.max(0, totalAfterTax - advanceReceived);
 
   const amountInWords = invoiceData.grand_total_in_words || invoiceData.grandTotalInWords || numberToWordsINR(totalAfterTax);
   const tdsNote = invoiceData.tds_note || invoiceData.tdsNote || "* Kindly deduct T.D.S on Invoice amount excluding GST amount.";
@@ -304,7 +329,13 @@ export default function InvoicePreview({
         {/* LOGO */}
         <div className="col-span-3 flex items-center justify-start">
           {resolvedLogoUrl ? (
-            <img src={resolvedLogoUrl} alt="Logo" className="max-h-20 max-w-[150px] object-contain" />
+            <img
+              src={resolvedLogoUrl}
+              alt="Company Logo"
+              crossOrigin="anonymous"
+              loading="eager"
+              className="max-h-20 max-w-[150px] object-contain"
+            />
           ) : (
             <div className="h-14 w-28 rounded border border-dashed border-slate-300 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase">
               {seller.name?.slice(0, 8) || "LOGO"}
@@ -569,6 +600,18 @@ export default function InvoicePreview({
             <span>Total After Tax:</span>
             <span className="tabular-nums">₹{formatIndianCurrency(totalAfterTax)}</span>
           </div>
+          {advanceReceived > 0 ? (
+            <>
+              <div className="flex justify-between text-slate-700 text-[10px]">
+                <span>Less: Advance Received:</span>
+                <span className="tabular-nums font-semibold text-emerald-700">-₹{formatIndianCurrency(advanceReceived)}</span>
+              </div>
+              <div className="pt-1 flex justify-between border-t border-slate-300 text-xs font-bold text-slate-900">
+                <span>Balance Payable:</span>
+                <span className="tabular-nums">₹{formatIndianCurrency(balancePayable)}</span>
+              </div>
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -594,7 +637,7 @@ export default function InvoicePreview({
         ) : null}
 
         {/* BANK DETAILS BOX & SIGNATURE */}
-        <div className="grid grid-cols-12 gap-3 pt-2 items-end">
+        <div className="grid grid-cols-12 gap-3 pt-2 items-end print-avoid-break">
           {/* BANK DETAILS BOX */}
           <div className="col-span-7">
             {hasBank ? (
@@ -614,7 +657,19 @@ export default function InvoicePreview({
           {/* FOR COMPANY & AUTHORIZED SIGNATORY */}
           <div className="col-span-5 text-right flex flex-col justify-end items-end h-full">
             <div className="font-bold text-slate-900 text-[10px]">For {seller.name}</div>
-            <div className="h-10"></div>
+            {resolvedSignatureUrl ? (
+              <div className="py-1 flex items-center justify-end">
+                <img
+                  src={resolvedSignatureUrl}
+                  alt="Authorized Signature"
+                  crossOrigin="anonymous"
+                  loading="eager"
+                  className="max-h-14 max-w-[140px] object-contain ml-auto"
+                />
+              </div>
+            ) : (
+              <div className="h-10"></div>
+            )}
             <div className="border-t border-slate-400 pt-0.5 font-semibold text-slate-800 text-[9.5px] w-36 text-center">
               Authorized Signatory
             </div>
@@ -632,4 +687,6 @@ export default function InvoicePreview({
       </div>
     </div>
   );
-}
+});
+
+export default InvoicePreview;

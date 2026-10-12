@@ -1,71 +1,53 @@
-export const reportSections = [
+export const REPORT_TYPES = [
   {
-    id: "v1-reports",
-    title: "Twite Billing V1 Reports",
-    description: "Core sales, tax invoice, pro forma, payment, and receivable reports.",
-    items: [
-      {
-        id: "sale-report",
-        label: "Sales Report",
-        description: "Comprehensive sales revenue breakdown."
-      },
-      {
-        id: "tax-invoice-report",
-        label: "Tax Invoice Report",
-        description: "Issued tax invoices, balances, and payment status."
-      },
-      {
-        id: "proforma-report",
-        label: "Pro Forma Invoice Report",
-        description: "Pro forma invoices and conversion tracking."
-      },
-      {
-        id: "payment-in-report",
-        label: "Payment In Report",
-        description: "Customer receipts, allocations, and TDS withholding."
-      },
-      {
-        id: "aging-report",
-        label: "Receivables Report",
-        description: "Customer outstanding balances and aging buckets."
-      }
-    ]
+    id: "customer-wise",
+    label: "Customer-wise Report",
+    shortLabel: "Customer-wise",
+    description: "Invoice and payment details grouped by customer.",
+    badge: "Grouped"
   },
   {
-    id: "v2-reports",
-    title: "Other Financial Reports (Upcoming)",
-    description: "Features reserved for future releases.",
-    items: [
-      {
-        id: "purchase-report",
-        label: "Purchase Report",
-        description: "Vendor bills and payables (V2)",
-        unavailable: true
-      },
-      {
-        id: "cash-flow",
-        label: "Cash Flow Report",
-        description: "Treasury cash in & out (V2)",
-        unavailable: true
-      },
-      {
-        id: "profit-loss",
-        label: "Profit & Loss",
-        description: "Income, COGS & Expense P&L (V2)",
-        unavailable: true
-      },
-      {
-        id: "gst-report",
-        label: "GST Compliance Report",
-        description: "GSTR-1 & GSTR-3B filings (V2)",
-        unavailable: true
-      },
-      {
-        id: "tds-report",
-        label: "TDS Report",
-        description: "Tax deduction register (V2)",
-        unavailable: true
-      }
-    ]
+    id: "payment-wise",
+    label: "Payment-wise Report",
+    shortLabel: "Payment-wise",
+    description: "Track actual money receipts and payment allocations.",
+    badge: "Receipts"
+  },
+  {
+    id: "advances",
+    label: "Advance Received Report",
+    shortLabel: "Advance Received",
+    description: "Advances received and subsequent application to Tax Invoices.",
+    badge: "Advances"
+  },
+  {
+    id: "balance-due",
+    label: "Balance Due Report",
+    shortLabel: "Balance Due",
+    description: "Identify outstanding invoices and overdue balances.",
+    badge: "Outstanding"
+  },
+  {
+    id: "proforma",
+    label: "Pro Forma Report",
+    shortLabel: "Pro Forma",
+    description: "Pro Forma values, advances, and Tax Invoice conversion tracking.",
+    badge: "Quotations"
+  },
+  {
+    id: "tax-invoices",
+    label: "Tax Invoice Report",
+    shortLabel: "Tax Invoice",
+    description: "Issued Tax Invoices with GST breakdown and collection status.",
+    badge: "Invoices"
+  }
+];
+
+export const reportSections = [
+  {
+    id: "billing-reports",
+    title: "Billing & Payment Reports",
+    description: "Core billing, payment, advance, and receivables reports.",
+    items: REPORT_TYPES
   }
 ];

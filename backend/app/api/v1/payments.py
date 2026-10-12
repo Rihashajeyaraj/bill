@@ -139,6 +139,7 @@ def list_receivables(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     q: Optional[str] = None,
+    doc_type: Optional[str] = Query(None, alias="docType"),
     ctx: UserContext = Depends(get_current_user_context)
 ):
     service = PaymentService(token=ctx.token)
@@ -148,7 +149,8 @@ def list_receivables(
         from_date=from_date,
         to_date=to_date,
         status_filter=status_filter,
-        q=q
+        q=q,
+        doc_type=doc_type
     )
 
 @router.get("/receipts", response_model=Dict[str, Any])

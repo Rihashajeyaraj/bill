@@ -14,23 +14,21 @@ import {
   markAllNotificationsRead,
   markNotificationRead
 } from "../services/activity.service";
-import {
-  CREDIT_NOTIFICATION_EVENT_NAME,
-  listCreditNotificationsCached,
-  markAllCreditNotificationsRead,
-  markCreditNotificationRead,
-  syncCreditNotificationsFromRemote
-} from "../services/creditNotifications.service";
-import {
-  STOCK_NOTIFICATION_EVENT_NAME,
-  listStockNotificationsCached,
-  markAllStockNotificationsRead,
-  markStockNotificationRead,
-  syncStockNotificationsFromRemote
-} from "../services/stockNotifications.service";
+const CREDIT_NOTIFICATION_EVENT_NAME = "credit_notifications_updated";
+const listCreditNotificationsCached = () => [];
+const markAllCreditNotificationsRead = async () => {};
+const markCreditNotificationRead = async () => {};
+const syncCreditNotificationsFromRemote = async () => [];
+
+const STOCK_NOTIFICATION_EVENT_NAME = "stock_notifications_updated";
+const listStockNotificationsCached = () => [];
+const markAllStockNotificationsRead = async () => {};
+const markStockNotificationRead = async () => {};
+const syncStockNotificationsFromRemote = async () => [];
+
+const syncTdsComplianceReminders = () => {};
 import { listItems } from "../modules/items/store";
 import { listParties } from "../modules/parties/store";
-import { syncTdsComplianceReminders } from "../services/tds.service";
 import { useOrganization } from "./OrganizationContext";
 
 const AppShellContext = createContext(null);

@@ -1,7 +1,7 @@
 import React from "react";
 import clsx from "clsx";
 
-export default function PageHeader({ title, subtitle, right, className }) {
+export default function PageHeader({ title = "", subtitle = "", right = null, className = "" }) {
   return (
     <div className={clsx("mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between", className)}>
       <div className="min-w-0">

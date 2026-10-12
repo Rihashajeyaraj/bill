@@ -112,12 +112,16 @@ export function OrganizationProvider({ children }) {
   const refreshOrganizations = useCallback(async () => {
     if (!authGetToken()) {
       setOrganizations([]);
+      setOrganizationsLoading(false);
       return [];
     }
 
     setOrganizationsLoading(true);
     try {
-      const nextRows = await authListOrganizations();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Organization list load timeout")), 5000)
+      );
+      const nextRows = await Promise.race([authListOrganizations(), timeoutPromise]);
       const safeRows = Array.isArray(nextRows) ? nextRows : [];
       setOrganizations(safeRows);
       return safeRows;

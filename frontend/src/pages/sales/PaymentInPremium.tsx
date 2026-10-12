@@ -221,6 +221,18 @@ export default function PaymentInPremium() {
     enabled: viewMode === "invoices"
   });
 
+  // Filtered Receivables by Invoice Type (Pro Forma vs Tax Invoice)
+  const filteredReceivables = useMemo(() => {
+    if (!Array.isArray(receivablesData)) return [];
+    return receivablesData.filter((doc: any) => {
+      if (docType && docType !== "all") {
+        const type = doc.invoice_type || (doc.invoice_no?.startsWith("PI-") ? "proforma" : "invoice");
+        if (type !== docType) return false;
+      }
+      return true;
+    });
+  }, [receivablesData, docType]);
+
   // 4. Customer-wise Receivables
   const {
     data: customerReceivablesData = [],
@@ -466,6 +478,118 @@ export default function PaymentInPremium() {
     }
   });
 
+  // Dedicated Record Payment Modal State (Section 4)
+  const [recordPaymentDoc, setRecordPaymentDoc] = useState<any | null>(null);
+  const [recordPaymentDate, setRecordPaymentDate] = useState<string>(new Date().toISOString().split("T")[0]);
+  const [recordPaymentAmount, setRecordPaymentAmount] = useState<number | "">("");
+  const [recordPaymentMode, setRecordPaymentMode] = useState<string>("Bank Transfer");
+  const [recordPaymentRefNo, setRecordPaymentRefNo] = useState<string>("");
+  const [recordPaymentNotes, setRecordPaymentNotes] = useState<string>("");
+  const [recordPaymentError, setRecordPaymentError] = useState<string>("");
+
+  // Dedicated View Details Modal State
+  const [viewDetailsDoc, setViewDetailsDoc] = useState<any | null>(null);
+
+  const handleOpenRecordPayment = (doc: any) => {
+    const invTotal = Number(doc.invoice_total ?? doc.grand_total ?? doc.total_amount ?? 0);
+    const advRec = Number(doc.advance_received ?? doc.advance_applied ?? 0);
+    const addRec = Number(doc.additional_payments_received ?? doc.additional_payments ?? Math.max(0, (doc.total_received ?? doc.paid_amount ?? 0) - advRec));
+    const totRec = Number(doc.total_received ?? (advRec + addRec));
+    const balDue = Number(doc.balance_due ?? Math.max(0, invTotal - totRec));
+
+    setRecordPaymentDoc(doc);
+    setRecordPaymentDate(new Date().toISOString().split("T")[0]);
+    setRecordPaymentAmount(balDue > 0 ? balDue : "");
+    setRecordPaymentMode("Bank Transfer");
+    setRecordPaymentRefNo("");
+    setRecordPaymentNotes("");
+    setRecordPaymentError("");
+  };
+
+  const recordPaymentMutation = useMutation({
+    mutationFn: async ({
+      doc,
+      amount,
+      paymentDate,
+      paymentMode,
+      refNo,
+      notes
+    }: {
+      doc: any;
+      amount: number;
+      paymentDate: string;
+      paymentMode: string;
+      refNo: string;
+      notes: string;
+    }) => {
+      const isProforma = doc.invoice_type === "proforma" || doc.invoice_no?.startsWith("PI-");
+      const cleanNotes = isProforma
+        ? `${notes || "Advance payment"} [proforma:${doc.invoice_id}] [advance]`
+        : (notes || "Payment received for invoice");
+
+      return apiClient.createPayment({
+        payment_date: paymentDate,
+        party_id: doc.customer_id,
+        amount: amount,
+        amount_received: amount,
+        payment_mode: paymentMode,
+        reference_no: refNo || undefined,
+        notes: cleanNotes,
+        allocations: [{
+          invoice_id: doc.invoice_id,
+          amount_allocated: amount
+        }]
+      });
+    },
+    onSuccess: () => {
+      setToastMessage(`Payment of ${formatINR(recordPaymentAmount)} recorded successfully!`);
+      setTimeout(() => setToastMessage(""), 5000);
+      setRecordPaymentDoc(null);
+      queryClient.invalidateQueries({ queryKey: ["receivables"] });
+      queryClient.invalidateQueries({ queryKey: ["receivables-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["receivables-customers"] });
+      queryClient.invalidateQueries({ queryKey: ["payments-receipts"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.detail || err.message || "Failed to record payment";
+      setRecordPaymentError(msg);
+    }
+  });
+
+  const handleSaveRecordPayment = () => {
+    if (!recordPaymentDoc) return;
+    const invTotal = Number(recordPaymentDoc.invoice_total ?? recordPaymentDoc.grand_total ?? recordPaymentDoc.total_amount ?? 0);
+    const advRec = Number(recordPaymentDoc.advance_received ?? recordPaymentDoc.advance_applied ?? 0);
+    const addRec = Number(recordPaymentDoc.additional_payments_received ?? recordPaymentDoc.additional_payments ?? Math.max(0, (recordPaymentDoc.total_received ?? recordPaymentDoc.paid_amount ?? 0) - advRec));
+    const totRec = Number(recordPaymentDoc.total_received ?? (advRec + addRec));
+    const balDue = Number(recordPaymentDoc.balance_due ?? Math.max(0, invTotal - totRec));
+
+    const numAmt = Number(recordPaymentAmount);
+    if (!numAmt || numAmt <= 0) {
+      setRecordPaymentError("Payment amount must be greater than zero.");
+      return;
+    }
+    if (numAmt > balDue + 0.01) {
+      setRecordPaymentError(`Payment amount cannot exceed outstanding balance of ${formatINR(balDue)}.`);
+      return;
+    }
+    if (!recordPaymentDate) {
+      setRecordPaymentError("Payment date is required.");
+      return;
+    }
+
+    recordPaymentMutation.mutate({
+      doc: recordPaymentDoc,
+      amount: numAmt,
+      paymentDate: recordPaymentDate,
+      paymentMode: recordPaymentMode,
+      refNo: recordPaymentRefNo,
+      notes: recordPaymentNotes
+    });
+  };
+
   // Handle Export
   const handleExport = async (type: "csv" | "excel" | "pdf") => {
     setExporting(true);
@@ -619,7 +743,7 @@ export default function PaymentInPremium() {
               ₹ INR
             </span>
           </div>
-          <p className="text-sm text-slate-500 mt-0.5">Receive money from customers and track open receivables across invoices</p>
+          <p className="text-sm text-slate-500 mt-0.5">Track customer advances, payments received, and outstanding balances.</p>
         </div>
         <div>
           <button
@@ -632,12 +756,12 @@ export default function PaymentInPremium() {
         </div>
       </div>
 
-      {/* 2. KPI CARDS (4 RESPONSIVE COLS WITH ERROR HANDLING & RETRY) */}
+      {/* 2. KPI CARDS (4 RESPONSIVE COLS DYNAMIC FROM BACKEND) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Card 1: Total Invoiced */}
+        {/* Card 1: Total Invoice Amount */}
         <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
           <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Total Invoiced</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Total Invoice Amount</span>
             <FileText className="w-5 h-5 text-emerald-600" />
           </div>
           {isSummaryLoading ? (
@@ -649,16 +773,16 @@ export default function PaymentInPremium() {
             </div>
           ) : (
             <div className="text-2xl font-bold text-slate-900">
-              {formatINR(summaryData?.total_invoiced)}
+              {formatINR(summaryData?.total_invoice_amount ?? summaryData?.total_invoiced)}
             </div>
           )}
           <p className="text-xs text-slate-400 mt-2">Total billings in period</p>
         </div>
 
-        {/* Card 2: Amount Received */}
+        {/* Card 2: Total Amount Received */}
         <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
           <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Amount Received</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Total Amount Received</span>
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
           </div>
           {isSummaryLoading ? (
@@ -670,16 +794,16 @@ export default function PaymentInPremium() {
             </div>
           ) : (
             <div className="text-2xl font-bold text-emerald-700">
-              {formatINR(summaryData?.amount_received ?? summaryData?.total_received)}
+              {formatINR(summaryData?.total_amount_received ?? summaryData?.amount_received ?? summaryData?.total_received)}
             </div>
           )}
-          <p className="text-xs text-slate-400 mt-2">Collected from payments</p>
+          <p className="text-xs text-slate-400 mt-2">Collected from advances & receipts</p>
         </div>
 
-        {/* Card 3: Pending Receivable */}
+        {/* Card 3: Total Outstanding */}
         <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
           <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Pending Receivable</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Total Outstanding</span>
             <Clock className="w-5 h-5 text-amber-500" />
           </div>
           {isSummaryLoading ? (
@@ -691,23 +815,17 @@ export default function PaymentInPremium() {
             </div>
           ) : (
             <div className="text-2xl font-bold text-amber-700">
-              {formatINR(summaryData?.pending_receivable)}
+              {formatINR(summaryData?.total_outstanding ?? summaryData?.pending_receivable)}
             </div>
           )}
-          <p className="text-xs text-slate-400 mt-2">
-            {summaryData?.overdue_count ? (
-              <span className="text-red-600 font-semibold">{summaryData.overdue_count} overdue ({formatINR(summaryData.overdue_amount)})</span>
-            ) : (
-              "All invoices on schedule"
-            )}
-          </p>
+          <p className="text-xs text-slate-400 mt-2">Total unpaid receivable balance</p>
         </div>
 
-        {/* Card 4: Advance / Unapplied Balance */}
+        {/* Card 4: Overdue Amount */}
         <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
           <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Advance / Unapplied</span>
-            <AlertCircle className="w-5 h-5 text-purple-500" />
+            <span className="text-xs font-semibold uppercase tracking-wider">Overdue Amount</span>
+            <AlertTriangle className="w-5 h-5 text-red-600" />
           </div>
           {isSummaryLoading ? (
             <div className="h-8 w-32 bg-slate-200 animate-pulse rounded my-1" />
@@ -717,11 +835,17 @@ export default function PaymentInPremium() {
               <button onClick={() => refetchSummary()} className="ml-2 text-xs font-bold text-emerald-700 underline">Retry</button>
             </div>
           ) : (
-            <div className="text-2xl font-bold text-purple-700">
-              {formatINR(summaryData?.unapplied_advance ?? summaryData?.unapplied_balance)}
+            <div className="text-2xl font-bold text-red-700">
+              {formatINR(summaryData?.overdue_amount)}
             </div>
           )}
-          <p className="text-xs text-slate-400 mt-2">Available for invoice allocation</p>
+          <p className="text-xs text-slate-400 mt-2">
+            {summaryData?.overdue_count ? (
+              <span className="text-red-600 font-semibold">{summaryData.overdue_count} overdue invoice{summaryData.overdue_count > 1 ? "s" : ""}</span>
+            ) : (
+              "All invoices on schedule"
+            )}
+          </p>
         </div>
       </div>
 
@@ -831,6 +955,22 @@ export default function PaymentInPremium() {
               ))}
             </select>
           </div>
+
+          {/* Invoice Type Filter (active in invoices view) */}
+          {viewMode === "invoices" && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Invoice Type</label>
+              <select
+                value={docType}
+                onChange={(e) => updateFilter("docType", e.target.value)}
+                className="w-full border border-slate-300 rounded-lg py-2 px-2.5 text-xs font-medium text-slate-700 bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              >
+                <option value="all">All Types</option>
+                <option value="invoice">Tax Invoice</option>
+                <option value="proforma">Pro Forma</option>
+              </select>
+            </div>
+          )}
 
           {/* Mode (active in receipts mode) */}
           {viewMode === "receipts" && (
@@ -1010,7 +1150,7 @@ export default function PaymentInPremium() {
                 Retry
               </button>
             </div>
-          ) : receivablesData.length === 0 ? (
+          ) : filteredReceivables.length === 0 ? (
             <div className="py-12 text-center text-xs text-slate-400">
               No invoice receivables matching active filters.
             </div>
@@ -1019,106 +1159,142 @@ export default function PaymentInPremium() {
               <table className="w-full text-left text-xs text-slate-700 border-collapse">
                 <thead className="bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider border-b border-slate-200">
                   <tr>
-                    <th className="py-3 px-3">Date</th>
-                    <th className="py-3 px-3">Invoice No</th>
-                    <th className="py-3 px-3">Customer</th>
-                    <th className="py-3 px-3">Due Date / Status</th>
-                    <th className="py-3 px-3 text-right">Total (₹)</th>
-                    <th className="py-3 px-3 text-right">Paid (₹)</th>
-                    <th className="py-3 px-3 text-right">Advance Applied (₹)</th>
-                    <th className="py-3 px-3 text-right">Balance Due (₹)</th>
-                    <th className="py-3 px-3">Badges</th>
-                    <th className="py-3 px-3 text-right">Actions</th>
+                    <th className="py-3 px-3.5">Invoice Date</th>
+                    <th className="py-3 px-3.5">Invoice No</th>
+                    <th className="py-3 px-3.5">Customer Details</th>
+                    <th className="py-3 px-3.5 text-right">Total Amount</th>
+                    <th className="py-3 px-3.5 text-right">Amount Received</th>
+                    <th className="py-3 px-3.5 text-right">Balance Amount</th>
+                    <th className="py-3 px-3.5">Due Date</th>
+                    <th className="py-3 px-3.5 text-center">Status</th>
+                    <th className="py-3 px-3.5 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {receivablesData.map((doc: any) => {
-                    const hasAdvAvail = (doc.available_customer_advance || 0) > 0.01;
-                    const canApplyAdv = hasAdvAvail && doc.balance_due > 0.01;
+                  {filteredReceivables.map((doc: any) => {
+                    const invTotal = Number(doc.invoice_total ?? doc.grand_total ?? doc.total_amount ?? 0);
+                    const advRec = Number(doc.advance_received ?? doc.advance_applied ?? 0);
+                    const addRec = Number(doc.additional_payments_received ?? doc.additional_payments ?? Math.max(0, (doc.total_received ?? doc.paid_amount ?? 0) - advRec));
+                    const totRec = Number(doc.total_received ?? (advRec + addRec));
+                    const balDue = Number(doc.balance_due ?? Math.max(0, invTotal - totRec));
+
+                    const isProforma = doc.invoice_type === "proforma" || doc.invoice_no?.startsWith("PI-");
+                    const isOverdue = balDue > 0.01 && Boolean(doc.due_date) && new Date(doc.due_date) < new Date(new Date().setHours(0, 0, 0, 0));
+
+                    let displayStatus: "Paid" | "Partially Paid" | "Overdue" | "Unpaid" = "Unpaid";
+                    if (balDue <= 0.01 && totRec > 0) {
+                      displayStatus = "Paid";
+                    } else if (isOverdue) {
+                      displayStatus = "Overdue";
+                    } else if (totRec > 0.01) {
+                      displayStatus = "Partially Paid";
+                    } else {
+                      displayStatus = "Unpaid";
+                    }
 
                     return (
-                      <tr key={doc.invoice_id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3 px-3 whitespace-nowrap">{formatDate(doc.invoice_date)}</td>
-                        <td className="py-3 px-3 font-bold text-slate-900 whitespace-nowrap">{doc.invoice_no}</td>
-                        <td className="py-3 px-3 font-semibold text-slate-800">{doc.customer_name}</td>
-                        <td className="py-3 px-3 whitespace-nowrap">
-                          {doc.status === "paid" ? (
-                            <span className="text-emerald-700 font-bold flex items-center">
-                              <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                              Paid
+                      <tr key={doc.invoice_id} className={`hover:bg-slate-50/80 transition-colors ${isOverdue ? "bg-red-50/20" : ""}`}>
+                        {/* 1. Invoice Date */}
+                        <td className="py-3 px-3.5 whitespace-nowrap text-slate-600 font-medium">
+                          {formatDate(doc.invoice_date)}
+                        </td>
+
+                        {/* 2. Invoice No */}
+                        <td className="py-3 px-3.5 whitespace-nowrap">
+                          <div className="flex items-center space-x-1.5">
+                            <span className="font-bold text-slate-900">{doc.invoice_no}</span>
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                              isProforma
+                                ? "bg-purple-50 text-purple-700 border-purple-200"
+                                : "bg-slate-100 text-slate-700 border-slate-200"
+                            }`}>
+                              {isProforma ? "Pro Forma" : "Tax Invoice"}
                             </span>
-                          ) : doc.days_overdue && doc.days_overdue > 0 ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-red-100 text-red-800 border border-red-200">
-                              <AlertCircle className="w-3 h-3 mr-1 shrink-0" />
-                              {doc.days_overdue} days overdue
-                            </span>
-                          ) : doc.days_to_due !== null && doc.days_to_due !== undefined ? (
-                            <span className="text-slate-600 font-medium flex items-center">
-                              <Clock className="w-3 h-3 mr-1 text-slate-400" />
-                              Due in {doc.days_to_due}d ({formatDate(doc.due_date)})
-                            </span>
-                          ) : doc.due_date ? (
-                            <span className="text-slate-600">{formatDate(doc.due_date)}</span>
-                          ) : (
-                            <span className="text-slate-400 italic">No due date</span>
-                          )}
-                        </td>
-                        {/* FIX: Always render grand_total ?? total_amount to avoid ₹0.00 bug */}
-                        <td className="py-3 px-3 text-right font-medium text-slate-900 whitespace-nowrap">
-                          {formatINR(doc.grand_total ?? doc.total_amount)}
-                        </td>
-                        <td className="py-3 px-3 text-right font-medium text-slate-600 whitespace-nowrap">
-                          {formatINR(doc.paid_amount)}
-                        </td>
-                        <td className="py-3 px-3 text-right font-medium text-blue-700 whitespace-nowrap">
-                          {formatINR(doc.advance_applied)}
-                        </td>
-                        <td className="py-3 px-3 text-right font-bold text-emerald-700 whitespace-nowrap">
-                          {formatINR(doc.balance_due)}
-                        </td>
-                        <td className="py-3 px-3 whitespace-nowrap">
-                          <div className="flex items-center space-x-1">
-                            {doc.has_advance_applied && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-                                Adv Applied
-                              </span>
-                            )}
-                            {hasAdvAvail && (
-                              <span
-                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800 border border-purple-200"
-                                title={`Unapplied Advance: ${formatINR(doc.available_customer_advance)}`}
-                              >
-                                Adv Avail ({formatINR(doc.available_customer_advance)})
-                              </span>
-                            )}
                           </div>
                         </td>
-                        <td className="py-3 px-3 text-right whitespace-nowrap">
-                          <div className="flex items-center justify-end space-x-1.5">
-                            {canApplyAdv && (
+
+                        {/* 3. Customer Details */}
+                        <td className="py-3 px-3.5">
+                          <div className="font-semibold text-slate-900">{doc.customer_name}</div>
+                          {(doc.customer_phone || doc.customer_gstin) && (
+                            <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                              {doc.customer_phone && <span>Ph: {doc.customer_phone}</span>}
+                              {doc.customer_gstin && <span className="font-mono">GSTIN: {doc.customer_gstin}</span>}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* 4. Total Amount */}
+                        <td className="py-3 px-3.5 text-right font-medium text-slate-900 whitespace-nowrap">
+                          {formatINR(invTotal)}
+                        </td>
+
+                        {/* 5. Amount Received */}
+                        <td className="py-3 px-3.5 text-right whitespace-nowrap">
+                          <span className="font-semibold text-emerald-700">{formatINR(totRec)}</span>
+                          {advRec > 0 && (
+                            <span className="block text-[10px] text-blue-600 font-medium">Adv: {formatINR(advRec)}</span>
+                          )}
+                        </td>
+
+                        {/* 6. Balance Amount */}
+                        <td className="py-3 px-3.5 text-right font-bold whitespace-nowrap text-slate-900">
+                          {formatINR(balDue)}
+                        </td>
+
+                        {/* 7. Due Date */}
+                        <td className="py-3 px-3.5 whitespace-nowrap">
+                          <span className={isOverdue ? "text-red-700 font-semibold" : "text-slate-600"}>
+                            {doc.due_date ? formatDate(doc.due_date) : "-"}
+                          </span>
+                          {isOverdue && (
+                            <span className="block text-[10px] text-red-600 font-medium">Past Due</span>
+                          )}
+                        </td>
+
+                        {/* 8. Status */}
+                        <td className="py-3 px-3.5 text-center whitespace-nowrap">
+                          {displayStatus === "Paid" ? (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-600" />
+                              Paid
+                            </span>
+                          ) : displayStatus === "Partially Paid" ? (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                              <Clock className="w-3 h-3 mr-1 text-amber-600" />
+                              Partially Paid
+                            </span>
+                          ) : displayStatus === "Overdue" ? (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-700 border border-red-200">
+                              <AlertTriangle className="w-3 h-3 mr-1 text-red-600" />
+                              Overdue
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                              <AlertCircle className="w-3 h-3 mr-1 text-blue-600" />
+                              Unpaid
+                            </span>
+                          )}
+                        </td>
+
+                        {/* 9. Actions */}
+                        <td className="py-3 px-3.5 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end space-x-2">
+                            <button
+                              onClick={() => setViewDetailsDoc(doc)}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-semibold transition-colors border border-slate-200"
+                            >
+                              View Details
+                            </button>
+                            {balDue > 0.01 ? (
                               <button
-                                onClick={() => {
-                                  const amtToApply = Math.min(doc.balance_due, doc.available_customer_advance);
-                                  applyAdvanceMutation.mutate({
-                                    customerId: doc.customer_id,
-                                    invoiceId: doc.invoice_id,
-                                    amount: amtToApply
-                                  });
-                                }}
-                                disabled={applyAdvanceMutation.isPending}
-                                className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-300 rounded text-[11px] font-semibold transition-colors"
-                                title={`Apply available advance of ${formatINR(Math.min(doc.balance_due, doc.available_customer_advance))}`}
+                                onClick={() => handleOpenRecordPayment(doc)}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold transition-colors shadow-xs"
                               >
-                                {applyAdvanceMutation.isPending ? "Applying..." : "Apply Adv"}
+                                Record Payment
                               </button>
-                            )}
-                            {doc.balance_due > 0.01 && (
-                              <button
-                                onClick={() => handleOpenWizardWithDoc(doc)}
-                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-semibold transition-colors shadow-xs"
-                              >
-                                Receive Payment
-                              </button>
+                            ) : (
+                              <span className="px-2 py-1 text-xs text-slate-400 font-medium">Settled</span>
                             )}
                           </div>
                         </td>
@@ -1126,22 +1302,19 @@ export default function PaymentInPremium() {
                     );
                   })}
                 </tbody>
-                <tfoot className="bg-slate-100/90 border-t border-slate-300 font-bold text-slate-900 text-xs">
+                <tfoot className="bg-slate-50 border-t border-slate-200 font-bold text-slate-900 text-xs">
                   <tr>
-                    <td colSpan={4} className="py-3 px-3 uppercase text-slate-500 tracking-wider">Total</td>
-                    <td className="py-3 px-3 text-right">
-                      {formatINR(receivablesData.reduce((sum: number, i: any) => sum + (i.grand_total ?? i.total_amount ?? 0), 0))}
+                    <td colSpan={3} className="py-3 px-3.5 uppercase text-slate-500 tracking-wider">Total</td>
+                    <td className="py-3 px-3.5 text-right text-slate-900">
+                      {formatINR(filteredReceivables.reduce((sum: number, i: any) => sum + Number(i.invoice_total ?? i.grand_total ?? i.total_amount ?? 0), 0))}
                     </td>
-                    <td className="py-3 px-3 text-right">
-                      {formatINR(receivablesData.reduce((sum: number, i: any) => sum + (i.paid_amount || 0), 0))}
+                    <td className="py-3 px-3.5 text-right text-emerald-700">
+                      {formatINR(filteredReceivables.reduce((sum: number, i: any) => sum + Number(i.total_received ?? (Number(i.advance_received || 0) + Number(i.additional_payments_received || 0))), 0))}
                     </td>
-                    <td className="py-3 px-3 text-right text-blue-700">
-                      {formatINR(receivablesData.reduce((sum: number, i: any) => sum + (i.advance_applied || 0), 0))}
+                    <td className="py-3 px-3.5 text-right text-slate-900 font-bold">
+                      {formatINR(filteredReceivables.reduce((sum: number, i: any) => sum + Number(i.balance_due || 0), 0))}
                     </td>
-                    <td className="py-3 px-3 text-right text-emerald-700">
-                      {formatINR(receivablesData.reduce((sum: number, i: any) => sum + (i.balance_due || 0), 0))}
-                    </td>
-                    <td colSpan={2} />
+                    <td colSpan={3} />
                   </tr>
                 </tfoot>
               </table>
@@ -2134,6 +2307,237 @@ export default function PaymentInPremium() {
               </div>
             )}
 
+          </div>
+        </div>
+      )}
+
+      {/* 10. RECORD PAYMENT MODAL (SECTION 4) */}
+      {recordPaymentDoc && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-200">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Record Payment</h3>
+                <p className="text-xs text-slate-500">Record customer payment against invoice {recordPaymentDoc.invoice_no}</p>
+              </div>
+              <button
+                onClick={() => setRecordPaymentDoc(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Read-Only Display (Required: Invoice No, Customer Name, Invoice Total, Previously Received, Outstanding Balance) */}
+            <div className="bg-slate-50 rounded-lg p-3.5 border border-slate-200 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-medium">Invoice Number:</span>
+                <span className="font-bold text-slate-900">{recordPaymentDoc.invoice_no}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-medium">Customer Name:</span>
+                <span className="font-semibold text-slate-800">{recordPaymentDoc.customer_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-medium">Invoice Total:</span>
+                <span className="font-bold text-slate-900">
+                  {formatINR(recordPaymentDoc.invoice_total ?? recordPaymentDoc.grand_total ?? recordPaymentDoc.total_amount)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-medium">Previously Received:</span>
+                <span className="font-semibold text-emerald-700">
+                  {formatINR(recordPaymentDoc.total_received ?? 0)}
+                </span>
+              </div>
+              <div className="flex justify-between border-t border-slate-200 pt-2 text-sm font-bold">
+                <span className="text-slate-700">Outstanding Balance:</span>
+                <span className="text-amber-700">
+                  {formatINR(recordPaymentDoc.balance_due)}
+                </span>
+              </div>
+            </div>
+
+            {/* User Input: Payment Date, Payment Amount, Payment Method, Reference Number, Notes */}
+            <div className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Payment Date *</label>
+                  <input
+                    type="date"
+                    value={recordPaymentDate}
+                    onChange={(e) => setRecordPaymentDate(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2 font-medium text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Payment Amount (₹) *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    max={Number(recordPaymentDoc.balance_due || 0)}
+                    value={recordPaymentAmount}
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? "" : parseFloat(e.target.value);
+                      setRecordPaymentAmount(val);
+                    }}
+                    placeholder="Enter amount"
+                    className="w-full border border-slate-300 rounded-lg p-2 font-bold text-emerald-700 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Payment Method *</label>
+                  <select
+                    value={recordPaymentMode}
+                    onChange={(e) => setRecordPaymentMode(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2 font-medium text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  >
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="UPI">UPI</option>
+                    <option value="Cash">Cash</option>
+                    <option value="Cheque">Cheque</option>
+                    <option value="Card">Card</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Reference Number</label>
+                  <input
+                    type="text"
+                    value={recordPaymentRefNo}
+                    onChange={(e) => setRecordPaymentRefNo(e.target.value)}
+                    placeholder="e.g. UTR / Cheque / Txn ID"
+                    className="w-full border border-slate-300 rounded-lg p-2 font-mono text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Notes</label>
+                <textarea
+                  value={recordPaymentNotes}
+                  onChange={(e) => setRecordPaymentNotes(e.target.value)}
+                  placeholder="Additional remarks or notes..."
+                  rows={2}
+                  className="w-full border border-slate-300 rounded-lg p-2 text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              {recordPaymentError && (
+                <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs font-semibold text-red-700 flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{recordPaymentError}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setRecordPaymentDoc(null)}
+                className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={recordPaymentMutation.isPending || !recordPaymentAmount || Number(recordPaymentAmount) <= 0}
+                onClick={handleSaveRecordPayment}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-colors shadow-xs flex items-center space-x-1.5"
+              >
+                {recordPaymentMutation.isPending ? "Saving..." : "Save Payment"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 11. VIEW DETAILS MODAL */}
+      {viewDetailsDoc && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-200">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">{viewDetailsDoc.invoice_no}</h3>
+                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
+                  (viewDetailsDoc.invoice_type === "proforma" || viewDetailsDoc.invoice_no?.startsWith("PI-"))
+                    ? "bg-purple-100 text-purple-800 border border-purple-200"
+                    : "bg-slate-100 text-slate-800 border border-slate-200"
+                }`}>
+                  {(viewDetailsDoc.invoice_type === "proforma" || viewDetailsDoc.invoice_no?.startsWith("PI-")) ? "Pro Forma Invoice" : "Tax Invoice"}
+                </span>
+              </div>
+              <button
+                onClick={() => setViewDetailsDoc(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 space-y-1.5">
+                <div className="font-bold text-slate-900 text-sm">{viewDetailsDoc.customer_name}</div>
+                {viewDetailsDoc.customer_phone && <div className="text-slate-600">Phone: {viewDetailsDoc.customer_phone}</div>}
+                {viewDetailsDoc.customer_gstin && <div className="text-slate-600 font-mono">GSTIN: {viewDetailsDoc.customer_gstin}</div>}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  <span className="text-slate-500 block text-[11px]">Invoice Date</span>
+                  <span className="font-semibold text-slate-900">{formatDate(viewDetailsDoc.invoice_date)}</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  <span className="text-slate-500 block text-[11px]">Due Date</span>
+                  <span className="font-semibold text-slate-900">{viewDetailsDoc.due_date ? formatDate(viewDetailsDoc.due_date) : "-"}</span>
+                </div>
+              </div>
+
+              <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 p-3 space-y-2">
+                <div className="flex justify-between py-1">
+                  <span className="text-slate-600">Total Invoice Amount:</span>
+                  <span className="font-bold text-slate-900">{formatINR(viewDetailsDoc.invoice_total ?? viewDetailsDoc.grand_total ?? viewDetailsDoc.total_amount)}</span>
+                </div>
+                {(viewDetailsDoc.advance_received ?? viewDetailsDoc.advance_applied) > 0 && (
+                  <div className="flex justify-between py-1">
+                    <span className="text-slate-600">Advance Received:</span>
+                    <span className="font-semibold text-blue-700">{formatINR(viewDetailsDoc.advance_received ?? viewDetailsDoc.advance_applied)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between py-1">
+                  <span className="text-slate-600">Total Amount Received:</span>
+                  <span className="font-bold text-emerald-700">{formatINR(viewDetailsDoc.total_received ?? 0)}</span>
+                </div>
+                <div className="flex justify-between py-1 text-sm font-bold">
+                  <span className="text-slate-900">Outstanding Balance:</span>
+                  <span className="text-amber-700">{formatINR(viewDetailsDoc.balance_due)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setViewDetailsDoc(null)}
+                className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
+              {Number(viewDetailsDoc.balance_due || 0) > 0.01 && (
+                <button
+                  onClick={() => {
+                    const docToPay = viewDetailsDoc;
+                    setViewDetailsDoc(null);
+                    handleOpenRecordPayment(docToPay);
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs"
+                >
+                  Record Payment
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

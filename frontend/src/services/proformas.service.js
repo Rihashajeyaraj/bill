@@ -6,6 +6,7 @@ import {
   authGetUser
 } from "./auth.service";
 import { isSupabaseConfigured, supabase } from "./supabaseClient";
+import { apiClient } from "./apiClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { invoicesCreate, invoicesList, invoicesSyncFromRemote } from "./invoices.service";
 import { syncItemsFromRemote } from "../modules/items/store";
@@ -236,8 +237,10 @@ function mapSalesHeader(row, lineRows = []) {
     status: normalizeStatus(row?.status),
     notes: row?.notes || "",
     terms: row?.terms || "",
+    templateId: metadata?.template_id || metadata?.templateId || row?.template_id || "new_globe_export",
     convertedDocumentId: row?.converted_document_id || "",
     convertedAt: row?.converted_at || "",
+
     lines,
     totals: {
       subTotal: round2(parseNumber(row?.subtotal) || computedTotals.subTotal),
@@ -350,17 +353,21 @@ export function purchaseProformasList() {
 }
 
 export async function salesProformaPeekNumber(proformaDate = "") {
-  if (!isSupabaseConfigured || !supabase) return `PI-${new Date().getFullYear()}-0001`;
+  try {
+    const res = await apiClient.getNextProformaNo();
+    if (res?.proforma_no) return res.proforma_no;
+  } catch (_) {}
+
+  if (!isSupabaseConfigured || !supabase) return "PI-0001";
   const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
-  if (!organizationId) return `PI-${new Date().getFullYear()}-0001`;
+  if (!organizationId) return "PI-0001";
   const { data, error } = await supabase.rpc("peek_sales_proforma_no", {
-    p_organization_id: organizationId,
-    p_proforma_date: proformaDate || new Date().toISOString().slice(0, 10)
+    p_org_id: organizationId
   });
   if (error) {
-    throw new Error(normalizeSupabaseError(error, "Failed to load sales proforma number"));
+    return "PI-0001";
   }
-  return String(data || "").trim();
+  return String(data || "PI-0001").trim();
 }
 
 export async function purchaseProformaPeekNumber(proformaDate = "") {
@@ -594,8 +601,10 @@ export async function salesProformaUpsert(input) {
           partyName: input?.partyName || "",
           taxMode: input?.taxMode || "",
           supplyType: input?.supplyType || "",
+          template_id: input?.templateId || input?.template_id || "new_globe_export",
           createdByName: actorName
         },
+
         created_by: actorUserId
       };
 
@@ -714,6 +723,13 @@ export async function salesProformaUpsert(input) {
     }
   }
 
+  const advanceAmount = parseNumber(input?.amountPaid || input?.totals?.amountPaid);
+  const localTotals = {
+    ...totals,
+    amountPaid: advanceAmount,
+    balanceDue: Math.max(0, totals.grandTotal - advanceAmount)
+  };
+
   const localEntry = {
     id: id || uid("spf_"),
     proformaNo: proformaNo || `PI-${Date.now()}`,
@@ -751,12 +767,56 @@ export async function salesProformaUpsert(input) {
       cessAmount: parseNumber(line?.cessAmount),
       lineTotal: parseNumber(line?.lineTotal)
     })),
-    totals,
+    totals: localTotals,
     updatedAt: nowIso
   };
 
   const existing = salesGetAll().filter((entry) => String(entry?.id || "") !== String(localEntry.id));
   salesSetAll([localEntry, ...existing]);
+
+  if (advanceAmount > 0) {
+    try {
+      const existingPayments = listPaymentIn().filter((p) =>
+        (Array.isArray(p?.allocations) ? p.allocations : []).some(
+          (a) =>
+            String(a?.invoiceId || "").trim() === String(localEntry.id) &&
+            String(a?.documentType || "invoice").toLowerCase() === "proforma"
+        )
+      );
+      const existingPayment = existingPayments[0];
+      const paymentPayload = {
+        id: existingPayment?.id,
+        country: input?.country || "IN",
+        paymentDate: proformaDate || new Date().toISOString().slice(0, 10),
+        customerId: input?.partyId || "",
+        customerName: input?.partyName || "Customer",
+        paymentMode: input?.paymentMode || "Bank Transfer",
+        referenceNo: `PI:${localEntry.proformaNo}`,
+        internalNotes: `Advance payment recorded on Pro Forma Invoice ${localEntry.proformaNo}`,
+        desiredStatus: "Applied",
+        amountReceived: advanceAmount,
+        tdsAmount: 0,
+        allocations: [
+          {
+            invoiceId: localEntry.id,
+            invoiceNo: localEntry.proformaNo,
+            invoiceDate: proformaDate || new Date().toISOString().slice(0, 10),
+            invoiceAmount: totals.grandTotal,
+            balanceDue: totals.grandTotal,
+            applyAmount: advanceAmount,
+            documentType: "proforma"
+          }
+        ],
+        customerOutstandingBefore: totals.grandTotal,
+        actor: actorName || "System User"
+      };
+      const savedPayment = savePaymentIn(paymentPayload);
+      syncPaymentInRemote(savedPayment).catch(() => {});
+    } catch (payErr) {
+      console.warn("Auto advance payment creation warning:", payErr);
+    }
+  }
+
   return { id: localEntry.id, proformaNo: localEntry.proformaNo, savedLocallyOnly, remoteSyncMessage };
 }
 
@@ -1043,14 +1103,28 @@ async function convertSalesProformaLocally(proformaId) {
     throw new Error("Sales proforma id is required.");
   }
 
-  const current = salesGetAll().find((entry) => String(entry?.id || "").trim() === safeProformaId);
+  let current = salesGetAll().find((entry) => String(entry?.id || "").trim() === safeProformaId);
+  if (!current) {
+    current = await salesProformaGetByIdRemote(safeProformaId);
+  }
+  if (!current) {
+    await salesProformasSyncFromRemote();
+    current = salesGetAll().find((entry) => String(entry?.id || "").trim() === safeProformaId);
+  }
   if (!current) {
     throw new Error("Sales proforma not found.");
   }
 
   const status = String(current?.status || "").trim().toUpperCase();
   if (status === "CONVERTED" || String(current?.convertedDocumentId || "").trim()) {
-    throw new Error("Sales proforma already converted.");
+    const existingDocId = current?.convertedDocumentId || current?.converted_document_id;
+    const existingInv = invoicesList().find((entry) => String(entry?.id || "").trim() === String(existingDocId || "").trim());
+    return {
+      id: existingDocId,
+      invoiceId: existingDocId,
+      invoice_no: existingInv?.invoiceNo || current?.convertedInvoiceNo || "",
+      invoiceNo: existingInv?.invoiceNo || current?.convertedInvoiceNo || ""
+    };
   }
   if (status === "EXPIRED") {
     throw new Error("Expired Pro Forma Invoices cannot be converted.");
@@ -1094,6 +1168,9 @@ async function convertSalesProformaLocally(proformaId) {
       taxableTotal: parseNumber(current?.totals?.taxableTotal),
       roundOff: parseNumber(current?.totals?.roundOff),
       grandTotal: parseNumber(current?.totals?.grandTotal),
+      amountPaid: parseNumber(current?.appliedAmount ?? current?.amount_paid ?? current?.advancePaid ?? 0),
+      balanceDue: Math.max(0, parseNumber(current?.totals?.grandTotal) - parseNumber(current?.appliedAmount ?? current?.amount_paid ?? current?.advancePaid ?? 0)),
+      bankDetails: current?.bankDetails || current?.bank_details || {},
       taxBreakup: {
         supplyType: current?.supplyType || null
       },
@@ -1135,28 +1212,29 @@ async function convertSalesProformaLocally(proformaId) {
 }
 
 export async function convertSalesProforma(proformaId) {
-  if (!isSupabaseConfigured || !supabase) {
-    return convertSalesProformaLocally(proformaId);
-  }
-  await syncItemsFromRemote();
-  const { data, error } = await supabase.rpc("convert_sales_proforma_to_invoice", {
-    p_proforma_id: proformaId
-  });
-  if (error) {
-    if (String(error?.message || "").toLowerCase().includes("sales proforma already converted")) {
-      await Promise.allSettled([salesProformasSyncFromRemote(), invoicesSyncFromRemote()]);
+  if (looksLikeUuid(proformaId)) {
+    try {
+      const res = await apiClient.convertProforma(proformaId);
+      const invoiceId = res?.id || res?.invoice_id || res?.invoiceId;
+      const invoiceNo = res?.invoice_no || res?.invoiceNo || "";
+      await Promise.all([
+        salesProformasSyncFromRemote().catch(() => {}),
+        invoicesSyncFromRemote().catch(() => {})
+      ]);
+      return {
+        id: invoiceId,
+        invoiceId,
+        invoice_no: invoiceNo,
+        invoiceNo
+      };
+    } catch (err) {
+      if (String(err?.message || "").toLowerCase().includes("already converted")) {
+        throw new Error("Sales proforma already converted.");
+      }
+      throw err;
     }
-    throw new Error(normalizeSupabaseError(error, "Failed to convert sales proforma"));
   }
-  const invoiceId = data?.invoice_id || "";
-  const invoiceNo = data?.invoice_no || "";
-  await invoicesSyncFromRemote();
-  await relinkSalesProformaPayments(proformaId, invoiceId, invoiceNo);
-  await Promise.all([salesProformasSyncFromRemote(), invoicesSyncFromRemote()]);
-  return {
-    invoiceId,
-    invoiceNo
-  };
+  return convertSalesProformaLocally(proformaId);
 }
 
 export async function convertPurchaseProforma(proformaId) {
@@ -1187,4 +1265,53 @@ export function salesProformaComputeTotals(lines, roundOff = 0) {
 export function purchaseProformaComputeTotals(lines) {
   return calculatePurchaseTotals(lines);
 }
+
+export async function salesProformaDelete(proformaId) {
+  assertWritePermission("sales proformas");
+  const targetId = String(proformaId || "").trim();
+  if (!targetId) return;
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
+      if (organizationId && looksLikeUuid(targetId)) {
+        await supabase.from("proforma_invoice_items").delete().eq("proforma_id", targetId);
+        await supabase.from("proforma_invoices").delete().eq("id", targetId).eq("organization_id", organizationId);
+      }
+    } catch (err) {
+      console.warn("Failed remote delete for sales proforma", err);
+    }
+  }
+
+  const remaining = salesGetAll().filter((entry) => String(entry?.id || "").trim() !== targetId && String(entry?.proformaNo || "").trim() !== targetId);
+  salesSetAll(remaining);
+  return true;
+}
+
+export async function salesProformaDeleteAll() {
+  assertWritePermission("sales proformas");
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
+      if (organizationId) {
+        const { data: headers } = await supabase
+          .from("proforma_invoices")
+          .select("id")
+          .eq("organization_id", organizationId);
+        const ids = (Array.isArray(headers) ? headers : []).map((h) => h.id).filter(Boolean);
+        if (ids.length) {
+          await supabase.from("proforma_invoice_items").delete().in("proforma_id", ids);
+          await supabase.from("proforma_invoices").delete().eq("organization_id", organizationId);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed remote delete all sales proformas", err);
+    }
+  }
+
+  salesSetAll([]);
+  return true;
+}
+
 

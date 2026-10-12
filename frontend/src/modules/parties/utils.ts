@@ -20,8 +20,17 @@ export function normalizeText(value?: string) {
 
 export function toIsoDate(value?: string) {
   if (!value) return "";
-  const raw = String(value);
+  const raw = String(value).trim();
   if (raw.length >= 10 && raw[4] === "-" && raw[7] === "-") return raw.slice(0, 10);
+  if (raw.includes("/")) {
+    const parts = raw.split("/");
+    if (parts.length === 3) {
+      const [d, m, y] = parts;
+      if (y.length === 4 && d.length <= 2 && m.length <= 2) {
+        return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+      }
+    }
+  }
   const parsed = new Date(raw);
   if (Number.isNaN(parsed.getTime())) return "";
   return parsed.toISOString().slice(0, 10);

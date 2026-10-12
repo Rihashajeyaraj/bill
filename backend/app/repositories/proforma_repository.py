@@ -1,6 +1,9 @@
 from typing import List, Optional, Dict, Any
 from app.core.supabase import get_admin_supabase_client, get_supabase_client
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+import logging
+
+logger = logging.getLogger(__name__)
 
 KNOWN_COLUMNS = {
     "id", "organization_id", "template_id", "proforma_no", "proforma_date", "invoice_date",
@@ -245,28 +248,80 @@ class ProformaRepository:
     def __init__(self, token: Optional[str] = None):
         self.db = get_admin_supabase_client()
 
-    def generate_proforma_no(self, organization_id: str) -> str:
-        res = self.db.table("proforma_invoices").select("proforma_no").eq("organization_id", organization_id).execute()
-        existing = set()
+    def generate_proforma_no(self, organization_id: str, reserve: bool = False) -> str:
+        org_id_str = str(organization_id)
+        existing_nos = set()
         max_no = 0
-        if res.data:
-            for row in res.data:
-                pno = str(row.get("proforma_no") or "")
-                existing.add(pno)
-                m = re.search(r"(\d+)$", pno)
-                if m:
-                    max_no = max(max_no, int(m.group(1)))
+        try:
+            res = self.db.table("proforma_invoices").select("proforma_no").eq("organization_id", org_id_str).order("created_at", desc=True).limit(50).execute()
+            if res.data:
+                for row in res.data:
+                    pno = str(row.get("proforma_no") or "").strip()
+                    if pno:
+                        existing_nos.add(pno)
+                        m = re.search(r"(\d+)$", pno)
+                        if m:
+                            try:
+                                max_no = max(max_no, int(m.group(1)))
+                            except ValueError:
+                                pass
+        except Exception as e:
+            logger.warning(f"Error reading proforma invoices for org {org_id_str}: {e}")
 
-        next_no = max(max_no + 1, len(res.data or []) + 1)
-        candidate = f"PI-{next_no:04d}"
-        while candidate in existing:
-            next_no += 1
-            candidate = f"PI-{next_no:04d}"
+        seq_next = 1
+        try:
+            seq_res = self.db.table("organization_document_sequences").select("sales_proforma_next_no").eq("organization_id", org_id_str).limit(1).execute()
+            if seq_res.data and seq_res.data[0].get("sales_proforma_next_no") is not None:
+                seq_next = int(seq_res.data[0]["sales_proforma_next_no"])
+        except Exception as e:
+            logger.warning(f"Error reading proforma document sequences for org {org_id_str}: {e}")
+
+        next_val = max(max_no + 1, seq_next, 1)
+        candidate = f"PI-{next_val:04d}"
+        while candidate in existing_nos:
+            next_val += 1
+            candidate = f"PI-{next_val:04d}"
+
+        if reserve:
+            try:
+                self.db.table("organization_document_sequences").upsert({
+                    "organization_id": org_id_str,
+                    "sales_proforma_prefix": "PI",
+                    "sales_proforma_next_no": next_val + 1,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }, on_conflict="organization_id").execute()
+            except Exception as e:
+                logger.warning(f"Error synchronizing organization_document_sequences for proforma: {e}")
 
         return candidate
 
     def get_all(self, organization_id: str) -> List[Dict[str, Any]]:
         proformas = self.db.table("proforma_invoices").select("*").eq("organization_id", organization_id).order("proforma_date", desc=True).execute().data or []
+        if not proformas:
+            return []
+
+        # Batch load party details for all proformas in ONE query
+        party_ids = list({p.get("customer_id") or p.get("party_id") for p in proformas if (p.get("customer_id") or p.get("party_id"))})
+        parties_map = {}
+        if party_ids:
+            try:
+                p_res = self.db.table("parties").select("*").in_("id", party_ids).execute()
+                for p in (p_res.data or []):
+                    parties_map[p["id"]] = p
+            except Exception as e:
+                logger.warning(f"Error batch fetching parties for proformas: {e}")
+
+        # Batch load converted invoice numbers in ONE query
+        conv_ids = list({p.get("converted_document_id") for p in proformas if p.get("converted_document_id")})
+        conv_inv_map = {}
+        if conv_ids:
+            try:
+                inv_res = self.db.table("invoices").select("id, invoice_no").in_("id", conv_ids).execute()
+                for inv in (inv_res.data or []):
+                    conv_inv_map[inv["id"]] = inv.get("invoice_no")
+            except Exception as e:
+                logger.warning(f"Error batch fetching converted invoices for proformas: {e}")
+
         unpacked = []
         for p in proformas:
             p_unpacked = unpack_header_result(p)
@@ -276,18 +331,13 @@ class ProformaRepository:
                     if k not in p_unpacked or p_unpacked[k] is None:
                         p_unpacked[k] = v
             party_id = p_unpacked.get("customer_id") or p_unpacked.get("party_id")
-            if party_id:
-                party_res = self.db.table("parties").select("display_name").eq("id", party_id).limit(1).execute()
-                if party_res.data:
-                    p_unpacked["party_name"] = party_res.data[0]["display_name"]
+            if party_id and party_id in parties_map:
+                customer_data = parties_map[party_id]
+                p_unpacked["party_name"] = customer_data.get("display_name")
+                p_unpacked["customer"] = customer_data
             conv_id = p_unpacked.get("converted_document_id")
-            if conv_id:
-                try:
-                    inv_res = self.db.table("invoices").select("invoice_no").eq("id", conv_id).limit(1).execute()
-                    if inv_res.data:
-                        p_unpacked["converted_invoice_no"] = inv_res.data[0].get("invoice_no")
-                except Exception:
-                    pass
+            if conv_id and conv_id in conv_inv_map:
+                p_unpacked["converted_invoice_no"] = conv_inv_map[conv_id]
             unpacked.append(p_unpacked)
         return unpacked
 
@@ -328,42 +378,57 @@ class ProformaRepository:
         return proforma
 
     def create(self, header_data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-        cleaned_header = clean_header_payload(header_data)
-        header = _safe_insert_header(self.db, cleaned_header)
-        proforma_id = header["id"]
-        
-        # Cache cleaned_header fields in memory
-        self._in_memory_extra[proforma_id] = dict(cleaned_header)
-
-        for item in items_data:
-            cleaned_item = clean_item_payload(item, proforma_id)
+        org_id = header_data.get("organization_id")
+        last_err = None
+        for attempt in range(5):
+            cleaned_header = clean_header_payload(header_data)
             try:
-                self.db.table("proforma_invoice_items").insert(cleaned_item).execute()
-            except Exception:
-                basic_item = {
-                    "proforma_id": proforma_id,
-                    "description": item.get("description", "Item"),
-                    "hsn_sac": item.get("hsn_sac", ""),
-                    "qty": item.get("qty", 1),
-                    "unit": item.get("unit", "PCS"),
-                    "unit_price": item.get("unit_price") or item.get("rate") or 0.0,
-                    "discount_percent": item.get("discount_percent", 0.0),
-                    "discount_amount": item.get("discount_amount", 0.0),
-                    "taxable_amount": item.get("taxable_amount") or item.get("taxable_value") or 0.0,
-                    "tax_rate": item.get("tax_rate") or item.get("gst_rate") or 0.0,
-                    "cgst_amount": item.get("cgst_amount", 0.0),
-                    "sgst_amount": item.get("sgst_amount", 0.0),
-                    "igst_amount": item.get("igst_amount", 0.0),
-                    "line_total": item.get("line_total", 0.0)
-                }
-                self.db.table("proforma_invoice_items").insert(basic_item).execute()
-            
-        res_pf = self.get_by_id(proforma_id, header["organization_id"])
-        if res_pf and cleaned_header:
-            for k, v in cleaned_header.items():
-                if k != "metadata" and (k not in res_pf or res_pf[k] is None):
-                    res_pf[k] = v
-        return res_pf
+                header = _safe_insert_header(self.db, cleaned_header)
+                proforma_id = header["id"]
+                
+                # Cache cleaned_header fields in memory
+                self._in_memory_extra[proforma_id] = dict(cleaned_header)
+
+                for item in items_data:
+                    cleaned_item = clean_item_payload(item, proforma_id)
+                    try:
+                        self.db.table("proforma_invoice_items").insert(cleaned_item).execute()
+                    except Exception:
+                        basic_item = {
+                            "proforma_id": proforma_id,
+                            "description": item.get("description", "Item"),
+                            "hsn_sac": item.get("hsn_sac", ""),
+                            "qty": item.get("qty", 1),
+                            "unit": item.get("unit", "PCS"),
+                            "unit_price": item.get("unit_price") or item.get("rate") or 0.0,
+                            "discount_percent": item.get("discount_percent", 0.0),
+                            "discount_amount": item.get("discount_amount", 0.0),
+                            "taxable_amount": item.get("taxable_amount") or item.get("taxable_value") or 0.0,
+                            "tax_rate": item.get("tax_rate") or item.get("gst_rate") or 0.0,
+                            "cgst_amount": item.get("cgst_amount", 0.0),
+                            "sgst_amount": item.get("sgst_amount", 0.0),
+                            "igst_amount": item.get("igst_amount", 0.0),
+                            "line_total": item.get("line_total", 0.0)
+                        }
+                        self.db.table("proforma_invoice_items").insert(basic_item).execute()
+                    
+                res_pf = self.get_by_id(proforma_id, header["organization_id"])
+                if res_pf and cleaned_header:
+                    for k, v in cleaned_header.items():
+                        if k != "metadata" and (k not in res_pf or res_pf[k] is None):
+                            res_pf[k] = v
+                return res_pf
+            except Exception as err:
+                last_err = err
+                err_str = str(err)
+                if ("23505" in err_str or "duplicate key" in err_str.lower() or "unique constraint" in err_str.lower() or "conflict" in err_str.lower()) and attempt < 4:
+                    next_pno = self.generate_proforma_no(org_id)
+                    header_data["proforma_no"] = next_pno
+                    logger.info(f"Unique conflict detected during proforma creation, retrying with next number: {next_pno}")
+                    continue
+                raise
+        if last_err:
+            raise last_err
 
 
     def update(self, proforma_id: str, organization_id: str, header_data: Dict[str, Any], items_data: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:

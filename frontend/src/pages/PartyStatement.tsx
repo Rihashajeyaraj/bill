@@ -9,9 +9,10 @@ import { buildPartyStatement, computePartyFinancials, getParty } from "../module
 import { formatMoney, outstandingMeta } from "../modules/parties/utils";
 import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, type CountryCode } from "../modules/paymentIn/countryConfig";
 import { listCustomerAdvanceWalletHistory, paymentInsightsByCustomer } from "../modules/paymentIn/store";
-import { listSupplierTdsHistory } from "../modules/paymentOut/store";
 import { useOrganization } from "../context/OrganizationContext";
 import { useFinancialYears } from "../context/FinancialYearContext";
+
+const listSupplierTdsHistory = (country?: any, partyId?: any) => [];
 
 const DOC_TYPES = [
   "Invoice",

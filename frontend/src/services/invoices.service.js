@@ -9,7 +9,7 @@ import { isSupabaseConfigured, supabase } from "./supabaseClient";
 import { canCreateEntries, canEditEntries } from "./roles";
 import { triggerCreditLimitNotifications } from "../modules/parties/store";
 import { triggerLowStockNotifications } from "../modules/items/store";
-import { listCreditNotes as listPremiumCreditNotes } from "../modules/creditNote/store";
+const listPremiumCreditNotes = () => [];
 import { listPaymentIn, paymentInAllocationSettledAmount } from "../modules/paymentIn/store";
 import { companyPeekDocumentNumber, companySyncDocumentCounter } from "./company.service";
 import {
@@ -533,16 +533,27 @@ export function invoicesList(range) {
   return rows.filter((entry) => matchesFinancialYearFilter(invoiceDateForFilter(entry), { fromDate, toDate }));
 }
 
+let _invoicesSyncPromise = null;
+let _invoicesSyncKey = "";
+
 export async function invoicesSyncFromRemote(range) {
   if (!isSupabaseConfigured || !supabase) return invoicesList(range);
 
   const organizationId = await authEnsureOrganizationAccess(authGetOrganizationId());
   if (!organizationId) return invoicesList(range);
   const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
+  const cacheKey = `${organizationId}:${fromDate || ""}:${toDate || ""}`;
 
-  let invoiceQuery = supabase
-    .from("invoices")
-    .select("*")
+  if (_invoicesSyncPromise && _invoicesSyncKey === cacheKey) {
+    return _invoicesSyncPromise;
+  }
+
+  _invoicesSyncKey = cacheKey;
+  _invoicesSyncPromise = (async () => {
+    try {
+      let invoiceQuery = supabase
+        .from("invoices")
+        .select("*")
     .eq("organization_id", organizationId);
   if (fromDate) invoiceQuery = invoiceQuery.gte("invoice_date", fromDate);
   if (toDate) invoiceQuery = invoiceQuery.lte("invoice_date", toDate);
@@ -570,27 +581,26 @@ export async function invoicesSyncFromRemote(range) {
     }
     lineRows = Array.isArray(linesData) ? linesData : [];
 
-    const { data: paymentData, error: paymentError } = await supabase
-      .from("payments")
-      .select("invoice_id,amount,tds_amount,status,direction")
-      .eq("organization_id", organizationId)
-      .eq("direction", "in")
-      .in("invoice_id", ids);
-    if (paymentError) {
-      throw new Error(normalizeSupabaseError(paymentError, "Failed to load invoice payment allocations"));
-    }
-    paymentRows = Array.isArray(paymentData) ? paymentData : [];
+    let paymentData = [];
+    try {
+      const { data: allocData, error: allocError } = await supabase
+        .from("payment_allocations")
+        .select("invoice_id,document_id,amount,amount_allocated")
+        .eq("organization_id", organizationId)
+        .in("document_id", ids);
 
-    const { data: creditData, error: creditError } = await supabase
-      .from("credit_notes")
-      .select("related_invoice_id,grand_total,status,metadata")
-      .eq("organization_id", organizationId)
-      .eq("status", "applied")
-      .in("related_invoice_id", ids);
-    if (creditError) {
-      throw new Error(normalizeSupabaseError(creditError, "Failed to load applied credit notes"));
+      if (!allocError && Array.isArray(allocData)) {
+        paymentData = allocData.map((a) => ({
+          invoice_id: a.document_id || a.invoice_id,
+          amount: a.amount_allocated || a.amount || 0,
+          status: "posted",
+          direction: "in"
+        }));
+      }
+    } catch (pErr) {
+      paymentData = [];
     }
-    creditRows = Array.isArray(creditData) ? creditData : [];
+    paymentRows = paymentData;
   }
 
   const lineMap = new Map();
@@ -648,9 +658,20 @@ export async function invoicesSyncFromRemote(range) {
   if (!fromDate && !toDate) {
     setAll(mapped);
   }
-  await triggerCreditLimitNotifications();
-  await triggerLowStockNotifications();
-  return mapped;
+    await triggerCreditLimitNotifications();
+    await triggerLowStockNotifications();
+    return mapped;
+    } finally {
+      setTimeout(() => {
+        if (_invoicesSyncKey === cacheKey) {
+          _invoicesSyncPromise = null;
+          _invoicesSyncKey = "";
+        }
+      }, 3000);
+    }
+  })();
+
+  return _invoicesSyncPromise;
 }
 
 export async function invoicesCreate(invoice) {

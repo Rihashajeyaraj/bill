@@ -344,8 +344,8 @@ export default function PartyFormModal({
       return;
     }
     setWarning(flow === "quick" ? "" : taxValidation.warning || "");
-    normalized.contactType = taxValidation.contactType;
-    normalized.customerType = taxValidation.contactType;
+    normalized.contactType = taxValidation.contactType as any;
+    normalized.customerType = taxValidation.contactType as any;
     normalized.taxId = taxValidation.normalizedTaxId;
     normalized.gstin = taxValidation.normalizedTaxId;
 

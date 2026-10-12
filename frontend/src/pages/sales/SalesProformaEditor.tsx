@@ -342,9 +342,8 @@ export default function SalesProformaEditor() {
           }
         } else {
           try {
-            const list = await apiClient.getProformas().catch(() => []);
-            const count = Array.isArray(list) ? list.length : 0;
-            const generatedNo = `PI-${String(count + 1).padStart(4, "0")}`;
+            const nextRes = await apiClient.getNextProformaNo().catch(() => null);
+            const generatedNo = nextRes?.proforma_no || "PI-0001";
             setForm((prev: any) => ({
               ...prev,
               proforma_no: prev.proforma_no || generatedNo
@@ -679,6 +678,21 @@ export default function SalesProformaEditor() {
       companyCin: company?.cin || "",
       companyPhone: company?.phone || "",
       companyState,
+      companyLogoUrl: company?.logoBase64 || company?.logo_url || company?.logoUrl || "",
+      companySignatureUrl: company?.signatureUrl || company?.signatureBase64 || company?.settings?.signatureUrl || "",
+      company: {
+        ...(company || {}),
+        logo_url: company?.logoBase64 || company?.logo_url || company?.logoUrl || "",
+        signature_url: company?.signatureUrl || company?.signatureBase64 || company?.settings?.signatureUrl || ""
+      },
+      seller: {
+        name: company?.companyName || company?.name || "",
+        address: companyAddressParts.join(", "),
+        gstin: companyGstin,
+        phone: company?.phone || "",
+        logoUrl: company?.logoBase64 || company?.logo_url || company?.logoUrl || "",
+        signatureUrl: company?.signatureUrl || company?.signatureBase64 || company?.settings?.signatureUrl || ""
+      },
 
       customerName: displayCustomerName,
       customerAddress: displayCustomerAddress,
@@ -745,14 +759,31 @@ export default function SalesProformaEditor() {
         igstTotal: finalIgstTotal,
         total: grandTotal,
         grandTotal,
+        advanceReceived: Number(form.amount_paid || 0),
+        advance_received: Number(form.amount_paid || 0),
         amountPaid: Number(form.amount_paid || 0),
-        balanceDue: Math.max(0, grandTotal - Number(form.amount_paid || 0))
+        amount_paid: Number(form.amount_paid || 0),
+        balanceDue: Math.max(0, grandTotal - Number(form.amount_paid || 0)),
+        balancePayable: Math.max(0, grandTotal - Number(form.amount_paid || 0))
       },
+      advanceReceived: Number(form.amount_paid || 0),
+      advance_received: Number(form.amount_paid || 0),
       amountPaid: Number(form.amount_paid || 0),
+      amount_paid: Number(form.amount_paid || 0),
       balanceDue: Math.max(0, grandTotal - Number(form.amount_paid || 0)),
+      balancePayable: Math.max(0, grandTotal - Number(form.amount_paid || 0)),
       grand_total_in_words: grandTotalInWords
     };
   }, [form, selectedCustomer, company, customerEntryMode]);
+
+  const [debouncedPreviewData, setDebouncedPreviewData] = useState(previewData);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedPreviewData(previewData);
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [previewData]);
 
   const validateForm = () => {
     const errs: any = {};
@@ -952,30 +983,55 @@ export default function SalesProformaEditor() {
       toast.showError("Failed to open print window. Please allow popups.");
       return;
     }
+    const copiedStyles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
+      .map((node) => node.outerHTML)
+      .join("\n");
+    printWindow.document.open();
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
           <title>Print Pro Forma ${form.proforma_no || "Invoice"}</title>
+          <base href="${window.location.origin}" />
+          ${copiedStyles}
           <style>
-            body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 20px; background: white; color: #1e293b; }
+            body { margin: 0; padding: 20px; background: white; color: #0f172a; }
             @media print { body { padding: 0; } }
           </style>
-          <link rel="stylesheet" href="${window.location.origin}/src/index.css" />
         </head>
         <body>
           <div>${container.innerHTML}</div>
-          <script>
-            window.onload = function() {
-              setTimeout(function() {
-                window.print();
-              }, 300);
-            };
-          </script>
         </body>
       </html>
     `);
     printWindow.document.close();
+
+    const triggerPrint = () => {
+      const images = Array.from(printWindow.document.images || []);
+      const promises = images.map((img) => {
+        if (img.complete) return Promise.resolve();
+        return new Promise((res) => {
+          img.onload = res;
+          img.onerror = res;
+        });
+      });
+      Promise.all(promises).then(() => {
+        window.setTimeout(() => {
+          if (!printWindow.closed) {
+            printWindow.focus();
+            printWindow.print();
+          }
+        }, 150);
+      });
+    };
+
+    if (printWindow.document.readyState === "complete" || printWindow.document.readyState === "interactive") {
+      triggerPrint();
+    } else {
+      printWindow.onload = triggerPrint;
+    }
   };
 
   if (loading) {
@@ -1991,6 +2047,42 @@ export default function SalesProformaEditor() {
                       disabled={isReadOnly}
                       className={commonInputStyle}
                     />
+                    {Number(form.amount_paid || 0) > Number(previewData?.totals?.grandTotal || 0) && (
+                      <p className="text-xs text-red-500 font-semibold mt-1">
+                        Advance amount cannot exceed invoice total (₹{formatDecimalByPreference(previewData?.totals?.grandTotal || 0)}).
+                      </p>
+                    )}
+                    {Number(form.amount_paid || 0) < 0 && (
+                      <p className="text-xs text-red-500 font-semibold mt-1">
+                        Advance amount cannot be negative.
+                      </p>
+                    )}
+                    {/* Financial Calculation Breakdown Card */}
+                    <div className="mt-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5 text-xs">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                        Financial Summary & Advance
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <span>Total Before Tax:</span>
+                        <span className="font-semibold text-slate-900">₹{formatDecimalByPreference(previewData?.totals?.taxableTotal || 0)}</span>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <span>Total GST:</span>
+                        <span className="font-semibold text-slate-900">₹{formatDecimalByPreference(((previewData?.totals?.cgstTotal || 0) + (previewData?.totals?.sgstTotal || 0) + (previewData?.totals?.igstTotal || 0)))}</span>
+                      </div>
+                      <div className="flex justify-between font-bold text-slate-900 border-t border-slate-200 pt-1">
+                        <span>Invoice Total:</span>
+                        <span className="font-bold">₹{formatDecimalByPreference(previewData?.totals?.grandTotal || 0)}</span>
+                      </div>
+                      <div className="flex justify-between text-emerald-700 font-semibold">
+                        <span>Less: Advance Received:</span>
+                        <span>-₹{formatDecimalByPreference(Number(form.amount_paid || 0))}</span>
+                      </div>
+                      <div className="flex justify-between text-sm font-black text-slate-950 border-t border-slate-300 pt-1">
+                        <span>Balance Payable:</span>
+                        <span className="text-sky-700">₹{formatDecimalByPreference(Math.max(0, (previewData?.totals?.grandTotal || 0) - Number(form.amount_paid || 0)))}</span>
+                      </div>
+                    </div>
                   </div>
                   <div>
                     <label className={labelStyle}>Customer Notes</label>
@@ -2062,7 +2154,7 @@ export default function SalesProformaEditor() {
               <InvoiceTemplateSelector
                 selectedTemplateKey={selectedTemplateKey}
                 onSelectTemplate={(key) => setSelectedTemplateKey(key)}
-                invoiceData={previewData}
+                invoiceData={debouncedPreviewData}
                 disabled={isReadOnly}
               />
             </Card>
@@ -2082,7 +2174,7 @@ export default function SalesProformaEditor() {
                 <InvoicePreview
                   templateId={selectedTemplateKey}
                   styleConfig={{}}
-                  invoiceData={previewData}
+                  invoiceData={debouncedPreviewData}
                   documentType="PRO FORMA INVOICE"
                 />
               </div>

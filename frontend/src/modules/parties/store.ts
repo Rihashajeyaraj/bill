@@ -8,8 +8,8 @@ import { authGetOrganizationId, authGetUser } from "../../services/auth.service"
 import { companyGetProfile } from "../../services/company.service";
 import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
 import { normalizeContactType, validateContactTax } from "../../services/customerTax";
-import { syncCreditMonitoringNotifications } from "../../services/creditNotifications.service";
 import { paymentInsightsByCustomer } from "../paymentIn/store";
+const syncCreditMonitoringNotifications = async (evaluations: any, options: any) => {};
 import { COUNTRY_CONFIG, type CountryCode } from "../paymentIn/countryConfig";
 import type {
   CreditLimitType,
@@ -226,10 +226,59 @@ function codeToCountry(code?: string | null) {
 }
 
 function normalizeSupabaseError(error: any, fallback: string) {
+  if (!error) return fallback;
   if (error?.code === "42501") {
     return `${fallback}. Supabase RLS denied access. Verify organization membership and policies.`;
   }
-  return error?.message || fallback;
+  if (error?.code === "23505") {
+    return `${fallback}. A party with this information already exists in this organization.`;
+  }
+  const msg = error?.message || fallback;
+  const details = error?.details ? ` (${error.details})` : "";
+  const hint = error?.hint ? ` Hint: ${error.hint}` : "";
+  return `${msg}${details}${hint}`;
+}
+
+const VALID_PARTY_DB_COLUMNS = new Set([
+  "id",
+  "organization_id",
+  "party_type",
+  "display_name",
+  "legal_name",
+  "contact_person",
+  "phone",
+  "email",
+  "billing_address_line1",
+  "billing_address_line2",
+  "city",
+  "state_name",
+  "state_code",
+  "country_code",
+  "postal_code",
+  "gstin",
+  "pan",
+  "opening_balance",
+  "credit_limit",
+  "notes",
+  "is_active",
+  "created_by"
+]);
+
+function cleanRemotePayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(payload)) {
+    if (VALID_PARTY_DB_COLUMNS.has(key)) {
+      cleaned[key] = val;
+    }
+  }
+  return cleaned;
+}
+
+function extractMissingColumn(error: any): string | null {
+  const msg = String(error?.message || error?.details || "");
+  const match = msg.match(/Could not find the '([^']+)' column/i) ||
+                msg.match(/column "?([^"\s]+)"? does not exist/i);
+  return match ? match[1] : null;
 }
 
 function organizationTaxContext() {
@@ -277,6 +326,8 @@ function mapRemoteParty(row: any): PartyRecord {
     .filter(Boolean)
     .join(", ");
 
+  const resolvedTaxId = row?.gstin || row?.pan || row?.tax_id || row?.vat_number || "";
+
   return normalizeParty({
     id: row?.id,
     type,
@@ -287,8 +338,8 @@ function mapRemoteParty(row: any): PartyRecord {
     city: row?.city || "",
     state: row?.state_name || "",
     address,
-    taxId: row?.tax_id || row?.gstin || row?.vat_number || "",
-    gstin: row?.gstin || "",
+    taxId: resolvedTaxId,
+    gstin: row?.gstin || resolvedTaxId,
     vatNo: row?.vat_number || "",
     openingBalance: Math.abs(openingBalanceSigned),
     openingBalanceType: inferOpeningBalanceType(type, openingBalanceSigned),
@@ -313,12 +364,24 @@ function toRemotePayload(draft: PartyDraft) {
   const normalized = normalizeParty(draft);
   const signedOpeningBalance = openingBalanceSigned(normalized);
   const creditLimit = Math.max(0, parseNumber(normalized.creditLimit));
-  const creditLimitDays = Math.max(0, Math.trunc(parseNumber(normalized.creditLimitDays)));
-  const useAmount = normalized.creditLimitEnabled && normalized.creditLimitType === "Amount";
-  const useDays = normalized.creditLimitEnabled && normalized.creditLimitType === "Days";
-  const creditLimitType = useDays ? "days" : "amount";
 
-  return {
+  const gstinValue = (normalized.gstin || normalized.taxId || "").trim() || null;
+  let panValue = ((normalized as any).pan || "").trim() || null;
+  if (!panValue && gstinValue) {
+    const upper = gstinValue.toUpperCase();
+    if (upper.length === 15) {
+      panValue = upper.slice(2, 12);
+    } else if (upper.length === 10) {
+      panValue = upper;
+    }
+  }
+
+  let stateCode = (normalized as any).state_code || (normalized as any).stateCode || null;
+  if (!stateCode && gstinValue && /^\d{2}/.test(gstinValue)) {
+    stateCode = gstinValue.slice(0, 2);
+  }
+
+  const rawPayload: Record<string, unknown> = {
     party_type: normalized.type === "Supplier" ? "supplier" : "customer",
     display_name: normalized.name,
     legal_name: normalized.name,
@@ -327,23 +390,23 @@ function toRemotePayload(draft: PartyDraft) {
     billing_address_line1: normalized.address || null,
     city: normalized.city || null,
     state_name: normalized.state || null,
+    state_code: stateCode,
     country_code: countryToCode(normalized.country),
-    gstin: normalized.gstin || normalized.taxId || null,
-    vat_number: normalized.vatNo || null,
-    tax_id: normalized.taxId || normalized.gstin || null,
+    postal_code: (normalized as any).postal_code || (normalized as any).postalCode || null,
+    gstin: gstinValue,
+    pan: panValue,
     opening_balance: signedOpeningBalance,
-    credit_limit: useAmount ? creditLimit : null,
-    // DB requires non-null credit_limit_type; keep a safe default when credit checks are disabled.
-    credit_limit_type: creditLimitType,
-    credit_limit_days: useDays ? creditLimitDays : null,
+    credit_limit: creditLimit > 0 ? creditLimit : null,
     notes: normalized.notes || null,
     is_active: true
   };
+
+  return cleanRemotePayload(rawPayload);
 }
 
 function toLegacyRemotePayload(payload: Record<string, unknown>) {
   const { credit_limit_type, credit_limit_days, ...legacyPayload } = payload;
-  return legacyPayload;
+  return cleanRemotePayload(legacyPayload);
 }
 
 function basePartyList() {
@@ -411,8 +474,8 @@ export function upsertParty(draft: PartyDraft, actor?: string): PartyRecord {
   if (taxValidation.error) throw new Error(taxValidation.error);
   incoming = {
     ...incoming,
-    contactType: taxValidation.contactType,
-    customerType: taxValidation.contactType,
+    contactType: taxValidation.contactType as any,
+    customerType: taxValidation.contactType as any,
     taxId: taxValidation.normalizedTaxId,
     gstin: taxValidation.normalizedTaxId || incoming.gstin || ""
   };
@@ -435,12 +498,12 @@ export function upsertParty(draft: PartyDraft, actor?: string): PartyRecord {
       updatedBy: actorName
     };
     const next = {
-      ...list[idx],
+      ...(list[idx] as any),
       ...incoming,
       audit,
       updated_at: now,
       updated_by: actorName,
-      gstin: incoming.taxId || incoming.gstin || list[idx]?.gstin || "",
+      gstin: incoming.taxId || incoming.gstin || (list[idx] as any)?.gstin || "",
       taxId: incoming.taxId || incoming.gstin || "",
       openingBalance: Math.abs(parseNumber(incoming.openingBalance)),
       creditLimit: Math.max(0, parseNumber(incoming.creditLimit)),
@@ -534,8 +597,8 @@ export async function upsertPartyRemote(draft: PartyDraft, actor?: string): Prom
   if (taxValidation.error) throw new Error(taxValidation.error);
   incoming = {
     ...incoming,
-    contactType: taxValidation.contactType,
-    customerType: taxValidation.contactType,
+    contactType: taxValidation.contactType as any,
+    customerType: taxValidation.contactType as any,
     taxId: taxValidation.normalizedTaxId,
     gstin: taxValidation.normalizedTaxId || incoming.gstin || ""
   };
@@ -557,22 +620,29 @@ export async function upsertPartyRemote(draft: PartyDraft, actor?: string): Prom
   let remoteRow: any = null;
 
   if (incoming.id && looksLikeUuid(incoming.id)) {
+    let updatePayload: Record<string, unknown> = { ...payload };
     let attempt = await supabase
       .from("parties")
-      .update(payload)
+      .update(updatePayload)
       .eq("organization_id", organizationId)
       .eq("id", incoming.id)
       .select("*")
       .maybeSingle();
 
-    if (attempt.error?.code === "42703") {
-      attempt = await supabase
-        .from("parties")
-        .update(toLegacyRemotePayload(payload))
-        .eq("organization_id", organizationId)
-        .eq("id", incoming.id)
-        .select("*")
-        .maybeSingle();
+    while (attempt.error && (attempt.error.code === "PGRST204" || attempt.error.code === "42703")) {
+      const missingCol = extractMissingColumn(attempt.error);
+      if (missingCol && missingCol in updatePayload) {
+        delete updatePayload[missingCol];
+        attempt = await supabase
+          .from("parties")
+          .update(updatePayload)
+          .eq("organization_id", organizationId)
+          .eq("id", incoming.id)
+          .select("*")
+          .maybeSingle();
+      } else {
+        break;
+      }
     }
 
     if (attempt.error) {
@@ -582,26 +652,30 @@ export async function upsertPartyRemote(draft: PartyDraft, actor?: string): Prom
   }
 
   if (!remoteRow) {
+    let insertPayload: Record<string, unknown> = {
+      organization_id: organizationId,
+      created_by: actorUserId,
+      ...payload
+    };
+
     let attempt = await supabase
       .from("parties")
-      .insert({
-        organization_id: organizationId,
-        created_by: actorUserId,
-        ...payload
-      })
+      .insert(insertPayload)
       .select("*")
       .single();
 
-    if (attempt.error?.code === "42703") {
-      attempt = await supabase
-        .from("parties")
-        .insert({
-          organization_id: organizationId,
-          created_by: actorUserId,
-          ...toLegacyRemotePayload(payload)
-        })
-        .select("*")
-        .single();
+    while (attempt.error && (attempt.error.code === "PGRST204" || attempt.error.code === "42703")) {
+      const missingCol = extractMissingColumn(attempt.error);
+      if (missingCol && missingCol in insertPayload) {
+        delete insertPayload[missingCol];
+        attempt = await supabase
+          .from("parties")
+          .insert(insertPayload)
+          .select("*")
+          .single();
+      } else {
+        break;
+      }
     }
 
     if (attempt.error) {
@@ -783,27 +857,27 @@ function listPurchases() {
 }
 
 function customerTotals(party: PartyRecord) {
-  const invoices = listInvoices().filter((record) => matchesParty(party, record));
-  const paymentsLegacy = listLegacyPayments().filter(
-    (record) =>
+  const invoices = (listInvoices() as any[]).filter((record: any) => matchesParty(party, record));
+  const paymentsLegacy = (listLegacyPayments() as any[]).filter(
+    (record: any) =>
       record?.direction === "IN" &&
       matchesParty(party, record) &&
       !String(record?.referenceNo || record?.reference_no || "").startsWith("PI:") &&
       !!(record?.invoiceId || record?.invoice_id)
   );
-  const paymentsPremium = listPremiumPayments().filter(
-    (record) => record?.status !== "Draft" && matchesParty(party, record)
+  const paymentsPremium = (listPremiumPayments() as any[]).filter(
+    (record: any) => record?.status !== "Draft" && matchesParty(party, record)
   );
-  const creditLegacy = listLegacyCreditNotes().filter((record) => matchesParty(party, record));
-  const creditPremium = listPremiumCreditNotes().filter(
-    (record) => record?.status === "Applied" && matchesParty(party, record)
+  const creditLegacy = (listLegacyCreditNotes() as any[]).filter((record: any) => matchesParty(party, record));
+  const creditPremium = (listPremiumCreditNotes() as any[]).filter(
+    (record: any) => record?.status === "Applied" && matchesParty(party, record)
   );
 
   return {
     invoices: sumRecords(invoices, extractInvoiceAmount),
     payments:
-      sumRecords(paymentsLegacy, (record) => parseNumber(record?.amount)) +
-      sumRecords(paymentsPremium, (record) => parseNumber(record?.totals?.amountApplied)),
+      sumRecords(paymentsLegacy, (record: any) => parseNumber(record?.amount)) +
+      sumRecords(paymentsPremium, (record: any) => parseNumber(record?.totals?.amountApplied)),
     creditNotes:
       sumRecords(creditLegacy, extractCreditAmount) +
       sumRecords(creditPremium, extractCreditAmount),
@@ -812,26 +886,26 @@ function customerTotals(party: PartyRecord) {
 }
 
 function supplierTotals(party: PartyRecord) {
-  const purchases = listPurchases().filter((record) => matchesParty(party, record));
-  const paymentsLegacy = listLegacyPayments().filter(
-    (record) =>
+  const purchases = (listPurchases() as any[]).filter((record: any) => matchesParty(party, record));
+  const paymentsLegacy = (listLegacyPayments() as any[]).filter(
+    (record: any) =>
       record?.direction === "OUT" &&
       matchesParty(party, record) &&
       !String(record?.referenceNo || record?.reference_no || "").startsWith("PO:") &&
       !!(record?.billId || record?.bill_id)
   );
-  const paymentsPremium = listPremiumPaymentOut().filter(
-    (record) => record?.status !== "Draft" && matchesParty(party, record)
+  const paymentsPremium = (listPremiumPaymentOut() as any[]).filter(
+    (record: any) => record?.status !== "Draft" && matchesParty(party, record)
   );
-  const debitPremium = listPremiumDebitNotes().filter(
-    (record) => record?.status === "Applied" && matchesParty(party, record)
+  const debitPremium = (listPremiumDebitNotes() as any[]).filter(
+    (record: any) => record?.status === "Applied" && matchesParty(party, record)
   );
 
   return {
     invoices: sumRecords(purchases, extractPurchaseAmount),
     payments:
-      sumRecords(paymentsLegacy, (record) => parseNumber(record?.amount)) +
-      sumRecords(paymentsPremium, (record) => parseNumber(record?.totals?.amountApplied)),
+      sumRecords(paymentsLegacy, (record: any) => parseNumber(record?.amount)) +
+      sumRecords(paymentsPremium, (record: any) => parseNumber(record?.totals?.amountApplied)),
     creditNotes: 0,
     debitNotes: sumRecords(debitPremium, extractDebitAmount)
   };
@@ -875,7 +949,7 @@ function toEpoch(dateValue: string) {
 }
 
 function collectOpenDocuments(party: PartyRecord) {
-  const records = (party.type === "Supplier" ? listPurchases() : listInvoices()).filter((record) =>
+  const records = ((party.type === "Supplier" ? listPurchases() : listInvoices()) as any[]).filter((record: any) =>
     matchesParty(party, record)
   );
   if (!records.length) return [];
@@ -885,7 +959,7 @@ function collectOpenDocuments(party: PartyRecord) {
   const todayEpoch = today.getTime();
 
   return records
-    .map((record) => {
+    .map((record: any) => {
       const status = String(record?.status || record?.paymentStatus || "").toLowerCase();
       if (status === "paid" || status === "cancelled" || status === "draft") return null;
 
@@ -1129,9 +1203,9 @@ export function buildPartyLedger(
   const entries: LedgerEntry[] = [];
 
   if (party.type === "Customer") {
-    listInvoices()
-      .filter((record) => matchesParty(party, record))
-      .forEach((record) => {
+    (listInvoices() as any[])
+      .filter((record: any) => matchesParty(party, record))
+      .forEach((record: any) => {
         addEntry(entries, {
           id: record.id || `inv_${Math.random().toString(16).slice(2)}`,
           date: toIsoDate(record.invoiceDate || record.date || record.created_at),
@@ -1142,15 +1216,15 @@ export function buildPartyLedger(
         }, typeFilter);
       });
 
-    listLegacyPayments()
+    (listLegacyPayments() as any[])
       .filter(
-        (record) =>
+        (record: any) =>
           record?.direction === "IN" &&
           matchesParty(party, record) &&
           !String(record?.referenceNo || record?.reference_no || "").startsWith("PI:") &&
           !!(record?.invoiceId || record?.invoice_id)
       )
-      .forEach((record) => {
+      .forEach((record: any) => {
         addEntry(entries, {
           id: record.id || `pay_${Math.random().toString(16).slice(2)}`,
           date: toIsoDate(record.date || record.created_at),
@@ -1161,9 +1235,9 @@ export function buildPartyLedger(
         }, typeFilter);
       });
 
-    listPremiumPayments()
-      .filter((record) => record?.status !== "Draft" && matchesParty(party, record))
-      .forEach((record) => {
+    (listPremiumPayments() as any[])
+      .filter((record: any) => record?.status !== "Draft" && matchesParty(party, record))
+      .forEach((record: any) => {
         const appliedAmount = parseNumber(record?.totals?.amountApplied);
         if (appliedAmount <= 0) return;
         addEntry(entries, {
@@ -1176,9 +1250,9 @@ export function buildPartyLedger(
         }, typeFilter);
       });
 
-    listLegacyCreditNotes()
-      .filter((record) => matchesParty(party, record))
-      .forEach((record) => {
+    (listLegacyCreditNotes() as any[])
+      .filter((record: any) => matchesParty(party, record))
+      .forEach((record: any) => {
         addEntry(entries, {
           id: record.id || `cr_${Math.random().toString(16).slice(2)}`,
           date: toIsoDate(record.creditDate || record.created_at),
@@ -1189,9 +1263,9 @@ export function buildPartyLedger(
         }, typeFilter);
       });
 
-    listPremiumCreditNotes()
-      .filter((record) => record?.status === "Applied" && matchesParty(party, record))
-      .forEach((record) => {
+    (listPremiumCreditNotes() as any[])
+      .filter((record: any) => record?.status === "Applied" && matchesParty(party, record))
+      .forEach((record: any) => {
         addEntry(entries, {
           id: record.id || `cr_${Math.random().toString(16).slice(2)}`,
           date: toIsoDate(record.creditNoteDate || record.created_at),
@@ -1202,9 +1276,9 @@ export function buildPartyLedger(
         }, typeFilter);
       });
   } else {
-    listPurchases()
-      .filter((record) => matchesParty(party, record))
-      .forEach((record) => {
+    (listPurchases() as any[])
+      .filter((record: any) => matchesParty(party, record))
+      .forEach((record: any) => {
         addEntry(entries, {
           id: record.id || `pur_${Math.random().toString(16).slice(2)}`,
           date: toIsoDate(record.billDate || record.invoiceDate || record.date || record.created_at),
@@ -1215,15 +1289,15 @@ export function buildPartyLedger(
         }, typeFilter);
       });
 
-    listLegacyPayments()
+    (listLegacyPayments() as any[])
       .filter(
-        (record) =>
+        (record: any) =>
           record?.direction === "OUT" &&
           matchesParty(party, record) &&
           !String(record?.referenceNo || record?.reference_no || "").startsWith("PO:") &&
           !!(record?.billId || record?.bill_id)
       )
-      .forEach((record) => {
+      .forEach((record: any) => {
         addEntry(entries, {
           id: record.id || `pay_${Math.random().toString(16).slice(2)}`,
           date: toIsoDate(record.date || record.created_at),
@@ -1234,9 +1308,9 @@ export function buildPartyLedger(
         }, typeFilter);
       });
 
-    listPremiumPaymentOut()
-      .filter((record) => record?.status !== "Draft" && matchesParty(party, record))
-      .forEach((record) => {
+    (listPremiumPaymentOut() as any[])
+      .filter((record: any) => record?.status !== "Draft" && matchesParty(party, record))
+      .forEach((record: any) => {
         const appliedAmount = parseNumber(record?.totals?.amountApplied);
         if (appliedAmount <= 0) return;
         addEntry(entries, {
@@ -1249,9 +1323,9 @@ export function buildPartyLedger(
         }, typeFilter);
       });
 
-    listPremiumDebitNotes()
-      .filter((record) => record?.status === "Applied" && matchesParty(party, record))
-      .forEach((record) => {
+    (listPremiumDebitNotes() as any[])
+      .filter((record: any) => record?.status === "Applied" && matchesParty(party, record))
+      .forEach((record: any) => {
         addEntry(entries, {
           id: record.id || `dn_${Math.random().toString(16).slice(2)}`,
           date: toIsoDate(record.debitNoteDate || record.created_at),

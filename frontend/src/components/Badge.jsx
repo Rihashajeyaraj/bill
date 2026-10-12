@@ -1,7 +1,7 @@
 import React from "react";
 import clsx from "clsx";
 
-export default function Badge({ tone = "neutral", children }) {
+export default function Badge({ tone = "neutral", children = null }) {
   const cls =
     tone === "success"
       ? "app-badge--success"

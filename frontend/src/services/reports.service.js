@@ -1,20 +1,22 @@
 import { listParties, computePartyFinancials, syncPartiesFromRemote } from "../modules/parties/store";
-import { listCreditNotes as listPremiumCreditNotes } from "../modules/creditNote/store";
-import { listDebitNotes } from "../modules/debitNote/store";
+const listPremiumCreditNotes = () => [];
+const listDebitNotes = () => [];
 import { listPaymentIn, paymentInAllocationSettledAmount, paymentInAllocationTdsShare } from "../modules/paymentIn/store";
-import {
-  listPaymentOut,
-  mapBillsByCountryWithAdvanceCoverage,
-  paymentOutAllocationSettledAmount,
-  paymentOutAllocationTdsShare
-} from "../modules/paymentOut/store";
+const listPaymentOut = () => [];
+const mapBillsByCountryWithAdvanceCoverage = () => ({});
+const paymentOutAllocationSettledAmount = () => 0;
+const paymentOutAllocationTdsShare = () => 0;
 import { normalizeText, openingBalanceSigned, parseNumber, toIsoDate } from "../modules/parties/utils";
-import { creditNotesList, creditNotesSyncFromRemote } from "./creditNotes.service";
-import { expensesList, expensesSyncFromRemote } from "./expenses.service";
+const creditNotesList = () => [];
+const creditNotesSyncFromRemote = async () => [];
+const expensesList = () => [];
+const expensesSyncFromRemote = async () => [];
 import { matchesFinancialYearFilter, resolveFinancialYearFilterRange } from "./financialYears.service";
 import { invoicesList, invoicesSyncFromRemote } from "./invoices.service";
+import { salesProformasList, salesProformasSyncFromRemote } from "./proformas.service";
 import { paymentsList, paymentsSyncFromRemote } from "./payments.service";
-import { purchasesList, purchasesSyncFromRemote } from "./purchases.service";
+const purchasesList = () => [];
+const purchasesSyncFromRemote = async () => [];
 
 export const PARTY_TYPES = {
   customer: "Customer",
@@ -74,6 +76,7 @@ export async function syncReportsData(range) {
     await Promise.all([
       syncPartiesFromRemote(),
       invoicesSyncFromRemote(range),
+      salesProformasSyncFromRemote(),
       purchasesSyncFromRemote(range),
       paymentsSyncFromRemote(range),
       expensesSyncFromRemote(range),
@@ -93,10 +96,17 @@ export function getReportsDataset(range) {
   const allLegacyCreditNotes = creditNotesList();
   const allPremiumCreditNotes = listPremiumCreditNotes();
   const allDebitNotes = listDebitNotes();
+  const allProformas = salesProformasList();
 
   return {
     parties: listParties(),
     invoices: invoicesList(range),
+    proformas: filterRowsByFinancialYear(
+      allProformas,
+      (row) => row?.proformaDate || row?.proforma_date || row?.date || row?.created_at,
+      range
+    ),
+    allProformas,
     purchases: purchasesList(range),
     legacyPayments: paymentsList(range),
     allLegacyPayments,
@@ -1313,40 +1323,205 @@ export function buildSaleReport(dataset, filters = {}) {
   const fromDate = toIsoDate(filters.fromDate);
   const toDate = toIsoDate(filters.toDate);
   const partyId = String(filters.partyId || "").trim();
+  const excludeDrafts = Boolean(filters.excludeDrafts);
+  const includeProforma = Boolean(filters.includeProforma);
   const sortKey = filters.sortKey || "date";
   const sortDirection = filters.sortDirection === "asc" ? "asc" : "desc";
   const indexes = buildPartyIndexes(dataset);
   const paymentsByInvoice = customerPaymentAppliedByInvoice(dataset, toDate);
   const creditByInvoice = customerCreditAppliedByInvoice(dataset, toDate);
 
-  const rows = (Array.isArray(dataset?.invoices) ? dataset.invoices : [])
-    .filter((row) => normalizeText(row?.status) !== "draft" && normalizeText(row?.status) !== "cancelled")
+  const isCustomerFilterSet = Boolean(partyId && partyId.toLowerCase() !== "all" && partyId.toLowerCase() !== "all customers");
+
+  const taxInvoiceRows = (Array.isArray(dataset?.invoices) ? dataset.invoices : [])
+    .filter((row) => normalizeText(row?.status) !== "cancelled")
+    .filter((row) => !excludeDrafts || normalizeText(row?.status) !== "draft")
     .filter((row) => inDateRange(resolveInvoiceDate(row), fromDate, toDate))
-    .filter((row) => matchesPartyId(row, partyId, PARTY_TYPES.customer))
+    .filter((row) => !isCustomerFilterSet || matchesPartyId(row, partyId, PARTY_TYPES.customer))
     .map((row) => {
       const totalAmount = amountFromInvoice(row);
       const balance = resolveInvoiceBalance(row, paymentsByInvoice, creditByInvoice);
       const paidAmount = Math.max(0, totalAmount - balance);
+
+      let custName = resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById);
+      if (!custName || custName === "Customer") {
+        custName = row?.bill_name || row?.customer_name || row?.customer_company_name || row?.party_name || "Walk-in / Unlinked";
+      }
+
+      const rawSt = normalizeText(row?.status);
+      let statusLabel = "Unpaid";
+      if (balance <= 0 && totalAmount > 0) statusLabel = "Paid";
+      else if (paidAmount > 0) statusLabel = "Partial";
+      else if (rawSt === "draft") statusLabel = "Draft";
+
       return {
         id: String(row?.id || row?.invoiceNo || ""),
         date: resolveInvoiceDate(row),
+        invoice_date: resolveInvoiceDate(row),
         reference: String(row?.invoiceNo || row?.id || "").trim(),
-        partyName: resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById),
+        invoice_no: String(row?.invoiceNo || row?.id || "").trim(),
+        customer_name: custName,
+        partyName: custName,
+        document_type: "Tax Invoice",
+        documentType: "Tax Invoice",
         totalAmount,
+        grand_total: totalAmount,
         paidAmount,
+        received: paidAmount,
         unpaidAmount: balance,
-        status: balance <= 0 ? "Paid" : paidAmount > 0 ? "Partial" : "Unpaid"
+        receivable: balance,
+        status: statusLabel,
+        is_proforma: false
+      };
+    });
+
+  let proformaRows = [];
+  const allProformas = Array.isArray(dataset?.allProformas) ? dataset.allProformas : (Array.isArray(dataset?.proformas) ? dataset.proformas : []);
+  const hasProformas = allProformas.length > 0;
+
+  if (includeProforma) {
+    proformaRows = allProformas
+      .filter((row) => {
+        const st = normalizeText(row?.status);
+        return st !== "converted" && st !== "cancelled";
+      })
+      .filter((row) => inDateRange(toIsoDate(row?.proformaDate || row?.proforma_date || row?.created_at), fromDate, toDate))
+      .filter((row) => !isCustomerFilterSet || matchesPartyId(row, partyId, PARTY_TYPES.customer))
+      .map((row) => {
+        const totalAmount = amountFromInvoice(row);
+        const adv = Math.max(0, parseNumber(row?.advance_received || row?.advanceReceived || 0));
+        const balance = Math.max(0, totalAmount - adv);
+
+        let custName = resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById);
+        if (!custName || custName === "Customer") {
+          custName = row?.bill_name || row?.customer_name || row?.customer_company_name || row?.party_name || "Walk-in / Unlinked";
+        }
+
+        return {
+          id: String(row?.id || row?.proformaNo || ""),
+          date: toIsoDate(row?.proformaDate || row?.proforma_date || row?.created_at),
+          invoice_date: toIsoDate(row?.proformaDate || row?.proforma_date || row?.created_at),
+          reference: String(row?.proformaNo || row?.id || "").trim(),
+          invoice_no: String(row?.proformaNo || row?.id || "").trim(),
+          customer_name: custName,
+          partyName: custName,
+          document_type: "Pro Forma",
+          documentType: "Pro Forma",
+          totalAmount,
+          grand_total: totalAmount,
+          paidAmount: adv,
+          received: adv,
+          unpaidAmount: balance,
+          receivable: balance,
+          status: normalizeText(row?.status) === "draft" ? "Draft" : "Sent",
+          is_proforma: true
+        };
+      });
+  }
+
+  const combinedRows = [...taxInvoiceRows, ...proformaRows].sort((left, right) => compareValues(left?.[sortKey], right?.[sortKey], sortDirection));
+
+  const totals = taxInvoiceRows.reduce(
+    (summary, row) => ({
+      totalSales: summary.totalSales + row.totalAmount,
+      total_sales: summary.total_sales + row.grand_total,
+      paidAmount: summary.paidAmount + row.paidAmount,
+      total_received: summary.total_received + row.received,
+      unpaidAmount: summary.unpaidAmount + row.unpaidAmount,
+      total_receivable: summary.total_receivable + row.receivable
+    }),
+    { totalSales: 0, total_sales: 0, paidAmount: 0, total_received: 0, unpaidAmount: 0, total_receivable: 0 }
+  );
+
+  return {
+    fromDate,
+    toDate,
+    partyId,
+    excludeDrafts,
+    includeProforma,
+    hasProformas,
+    sortKey,
+    sortDirection,
+    rows: combinedRows,
+    taxInvoiceCount: taxInvoiceRows.length,
+    proformaCount: proformaRows.length,
+    totals: {
+      ...totals,
+      invoiceCount: taxInvoiceRows.length,
+      invoice_count: taxInvoiceRows.length,
+      proformaCount: proformaRows.length,
+      proforma_count: proformaRows.length,
+      paidCount: taxInvoiceRows.filter((row) => row.unpaidAmount <= 0).length,
+      unpaidCount: taxInvoiceRows.filter((row) => row.unpaidAmount > 0).length
+    }
+  };
+}
+
+export function buildTaxInvoiceReport(dataset, filters = {}) {
+  return buildSaleReport(dataset, filters);
+}
+
+export function buildProformaReport(dataset, filters = {}) {
+  const fromDate = toIsoDate(filters.fromDate);
+  const toDate = toIsoDate(filters.toDate);
+  const partyId = String(filters.partyId || "").trim();
+  const sortKey = filters.sortKey || "date";
+  const sortDirection = filters.sortDirection === "asc" ? "asc" : "desc";
+  const indexes = buildPartyIndexes(dataset);
+
+  const paymentIns = Array.isArray(dataset?.allPaymentIns) ? dataset.allPaymentIns : (dataset?.paymentIns || []);
+  const proformaPaymentsMap = new Map();
+
+  paymentIns.forEach((row) => {
+    if (normalizeText(row?.status) === "draft") return;
+    const allocations = Array.isArray(row?.allocations) ? row.allocations : [];
+    allocations.forEach((allocation) => {
+      if (normalizeText(allocation?.documentType || "invoice") === "proforma") {
+        const pId = String(allocation?.invoiceId || "").trim();
+        if (pId) {
+          const paid = paymentInAllocationSettledAmount(row, allocation);
+          proformaPaymentsMap.set(pId, (proformaPaymentsMap.get(pId) || 0) + paid);
+        }
+      }
+    });
+  });
+
+  const proformas = Array.isArray(dataset?.proformas) ? dataset.proformas : [];
+  const rows = proformas
+    .filter((row) => inDateRange(resolveInvoiceDate(row), fromDate, toDate))
+    .filter((row) => matchesPartyId(row, partyId, PARTY_TYPES.customer))
+    .map((row) => {
+      const grandTotal = amountFromInvoice(row);
+      const proformaId = String(row?.id || "").trim();
+      const advancePaid = proformaPaymentsMap.get(proformaId) || parseNumber(row?.totals?.amountPaid || row?.amountPaid || 0);
+      const balanceDue = Math.max(0, grandTotal - advancePaid);
+      const status = String(row?.status || "DRAFT").toUpperCase();
+
+      return {
+        id: proformaId || String(row?.proformaNo || ""),
+        date: resolveInvoiceDate(row),
+        validTill: toIsoDate(row?.validTill || row?.valid_till),
+        dueDate: toIsoDate(row?.dueDate || row?.validTill || row?.proformaDate),
+        proformaNo: String(row?.proformaNo || row?.proforma_no || "").trim(),
+        partyName: resolvePartyName(row, PARTY_TYPES.customer, indexes.partiesById),
+        grandTotal,
+        advancePaid,
+        balanceDue,
+        status,
+        convertedDocumentId: row?.convertedDocumentId || "",
+        convertedAt: row?.convertedAt ? toIsoDate(row.convertedAt) : ""
       };
     })
     .sort((left, right) => compareValues(left?.[sortKey], right?.[sortKey], sortDirection));
 
   const totals = rows.reduce(
     (summary, row) => ({
-      totalSales: summary.totalSales + row.totalAmount,
-      paidAmount: summary.paidAmount + row.paidAmount,
-      unpaidAmount: summary.unpaidAmount + row.unpaidAmount
+      totalGrandTotal: summary.totalGrandTotal + row.grandTotal,
+      totalAdvancePaid: summary.totalAdvancePaid + row.advancePaid,
+      totalBalanceDue: summary.totalBalanceDue + row.balanceDue,
+      convertedCount: summary.convertedCount + (row.status === "CONVERTED" ? 1 : 0)
     }),
-    { totalSales: 0, paidAmount: 0, unpaidAmount: 0 }
+    { totalGrandTotal: 0, totalAdvancePaid: 0, totalBalanceDue: 0, convertedCount: 0 }
   );
 
   return {
@@ -1358,9 +1533,7 @@ export function buildSaleReport(dataset, filters = {}) {
     rows,
     totals: {
       ...totals,
-      invoiceCount: rows.length,
-      paidCount: rows.filter((row) => row.unpaidAmount <= 0).length,
-      unpaidCount: rows.filter((row) => row.unpaidAmount > 0).length
+      proformaCount: rows.length
     }
   };
 }

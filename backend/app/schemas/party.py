@@ -4,6 +4,7 @@ from datetime import datetime
 
 class PartyBase(BaseModel):
     display_name: str
+    legal_name: Optional[str] = None
     party_type: str = "customer"  # customer, supplier, both
     contact_person: Optional[str] = None
     phone: Optional[str] = None

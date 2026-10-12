@@ -8,6 +8,7 @@ import {
   Copy,
   Globe,
   Hash,
+  Landmark,
   LayoutTemplate,
   Palette,
   Percent,
@@ -39,7 +40,8 @@ import {
   organizationGenerateCode,
   organizationListActiveCodes,
   settingsGetCompany,
-  settingsPutCompany
+  settingsPutCompany,
+  deleteCompanyAssetFromStorage
 } from "../services/company.service";
 import { authGetRole, authGetToken, authGetUser } from "../services/auth.service";
 import {
@@ -92,6 +94,12 @@ const SECTION_ITEMS = [
     label: "Company Profile",
     description: "Brand identity and contact details.",
     icon: Building2
+  },
+  {
+    id: "bank",
+    label: "Bank Details",
+    description: "Company bank account for payments.",
+    icon: Landmark
   },
   {
     id: "localization",
@@ -292,7 +300,8 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
   const address = profile?.address || {};
   const profileSection = {
     companyName: profile?.companyName || "",
-    logoBase64: profile?.logoBase64 || "",
+    logoBase64: profile?.logoBase64 || profile?.logoUrl || "",
+    signatureUrl: profile?.signatureUrl || profile?.signatureBase64 || profile?.settings?.signatureUrl || "",
     email: profile?.email || "",
     phone: profile?.phone || "",
     website: profile?.website || "",
@@ -318,10 +327,12 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
     numberFormat: stored.localization?.numberFormat || "1,23,456.78"
   };
 
-  const taxStored = stored.tax || {};
   const tax = {
     enableGst: taxStored.enableGst ?? baseCountry === "India",
-    gstin: taxStored.gstin || profile?.tax?.gstin || "",
+    gstin: taxStored.gstin || profile?.tax?.gstin || profile?.gstin || "",
+    pan: taxStored.pan || profile?.tax?.pan || profile?.pan || "",
+    cin: taxStored.cin || profile?.tax?.cin || profile?.cin || "",
+    iec: taxStored.iec || profile?.tax?.iec || profile?.iec || "",
     defaultGstRate: taxStored.defaultGstRate ?? meta.gstDefault ?? 18,
     cgstRule: taxStored.cgstRule || "Split equally",
     sgstRule: taxStored.sgstRule || "Split equally",
@@ -435,6 +446,17 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
     stockTracking: stored.preferences?.stockTracking ?? true,
     multiCurrency: stored.preferences?.multiCurrency ?? false
   };
+  const bankStored = stored.bankDetails || stored.bank || profile?.bankDetails || profile?.settings?.bankDetails || {};
+  const bank = {
+    bankName: bankStored.bankName || bankStored.bank_name || "",
+    accountName: bankStored.accountName || bankStored.account_name || profileSection.companyName || "",
+    accountNo: bankStored.accountNo || bankStored.account_no || bankStored.accountNumber || "",
+    ifsc: bankStored.ifsc || bankStored.ifsc_code || "",
+    swift: bankStored.swift || bankStored.swift_code || "",
+    iban: bankStored.iban || "",
+    bankAddress: bankStored.bankAddress || bankStored.bank_address || bankStored.address || ""
+  };
+
   const effectiveCurrencies = localization.currencies;
   const normalizedLocalization = {
     ...localization,
@@ -444,6 +466,7 @@ function buildDefaultSettings(profile, currentUser, remoteMembers = null) {
 
   return {
     profile: profileSection,
+    bank,
     localization: normalizedLocalization,
     tax,
     numbering,
@@ -476,6 +499,7 @@ function mapSettingsToProfile(settings) {
   };
   const normalizedSettings = {
     ...settings,
+    bankDetails: settings.bank || {},
     theme_config: normalizedThemeConfig,
     localization: {
       ...settings.localization,
@@ -492,9 +516,13 @@ function mapSettingsToProfile(settings) {
   return {
     companyName: settings.profile.companyName,
     logoBase64: settings.profile.logoBase64,
+    logoUrl: settings.profile.logoBase64,
+    signatureUrl: settings.profile.signatureUrl || settings.profile.signatureBase64 || "",
+    signatureBase64: settings.profile.signatureBase64 || settings.profile.signatureUrl || "",
     email: settings.profile.email,
     phone: settings.profile.phone,
     website: settings.profile.website,
+    bankDetails: settings.bank || {},
     country: settings.localization.defaultCountry,
     financialYearDate: settings.profile.financialYearDate,
     financialYearStartDate: settings.profile.financialYearStartDate,
@@ -504,6 +532,9 @@ function mapSettingsToProfile(settings) {
     address: settings.profile.address,
     tax: {
       gstin: settings.tax.gstin,
+      pan: settings.tax.pan,
+      cin: settings.tax.cin,
+      iec: settings.tax.iec,
       vatNumber: settings.tax.vatNumber,
       vatRate: settings.tax.defaultVatRate,
       enableGst: settings.tax.enableGst,
@@ -799,7 +830,7 @@ export default function CompanySettings() {
     setThemeOverrides,
     setThemeConfig
   } = useTheme();
-  const { profile: organizationProfile } = useOrganization();
+  const { organizationId, profile: organizationProfile } = useOrganization();
   const currentProfile = organizationProfile || companyGetProfile();
   const [authLoading, setAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState(() => authGetUser());
@@ -826,6 +857,7 @@ export default function CompanySettings() {
   const [codeMessage, setCodeMessage] = useState("");
   const [codeError, setCodeError] = useState("");
   const [profileLogoFile, setProfileLogoFile] = useState(null);
+  const [profileSignatureFile, setProfileSignatureFile] = useState(null);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [savingSection, setSavingSection] = useState("");
   const [profileCountryMenuOpen, setProfileCountryMenuOpen] = useState(false);
@@ -1320,6 +1352,7 @@ export default function CompanySettings() {
         nextProfile,
         {
           ...(section === "profile" && profileLogoFile ? { logoFile: profileLogoFile } : {}),
+          ...(section === "profile" && profileSignatureFile ? { signatureFile: profileSignatureFile } : {}),
           accessToken: authContext.accessToken
         }
       );
@@ -1338,6 +1371,7 @@ export default function CompanySettings() {
 
       if (section === "profile") {
         setProfileLogoFile(null);
+        setProfileSignatureFile(null);
       }
 
       if (section === "theme") {
@@ -1388,6 +1422,7 @@ export default function CompanySettings() {
     setErrors((prev) => ({ ...prev, [section]: {} }));
     if (section === "profile") {
       setProfileLogoFile(null);
+      setProfileSignatureFile(null);
     }
     if (section === "theme") {
       const savedTheme = savedSettings.theme || {};
@@ -1694,9 +1729,11 @@ export default function CompanySettings() {
                       ) : null}
                     </FormField>
 
-                    <FormField label="Logo Upload" error={sectionErrors.logo}>
+                    <FormField label="Company Logo" hint="Display in the invoice header" error={sectionErrors.logo}>
                       <FileUpload
                         value={settings.profile.logoBase64}
+                        assetType="logo"
+                        helperText="PNG, JPG, or JPEG format (Max 5MB)"
                         onChange={(value, file) => {
                           updateSection("profile", { logoBase64: value });
                           setProfileLogoFile(file || null);
@@ -1707,6 +1744,17 @@ export default function CompanySettings() {
                               logo: ""
                             }
                           }));
+                        }}
+                        onRemove={async () => {
+                          updateSection("profile", { logoBase64: "" });
+                          setProfileLogoFile(null);
+                          if (organizationId) {
+                            try {
+                              await deleteCompanyAssetFromStorage({ organizationId, assetType: "logo" });
+                            } catch (e) {
+                              console.warn("Could not delete logo from storage:", e);
+                            }
+                          }
                         }}
                         onError={(message) =>
                           setErrors((prev) => ({
@@ -1720,6 +1768,48 @@ export default function CompanySettings() {
                       />
                       {sectionErrors.logo ? (
                         <p className="mt-1 text-xs text-rose-600">{sectionErrors.logo}</p>
+                      ) : null}
+                    </FormField>
+
+                    <FormField label="Authorized Signature" hint="Display in the bottom-right Authorized Signatory section" error={sectionErrors.signature}>
+                      <FileUpload
+                        value={settings.profile.signatureUrl || settings.profile.signatureBase64}
+                        assetType="signature"
+                        helperText="PNG, JPG, or JPEG signature image (Max 5MB)"
+                        onChange={(value, file) => {
+                          updateSection("profile", { signatureUrl: value, signatureBase64: value });
+                          setProfileSignatureFile(file || null);
+                          setErrors((prev) => ({
+                            ...prev,
+                            profile: {
+                              ...(prev.profile || {}),
+                              signature: ""
+                            }
+                          }));
+                        }}
+                        onRemove={async () => {
+                          updateSection("profile", { signatureUrl: "", signatureBase64: "" });
+                          setProfileSignatureFile(null);
+                          if (organizationId) {
+                            try {
+                              await deleteCompanyAssetFromStorage({ organizationId, assetType: "signature" });
+                            } catch (e) {
+                              console.warn("Could not delete signature from storage:", e);
+                            }
+                          }
+                        }}
+                        onError={(message) =>
+                          setErrors((prev) => ({
+                            ...prev,
+                            profile: {
+                              ...(prev.profile || {}),
+                              signature: message || ""
+                            }
+                          }))
+                        }
+                      />
+                      {sectionErrors.signature ? (
+                        <p className="mt-1 text-xs text-rose-600">{sectionErrors.signature}</p>
                       ) : null}
                     </FormField>
 
@@ -1967,36 +2057,139 @@ export default function CompanySettings() {
                   <div className="mt-6 rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
                     <p className="text-sm font-semibold text-slate-900">Preview</p>
                     <p className="text-xs text-slate-500">Shown on invoices and statements.</p>
-                    <div className="mt-3 flex items-center gap-3">
-                      <div className="h-10 w-10 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                        {settings.profile.logoBase64 ? (
-                          <img
-                            src={settings.profile.logoBase64}
-                            alt="logo"
-                            className="h-full w-full object-contain bg-white p-1"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center rounded-2xl bg-slate-100 text-xs font-semibold text-slate-600">
-                            {(settings.profile.companyName || "C").slice(0, 1).toUpperCase()}
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                          {settings.profile.logoBase64 ? (
+                            <img
+                              src={settings.profile.logoBase64}
+                              alt="logo"
+                              className="h-full w-full object-contain bg-white p-1"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center rounded-2xl bg-slate-100 text-xs font-semibold text-slate-600">
+                              {(settings.profile.companyName || "C").slice(0, 1).toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {settings.profile.companyName || "Company Name"}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {settings.localization.currency} | {settings.profile.country}
+                          </p>
+                        </div>
+                      </div>
+
+                      {settings.profile.signatureUrl || settings.profile.signatureBase64 ? (
+                        <div className="flex flex-col items-end">
+                          <span className="text-[10px] font-medium text-slate-500">Authorized Signatory</span>
+                          <div className="mt-0.5 h-10 w-28 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 flex items-center justify-center">
+                            <img
+                              src={settings.profile.signatureUrl || settings.profile.signatureBase64}
+                              alt="signature"
+                              className="h-full w-full object-contain"
+                            />
                           </div>
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">
-                          {settings.profile.companyName || "Company Name"}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          {settings.localization.currency} | {settings.profile.country}
-                        </p>
-                      </div>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
+                </Card>
+              ) : null}
+              {activeSection === "bank" ? (
+                <Card className="p-6">
+                  <SectionHeader
+                    title="Bank Account Details"
+                    description="Default company bank account printed on invoices and payment receipts."
+                  />
+
+                  <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <FormField label="Bank Name" hint="e.g. HDFC Bank, Chase, Barclays">
+                      <input
+                        value={settings.bank?.bankName || ""}
+                        onChange={(event) =>
+                          updateSection("bank", { bankName: event.target.value })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                        placeholder="HDFC Bank"
+                      />
+                    </FormField>
+
+                    <FormField label="Account Holder Name">
+                      <input
+                        value={settings.bank?.accountName || ""}
+                        onChange={(event) =>
+                          updateSection("bank", { accountName: event.target.value })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                        placeholder="Company Name / Account Title"
+                      />
+                    </FormField>
+
+                    <FormField label="Account Number">
+                      <input
+                        value={settings.bank?.accountNo || ""}
+                        onChange={(event) =>
+                          updateSection("bank", { accountNo: event.target.value })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm font-mono"
+                        placeholder="50200012345678"
+                      />
+                    </FormField>
+
+                    <FormField label="IFSC / RTGS Code" hint="For India electronic payments">
+                      <input
+                        value={settings.bank?.ifsc || ""}
+                        onChange={(event) =>
+                          updateSection("bank", { ifsc: event.target.value.toUpperCase() })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm font-mono uppercase"
+                        placeholder="HDFC0001234"
+                      />
+                    </FormField>
+
+                    <FormField label="SWIFT / BIC Code" hint="For international wire transfers">
+                      <input
+                        value={settings.bank?.swift || ""}
+                        onChange={(event) =>
+                          updateSection("bank", { swift: event.target.value.toUpperCase() })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm font-mono uppercase"
+                        placeholder="HDFCINBBXXX"
+                      />
+                    </FormField>
+
+                    <FormField label="IBAN" hint="International Bank Account Number">
+                      <input
+                        value={settings.bank?.iban || ""}
+                        onChange={(event) =>
+                          updateSection("bank", { iban: event.target.value.toUpperCase() })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm font-mono uppercase"
+                        placeholder="GB29NWBK60161331926819"
+                      />
+                    </FormField>
+
+                    <FormField label="Branch Address" className="md:col-span-2">
+                      <input
+                        value={settings.bank?.bankAddress || ""}
+                        onChange={(event) =>
+                          updateSection("bank", { bankAddress: event.target.value })
+                        }
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                        placeholder="Main Branch, City, Country"
+                      />
+                    </FormField>
+                  </div>
+
                   <ActionRow
-                    dirty={sectionDirty}
-                    disabled={!sectionDirty || saveBlocked}
-                    onSave={() => handleSave("profile")}
-                    onCancel={() => handleCancel("profile")}
+                    dirty={dirtyMap.bank}
+                    disabled={!dirtyMap.bank || saveBlocked}
+                    onSave={() => handleSave("bank")}
+                    onCancel={() => handleCancel("bank")}
                   />
                 </Card>
               ) : null}
@@ -2144,6 +2337,30 @@ export default function CompanySettings() {
                             {sectionErrors.gstin ? (
                               <p className="mt-1 text-xs text-rose-600">{sectionErrors.gstin}</p>
                             ) : null}
+                          </FormField>
+                          <FormField label="PAN No">
+                            <input
+                              value={settings.tax.pan || ""}
+                              placeholder="e.g. ABCDE1234F"
+                              onChange={(event) => updateSection("tax", { pan: event.target.value })}
+                              className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                            />
+                          </FormField>
+                          <FormField label="CIN No (Corporate ID)">
+                            <input
+                              value={settings.tax.cin || ""}
+                              placeholder="e.g. U12345TN2020PTC123456"
+                              onChange={(event) => updateSection("tax", { cin: event.target.value })}
+                              className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                            />
+                          </FormField>
+                          <FormField label="IEC Code (Import Export)">
+                            <input
+                              value={settings.tax.iec || ""}
+                              placeholder="e.g. 0123456789"
+                              onChange={(event) => updateSection("tax", { iec: event.target.value })}
+                              className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                            />
                           </FormField>
                           <FormField label="Default GST %" error={sectionErrors.defaultGstRate}>
                             <input
@@ -2867,10 +3084,24 @@ export default function CompanySettings() {
                       </select>
                     </FormField>
 
-                    <FormField label="Logo">
+                    <FormField label="Company Logo">
                       <FileUpload
-                        value={settings.invoiceTemplate.logoUrl}
-                        onChange={(value) => updateSection("invoiceTemplate", { logoUrl: value })}
+                        value={settings.invoiceTemplate.logoUrl || settings.profile.logoBase64}
+                        assetType="logo"
+                        onChange={(value) => {
+                          updateSection("invoiceTemplate", { logoUrl: value });
+                          updateSection("profile", { logoBase64: value });
+                        }}
+                      />
+                    </FormField>
+
+                    <FormField label="Authorized Signature">
+                      <FileUpload
+                        value={settings.profile.signatureUrl || settings.profile.signatureBase64}
+                        assetType="signature"
+                        onChange={(value) => {
+                          updateSection("profile", { signatureUrl: value, signatureBase64: value });
+                        }}
                       />
                     </FormField>
                   </div>

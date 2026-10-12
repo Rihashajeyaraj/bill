@@ -108,62 +108,24 @@ export default function Sidebar({ collapsed, onToggle, onNavigate }) {
 
   const items = useMemo(() => {
     return [
-      // Core V1 Modules
       { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
       {
-        type: "group",
-        key: "sales",
+        to: "/app/sales/proformas/history",
         icon: FileText,
-        label: "Sales",
-        children: [
-          {
-            to: "/app/sales/proformas/history",
-            icon: FileText,
-            label: "Pro Forma Invoice",
-            activeMatchers: ["/sales/proformas", "/app/sales/proformas"]
-          },
-          {
-            to: "/app/sales/invoice/history",
-            icon: ReceiptIndianRupee,
-            label: "Tax Invoice",
-            activeMatchers: ["/sales/invoices", "/app/sales/invoice"]
-          }
-        ]
+        label: "Pro Forma Invoice",
+        activeMatchers: ["/sales/proformas", "/app/sales/proformas"]
       },
       {
-        type: "group",
-        key: "payments",
-        icon: Wallet,
-        label: "Payments",
-        children: [
-          { to: "/app/sales/payment-in", icon: ArrowDownToLine, label: "Payment In" }
-        ]
+        to: "/app/sales/invoice/history",
+        icon: ReceiptIndianRupee,
+        label: "Tax Invoice",
+        activeMatchers: ["/sales/invoices", "/app/sales/invoice"]
       },
+      { to: "/app/sales/payment-in", icon: ArrowDownToLine, label: "Payment In" },
       ...(canOpenReports ? [{ to: "/app/reports", icon: BarChart3, label: "Reports" }] : []),
-
-      // Unavailable Modules (V2 Scope)
-      {
-        type: "group",
-        key: "otherUnavailable",
-        icon: Settings,
-        label: "Other Modules",
-        unavailable: true,
-        children: [
-          { to: "/app/parties", icon: Users, label: "Parties", unavailable: true },
-          { to: "/app/items", icon: Boxes, label: "Items", unavailable: true },
-          { to: "/app/purchase/history", icon: ShoppingCart, label: "Purchase", unavailable: true },
-          { to: "/app/purchases/payment-out", icon: ArrowUpFromLine, label: "Payment Out", unavailable: true },
-          { to: "/app/sales/credit-note", icon: BadgePercent, label: "Credit Notes", unavailable: true },
-          { to: "/app/purchase/debit-note", icon: BadgePercent, label: "Debit Notes", unavailable: true },
-          { to: "/app/purchase/expense", icon: Wallet, label: "Expenses", unavailable: true },
-          { to: "/app/notifications", icon: Bell, label: "Notifications", unavailable: true },
-          { to: "/app/company-settings", icon: Settings, label: "Company Settings", unavailable: true },
-          { to: "/app/backup", icon: Download, label: "Backup", unavailable: true },
-          { to: "/app/audit-history", icon: History, label: "Audit History", unavailable: true }
-        ]
-      }
+      ...(canOpenSettings ? [{ to: "/app/settings", icon: Settings, label: "Settings", activeMatchers: ["/app/settings", "/app/company-settings", "/settings"] }] : []),
     ];
-  }, [canOpenReports]);
+  }, [canOpenReports, canOpenSettings]);
 
   const groupIsActive = {
     sales: salesActive,

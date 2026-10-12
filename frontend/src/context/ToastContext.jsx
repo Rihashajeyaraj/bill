@@ -63,6 +63,10 @@ export function ToastProvider({ children }) {
         showToast({ title, description, duration, tone: "warning" }),
       error: (title, description, duration) =>
         showToast({ title, description, duration, tone: "error" }),
+      showError: (title, description, duration) =>
+        showToast({ title, description, duration, tone: "error" }),
+      showSuccess: (title, description, duration) =>
+        showToast({ title, description, duration, tone: "success" }),
       info: (title, description, duration) =>
         showToast({ title, description, duration, tone: "info" })
     }),

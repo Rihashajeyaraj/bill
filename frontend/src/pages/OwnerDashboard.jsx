@@ -1,8 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowDownCircle,
-  ArrowUpCircle,
   AlertTriangle,
   Wallet,
   Users,
@@ -11,10 +10,7 @@ import {
 import Card from "../components/Card";
 import DateInput from "../components/DateInput";
 import { invoicesList, invoicesSyncFromRemote } from "../services/invoices.service";
-import { purchasesList, purchasesSyncFromRemote } from "../services/purchases.service";
 import { paymentsList, paymentsSyncFromRemote } from "../services/payments.service";
-import { EXPENSES_CHANGED_EVENT, expensesList, expensesSyncFromRemote } from "../services/expenses.service";
-import { mapOpenBillsByCountry } from "../modules/paymentOut/store";
 import { listParties, syncPartiesFromRemote } from "../modules/parties/store";
 import { useOrganization } from "../context/OrganizationContext";
 import {
@@ -31,7 +27,7 @@ import {
 import { beginPageLoading, endPageLoading } from "../state/pageLoadingStore";
 import { isOrganizationScopedStorageEventKey, LS_KEYS, lsGetOrganizationScoped } from "../services/storage";
 import { resolveCountryIsoCode } from "../lib/geoData";
-import { formatCurrencyByPreference, formatNumberByPreference } from "../lib/formatPreferences";
+import { formatNumberByPreference } from "../lib/formatPreferences";
 import { useFinancialYears } from "../context/FinancialYearContext";
 
 function money(n) {
@@ -167,7 +163,8 @@ function countryMatches(recordValue, targetCountry) {
 export default function Dashboard() {
   const navigate = useNavigate();
   const { currency = "INR", country = "India", countryCode = "IN", profile = {} } = useOrganization();
-  const { selectedYear, activeRange } = useFinancialYears();
+  const { selectedYear } = useFinancialYears();
+  const activeRange = selectedYear;
   const companyTimeZone = useMemo(
     () => resolveCompanyTimeZone(profile, country, countryCode),
     [profile, country, countryCode]
@@ -186,19 +183,13 @@ export default function Dashboard() {
   }, []);
 
   const [invoices, setInvoices] = useState(() => invoicesList(activeRange));
-  const [purchases, setPurchases] = useState(() => purchasesList(activeRange));
   const [payments, setPayments] = useState(() => paymentsList(activeRange));
-  const [expenses, setExpenses] = useState(() => expensesList(activeRange));
   const [parties, setParties] = useState(() => listParties());
   const [paymentInPremium, setPaymentInPremium] = useState(() =>
     lsGetOrganizationScoped("paymentInPremiumV1", [])
   );
-  const [paymentOutPremium, setPaymentOutPremium] = useState(() =>
-    lsGetOrganizationScoped("paymentOutPremiumV1", [])
-  );
   const [fromDate, setFromDate] = useState(() => defaultFromDate);
   const [toDate, setToDate] = useState(() => defaultToDate);
-  const [donutTab, setDonutTab] = useState("income");
 
   useEffect(() => {
     if (!selectedYear) return;
@@ -206,43 +197,26 @@ export default function Dashboard() {
     setToDate(selectedYear.endDate);
   }, [selectedYear?.id, selectedYear?.startDate, selectedYear?.endDate]);
 
-  const refreshExpenses = useCallback(async () => {
-    try {
-      const synced = await expensesSyncFromRemote(activeRange);
-      setExpenses(Array.isArray(synced) ? synced : expensesList(activeRange));
-    } catch {
-      setExpenses(expensesList(activeRange));
-    }
-  }, [activeRange]);
-
   useEffect(() => {
     let mounted = true;
     async function syncDashboardData() {
       try {
-        const [syncedInvoices, syncedPurchases, syncedPayments, syncedExpenses, syncedParties] = await Promise.all([
+        const [syncedInvoices, syncedPayments, syncedParties] = await Promise.all([
           invoicesSyncFromRemote(activeRange),
-          purchasesSyncFromRemote(activeRange),
           paymentsSyncFromRemote(activeRange),
-          expensesSyncFromRemote(activeRange),
           syncPartiesFromRemote(),
         ]);
         if (!mounted) return;
         setInvoices(Array.isArray(syncedInvoices) ? syncedInvoices : invoicesList(activeRange));
-        setPurchases(Array.isArray(syncedPurchases) ? syncedPurchases : purchasesList(activeRange));
         setPayments(Array.isArray(syncedPayments) ? syncedPayments : paymentsList(activeRange));
-        setExpenses(Array.isArray(syncedExpenses) ? syncedExpenses : expensesList(activeRange));
         setParties(Array.isArray(syncedParties) ? syncedParties : listParties());
         setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
-        setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
       } catch {
         if (!mounted) return;
         setInvoices(invoicesList(activeRange));
-        setPurchases(purchasesList(activeRange));
         setPayments(paymentsList(activeRange));
-        setExpenses(expensesList(activeRange));
         setParties(listParties());
         setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
-        setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
       }
     }
     syncDashboardData();
@@ -252,39 +226,25 @@ export default function Dashboard() {
   }, [activeRange]);
 
   useEffect(() => {
-    function handleExpenseChange() {
-      void refreshExpenses();
-    }
-
     function handleStorage(event) {
-      if (isOrganizationScopedStorageEventKey(LS_KEYS.expenses, event?.key)) {
-        void refreshExpenses();
-        return;
-      }
       if (
         isOrganizationScopedStorageEventKey(LS_KEYS.invoices, event?.key) ||
-        isOrganizationScopedStorageEventKey(LS_KEYS.purchases, event?.key) ||
         isOrganizationScopedStorageEventKey(LS_KEYS.payments, event?.key) ||
         isOrganizationScopedStorageEventKey(LS_KEYS.parties, event?.key) ||
-        isOrganizationScopedStorageEventKey("paymentInPremiumV1", event?.key) ||
-        isOrganizationScopedStorageEventKey("paymentOutPremiumV1", event?.key)
+        isOrganizationScopedStorageEventKey("paymentInPremiumV1", event?.key)
       ) {
         setInvoices(invoicesList(activeRange));
-        setPurchases(purchasesList(activeRange));
         setPayments(paymentsList(activeRange));
         setParties(listParties());
         setPaymentInPremium(lsGetOrganizationScoped("paymentInPremiumV1", []));
-        setPaymentOutPremium(lsGetOrganizationScoped("paymentOutPremiumV1", []));
       }
     }
 
-    window.addEventListener(EXPENSES_CHANGED_EVENT, handleExpenseChange);
     window.addEventListener("storage", handleStorage);
     return () => {
-      window.removeEventListener(EXPENSES_CHANGED_EVENT, handleExpenseChange);
       window.removeEventListener("storage", handleStorage);
     };
-  }, [refreshExpenses, activeRange]);
+  }, [activeRange]);
 
   const currencyPrefix = currency ? `${currency} ` : "";
   const currencyBadge = currency.slice(0, 3).toUpperCase();
@@ -297,26 +257,6 @@ export default function Dashboard() {
           dateInRange(entry?.invoiceDate || entry?.date || entry?.created_at, fromDate, toDate, companyTimeZone)
       ),
     [invoices, country, fromDate, toDate, companyTimeZone]
-  );
-
-  const filteredPurchases = useMemo(
-    () =>
-      purchases.filter(
-        (entry) =>
-          countryMatches(recordCountry(entry), country) &&
-          dateInRange(
-            entry?.billDate || entry?.invoiceDate || entry?.date || entry?.created_at,
-            fromDate,
-            toDate,
-            companyTimeZone
-          )
-      ),
-    [purchases, country, fromDate, toDate, companyTimeZone]
-  );
-
-  const filteredExpenses = useMemo(
-    () => expenses.filter((entry) => dateInRange(entry?.date || entry?.created_at, fromDate, toDate, companyTimeZone)),
-    [expenses, fromDate, toDate, companyTimeZone]
   );
 
   const filteredPaymentInPremium = useMemo(
@@ -335,22 +275,6 @@ export default function Dashboard() {
     [paymentInPremium, country, fromDate, toDate, companyTimeZone]
   );
 
-  const filteredPaymentOutPremium = useMemo(
-    () =>
-      (Array.isArray(paymentOutPremium) ? paymentOutPremium : []).filter(
-        (entry) =>
-          String(entry?.status || "").toLowerCase() !== "draft" &&
-          countryMatches(recordCountry(entry), country) &&
-          dateInRange(
-            entry?.paymentDate || entry?.payment_date || entry?.created_at,
-            fromDate,
-            toDate,
-            companyTimeZone
-          )
-      ),
-    [paymentOutPremium, country, fromDate, toDate, companyTimeZone]
-  );
-
   const filteredLegacyPayments = useMemo(
     () =>
       payments.filter(
@@ -364,13 +288,11 @@ export default function Dashboard() {
   const partyCounts = useMemo(() => {
     const scoped = parties.filter((party) => countryMatches(recordCountry(party), country));
     let customers = 0;
-    let suppliers = 0;
     scoped.forEach((party) => {
       const type = String(party?.type || "").toLowerCase();
-      if (type === "supplier") suppliers += 1;
-      else customers += 1;
+      if (type !== "supplier") customers += 1;
     });
-    return { total: scoped.length, customers, suppliers };
+    return { total: scoped.length, customers };
   }, [parties, country]);
 
   const totals = useMemo(() => {
@@ -378,23 +300,6 @@ export default function Dashboard() {
       (sum, entry) =>
         sum +
         Number(entry?.totals?.grandTotal ?? entry?.totals?.total ?? entry?.totals?.subTotal ?? entry?.grandTotal ?? 0),
-      0
-    );
-    const purchase = filteredPurchases.reduce(
-      (sum, entry) =>
-        sum +
-        Number(
-          entry?.totals?.grandTotal ??
-            entry?.totals?.finalTotal ??
-            entry?.totals?.total ??
-            entry?.totals?.subTotal ??
-            entry?.grandTotal ??
-            0
-        ),
-      0
-    );
-    const totalExpense = filteredExpenses.reduce(
-      (sum, entry) => sum + Number(entry?.amount ?? entry?.totalAmount ?? entry?.total ?? 0),
       0
     );
 
@@ -406,32 +311,11 @@ export default function Dashboard() {
         return !reference.startsWith("PI:");
       })
       .reduce((sum, entry) => sum + Number(entry?.amount || 0), 0);
-    const paidLegacy = filteredLegacyPayments
-      .filter((entry) => {
-        const direction = String(entry?.direction || "").toUpperCase();
-        if (direction !== "OUT") return false;
-        const reference = String(entry?.referenceNo || entry?.reference_no || "");
-        return !reference.startsWith("PO:");
-      })
-      .reduce((sum, entry) => sum + Number(entry?.amount || 0), 0);
+
     const receivedPremium = filteredPaymentInPremium
       .reduce((sum, entry) => sum + Number(entry?.totals?.amountReceived || 0), 0);
-    const paidPremium = filteredPaymentOutPremium
-      .reduce((sum, entry) => sum + Number(entry?.totals?.amountPaid || 0), 0);
 
     const received = Math.max(0, receivedLegacy + receivedPremium);
-    const paid = Math.max(0, paidLegacy + paidPremium);
-
-    const payables = mapOpenBillsByCountry(countryCode || country)
-      .filter((bill) =>
-        dateInRange(
-          bill?.billDate || bill?.invoiceDate || bill?.date || bill?.created_at,
-          fromDate,
-          toDate,
-          companyTimeZone
-        )
-      )
-      .reduce((sum, bill) => sum + Number(bill?.balanceDue || 0), 0);
 
     const receivables = filteredInvoices.reduce((sum, invoice) => {
       const balance = Number(
@@ -474,23 +358,14 @@ export default function Dashboard() {
     return {
       totalSales: sales,
       receivables: Math.max(0, receivables),
-      payables: Math.max(0, payables),
-      cashBalance: Math.max(0, received - paid),
+      cashBalance: received,
       overdueAmount: Math.max(0, overdueAmount),
-      expenses: purchase,
-      received,
-      paid,
-      totalExpense: Math.max(0, totalExpense)
+      received
     };
   }, [
     filteredInvoices,
-    filteredPurchases,
-    filteredExpenses,
     filteredLegacyPayments,
     filteredPaymentInPremium,
-    filteredPaymentOutPremium,
-    countryCode,
-    country,
     todayIso,
     companyTimeZone
   ]);
@@ -498,7 +373,6 @@ export default function Dashboard() {
   const chart = useMemo(() => {
     const months = buildMonthLabels();
     const incomeMap = new Map();
-    const expenseMap = new Map();
 
     filteredInvoices.forEach((inv) => {
       const isoDate = toIsoDate(inv?.invoiceDate || inv?.date || inv?.created_at, companyTimeZone);
@@ -511,40 +385,14 @@ export default function Dashboard() {
         (incomeMap.get(label) || 0) + Number(inv?.totals?.grandTotal ?? inv?.totals?.total ?? inv?.grandTotal ?? 0)
       );
     });
-    filteredPurchases.forEach((bill) => {
-      const isoDate = toIsoDate(bill?.billDate || bill?.invoiceDate || bill?.date || bill?.created_at, companyTimeZone);
-      if (!isoDate) return;
-      const monthIndex = Number(isoDate.slice(5, 7)) - 1;
-      const label = MONTH_SHORT_NAMES[monthIndex] || "";
-      if (!label) return;
-      expenseMap.set(
-        label,
-        (expenseMap.get(label) || 0) +
-          Number(bill?.totals?.grandTotal ?? bill?.totals?.finalTotal ?? bill?.totals?.total ?? bill?.grandTotal ?? 0)
-      );
-    });
 
     return months.map((m) => ({
       month: m,
-      income: Math.round(incomeMap.get(m) || 0),
-      expense: Math.round(expenseMap.get(m) || 0)
+      income: Math.round(incomeMap.get(m) || 0)
     }));
-  }, [filteredInvoices, filteredPurchases, companyTimeZone]);
+  }, [filteredInvoices, companyTimeZone]);
 
   const donutData = useMemo(() => {
-    if (donutTab === "expense") {
-      const bucket = new Map();
-      filteredExpenses.forEach((entry) => {
-        const name = String(entry?.category || "Uncategorized").trim() || "Uncategorized";
-        const value = Math.max(0, Number(entry?.amount ?? entry?.totalAmount ?? entry?.total ?? 0));
-        bucket.set(name, (bucket.get(name) || 0) + value);
-      });
-      return Array.from(bucket.entries())
-        .map(([name, value]) => ({ name, value }))
-        .filter((entry) => entry.value > 0)
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 5);
-    }
     const incomeByParty = new Map();
     filteredInvoices.forEach((entry) => {
       const party = String(entry?.partyName || entry?.buyer?.name || "Customer").trim() || "Customer";
@@ -556,9 +404,9 @@ export default function Dashboard() {
       .filter((entry) => entry.value > 0)
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
-  }, [donutTab, filteredExpenses, filteredInvoices]);
+  }, [filteredInvoices]);
 
-  const donutColors = ["#ff6b6b", "#f6c453", "#4caf50", "#8e8e93", "#3b82f6"];
+  const donutColors = ["#4caf50", "#3b82f6", "#f6c453", "#8e8e93", "#a855f7"];
   const isDonutEmpty = donutData.length === 0;
 
   return (
@@ -601,14 +449,14 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         <button
           type="button"
           onClick={() => navigate("/app/reports?report=sale-report")}
           className="card flex items-center justify-between p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
         >
           <div>
-            <p className="text-xs text-slate-500">Receivable</p>
+            <p className="text-xs text-slate-500">Receivables</p>
             <p className="text-sm font-semibold text-blue-600">{currencyPrefix}{money(totals.receivables)}</p>
           </div>
           <div className="h-9 w-9 rounded-full bg-emerald-100 flex items-center justify-center">
@@ -616,23 +464,9 @@ export default function Dashboard() {
           </div>
         </button>
 
-        <button
-          type="button"
-          onClick={() => navigate("/app/reports?report=purchase-report")}
-          className="card flex items-center justify-between p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
-        >
-          <div>
-            <p className="text-xs text-slate-500">Payables</p>
-            <p className="text-sm font-semibold text-rose-500">{currencyPrefix}{money(totals.payables)}</p>
-          </div>
-          <div className="h-9 w-9 rounded-full bg-rose-100 flex items-center justify-center">
-            <ArrowUpCircle className="h-4 w-4 text-rose-500" />
-          </div>
-        </button>
-
         <Card className="p-3 flex items-center justify-between">
           <div>
-            <p className="text-xs text-slate-500">Cash Balance</p>
+            <p className="text-xs text-slate-500">Cash Received</p>
             <p className="text-sm font-semibold text-emerald-600">{currencyPrefix}{money(totals.cashBalance)}</p>
           </div>
           <div className="h-9 w-9 rounded-full bg-emerald-100 flex items-center justify-center">
@@ -652,11 +486,8 @@ export default function Dashboard() {
 
         <Card className="p-3 flex items-center justify-between">
           <div>
-            <p className="text-xs text-slate-500">Parties</p>
-            <p className="text-sm font-semibold text-slate-900">{partyCounts.total}</p>
-            <p className="text-[11px] text-slate-500">
-              C {partyCounts.customers} | S {partyCounts.suppliers}
-            </p>
+            <p className="text-xs text-slate-500">Customers</p>
+            <p className="text-sm font-semibold text-slate-900">{partyCounts.customers}</p>
           </div>
           <div className="h-9 w-9 rounded-full bg-indigo-100 flex items-center justify-center">
             <Users className="h-4 w-4 text-indigo-600" />
@@ -667,7 +498,7 @@ export default function Dashboard() {
       <div className="mt-4 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
         <Card className="p-4 min-w-0">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-slate-700">Income vs Expense</p>
+            <p className="text-sm font-semibold text-slate-700">Monthly Income Trend</p>
             <p className="text-xs text-slate-500">Date-filtered totals</p>
           </div>
           <div className="mt-3 overflow-x-auto">
@@ -698,8 +529,7 @@ export default function Dashboard() {
                     tick={{ fontSize: 12 }}
                   />
                   <Tooltip formatter={(value) => money(value)} />
-                  <Bar dataKey="income" fill="#4caf50" radius={[6, 6, 0, 0]} maxBarSize={22} />
-                  <Bar dataKey="expense" fill="#6b7280" radius={[6, 6, 0, 0]} maxBarSize={22} />
+                  <Bar dataKey="income" fill="#4caf50" radius={[6, 6, 0, 0]} maxBarSize={28} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -709,31 +539,12 @@ export default function Dashboard() {
               <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
               Income
             </span>
-            <span className="inline-flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full bg-slate-500" />
-              Expense
-            </span>
           </div>
         </Card>
 
         <Card className="p-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4 text-sm font-semibold">
-              <button
-                type="button"
-                onClick={() => setDonutTab("income")}
-                className={`pb-1 ${donutTab === "income" ? "text-emerald-600 border-b-2 border-emerald-500" : "text-slate-400"}`}
-              >
-                Top 5 Income
-              </button>
-              <button
-                type="button"
-                onClick={() => setDonutTab("expense")}
-                className={`pb-1 ${donutTab === "expense" ? "text-rose-500 border-b-2 border-rose-500" : "text-slate-400"}`}
-              >
-                Expense
-              </button>
-            </div>
+            <p className="text-sm font-semibold text-slate-700">Top 5 Income</p>
           </div>
 
           <div className="mt-4 h-[180px]">
@@ -775,7 +586,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
         <Card className="p-3 flex items-center gap-3">
           <div className="h-9 w-9 rounded-full border border-blue-200 text-blue-600 flex items-center justify-center">
             <div className="h-5 w-5 rounded-full border-2 border-blue-500 flex items-center justify-center text-[10px] font-semibold">
@@ -783,20 +594,8 @@ export default function Dashboard() {
             </div>
           </div>
           <div>
-            <p className="text-xs text-slate-500">Sales</p>
+            <p className="text-xs text-slate-500">Total Sales</p>
             <p className="text-sm font-semibold text-slate-700">{currencyPrefix}{money(totals.totalSales)}</p>
-          </div>
-        </Card>
-
-        <Card className="p-3 flex items-center gap-3">
-          <div className="h-9 w-9 rounded-full border border-amber-200 text-amber-600 flex items-center justify-center">
-            <div className="h-5 w-5 rounded-full border-2 border-amber-500 flex items-center justify-center text-[10px] font-semibold">
-              {currencyBadge}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Purchase</p>
-            <p className="text-sm font-semibold text-slate-700">{currencyPrefix}{money(totals.expenses)}</p>
           </div>
         </Card>
 
@@ -807,23 +606,24 @@ export default function Dashboard() {
             </div>
           </div>
           <div>
-            <p className="text-xs text-slate-500">Income</p>
+            <p className="text-xs text-slate-500">Total Received</p>
             <p className="text-sm font-semibold text-slate-700">{currencyPrefix}{money(totals.received)}</p>
           </div>
         </Card>
 
         <Card className="p-3 flex items-center gap-3">
-          <div className="h-9 w-9 rounded-full border border-rose-200 text-rose-600 flex items-center justify-center">
-            <div className="h-5 w-5 rounded-full border-2 border-rose-500 flex items-center justify-center text-[10px] font-semibold">
+          <div className="h-9 w-9 rounded-full border border-indigo-200 text-indigo-600 flex items-center justify-center">
+            <div className="h-5 w-5 rounded-full border-2 border-indigo-500 flex items-center justify-center text-[10px] font-semibold">
               {currencyBadge}
             </div>
           </div>
           <div>
-            <p className="text-xs text-slate-500">Expense</p>
-            <p className="text-sm font-semibold text-slate-700">{currencyPrefix}{money(totals.totalExpense)}</p>
+            <p className="text-xs text-slate-500">Total Receivables</p>
+            <p className="text-sm font-semibold text-slate-700">{currencyPrefix}{money(totals.receivables)}</p>
           </div>
         </Card>
       </div>
     </div>
   );
 }
+

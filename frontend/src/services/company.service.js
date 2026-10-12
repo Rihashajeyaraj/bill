@@ -1,4 +1,4 @@
-import { authGetOrganizationId, authGetRole, authGetUser } from "./auth.service";
+import { authGetAccessToken, authGetOrganizationId, authGetRole, authGetUser } from "./auth.service";
 import { canAccessSettings, canManageUsers, fromDbRole, toDbRole } from "./roles";
 import {
   LS_KEYS,
@@ -18,6 +18,7 @@ import {
   isSupabaseConfigured,
   supabase
 } from "./supabaseClient";
+import { apiRequest } from "./apiClient";
 import { setInvoiceTemplateCompleted } from "../lib/templateStore";
 import {
   buildFinancialYearEndDate,
@@ -190,7 +191,11 @@ function nextNumberingStateForYear(numbering = {}, options = {}) {
 
 function resolveSupabaseClient(accessToken = "") {
   if (!isSupabaseConfigured || !supabase) return null;
-  return createSupabaseClientWithAccessToken(accessToken) || supabase;
+  const token = String(accessToken || authGetAccessToken() || "").trim();
+  if (token) {
+    return createSupabaseClientWithAccessToken(token) || supabase;
+  }
+  return supabase;
 }
 
 function getCountryCode(countryName) {
@@ -353,6 +358,37 @@ async function uploadCompanyLogoToStorage({
   userId = "",
   supabaseClient = null
 }) {
+  const orgId = String(organizationId || authGetOrganizationId() || "").trim();
+  if (orgId && !orgId.startsWith("org_")) {
+    try {
+      if (logoFile) {
+        const formData = new FormData();
+        formData.append("file", logoFile);
+        const headers = {};
+        const token = authGetAccessToken();
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        headers["X-Organization-Id"] = orgId;
+        const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1"}/companies/${orgId}/logo`, {
+          method: "POST",
+          headers,
+          body: formData
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.url) return { logoValue: json.url };
+        }
+      } else if (isDataUrl(logoValue)) {
+        const res = await apiRequest(`/companies/${orgId}/logo`, "POST", {
+          image_data: logoValue,
+          mime_type: getDataUrlMime(logoValue)
+        });
+        if (res?.url) return { logoValue: res.url };
+      }
+    } catch (apiErr) {
+      console.warn("Backend logo upload fallback to storage:", apiErr);
+    }
+  }
+
   const client = supabaseClient || supabase;
   if (!isSupabaseConfigured || !client) {
     return { logoValue };
@@ -363,7 +399,7 @@ async function uploadCompanyLogoToStorage({
   if (payload.error) return { logoValue, warning: payload.error };
 
   const scopedId = String(organizationId || userId || "org").trim();
-  const filePath = `organizations/${scopedId}/logo`;
+  const filePath = `organizations/${scopedId}/logo.${payload.extension}`;
   const version = Date.now();
 
   let lastError = "";
@@ -391,8 +427,97 @@ async function uploadCompanyLogoToStorage({
     logoValue,
     warning:
       (lastError ? `${lastError}. ` : "") +
-      "Failed to upload logo to storage. Run supabase/create_company_assets_bucket.sql and try again."
+      "Failed to upload logo to storage."
   };
+}
+
+export async function uploadCompanySignatureToStorage({
+  signatureValue = "",
+  signatureFile = null,
+  organizationId = "",
+  userId = "",
+  supabaseClient = null
+}) {
+  const orgId = String(organizationId || authGetOrganizationId() || "").trim();
+  if (orgId && !orgId.startsWith("org_")) {
+    try {
+      if (signatureFile) {
+        const formData = new FormData();
+        formData.append("file", signatureFile);
+        const headers = {};
+        const token = authGetAccessToken();
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        headers["X-Organization-Id"] = orgId;
+        const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1"}/companies/${orgId}/signature`, {
+          method: "POST",
+          headers,
+          body: formData
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.url) return { signatureValue: json.url };
+        }
+      } else if (isDataUrl(signatureValue)) {
+        const res = await apiRequest(`/companies/${orgId}/signature`, "POST", {
+          image_data: signatureValue,
+          mime_type: getDataUrlMime(signatureValue)
+        });
+        if (res?.url) return { signatureValue: res.url };
+      }
+    } catch (apiErr) {
+      console.warn("Backend signature upload fallback to storage:", apiErr);
+    }
+  }
+
+  const client = supabaseClient || supabase;
+  if (!isSupabaseConfigured || !client) {
+    return { signatureValue };
+  }
+
+  const payload = await prepareLogoUploadPayload({ logoValue: signatureValue, logoFile: signatureFile });
+  if (payload.skip) return { signatureValue };
+  if (payload.error) return { signatureValue, warning: payload.error };
+
+  const scopedId = String(organizationId || userId || "org").trim();
+  const filePath = `organizations/${scopedId}/signature.${payload.extension}`;
+  const version = Date.now();
+
+  let lastError = "";
+  for (const bucket of COMPANY_LOGO_BUCKET_CANDIDATES) {
+    const { error: uploadError } = await client.storage
+      .from(bucket)
+      .upload(filePath, payload.blob, {
+        upsert: true,
+        contentType: payload.mime,
+        cacheControl: "3600"
+      });
+
+    if (uploadError) {
+      lastError = uploadError.message || "Upload failed";
+      continue;
+    }
+
+    const { data } = client.storage.from(bucket).getPublicUrl(filePath);
+    const publicUrl = data?.publicUrl || "";
+    if (publicUrl) return { signatureValue: appendVersionQuery(publicUrl, version) };
+    return { signatureValue: appendVersionQuery(signatureValue, version) };
+  }
+
+  return {
+    signatureValue,
+    warning: (lastError ? `${lastError}. ` : "") + "Failed to upload signature to storage."
+  };
+}
+
+export async function deleteCompanyAssetFromStorage({ organizationId = "", assetType = "logo" }) {
+  const orgId = String(organizationId || authGetOrganizationId() || "").trim();
+  if (orgId && !orgId.startsWith("org_")) {
+    try {
+      await apiRequest(`/companies/${orgId}/${assetType}`, "DELETE");
+    } catch (err) {
+      console.warn(`Backend delete ${assetType} error:`, err);
+    }
+  }
 }
 
 function mapOrganizationToProfile(organization, taxProfile = null) {
@@ -402,10 +527,24 @@ function mapOrganizationToProfile(organization, taxProfile = null) {
   const { financialYearDate, financialYearStartDate, financialYearEndDate } = normalizeFinancialYearFields(
     organization?.settings || {}
   );
+  const logoUrl =
+    organization.logo_base64 ||
+    organization?.settings?.logoUrl ||
+    organization?.settings?.logo_url ||
+    "";
+  const signatureUrl =
+    organization?.settings?.signatureUrl ||
+    organization?.settings?.signature_url ||
+    organization?.settings?.signatureBase64 ||
+    organization?.settings?.signature_base64 ||
+    "";
 
   return {
     companyName: organization.company_name || "",
-    logoBase64: organization.logo_base64 || "",
+    logoBase64: logoUrl,
+    logoUrl,
+    signatureUrl,
+    signatureBase64: signatureUrl,
     country,
     countryCode: String(organization.country_code || getCountryCode(country)).toUpperCase(),
     currency: baseCurrency,
@@ -433,7 +572,11 @@ function mapOrganizationToProfile(organization, taxProfile = null) {
     financialYearDate,
     financialYearStartDate,
     financialYearEndDate,
-    settings: organization.settings || {},
+    settings: {
+      ...(organization.settings || {}),
+      logoUrl,
+      signatureUrl
+    },
     created_at: organization.created_at,
     updated_at: organization.updated_at
   };
@@ -445,12 +588,14 @@ function mapProfileToOrganizationPayload(profile, userId, existingOrgId = "") {
   const currency = profile?.currency || profile?.currencies?.[0] || "INR";
   const { financialYearDate, financialYearStartDate, financialYearEndDate } = normalizeFinancialYearFields(profile);
   const financialYearStartMonth = Number(financialYearStartDate.slice(5, 7)) || 4;
+  const logoUrl = profile?.logoBase64 || profile?.logoUrl || "";
+  const signatureUrl = profile?.signatureUrl || profile?.signatureBase64 || "";
 
   return {
     id: existingOrgId || undefined,
     owner_user_id: userId,
     company_name: profile?.companyName || "",
-    logo_base64: profile?.logoBase64 || "",
+    logo_base64: logoUrl,
     country_code: countryData.countryCode,
     state_name: profile?.address?.state || "",
     city: profile?.address?.city || "",
@@ -467,6 +612,9 @@ function mapProfileToOrganizationPayload(profile, userId, existingOrgId = "") {
     is_setup_completed: true,
     settings: {
       ...(profile?.settings || {}),
+      logoUrl,
+      signatureUrl,
+      signatureBase64: signatureUrl,
       owner_role: toDbRole(authGetRole()),
       currencies: Array.isArray(profile?.currencies) ? profile.currencies : [currency],
       financialYearDate,
@@ -582,12 +730,15 @@ async function upsertMembershipDirectly({ organizationId, userId, role, supabase
 }
 
 async function getCurrentUserId(supabaseClient = null) {
-  const client = supabaseClient || supabase;
-  if (!isSupabaseConfigured || !client) return "";
-  const {
-    data: { user }
-  } = await client.auth.getUser();
-  return user?.id || "";
+  const client = supabaseClient || resolveSupabaseClient();
+  if (!isSupabaseConfigured || !client) return authGetUser()?.id || "";
+  try {
+    const {
+      data: { user }
+    } = await client.auth.getUser();
+    if (user?.id) return user.id;
+  } catch {}
+  return authGetUser()?.id || "";
 }
 
 export function companyIsCompleted() {
@@ -956,9 +1107,31 @@ function withMergedSettings(baseProfile, settingsPatch = null, sequencePatch = n
   }
   const { settings: sanitizedSettings } = sanitizeSettingsPayload(merged);
 
+  const resolvedLogo =
+    sanitizedSettings.logoUrl ||
+    sanitizedSettings.logo_url ||
+    base.logoBase64 ||
+    base.logoUrl ||
+    "";
+  const resolvedSignature =
+    sanitizedSettings.signatureUrl ||
+    sanitizedSettings.signature_url ||
+    sanitizedSettings.signatureBase64 ||
+    base.signatureUrl ||
+    base.signatureBase64 ||
+    "";
+
   return {
     ...base,
-    settings: sanitizedSettings
+    logoBase64: resolvedLogo,
+    logoUrl: resolvedLogo,
+    signatureUrl: resolvedSignature,
+    signatureBase64: resolvedSignature,
+    settings: {
+      ...sanitizedSettings,
+      logoUrl: resolvedLogo,
+      signatureUrl: resolvedSignature
+    }
   };
 }
 
@@ -1157,6 +1330,21 @@ export async function companySaveProfileRemote(profile, options = {}) {
     warnings.push(uploadedLogo.warning);
   }
   mergedProfile.logoBase64 = uploadedLogo.logoValue || mergedProfile.logoBase64 || "";
+  mergedProfile.logoUrl = mergedProfile.logoBase64;
+
+  const signatureFile = options?.signatureFile || null;
+  const uploadedSignature = await uploadCompanySignatureToStorage({
+    signatureValue: mergedProfile.signatureUrl || mergedProfile.signatureBase64,
+    signatureFile,
+    organizationId: targetOrganizationId,
+    userId,
+    supabaseClient
+  });
+  if (uploadedSignature.warning) {
+    warnings.push(uploadedSignature.warning);
+  }
+  mergedProfile.signatureUrl = uploadedSignature.signatureValue || mergedProfile.signatureUrl || "";
+  mergedProfile.signatureBase64 = mergedProfile.signatureUrl;
 
   companySaveProfile(mergedProfile);
   const payload = mapProfileToOrganizationPayload(mergedProfile, userId, targetOrganizationId);
@@ -1186,6 +1374,19 @@ export async function companySaveProfileRemote(profile, options = {}) {
       throw new Error(error?.message || "Failed to create organization");
     }
     organizationId = generatedOrgId || targetOrganizationId;
+  }
+
+  // Mandatory Database Verification Check (Requirement #3 & #10)
+  const { data: verifyOrg, error: verifyError } = await supabaseClient
+    .from("organizations")
+    .select("id, company_name, created_at")
+    .eq("id", organizationId)
+    .maybeSingle();
+
+  if (!verifyOrg || verifyError) {
+    throw new Error(
+      `Company creation failed database verification: ${verifyError?.message || "Record was not confirmed in PostgreSQL organizations table"}`
+    );
   }
 
   const ownerMode = canAccessSettings(authGetRole()) || toDbRole(authGetRole()) === "owner";
@@ -1448,6 +1649,16 @@ export async function settingsLogoUpload({ logoBase64 = "", logoFile = null } = 
     logoBase64: logoBase64 || current.logoBase64 || ""
   };
   return settingsPutCompany(next, { logoFile });
+}
+
+export async function settingsSignatureUpload({ signatureUrl = "", signatureFile = null } = {}) {
+  const current = companyGetProfile() || {};
+  const next = {
+    ...current,
+    signatureUrl: signatureUrl || current.signatureUrl || "",
+    signatureBase64: signatureUrl || current.signatureBase64 || ""
+  };
+  return settingsPutCompany(next, { signatureFile });
 }
 
 function generateInviteCodeToken() {

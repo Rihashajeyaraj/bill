@@ -3,6 +3,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 import PageLoader from "../components/PageLoader";
+import DemoSwitcherBanner from "../components/DemoSwitcherBanner";
 import { usePageLoading } from "../context/PageLoadingContext";
 import { useOrganization } from "../context/OrganizationContext";
 
@@ -99,11 +100,12 @@ export default function AppLayout() {
   );
 
   return (
-    <div
-      key={organizationId || "no-organization"}
-      className="app-shell h-[100svh] h-dvh overflow-hidden"
-      style={{ "--app-sidebar-width": sidebarWidth }}
-    >
+    <div className="flex flex-col h-[100svh] h-dvh overflow-hidden">
+      <div
+        key={organizationId || "no-organization"}
+        className="app-shell flex-1 overflow-hidden"
+        style={{ "--app-sidebar-width": sidebarWidth }}
+      >
       {mobileNavOpen ? (
         <button
           type="button"
@@ -137,5 +139,6 @@ export default function AppLayout() {
         </main>
       </div>
     </div>
+  </div>
   );
 }

@@ -607,11 +607,21 @@ export default function InvoiceCreate() {
           const triggerPrint = () => {
             if (printTriggered || printWindow?.closed) return;
             printTriggered = true;
-            window.setTimeout(() => {
-              if (printWindow?.closed) return;
-              printWindow.focus();
-              printWindow.print();
-            }, 200);
+            const images = Array.from(printWindow.document?.images || []);
+            const imagePromises = images.map((img) => {
+              if (img.complete) return Promise.resolve();
+              return new Promise((res) => {
+                img.onload = res;
+                img.onerror = res;
+              });
+            });
+            Promise.all(imagePromises).then(() => {
+              window.setTimeout(() => {
+                if (printWindow?.closed) return;
+                printWindow.focus();
+                printWindow.print();
+              }, 150);
+            });
           };
           printWindow.onload = triggerPrint;
           window.setTimeout(() => {
@@ -1873,7 +1883,9 @@ export default function InvoiceCreate() {
       phone: company?.phone || "",
       email: company?.email || "",
       country: companyCountry,
-      state: companyState
+      state: companyState,
+      logoUrl: company?.logoBase64 || company?.logo_url || company?.logoUrl || "",
+      signatureUrl: company?.signatureUrl || company?.signatureBase64 || company?.settings?.signatureUrl || ""
     };
     const buyer = {
       name: party?.name || fallbackRecord?.buyer?.name || fallbackRecord?.partyName || "",
@@ -1893,7 +1905,13 @@ export default function InvoiceCreate() {
       isProforma: false,
       country,
       companyName: company?.companyName || "",
-      companyLogoUrl: company?.logoBase64 || "",
+      companyLogoUrl: company?.logoBase64 || company?.logo_url || company?.logoUrl || "",
+      companySignatureUrl: company?.signatureUrl || company?.signatureBase64 || company?.settings?.signatureUrl || "",
+      company: {
+        ...(company || {}),
+        logo_url: company?.logoBase64 || company?.logo_url || company?.logoUrl || "",
+        signature_url: company?.signatureUrl || company?.signatureBase64 || company?.settings?.signatureUrl || ""
+      },
       currencySymbol: resolveCurrencySymbol(currencySymbol, currency),
       invoiceNo: preferFallbackRecord ? fallbackRecord?.invoice_no || fallbackRecord?.invoiceNo || invoiceNo || "-" : invoiceNo || fallbackRecord?.invoice_no || fallbackRecord?.invoiceNo || "-",
       invoiceDate: preferFallbackRecord ? fallbackRecord?.invoice_date || fallbackRecord?.invoiceDate || invoiceDate || "" : invoiceDate || fallbackRecord?.invoice_date || fallbackRecord?.invoiceDate || "",

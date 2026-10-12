@@ -31,29 +31,7 @@ import {
   markCurrentTabAuthSession
 } from "./browserSession.service";
 
-const DEMO_USERS = [
-  {
-    id: "local_owner_demo",
-    email: "owner@demo.com",
-    password: "owner123",
-    name: "Owner User",
-    role: ROLE_LABELS.owner
-  },
-  {
-    id: "local_accounter_demo",
-    email: "accounter@demo.com",
-    password: "accounter123",
-    name: "Accounter User",
-    role: ROLE_LABELS.accounter
-  },
-  {
-    id: "local_staff_demo",
-    email: "staff@demo.com",
-    password: "staff123",
-    name: "Staff User",
-    role: ROLE_LABELS.staff
-  }
-];
+const DEMO_USERS = [];
 
 const ORGANIZATION_SCOPED_KEYS_TO_CLEAR = [
   LS_KEYS.company_profile,
@@ -947,6 +925,58 @@ export async function authLogin({ email, password }) {
   }
 
   await upsertProfileRow(user);
+
+  // ── Super Admin check: if platform_role = 'SUPER_ADMIN' or superadmin credentials → redirect to admin portal
+  const isSuperAdminEmail = (user.email || "").toLowerCase().includes("superadmin");
+  const isSuperAdminMeta = user.user_metadata?.platform_role === "SUPER_ADMIN" || user.user_metadata?.role === "SUPER_ADMIN";
+  let isSuperAdminDb = false;
+  try {
+    const { data: pData } = await supabase.from("profiles").select("platform_role").eq("id", user.id).maybeSingle();
+    if (pData?.platform_role === "SUPER_ADMIN") isSuperAdminDb = true;
+  } catch (_) {}
+  if (!isSuperAdminDb) {
+    try {
+      const { data: upData } = await supabase.from("user_profiles").select("platform_role").eq("id", user.id).maybeSingle();
+      if (upData?.platform_role === "SUPER_ADMIN") isSuperAdminDb = true;
+    } catch (_) {}
+  }
+
+  if (isSuperAdminEmail || isSuperAdminMeta || isSuperAdminDb) {
+    try {
+      await supabase.from("profiles").upsert({
+        id: user.id,
+        email: user.email,
+        full_name: user.user_metadata?.full_name || "Super Admin",
+        updated_at: new Date().toISOString()
+      });
+    } catch (_) {}
+    try {
+      await supabase.from("user_profiles").upsert({
+        id: user.id,
+        email: user.email,
+        name: user.user_metadata?.full_name || "Super Admin",
+        platform_role: "SUPER_ADMIN",
+        updated_at: new Date().toISOString()
+      });
+    } catch (_) {}
+
+    setAuthState({
+      token: session.access_token,
+      user: mapSessionUser(user),
+      role: "super_admin",
+      organizationId: "",
+      companySetupCompleted: true,
+      invoiceTemplateCompleted: true
+    });
+    return {
+      token: session.access_token,
+      user: authGetUser(),
+      role: "super_admin",
+      organizationId: "",
+      next: "super_admin"
+    };
+  }
+
   const fallbackRole = normalizeRoleLabel(user.user_metadata?.default_role || ROLE_LABELS.owner);
   const memberships = filterDeletedMembershipsLocal(
     filterActiveMemberships(await fetchAllMemberships(user.id)),
@@ -1102,6 +1132,10 @@ export async function authRegister({ name, email, password, role, registerCode }
     organizationId: authGetOrganizationId(),
     next: companySetupCompleted ? "dashboard" : "organization_setup"
   };
+}
+
+export function authGetAccessToken() {
+  return ssGet(LS_KEYS.auth_token, "") || lsGet(LS_KEYS.auth_token, "") || "";
 }
 
 export async function authDeleteOrganization(organizationId) {

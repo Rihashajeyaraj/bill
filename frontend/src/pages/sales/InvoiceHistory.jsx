@@ -167,55 +167,51 @@ export default function InvoiceHistory() {
       setWarning(null);
 
       const fetchPromise = (async () => {
-        const results = await Promise.allSettled([
-          apiClient.getInvoices(),
-          invoicesSyncFromRemote(activeRange)
-        ]);
-
-        const fastApiResult = results[0];
-        const remoteSyncResult = results[1];
-
         let loadedInvoices = [];
         let hasData = false;
 
-        // 1. Primary: FastAPI backend (uses JWT tenant_id, bypasses anon RLS issues)
-        if (fastApiResult.status === "fulfilled" && Array.isArray(fastApiResult.value)) {
-          hasData = true;
-          loadedInvoices = fastApiResult.value.map((inv) => ({
-            id: inv.id,
-            invoiceNo: inv.invoice_no || inv.invoiceNo || inv.id,
-            invoiceDate: inv.invoice_date || inv.invoiceDate || "",
-            dueDate: inv.due_date || inv.dueDate || "",
-            partyName: inv.customer_name || (inv.customer && (inv.customer.display_name || inv.customer.name)) || inv.party_name || "-",
-            buyer: {
-              name: inv.customer_name || (inv.customer && (inv.customer.display_name || inv.customer.name)) || inv.party_name || "-",
-              phone: inv.customer_phone || (inv.customer && inv.customer.phone) || ""
-            },
-            totals: {
-              grandTotal: Number(inv.grand_total ?? inv.subtotal ?? 0)
-            },
-            remainingBalance: Number(inv.balance_due ?? inv.balance_amount ?? 0),
-            status: inv.status || "issued",
-            lines: Array.isArray(inv.items) ? inv.items : []
-          }));
+        // 1. Primary: FastAPI backend (batch-loaded parties, avoids redundant full table + lines download)
+        try {
+          const fastApiData = await apiClient.getInvoices();
+          if (Array.isArray(fastApiData)) {
+            hasData = true;
+            loadedInvoices = fastApiData.map((inv) => ({
+              id: inv.id,
+              invoiceNo: inv.invoice_no || inv.invoiceNo || inv.id,
+              invoiceDate: inv.invoice_date || inv.invoiceDate || "",
+              dueDate: inv.due_date || inv.dueDate || "",
+              partyName: inv.customer_name || (inv.customer && (inv.customer.display_name || inv.customer.name)) || inv.party_name || "-",
+              buyer: {
+                name: inv.customer_name || (inv.customer && (inv.customer.display_name || inv.customer.name)) || inv.party_name || "-",
+                phone: inv.customer_phone || (inv.customer && inv.customer.phone) || ""
+              },
+              totals: {
+                grandTotal: Number(inv.grand_total ?? inv.subtotal ?? 0)
+              },
+              remainingBalance: Number(inv.balance_due ?? inv.balance_amount ?? 0),
+              status: inv.status || "issued",
+              lines: Array.isArray(inv.items) ? inv.items : []
+            }));
+          }
+        } catch (fastApiErr) {
+          console.warn("FastAPI invoices fetch failed, checking fallback:", fastApiErr);
         }
 
-        // 2. Fallback: remote sync or local storage
-        if (!hasData && remoteSyncResult.status === "fulfilled" && Array.isArray(remoteSyncResult.value)) {
-          hasData = true;
-          loadedInvoices = remoteSyncResult.value;
+        // 2. Fallback: remote sync or local storage if primary failed
+        if (!hasData) {
+          try {
+            const remoteSyncData = await invoicesSyncFromRemote(activeRange);
+            if (Array.isArray(remoteSyncData) && remoteSyncData.length > 0) {
+              hasData = true;
+              loadedInvoices = remoteSyncData;
+            }
+          } catch (syncErr) {
+            console.warn("Remote sync fallback failed:", syncErr);
+          }
         }
 
         if (!hasData) {
           loadedInvoices = invoicesList(activeRange);
-        }
-
-        if (remoteSyncResult.status === "rejected" && fastApiResult.status === "rejected") {
-          throw new Error(fastApiResult.reason?.message || remoteSyncResult.reason?.message || "Failed to load tax invoices");
-        }
-
-        if (remoteSyncResult.status === "rejected" && hasData) {
-          setWarning(`Notice: Secondary sync notice (${remoteSyncResult.reason?.message || "Credit notes lookup"}). Invoices loaded successfully.`);
         }
 
         return loadedInvoices;

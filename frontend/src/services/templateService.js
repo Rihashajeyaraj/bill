@@ -126,7 +126,7 @@ export async function fetchTenantTemplates(tenantIdInput = null) {
       const { data, error } = await supabase
         .from("invoice_templates")
         .select("*")
-        .or(`tenant_id.eq.${tenantId},organization_id.eq.${tenantId}`)
+        .eq("organization_id", tenantId)
         .order("created_at", { ascending: true });
 
       if (!error && Array.isArray(data) && data.length > 0) {
@@ -265,7 +265,7 @@ export async function renameCustomTemplate(templateKey, newName, newDescription,
           description: newDescription,
           updated_at: new Date().toISOString()
         })
-        .or(`tenant_id.eq.${tenantId},organization_id.eq.${tenantId}`)
+        .eq("organization_id", tenantId)
         .eq("template_key", templateKey);
     } catch {
       // Fallback
@@ -293,7 +293,7 @@ export async function deleteCustomTemplate(templateKey, tenantIdInput = null) {
       await supabase
         .from("invoice_templates")
         .delete()
-        .or(`tenant_id.eq.${tenantId},organization_id.eq.${tenantId}`)
+        .eq("organization_id", tenantId)
         .eq("template_key", templateKey);
     } catch {
       // Fallback
@@ -315,13 +315,13 @@ export async function setTemplateAsDefault(templateKey, tenantIdInput = null) {
       await supabase
         .from("invoice_templates")
         .update({ is_default: false, updated_at: new Date().toISOString() })
-        .or(`tenant_id.eq.${tenantId},organization_id.eq.${tenantId}`);
+        .eq("organization_id", tenantId);
 
       // Set new default
       await supabase
         .from("invoice_templates")
         .update({ is_default: true, updated_at: new Date().toISOString() })
-        .or(`tenant_id.eq.${tenantId},organization_id.eq.${tenantId}`)
+        .eq("organization_id", tenantId)
         .eq("template_key", templateKey);
     } catch {
       // Non-blocking fallback
@@ -348,7 +348,7 @@ export async function toggleTemplateActive(templateKey, isActive, tenantIdInput 
       await supabase
         .from("invoice_templates")
         .update({ is_active: isActive, updated_at: new Date().toISOString() })
-        .or(`tenant_id.eq.${tenantId},organization_id.eq.${tenantId}`)
+        .eq("organization_id", tenantId)
         .eq("template_key", templateKey);
     } catch {
       // Non-blocking fallback

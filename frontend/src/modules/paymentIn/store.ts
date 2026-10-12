@@ -1,7 +1,7 @@
 import { LS_KEYS, lsGetOrganizationScoped, lsSetOrganizationScoped } from "../../services/storage";
 import { authGetRole } from "../../services/auth.service";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
-import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW, normalizePaymentStatus } from "./countryConfig";
+import { COUNTRY_CONFIG, COUNTRY_NAME_TO_CODE, STATUS_FLOW, normalizePaymentStatus, normalizePaymentMode } from "./countryConfig";
 import type { CountryCode, PaymentMode, PaymentStatus } from "./countryConfig";
 import type { PaymentAttachmentMeta } from "./types";
 
@@ -91,6 +91,8 @@ export interface PaymentInRecord {
   internalNotes?: string;
   customerNotes?: string;
   attachment?: PaymentAttachmentMeta | null;
+  amountReceived?: number;
+  tdsAmount?: number;
   status: PaymentStatus;
   allocations: PaymentAllocationDraft[];
   totals: PaymentInTotals;
@@ -140,6 +142,7 @@ export interface SavePaymentInPayload {
   paymentDate: string;
   customerId: string;
   customerName: string;
+  currency?: string;
   paymentMode: PaymentMode;
   referenceNo?: string;
   chequeNo?: string;

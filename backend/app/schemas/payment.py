@@ -141,18 +141,29 @@ class ReceivableInvoiceItem(BaseModel):
     invoice_id: str
     invoice_no: str
     invoice_date: str
+    invoice_type: str = "invoice"  # "invoice" | "proforma"
     customer_id: Optional[str] = None
     customer_name: str
+    customer_phone: Optional[str] = None
+    customer_gstin: Optional[str] = None
     due_date: Optional[str] = None
     grand_total: float
     total_amount: float
+    invoice_total: float = Field(default=0.0, validation_alias=AliasChoices("invoice_total", "grand_total", "total_amount"))
     paid: float = Field(default=0.0, validation_alias=AliasChoices("paid", "paid_amount"))
     paid_amount: float = Field(default=0.0, validation_alias=AliasChoices("paid_amount", "paid"))
+    advance_received: float = 0.0
     advance_applied: float = 0.0
+    additional_payments_received: float = Field(default=0.0, validation_alias=AliasChoices("additional_payments_received", "additional_payments"))
+    additional_payments: float = Field(default=0.0, validation_alias=AliasChoices("additional_payments", "additional_payments_received"))
+    total_received: float = Field(default=0.0, validation_alias=AliasChoices("total_received", "paid_amount", "paid"))
+    amount_received: float = Field(default=0.0, validation_alias=AliasChoices("amount_received", "total_received", "paid_amount"))
     balance_due: float
+    balance_amount: float = Field(default=0.0, validation_alias=AliasChoices("balance_amount", "balance_due"))
     days_overdue: Optional[int] = None
     days_to_due: Optional[int] = None
     status: str  # "unpaid" | "partial" | "paid" | "overdue"
+    payment_status: str = "UNPAID"  # "UNPAID" | "PARTIALLY_PAID" | "PAID"
     has_advance_applied: bool = False
     customer_has_advance: bool = False
     available_customer_advance: float = 0.0
@@ -161,9 +172,12 @@ class ReceivableInvoiceItem(BaseModel):
 
 class ReceivablesSummaryResponse(BaseModel):
     total_invoiced: float
+    total_invoice_amount: float = Field(default=0.0, validation_alias=AliasChoices("total_invoice_amount", "total_invoiced"))
     total_received: float
+    total_amount_received: float = Field(default=0.0, validation_alias=AliasChoices("total_amount_received", "total_received", "amount_received"))
     amount_received: Optional[float] = None
     pending_receivable: float
+    total_outstanding: float = Field(default=0.0, validation_alias=AliasChoices("total_outstanding", "pending_receivable"))
     overdue_amount: float
     overdue_count: int
     unapplied_advance: float

@@ -22,6 +22,7 @@ import {
   companyIsCompleted,
   companyLoadMyOrganization
 } from "../services/company.service";
+import DemoSwitcherBanner from "../components/DemoSwitcherBanner";
 import { ROLE_LABELS, ROLE_OPTIONS, isOwnerRole } from "../services/roles";
 import { invoiceTemplateIsCompleted } from "../lib/templateStore";
 import twiteLogo from "../images/twite_ai_technologies_logo.jfif";
@@ -106,6 +107,7 @@ export default function Login() {
   }
 
   function redirectAfterAuth(next, role) {
+    if (next === "super_admin" || role === "super_admin") { nav("/super-admin", { replace: true }); return; }
     if (next === "organization_select") { nav("/organization-select", { replace: true }); return; }
     if (next === "organization_setup") { nav("/company-setup", { replace: true }); return; }
     if (next === "invoice_template_setup") { nav("/invoice-template-setup", { replace: true }); return; }

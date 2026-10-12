@@ -1,5 +1,12 @@
+from typing import Optional
 from supabase import create_client, Client
 from app.core.config import settings
+
+def is_valid_jwt(token: Optional[str]) -> bool:
+    if not token or not isinstance(token, str):
+        return False
+    parts = token.split('.')
+    return len(parts) == 3 and all(len(p) > 0 for p in parts)
 
 def get_supabase_client(token: str = None) -> Client:
     """
@@ -10,7 +17,7 @@ def get_supabase_client(token: str = None) -> Client:
     key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY
     
     client = create_client(url, key)
-    if token:
+    if token and is_valid_jwt(token):
         client.postgrest.auth(token)
     return client
 

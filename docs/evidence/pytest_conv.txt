@@ -1,0 +1,312 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.9, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\RIHASHA\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\RIHASHA\OneDrive\Desktop\bill-riha
+plugins: anyio-4.15.1
+collecting ... collected 9 items
+
+backend/tests/test_proforma_conversion.py::test_lossless_proforma_to_tax_invoice_conversion PASSED [ 11%]
+backend/tests/test_proforma_conversion.py::test_duplicate_conversion_rejection_409 PASSED [ 22%]
+backend/tests/test_proforma_conversion.py::test_tax_invoice_read_only_enforcement PASSED [ 33%]
+backend/tests/test_proforma_conversion.py::test_tenant_isolation_on_proforma_conversion PASSED [ 44%]
+backend/tests/test_proforma_conversion.py::test_proforma_field_coverage_mapping PASSED [ 55%]
+backend/tests/test_proforma_conversion.py::test_parallel_proforma_conversion_single_invoice PASSED [ 66%]
+backend/tests/test_proforma_conversion.py::test_financial_year_rollover_sequence_no_collision PASSED [ 77%]
+backend/tests/test_proforma_conversion.py::test_direct_tax_invoice_creation_prohibited_403 PASSED [ 88%]
+backend/tests/test_proforma_conversion.py::test_20_parallel_conversions_distinct_gap_free FAILED [100%]
+
+================================== FAILURES ===================================
+_______________ test_20_parallel_conversions_distinct_gap_free ________________
+
+db = <supabase._sync.client.Client object at 0x000002040FFE0770>
+admin_db = <supabase._sync.client.Client object at 0x000002040FFE08F0>
+cleaned_header = {'organization_id': 'fd2307d9-1957-434e-acc0-0e05139a2ac7', 'invoice_no': 'INV-2627-0001', 'invoice_date': '2026-10-11', 'due_date': '2026-11-10', ...}
+
+    def _safe_insert_invoice_header(db, admin_db, cleaned_header: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(cleaned_header)
+        popped_extra: Dict[str, Any] = {}
+        if "metadata" not in payload or not isinstance(payload["metadata"], dict):
+            payload["metadata"] = {}
+    
+        err_msg = ""
+        for _ in range(60):
+            try:
+                try:
+>                   res = db.table("invoices").insert(payload).execute()
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+backend\app\repositories\invoice_repository.py:143: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <postgrest._sync.request_builder.SyncQueryRequestBuilder object at 0x000002041D4102F0>
+
+    def execute(self) -> APIResponse:
+        """Execute the query.
+    
+        .. tip::
+            This is the last method called, after the query is built.
+    
+        Returns:
+            :class:`APIResponse`
+    
+        Raises:
+            :class:`APIError` If the API raised an error.
+        """
+        r = send_with_retry(self.request)
+        try:
+            if r.is_success:
+                return APIResponse.from_http_request_response(r)
+            else:
+                json_obj = model_validate_json(APIErrorFromJSON, r.content)
+>               raise APIError(dict(json_obj))
+E               postgrest.exceptions.APIError: {'message': 'duplicate key value violates unique constraint "invoices_organization_id_invoice_no_key"', 'code': '23505', 'hint': None, 'details': 'Key (organization_id, invoice_no)=(fd2307d9-1957-434e-acc0-0e05139a2ac7, INV-2627-0001) already exists.'}
+
+..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\postgrest\_sync\request_builder.py:96: APIError
+
+During handling of the above exception, another exception occurred:
+
+db = <supabase._sync.client.Client object at 0x000002040FFE0770>
+admin_db = <supabase._sync.client.Client object at 0x000002040FFE08F0>
+cleaned_header = {'organization_id': 'fd2307d9-1957-434e-acc0-0e05139a2ac7', 'invoice_no': 'INV-2627-0001', 'invoice_date': '2026-10-11', 'due_date': '2026-11-10', ...}
+
+    def _safe_insert_invoice_header(db, admin_db, cleaned_header: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(cleaned_header)
+        popped_extra: Dict[str, Any] = {}
+        if "metadata" not in payload or not isinstance(payload["metadata"], dict):
+            payload["metadata"] = {}
+    
+        err_msg = ""
+        for _ in range(60):
+            try:
+                try:
+                    res = db.table("invoices").insert(payload).execute()
+                except Exception:
+>                   res = admin_db.table("invoices").insert(payload).execute()
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+backend\app\repositories\invoice_repository.py:145: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <postgrest._sync.request_builder.SyncQueryRequestBuilder object at 0x0000020410006930>
+
+    def execute(self) -> APIResponse:
+        """Execute the query.
+    
+        .. tip::
+            This is the last method called, after the query is built.
+    
+        Returns:
+            :class:`APIResponse`
+    
+        Raises:
+            :class:`APIError` If the API raised an error.
+        """
+        r = send_with_retry(self.request)
+        try:
+            if r.is_success:
+                return APIResponse.from_http_request_response(r)
+            else:
+                json_obj = model_validate_json(APIErrorFromJSON, r.content)
+>               raise APIError(dict(json_obj))
+E               postgrest.exceptions.APIError: {'message': 'duplicate key value violates unique constraint "invoices_organization_id_invoice_no_key"', 'code': '23505', 'hint': None, 'details': 'Key (organization_id, invoice_no)=(fd2307d9-1957-434e-acc0-0e05139a2ac7, INV-2627-0001) already exists.'}
+
+..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\postgrest\_sync\request_builder.py:96: APIError
+
+During handling of the above exception, another exception occurred:
+
+    def test_20_parallel_conversions_distinct_gap_free():
+        """
+        Task 2 requirement:
+        Fires 20 parallel conversions for one org and asserts 20 distinct, gap-free numbers.
+        """
+        from app.services.proforma_service import ProformaService
+        from app.schemas.proforma import ProFormaCreate, ProFormaItemCreate
+    
+        db = get_admin_supabase_client()
+        user_id = "127df1f4-2c25-48aa-9c7b-4a4ad23a8e9f"
+        org_id = str(uuid.uuid4())
+    
+        db.table("organizations").insert({
+            "id": org_id,
+            "owner_user_id": user_id,
+            "company_name": f"Parallel Org {uuid.uuid4().hex[:6]}",
+            "country_code": "IN",
+            "state_name": "Maharashtra"
+        }).execute()
+    
+        db.table("organization_members").insert({
+            "organization_id": org_id,
+            "user_id": user_id,
+            "role": "owner",
+            "status": "active"
+        }).execute()
+    
+        try:
+            db.table("organization_document_sequences").insert({
+                "organization_id": org_id,
+                "invoice_prefix": "INV",
+                "invoice_next_no": 1,
+                "sales_proforma_prefix": "PI",
+                "sales_proforma_next_no": 1
+            }).execute()
+        except Exception:
+            pass
+    
+        pf_service = ProformaService()
+        pf_ids = []
+        for i in range(20):
+            pf_payload = ProFormaCreate(
+                customer_name=f"Customer {i+1}",
+                items=[ProFormaItemCreate(description=f"Item {i+1}", qty=1, unit_price=100.0 * (i+1))]
+            )
+            created = pf_service.create_proforma(org_id, pf_payload, user_id)
+            pf_ids.append(created["id"])
+    
+        def do_convert(pf_id):
+            import time
+            for attempt in range(5):
+                try:
+                    svc = ProformaService()
+                    return svc.convert_to_invoice(pf_id, org_id, user_id)
+                except Exception as e:
+                    if ("disconnect" in str(e).lower() or "connection" in str(e).lower()) and attempt < 4:
+                        time.sleep(0.3 * (attempt + 1))
+                        continue
+                    raise
+    
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            futures = [executor.submit(do_convert, pid) for pid in pf_ids]
+            for f in concurrent.futures.as_completed(futures):
+>               results.append(f.result())
+                               ^^^^^^^^^^
+
+backend\tests\test_proforma_conversion.py:472: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+..\..\..\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py:401: in __get_result
+    raise self._exception
+..\..\..\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend\tests\test_proforma_conversion.py:461: in do_convert
+    return svc.convert_to_invoice(pf_id, org_id, user_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend\app\services\proforma_service.py:670: in convert_to_invoice
+    created_invoice = self.invoice_repo.create(inv_header, inv_items)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend\app\repositories\invoice_repository.py:284: in create
+    header = _safe_insert_invoice_header(self.db, self.admin_db, cleaned_header)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+db = <supabase._sync.client.Client object at 0x000002040FFE0770>
+admin_db = <supabase._sync.client.Client object at 0x000002040FFE08F0>
+cleaned_header = {'organization_id': 'fd2307d9-1957-434e-acc0-0e05139a2ac7', 'invoice_no': 'INV-2627-0001', 'invoice_date': '2026-10-11', 'due_date': '2026-11-10', ...}
+
+    def _safe_insert_invoice_header(db, admin_db, cleaned_header: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(cleaned_header)
+        popped_extra: Dict[str, Any] = {}
+        if "metadata" not in payload or not isinstance(payload["metadata"], dict):
+            payload["metadata"] = {}
+    
+        err_msg = ""
+        for _ in range(60):
+            try:
+                try:
+                    res = db.table("invoices").insert(payload).execute()
+                except Exception:
+                    res = admin_db.table("invoices").insert(payload).execute()
+                inserted = res.data[0]
+                if popped_extra:
+                    if "metadata" not in inserted or not isinstance(inserted.get("metadata"), dict):
+                        inserted["metadata"] = {}
+                    for k, v in popped_extra.items():
+                        inserted["metadata"][k] = v
+                        if k not in inserted or inserted[k] is None:
+                            inserted[k] = v
+                return inserted
+            except Exception as err:
+                err_msg = str(err)
+                m = re.search(r"Could not find the '([^']+)' column", err_msg, re.IGNORECASE) or re.search(r"column '([^']+)'", err_msg, re.IGNORECASE)
+    
+                if m:
+                    col_name = m.group(1)
+                    val = payload.pop(col_name, None)
+                    if val is not None and col_name not in ["id", "organization_id"]:
+                        popped_extra[col_name] = val
+                        if col_name != "metadata" and "metadata" in payload and isinstance(payload.get("metadata"), dict):
+                            payload["metadata"][col_name] = val
+                    continue
+    
+                if "23505" in err_msg or "duplicate key" in err_msg.lower() or "unique constraint" in err_msg.lower():
+                    from fastapi import HTTPException, status
+>                   raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Sales Pro Forma is already converted or invoice number conflict."
+                    )
+E                   fastapi.exceptions.HTTPException: 409: Sales Pro Forma is already converted or invoice number conflict.
+
+backend\app\repositories\invoice_repository.py:170: HTTPException
+------------------------------ Captured log call ------------------------------
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:508 Supabase RPC convert_sales_proforma_to_invoice fallback notice: 'ProformaService' object has no attribute 'admin_db'
+WARNING  app.services.proforma_service:proforma_service.py:704 Payment allocation reallocation exception: {'message': "Could not find the table 'public.payment_allocations' in the schema cache", 'code': 'PGRST205', 'hint': "Perhaps you meant the table 'public.payments'", 'details': None}
+WARNING  app.services.proforma_service:proforma_service.py:743 Audit log insertion notice: {'message': "Could not find the 'details' column of 'audit_logs' in the schema cache", 'code': 'PGRST204', 'hint': None, 'details': None}
+============================== warnings summary ===============================
+..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\testclient.py:1
+  C:\Users\RIHASHA\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+backend/tests/test_proforma_conversion.py: 177 warnings
+  C:\Users\RIHASHA\AppData\Local\Programs\Python\Python312\Lib\site-packages\supabase\_sync\client.py:309: DeprecationWarning: The 'timeout' parameter is deprecated. Please configure it in the http client instead.
+    return SyncPostgrestClient(
+
+backend/tests/test_proforma_conversion.py: 177 warnings
+  C:\Users\RIHASHA\AppData\Local\Programs\Python\Python312\Lib\site-packages\supabase\_sync\client.py:309: DeprecationWarning: The 'verify' parameter is deprecated. Please configure it in the http client instead.
+    return SyncPostgrestClient(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED backend/tests/test_proforma_conversion.py::test_20_parallel_conversions_distinct_gap_free
+============ 1 failed, 8 passed, 355 warnings in 365.03s (0:06:05) ============

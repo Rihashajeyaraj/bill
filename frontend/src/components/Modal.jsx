@@ -2,7 +2,7 @@ import React, { useEffect } from "react";
 import { X } from "lucide-react";
 import Card from "./Card";
 
-export default function Modal({ open, isOpen, title, onClose, children, footer, size }) {
+export default function Modal({ open = undefined, isOpen = undefined, title = "", onClose = () => {}, children = null, footer = null, size = "md" }) {
   const activeOpen = Boolean(open ?? isOpen);
 
   useEffect(() => {

@@ -6,6 +6,16 @@ from app.core.auth import is_valid_uuid
 
 logger = logging.getLogger(__name__)
 
+VALID_ITEM_COLUMNS = {
+    "id", "organization_id", "item_type", "item_name", "item_code",
+    "sku", "hsn_sac", "unit", "sale_price", "purchase_price",
+    "tax_rate", "tax_inclusive", "opening_stock", "current_stock",
+    "reorder_level", "category_id", "is_active", "created_by"
+}
+
+def _clean_item_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: v for k, v in data.items() if k in VALID_ITEM_COLUMNS and v is not None}
+
 class ItemRepository:
     def __init__(self):
         self.db = get_admin_supabase_client()
@@ -35,8 +45,10 @@ class ItemRepository:
     def create(self, organization_id: str, item_data: ItemCreate, user_id: str) -> Dict[str, Any]:
         data = item_data.model_dump()
         data["organization_id"] = organization_id
-        data["created_by"] = user_id
-        res = self.db.table("items").insert(data).execute()
+        if user_id and is_valid_uuid(user_id):
+            data["created_by"] = user_id
+        clean_data = _clean_item_data(data)
+        res = self.db.table("items").insert(clean_data).execute()
         return res.data[0]
 
     def update(self, item_id: str, organization_id: str, item_data: ItemUpdate) -> Optional[Dict[str, Any]]:

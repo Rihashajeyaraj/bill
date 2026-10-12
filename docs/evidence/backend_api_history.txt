@@ -1,0 +1,24 @@
+commit 6d7c0b9f1f044e0000bb55a51111b0357961604d
+Author: Rihasha Fdo <rihashafdo@gmail.com>
+Date:   Thu Oct 8 09:50:57 2026 +0530
+
+    estructure project layout into frontend and backend
+
+ create mode 100644 backend/app/api/v1/__init__.py
+ create mode 100644 backend/app/api/v1/__pycache__/__init__.cpython-312.pyc
+ create mode 100644 backend/app/api/v1/__pycache__/auth.cpython-312.pyc
+ create mode 100644 backend/app/api/v1/__pycache__/dashboard.cpython-312.pyc
+ create mode 100644 backend/app/api/v1/__pycache__/invoices.cpython-312.pyc
+ create mode 100644 backend/app/api/v1/__pycache__/items.cpython-312.pyc
+ create mode 100644 backend/app/api/v1/__pycache__/parties.cpython-312.pyc
+ create mode 100644 backend/app/api/v1/__pycache__/payments.cpython-312.pyc
+ create mode 100644 backend/app/api/v1/__pycache__/proforma.cpython-312.pyc
+ create mode 100644 backend/app/api/v1/__pycache__/reports.cpython-312.pyc
+ create mode 100644 backend/app/api/v1/auth.py
+ create mode 100644 backend/app/api/v1/dashboard.py
+ create mode 100644 backend/app/api/v1/invoices.py
+ create mode 100644 backend/app/api/v1/items.py
+ create mode 100644 backend/app/api/v1/parties.py
+ create mode 100644 backend/app/api/v1/payments.py
+ create mode 100644 backend/app/api/v1/proforma.py
+ create mode 100644 backend/app/api/v1/reports.py

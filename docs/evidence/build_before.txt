@@ -1,0 +1,25 @@
+
+> vyapar-relaxing-red-frontend@1.0.0 build
+> vite build
+
+[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+transforming...
+[32m✓[39m 3053 modules transformed.
+rendering chunks...
+[1m[33m[plugin:vite:reporter][39m[22m [33m[plugin vite:reporter] 
+(!) C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/services/apiClient.js is dynamically imported by C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/services/payments.service.js, C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/services/payments.service.js, C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/services/payments.service.js but also statically imported by C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/pages/Reports.jsx, C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/pages/sales/InvoiceHistory.jsx, C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/pages/sales/PaymentInPremium.tsx, C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/pages/sales/SalesProformaEditor.tsx, C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/pages/sales/SalesProformasList.tsx, C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/pages/settings/TenantCompanyUsers.jsx, C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/pages/super-admin/SuperAdminActivity.jsx, C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/pages/super-admin/SuperAdminCompanies.jsx, C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/pages/super-admin/SuperAdminDashboard.jsx, C:/Users/RIHASHA/OneDrive/Desktop/bill-riha/frontend/src/pages/super-admin/SuperAdminRequests.jsx, dynamic import will not move module into another chunk.
+[39m
+computing gzip size...
+[2mdist/[22m[32mindex.html                                       [39m[1m[2m    1.58 kB[22m[1m[22m[2m │ gzip:   0.66 kB[22m
+[2mdist/[22m[32massets/twite_ai_technologies_logo-DTaAcKGK.jfif  [39m[1m[2m    4.12 kB[22m[1m[22m
+[2mdist/[22m[35massets/index-8lz_doSL.css                        [39m[1m[2m  103.72 kB[22m[1m[22m[2m │ gzip:  18.63 kB[22m
+[2mdist/[22m[36massets/purify.es-BSKMTLSQ.js                     [39m[1m[2m   26.41 kB[22m[1m[22m[2m │ gzip:   9.94 kB[22m
+[2mdist/[22m[36massets/index.es-D7kWfcl9.js                      [39m[1m[2m  150.69 kB[22m[1m[22m[2m │ gzip:  51.55 kB[22m
+[2mdist/[22m[36massets/html2canvas.esm-CBrSDip1.js               [39m[1m[2m  201.42 kB[22m[1m[22m[2m │ gzip:  48.03 kB[22m
+[2mdist/[22m[36massets/index-DEym-diK.js                         [39m[1m[33m3,766.34 kB[39m[22m[2m │ gzip: 900.47 kB[22m
+[33m
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 28.33s[39m

@@ -242,8 +242,18 @@ function hydratePremiumPaymentStores(remoteRows) {
     const status = String(row?.status || "").toLowerCase();
     if (status === "cancelled" || status === "draft") return;
     const referenceNo = String(row?.reference_no || "");
-    const paymentInId = sourceRecordIdFromReference(referenceNo, "PI:");
-    const paymentOutId = sourceRecordIdFromReference(referenceNo, "PO:");
+    const direction = String(row?.direction || "").toLowerCase();
+    let paymentInId = sourceRecordIdFromReference(referenceNo, "PI:");
+    let paymentOutId = sourceRecordIdFromReference(referenceNo, "PO:");
+
+    if (!paymentInId && !paymentOutId) {
+      if (direction === "in" || direction === "incoming") {
+        paymentInId = String(row?.id || row?.payment_no || `remote_pi_${Math.random()}`);
+      } else if (direction === "out" || direction === "outgoing") {
+        paymentOutId = String(row?.id || row?.payment_no || `remote_po_${Math.random()}`);
+      }
+    }
+
     if (paymentInId) {
       const list = paymentInGroups.get(paymentInId) || [];
       list.push(row);
@@ -270,17 +280,23 @@ function hydratePremiumPaymentStores(remoteRows) {
       const invoice = invoiceLookup.get(invoiceId) || {};
       const amountReceived = parseNumber(row?.amount_received ?? row?.amount);
       const tdsAmount = parseNumber(row?.tds_amount);
-      const amountApplied = invoiceId ? amountReceived : 0;
       const totalSettled = amountReceived + tdsAmount;
       const paymentDate = row?.payment_date || "";
       const receiptNo = String(row?.payment_no || id).replace(/-ENTRY$/i, "");
+      const notesText = String(row?.notes || "");
+      const isProformaNote = notesText.toLowerCase().includes("proforma") || String(row?.reference_no || "").includes("PI:");
+      const documentType = isProformaNote ? "proforma" : "invoice";
+      const docNoMatch = notesText.match(/(?:Proforma|Invoice)\s+([A-Z0-9-]+)/i);
+      const extractedDocNo = docNoMatch ? docNoMatch[1] : (invoice?.invoiceNo || invoiceId);
+      const hasAllocation = Boolean(invoiceId || extractedDocNo);
+
       return {
         id,
         country,
         receiptNo,
         paymentDate,
         customerId: String(row?.party_id || ""),
-        customerName: String(party?.name || "Customer"),
+        customerName: String(party?.name || row?.customer_name || row?.party_name || "Customer"),
         currency: organizationProfile.currency,
         paymentMode: row?.payment_mode || "Cash",
         referenceNo: row?.reference_no || "",
@@ -293,20 +309,20 @@ function hydratePremiumPaymentStores(remoteRows) {
         tdsCategory: tdsAmount > 0 ? "custom" : "",
         tdsRate: parseNumber(row?.tds_rate),
         isManual: !!row?.is_manual,
-        internalNotes: row?.notes || "",
+        internalNotes: notesText,
         customerNotes: "",
         attachment: null,
-        status: invoiceId ? "Applied" : "Confirmed",
-        allocations: invoiceId
+        status: hasAllocation ? "Applied" : "Confirmed",
+        allocations: hasAllocation
           ? [
               {
-                invoiceId,
-                invoiceNo: String(invoice?.invoiceNo || invoiceId),
+                invoiceId: invoiceId || extractedDocNo || id,
+                invoiceNo: String(extractedDocNo || invoice?.invoiceNo || invoiceId || id),
                 invoiceDate: String(invoice?.invoiceDate || paymentDate),
                 invoiceAmount: parseNumber(invoice?.invoiceAmount || totalSettled),
                 balanceDue: parseNumber(invoice?.invoiceAmount || totalSettled),
                 applyAmount: amountReceived,
-                documentType: "invoice"
+                documentType
               }
             ]
           : [],
@@ -314,8 +330,8 @@ function hydratePremiumPaymentStores(remoteRows) {
           amountReceived,
           tdsAmount,
           totalSettled,
-          amountApplied,
-          unappliedAmount: Math.max(0, amountReceived - amountApplied),
+          amountApplied: hasAllocation ? amountReceived : 0,
+          unappliedAmount: Math.max(0, amountReceived - (hasAllocation ? amountReceived : 0)),
           customerOutstandingBefore: 0,
           customerOutstandingAfter: 0
         },
@@ -327,7 +343,7 @@ function hydratePremiumPaymentStores(remoteRows) {
         },
         history: [
           {
-            status: invoiceId ? "Applied" : "Confirmed",
+            status: hasAllocation ? "Applied" : "Confirmed",
             at: row?.updated_at || row?.created_at || new Date().toISOString(),
             by: "Remote Sync",
             note: "Hydrated from payments table"
@@ -485,59 +501,81 @@ export function paymentsList(range) {
   return rows.filter((entry) => matchesFinancialYearFilter(paymentDateForFilter(entry), { fromDate, toDate }));
 }
 
+let _paymentsSyncPromise = null;
+let _paymentsSyncKey = "";
+
 export async function paymentsSyncFromRemote(range) {
   if (!isSupabaseConfigured || !supabase) return paymentsList(range);
 
   const organizationId = authGetOrganizationId();
   if (!organizationId) return paymentsList(range);
   const { fromDate, toDate } = resolveFinancialYearFilterRange(range);
+  const cacheKey = `${organizationId}:${fromDate || ""}:${toDate || ""}`;
 
-  let query = supabase
-    .from("payments")
-    .select("*")
-    .eq("organization_id", organizationId);
-  if (fromDate) query = query.gte("payment_date", fromDate);
-  if (toDate) query = query.lte("payment_date", toDate);
-
-  const { data, error } = await query
-    .order("payment_date", { ascending: false })
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    throw new Error(normalizeSupabaseError(error, "Failed to load payments"));
+  if (_paymentsSyncPromise && _paymentsSyncKey === cacheKey) {
+    return _paymentsSyncPromise;
   }
 
-  const mapped = (Array.isArray(data) ? data : []).map((row) =>
-    annotateWithFinancialYear(
-      {
-        id: row?.id || uid("pay_"),
-        date: row?.payment_date || "",
-        paymentNo: row?.payment_no || "",
-        direction: String(row?.direction || "").toUpperCase(),
-        partyId: row?.party_id || "",
-        invoiceId: row?.invoice_id || "",
-        billId: row?.bill_id || "",
-        amount: parseNumber(row?.amount),
-        amountReceived: parseNumber(row?.amount_received ?? row?.amount),
-        tdsAmount: parseNumber(row?.tds_amount),
-        tdsRate: parseNumber(row?.tds_rate),
-        isManual: !!row?.is_manual,
-        mode: row?.payment_mode || "",
-        referenceNo: row?.reference_no || "",
-        note: row?.notes || "",
-        status: row?.status || "posted",
-        financialYearId: row?.financial_year_id || "",
-        created_at: row?.created_at || new Date().toISOString()
-      },
-      row?.payment_date || row?.created_at
-    )
-  );
+  _paymentsSyncKey = cacheKey;
+  _paymentsSyncPromise = (async () => {
+    try {
+      let query = supabase
+        .from("payments")
+        .select("*")
+        .eq("organization_id", organizationId);
+      if (fromDate) query = query.gte("payment_date", fromDate);
+      if (toDate) query = query.lte("payment_date", toDate);
 
-  if (!fromDate && !toDate) {
-    setAll(mapped);
-    hydratePremiumPaymentStores(data);
-  }
-  return mapped;
+      const { data, error } = await query
+        .order("payment_date", { ascending: false })
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        throw new Error(normalizeSupabaseError(error, "Failed to load payments"));
+      }
+
+      const mapped = (Array.isArray(data) ? data : []).map((row) =>
+        annotateWithFinancialYear(
+          {
+            id: row?.id || uid("pay_"),
+            date: row?.payment_date || "",
+            paymentNo: row?.payment_no || "",
+            direction: String(row?.direction || "").toUpperCase(),
+            partyId: row?.party_id || "",
+            invoiceId: row?.invoice_id || "",
+            billId: row?.bill_id || "",
+            amount: parseNumber(row?.amount),
+            amountReceived: parseNumber(row?.amount_received ?? row?.amount),
+            tdsAmount: parseNumber(row?.tds_amount),
+            tdsRate: parseNumber(row?.tds_rate),
+            isManual: !!row?.is_manual,
+            mode: row?.payment_mode || "",
+            referenceNo: row?.reference_no || "",
+            note: row?.notes || "",
+            status: row?.status || "posted",
+            financialYearId: row?.financial_year_id || "",
+            created_at: row?.created_at || new Date().toISOString()
+          },
+          row?.payment_date || row?.created_at
+        )
+      );
+
+      if (!fromDate && !toDate) {
+        setAll(mapped);
+        hydratePremiumPaymentStores(data);
+      }
+      return mapped;
+    } finally {
+      setTimeout(() => {
+        if (_paymentsSyncKey === cacheKey) {
+          _paymentsSyncPromise = null;
+          _paymentsSyncKey = "";
+        }
+      }, 3000);
+    }
+  })();
+
+  return _paymentsSyncPromise;
 }
 
 export function paymentsCreate(payment) {
@@ -1016,3 +1054,21 @@ export async function deletePaymentOutRemote(recordId) {
   mergeSourceRowsToLocalPayments(sourcePrefix, []);
   await triggerCreditLimitNotifications();
 }
+
+export async function fetchCustomerSummaryApi(customerId) {
+  if (!customerId) return { outstanding: 0, last_payment: { amount: 0, date: null }, advance_balance: 0 };
+  const { apiClient } = await import("./apiClient");
+  return await apiClient.get(`/payments/customer-summary/${customerId}`);
+}
+
+export async function fetchPendingDocumentsApi(customerId) {
+  if (!customerId) return [];
+  const { apiClient } = await import("./apiClient");
+  return await apiClient.get(`/payments/pending-documents?customer_id=${customerId}`);
+}
+
+export async function createPaymentWizardApi(payload) {
+  const { apiClient } = await import("./apiClient");
+  return await apiClient.createPayment(payload);
+}
+

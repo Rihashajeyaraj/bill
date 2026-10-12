@@ -221,7 +221,8 @@ class PaymentService:
         from_date: Optional[str] = None,
         to_date: Optional[str] = None,
         status_filter: Optional[str] = None,
-        q: Optional[str] = None
+        q: Optional[str] = None,
+        doc_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         return self.payment_repo.get_receivables(
             organization_id=organization_id,
@@ -229,7 +230,8 @@ class PaymentService:
             from_date=from_date,
             to_date=to_date,
             status_filter=status_filter,
-            q=q
+            q=q,
+            doc_type=doc_type
         )
 
     def get_receivables_summary(

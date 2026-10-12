@@ -43,7 +43,11 @@ KNOWN_INVOICE_COLUMNS = {
     "created_by", "created_at", "updated_at", "metadata"
 }
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+import logging
+import re
+
+logger = logging.getLogger(__name__)
 
 def clean_invoice_header_payload(header_data: Dict[str, Any]) -> Dict[str, Any]:
     cleaned = {}
@@ -83,6 +87,8 @@ def unpack_invoice_header_result(header: Dict[str, Any]) -> Dict[str, Any]:
         for k, v in meta.items():
             if k not in result or result[k] is None or (result[k] == 0 and v):
                 result[k] = v
+    if not result.get("advance_received") and result.get("amount_paid"):
+        result["advance_received"] = result["amount_paid"]
     return result
 
 from app.core.auth import is_valid_uuid
@@ -209,46 +215,83 @@ class InvoiceRepository:
         self.admin_db = get_admin_supabase_client()
 
     def generate_invoice_no(self, organization_id: str, invoice_date: Optional[Any] = None) -> str:
-        date_val = str(invoice_date)[:10] if invoice_date else str(date.today())
-        try:
-            res = self.admin_db.rpc("allocate_tax_invoice_no", {
-                "p_organization_id": str(organization_id),
-                "p_invoice_date": date_val
-            }).execute()
-            if res.data:
-                return str(res.data)
-        except Exception as e:
-            if "PGRST202" not in str(e) and "Could not find the function" not in str(e):
-                raise
-        dt = datetime.strptime(date_val, "%Y-%m-%d").date()
-        fy_start = dt.year if dt.month >= 4 else dt.year - 1
-        fy_code = f"{fy_start % 100:02d}{(fy_start + 1) % 100:02d}"
-        prefix = f"INV-{fy_code}"
-        res = self.admin_db.table("invoices").select("invoice_no").eq("organization_id", organization_id).like("invoice_no", f"{prefix}-%").execute()
+        org_id_str = str(organization_id)
+        existing_nos = set()
         max_no = 0
-        if res.data:
-            for row in res.data:
-                ino = str(row.get("invoice_no") or "")
-                m = re.search(r"(\d+)$", ino)
-                if m:
-                    max_no = max(max_no, int(m.group(1)))
-        return f"{prefix}-{(max_no + 1):04d}"
+        try:
+            res = self.admin_db.table("invoices").select("invoice_no").eq("organization_id", org_id_str).execute()
+            if res.data:
+                for row in res.data:
+                    ino = str(row.get("invoice_no") or "").strip()
+                    if ino:
+                        existing_nos.add(ino)
+                        m = re.search(r"(\d+)$", ino)
+                        if m:
+                            try:
+                                max_no = max(max_no, int(m.group(1)))
+                            except ValueError:
+                                pass
+        except Exception as e:
+            logger.warning(f"Error reading existing invoices for org {org_id_str}: {e}")
+
+        seq_next = 1
+        try:
+            seq_res = self.admin_db.table("organization_document_sequences").select("invoice_next_no").eq("organization_id", org_id_str).limit(1).execute()
+            if seq_res.data and seq_res.data[0].get("invoice_next_no") is not None:
+                seq_next = int(seq_res.data[0]["invoice_next_no"])
+        except Exception as e:
+            logger.warning(f"Error reading document sequences for org {org_id_str}: {e}")
+
+        next_val = max(max_no + 1, seq_next, 1)
+        candidate = f"INV-{next_val:04d}"
+        while candidate in existing_nos:
+            next_val += 1
+            candidate = f"INV-{next_val:04d}"
+
+        try:
+            self.admin_db.table("organization_document_sequences").upsert({
+                "organization_id": org_id_str,
+                "invoice_prefix": "INV",
+                "invoice_next_no": next_val + 1,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }, on_conflict="organization_id").execute()
+        except Exception as e:
+            logger.warning(f"Error synchronizing organization_document_sequences: {e}")
+
+        return candidate
 
     def get_all(self, organization_id: str) -> List[Dict[str, Any]]:
         try:
             invoices = self.db.table("invoices").select("*").eq("organization_id", organization_id).order("invoice_date", desc=True).execute().data or []
         except Exception:
             invoices = self.admin_db.table("invoices").select("*").eq("organization_id", organization_id).order("invoice_date", desc=True).execute().data or []
+
+        if not invoices:
+            return []
+
+        # Batch load parties in ONE query
+        party_ids = list({inv.get("party_id") for inv in invoices if inv.get("party_id")})
+        parties_map = {}
+        if party_ids:
+            try:
+                party_res = self.db.table("parties").select("id, display_name, legal_name, phone, gstin").in_("id", party_ids).execute()
+                for p in (party_res.data or []):
+                    parties_map[p["id"]] = p
+            except Exception:
+                try:
+                    party_res = self.admin_db.table("parties").select("id, display_name, legal_name, phone, gstin").in_("id", party_ids).execute()
+                    for p in (party_res.data or []):
+                        parties_map[p["id"]] = p
+                except Exception:
+                    pass
+
         unpacked = []
         for inv in invoices:
             inv_unpacked = unpack_invoice_header_result(inv)
-            if inv_unpacked.get("party_id"):
-                try:
-                    party_res = self.db.table("parties").select("display_name").eq("id", inv_unpacked["party_id"]).limit(1).execute()
-                except Exception:
-                    party_res = self.admin_db.table("parties").select("display_name").eq("id", inv_unpacked["party_id"]).limit(1).execute()
-                if party_res.data:
-                    inv_unpacked["party_name"] = party_res.data[0]["display_name"]
+            pid = inv_unpacked.get("party_id")
+            if pid and pid in parties_map:
+                inv_unpacked["party_name"] = parties_map[pid].get("display_name")
+                inv_unpacked["customer"] = parties_map[pid]
             unpacked.append(inv_unpacked)
         return unpacked
 
@@ -292,21 +335,36 @@ class InvoiceRepository:
 
 
     def create(self, header_data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-        cleaned_header = clean_invoice_header_payload(header_data)
-        header = _safe_insert_invoice_header(self.db, self.admin_db, cleaned_header)
-        invoice_id = header["id"]
-        
-        for item in items_data:
-            cleaned_item = clean_invoice_item_payload(item, invoice_id)
-            _safe_insert_invoice_item(self.db, self.admin_db, cleaned_item)
-            
-        db_inv = self.get_by_id(invoice_id, header["organization_id"])
-        if db_inv:
-            for k, v in header.items():
-                if k not in db_inv or db_inv[k] is None:
-                    db_inv[k] = v
-            return db_inv
-        return header
+        org_id = header_data.get("organization_id")
+        last_err = None
+        for attempt in range(5):
+            cleaned_header = clean_invoice_header_payload(header_data)
+            try:
+                header = _safe_insert_invoice_header(self.db, self.admin_db, cleaned_header)
+                invoice_id = header["id"]
+                
+                for item in items_data:
+                    cleaned_item = clean_invoice_item_payload(item, invoice_id)
+                    _safe_insert_invoice_item(self.db, self.admin_db, cleaned_item)
+                    
+                db_inv = self.get_by_id(invoice_id, header["organization_id"])
+                if db_inv:
+                    for k, v in header.items():
+                        if k not in db_inv or db_inv[k] is None:
+                            db_inv[k] = v
+                    return db_inv
+                return header
+            except Exception as err:
+                last_err = err
+                err_str = str(err)
+                if ("23505" in err_str or "duplicate key" in err_str.lower() or "unique constraint" in err_str.lower() or "conflict" in err_str.lower()) and attempt < 4:
+                    next_no = self.generate_invoice_no(org_id)
+                    header_data["invoice_no"] = next_no
+                    logger.info(f"Unique conflict detected during invoice creation, retrying with next number: {next_no}")
+                    continue
+                raise
+        if last_err:
+            raise last_err
 
     def update(self, invoice_id: str, organization_id: str, header_data: Dict[str, Any], items_data: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
         if header_data:

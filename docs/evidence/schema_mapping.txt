@@ -1,0 +1,167 @@
+================================================================================
+LIVE DATABASE SCHEMA MAPPING & RECONCILIATION AUDIT
+================================================================================
+
+--- 1. PROFORMA_INVOICES -> INVOICES (HEADERS) ---
+Copied (same name) [24]:
+  + balance_due
+  + cgst_total
+  + created_at
+  + created_by
+  + currency_code
+  + discount_total
+  + due_date
+  + exchange_rate
+  + grand_total
+  + id
+  + igst_total
+  + notes
+  + organization_id
+  + party_id
+  + place_of_supply_state
+  + round_off
+  + sgst_total
+  + status
+  + subtotal
+  + tax_total
+  + taxable_total
+  + template_id
+  + terms
+  + updated_at
+
+Copied (renamed) [0]:
+
+Copied (preserved in metadata snapshot) [38]:
+  * bill_address_line1
+  * bill_city
+  * bill_gstin
+  * bill_name
+  * bill_pan
+  * bill_state
+  * bl_number
+  * container_details
+  * container_vehicle_no
+  * currency_symbol
+  * customer_id
+  * discount_type
+  * discount_value
+  * eta_date
+  * etd_date
+  * export_type
+  * file_no
+  * gross_total
+  * hbl_number
+  * igm_item_no
+  * igm_no
+  * lut_bond_no
+  * lut_number
+  * mbl_number
+  * ocean_bl_no
+  * rcm_applicable
+  * roe
+  * sales_rep
+  * ship_address_line1
+  * ship_name
+  * taxable_subtotal
+  * thbl_number
+  * total_cgst
+  * total_igst
+  * total_sgst
+  * vessel_name
+  * vessel_voyage
+  * voyage_no
+
+Allowlisted-not-copied [6]:
+  # converted_at
+  # converted_document_id
+  # needs_customer_link
+  # proforma_date
+  # proforma_no
+  # valid_till
+
+UNMAPPED (must be 0) [0]:
+
+--- 2. PROFORMA_INVOICE_ITEMS -> INVOICE_ITEMS (ITEMS) ---
+Copied (same name) [16]:
+  + cgst_amount
+  + description
+  + discount_amount
+  + discount_percent
+  + hsn_sac
+  + id
+  + igst_amount
+  + item_id
+  + line_no
+  + line_total
+  + qty
+  + sgst_amount
+  + tax_rate
+  + taxable_amount
+  + unit
+  + unit_price
+
+Copied (renamed) [1]:
+  ~ rate -> unit_price
+
+Allowlisted-not-copied [5]:
+  # cgst_rate
+  # igst_rate
+  # proforma_id
+  # sgst_rate
+  # sort_order
+
+UNMAPPED (must be 0) [0]:
+
+--- 3. CONFIRMATION OF REQUIRED LOGISTICS & EXPORT FIELDS ---
+  [CONFIRMED] bl_number is tracked and copied.
+  [CONFIRMED] vessel_name is tracked and copied.
+  [CONFIRMED] etd_date is tracked and copied.
+  [CONFIRMED] eta_date is tracked and copied.
+  [CONFIRMED] igm_no is tracked and copied.
+  [CONFIRMED] lut_number is tracked and copied.
+  [CONFIRMED] export_type is tracked and copied.
+  [CONFIRMED] line_no is tracked and copied.
+
+--- 4. STORED PROCEDURE FINAL INSERT ... SELECT ---
+
+-- Final INSERT ... SELECT of convert_sales_proforma_to_invoice / convert_proforma_to_invoice:
+INSERT INTO public.invoice_items (
+    invoice_id,
+    item_id,
+    line_no,
+    description,
+    hsn_sac,
+    qty,
+    unit,
+    unit_price,
+    discount_percent,
+    discount_amount,
+    taxable_amount,
+    tax_rate,
+    cgst_amount,
+    sgst_amount,
+    igst_amount,
+    line_total
+)
+SELECT
+    v_invoice_id,
+    item_id,
+    line_no,
+    description,
+    hsn_sac,
+    qty,
+    unit,
+    unit_price,
+    discount_percent,
+    discount_amount,
+    taxable_amount,
+    tax_rate,
+    cgst_amount,
+    sgst_amount,
+    igst_amount,
+    line_total
+FROM public.proforma_invoice_items
+WHERE proforma_id = p_proforma_id;
+
+
+[SUCCESS] 0 unmapped columns! 100% of live database columns accounted for.

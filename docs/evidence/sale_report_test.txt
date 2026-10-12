@@ -1,0 +1,34 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.9, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\RIHASHA\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\RIHASHA\OneDrive\Desktop\bill-riha
+plugins: anyio-4.15.1
+collecting ... collected 1 item
+
+backend/tests/test_sale_report.py::test_sale_report_end_to_end PASSED    [100%]
+
+============================== warnings summary ===============================
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+  C:\Users\RIHASHA\AppData\Local\Programs\Python\Python312\Lib\site-packages\supabase\_sync\client.py:309: DeprecationWarning: The 'timeout' parameter is deprecated. Please configure it in the http client instead.
+    return SyncPostgrestClient(
+
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+backend/tests/test_sale_report.py::test_sale_report_end_to_end
+  C:\Users\RIHASHA\AppData\Local\Programs\Python\Python312\Lib\site-packages\supabase\_sync\client.py:309: DeprecationWarning: The 'verify' parameter is deprecated. Please configure it in the http client instead.
+    return SyncPostgrestClient(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================== 1 passed, 16 warnings in 76.07s (0:01:16) ==================

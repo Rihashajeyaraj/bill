@@ -1,0 +1,9 @@
+* cleanup-and-workflow
+  main
+  riha-riha
++ temp-revert-wrong-origin
+  remotes/origin/HEAD -> origin/main
+  remotes/origin/main
+  remotes/origin/riha
+  remotes/wrong-origin/HEAD -> wrong-origin/main
+  remotes/wrong-origin/main

@@ -1,9 +1,20 @@
 import React, { useEffect, useState } from "react";
 import { useRoutes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { routes } from "./routes";
-import { ensureSeeded } from "./services/seed";
 import { authBootstrapSession } from "./services/auth.service";
 import { companyLoadMyOrganization } from "./services/company.service";
+
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      staleTime: 30000,
+      gcTime: 5 * 60 * 1000,
+      retry: 1,
+    },
+  },
+});
 
 function isRequiredField(target) {
   if (!(target instanceof HTMLElement)) return false;
@@ -48,7 +59,6 @@ export default function App() {
     let mounted = true;
     async function bootstrap() {
       try {
-        ensureSeeded();
         const hasSession = await authBootstrapSession();
         if (hasSession) {
           await companyLoadMyOrganization();
@@ -120,5 +130,5 @@ export default function App() {
     );
   }
 
-  return element;
+  return <QueryClientProvider client={queryClient}>{element}</QueryClientProvider>;
 }

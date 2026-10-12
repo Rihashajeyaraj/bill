@@ -139,17 +139,17 @@ function applyDigitsToSelection(currentValue, selectionStart, selectionEnd, inse
 }
 
 export default function DateInput({
-  value,
-  onChange,
-  onRawChange,
-  onValidationError,
+  value = "",
+  onChange = null,
+  onRawChange = null,
+  onValidationError = null,
   placeholder = "DD/MM/YYYY",
   className = "",
   disabled = false,
   min = "",
   max = "",
   requireFourDigitYear = false,
-  style,
+  style = {},
   ...props
 }) {
   const inputRef = useRef(null);

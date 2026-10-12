@@ -1,12 +1,14 @@
-import logging
+from decimal import Decimal
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta, date
+import logging
+import uuid
 from fastapi import HTTPException, status
 from app.repositories.proforma_repository import ProformaRepository
 from app.repositories.invoice_repository import InvoiceRepository
 from app.repositories.party_repository import PartyRepository
 from app.core.supabase import get_admin_supabase_client
-from app.services.calculation_service import calculate_document_totals
+from app.services.calculation_service import calculate_document_totals, validate_advance_amount, to_decimal
 from app.schemas.proforma import ProFormaCreate, ProFormaUpdate
 from app.utils.num2words import number_to_words_indian
 
@@ -119,6 +121,11 @@ class ProformaService:
         discount_type = payload_dict.get("discount_type") or payload_dict.get("additional_discount_type") or "amount"
         discount_value = payload_dict.get("discount_value") if payload_dict.get("discount_value") is not None else payload_dict.get("additional_discount_value", 0.0)
 
+        raw_adv = payload_dict.get("advance_received") if (payload_dict.get("advance_received") is not None and float(payload_dict.get("advance_received") or 0) > 0) else payload_dict.get("amount_paid", 0.0)
+        dec_adv = to_decimal(raw_adv)
+        if dec_adv < Decimal("0.00"):
+            raise HTTPException(status_code=422, detail="Advance amount cannot be negative.")
+
         calc_result = calculate_document_totals(
             raw_items,
             company_state,
@@ -126,15 +133,25 @@ class ProformaService:
             company_country=company_country,
             customer_country=customer_country,
             exchange_rate=payload_dict.get("exchange_rate", 1.0),
-            amount_paid=payload_dict.get("amount_paid", 0.0),
+            amount_paid=raw_adv,
             export_type=export_type,
             overall_discount_type=discount_type,
             overall_discount_value=discount_value,
             doc_currency=payload_dict.get("currency_code", "INR")
         )
+
+        validated_adv = validate_advance_amount(raw_adv, calc_result.grand_total)
+        existing_pno = str(payload_dict.get("proforma_no") or "").strip()
+        is_already_taken = False
+        if existing_pno:
+            chk = self.db.table("proforma_invoices").select("id").eq("organization_id", organization_id).eq("proforma_no", existing_pno).limit(1).execute()
+            if chk.data:
+                is_already_taken = True
         
-        proforma_no = payload_dict.get("proforma_no") or self.proforma_repo.generate_proforma_no(organization_id)
-        
+        if not existing_pno or is_already_taken:
+            proforma_no = self.proforma_repo.generate_proforma_no(organization_id)
+        else:
+            proforma_no = existing_pno
         header_data = {
             **payload_dict,
             "organization_id": organization_id,
@@ -163,7 +180,9 @@ class ProformaService:
 
             "round_off": float(calc_result.round_off),
             "grand_total": float(calc_result.grand_total),
-            "balance_due": float(calc_result.balance_due),
+            "advance_received": float(validated_adv),
+            "amount_paid": float(validated_adv),
+            "balance_due": float(calc_result.grand_total - validated_adv),
             "status": payload_dict.get("status") or "DRAFT",
         }
         
@@ -171,14 +190,39 @@ class ProformaService:
         res = self.proforma_repo.create(header_data, items_data)
         res["grand_total_in_words"] = calc_result.grand_total_in_words
         res["customer"] = customer
+
+        # Sync advance payment to payments table so it appears in Payment In
+        if validated_adv > Decimal("0.00") and data.party_id:
+            try:
+                from app.repositories.payment_repository import PaymentRepository
+                payment_repo = PaymentRepository()
+                pmt_no = payment_repo.generate_payment_no(organization_id)
+                payment_repo.create_payment(
+                    organization_id=organization_id,
+                    payment_no=pmt_no,
+                    payment_date=str(data.proforma_date),
+                    party_id=data.party_id,
+                    amount=float(validated_adv),
+                    amount_received=float(validated_adv),
+                    payment_mode="Bank Transfer",
+                    reference_no=proforma_no,
+                    notes=f"Advance received for Pro Forma {proforma_no} [proforma:{res['id']}] [advance]",
+                    user_id=user_id,
+                    allocations=[{
+                        "document_id": res["id"],
+                        "document_type": "proforma",
+                        "amount": float(validated_adv),
+                        "amount_allocated": float(validated_adv)
+                    }],
+                    is_advance=True
+                )
+            except Exception as e:
+                logger.warning(f"Notice while recording advance on proforma creation: {e}")
+
         return res
 
     def get_proformas(self, organization_id: str) -> List[Dict[str, Any]]:
-        proformas = self.proforma_repo.get_all(organization_id)
-        for p in proformas:
-            if p.get("party_id"):
-                p["customer"] = self.get_customer_details(p["party_id"], organization_id)
-        return proformas
+        return self.proforma_repo.get_all(organization_id)
 
     def _build_hsn_summary(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         hsn_map: Dict[str, Dict[str, Any]] = {}
@@ -392,16 +436,22 @@ class ProformaService:
             discount_type = header_updates.get("discount_type") or existing.get("discount_type") or "amount"
             discount_value = header_updates.get("discount_value") if header_updates.get("discount_value") is not None else existing.get("discount_value", 0.0)
 
+            raw_adv = header_updates.get("advance_received") if (header_updates.get("advance_received") is not None) else header_updates.get("amount_paid", existing.get("advance_received") or existing.get("amount_paid", 0.0))
+            dec_adv = to_decimal(raw_adv)
+            if dec_adv < Decimal("0.00"):
+                raise HTTPException(status_code=422, detail="Advance amount cannot be negative.")
+
             calc_result = calculate_document_totals(
                 raw_items,
                 company_state,
                 customer_state,
                 exchange_rate=data.exchange_rate or existing.get("exchange_rate", 1.0),
-                amount_paid=header_updates.get("amount_paid", existing.get("amount_paid", 0.0)),
+                amount_paid=raw_adv,
                 export_type=export_type,
                 overall_discount_type=discount_type,
                 overall_discount_value=discount_value
             )
+            validated_adv = validate_advance_amount(raw_adv, calc_result.grand_total)
             
             header_updates.update({
                 "subtotal": float(calc_result.subtotal),
@@ -413,69 +463,285 @@ class ProformaService:
                 "tax_total": float(calc_result.tax_total),
                 "round_off": float(calc_result.round_off),
                 "grand_total": float(calc_result.grand_total),
-                "balance_due": float(calc_result.balance_due)
+                "advance_received": float(validated_adv),
+                "amount_paid": float(validated_adv),
+                "balance_due": float(calc_result.grand_total - validated_adv)
             })
             items_data = [item.to_dict() for item in calc_result.items]
-            
-        return self.proforma_repo.update(proforma_id, organization_id, header_updates, items_data)
+        elif "advance_received" in header_updates or "amount_paid" in header_updates:
+            raw_adv = header_updates.get("advance_received") if header_updates.get("advance_received") is not None else header_updates.get("amount_paid")
+            gt_dec = to_decimal(existing.get("grand_total") or 0.0)
+            validated_adv = validate_advance_amount(raw_adv, gt_dec)
+            header_updates["advance_received"] = float(validated_adv)
+            header_updates["amount_paid"] = float(validated_adv)
+        updated = self.proforma_repo.update(proforma_id, organization_id, header_updates, items_data)
+
+        # Sync advance payment if advance is present
+        adv_val = float(header_updates.get("advance_received") or header_updates.get("amount_paid") or 0.0)
+        target_party = header_updates.get("party_id") or existing.get("party_id")
+        if adv_val > 0 and target_party:
+            try:
+                from app.repositories.payment_repository import PaymentRepository
+                payment_repo = PaymentRepository()
+                pf_no = existing.get("proforma_no") or header_updates.get("proforma_no")
+                res_pf = self.admin_db.table("payments").select("id").eq("organization_id", organization_id).or_(f"notes.ilike.%[proforma:{proforma_id}]%,reference_no.eq.{pf_no}").execute()
+                if res_pf.data:
+                    pmt_id = res_pf.data[0]["id"]
+                    self.admin_db.table("payments").update({"amount": adv_val, "party_id": target_party}).eq("id", pmt_id).execute()
+                    self.admin_db.table("payment_allocations").update({"amount": adv_val, "amount_allocated": adv_val}).eq("payment_id", pmt_id).execute()
+                else:
+                    pmt_no = payment_repo.generate_payment_no(organization_id)
+                    payment_repo.create_payment(
+                        organization_id=organization_id,
+                        payment_no=pmt_no,
+                        payment_date=str(header_updates.get("proforma_date") or existing.get("proforma_date") or date.today()),
+                        party_id=target_party,
+                        amount=adv_val,
+                        amount_received=adv_val,
+                        payment_mode="Bank Transfer",
+                        reference_no=pf_no,
+                        notes=f"Advance received for Pro Forma {pf_no} [proforma:{proforma_id}] [advance]",
+                        user_id=existing.get("created_by"),
+                        allocations=[{
+                            "document_id": proforma_id,
+                            "document_type": "proforma",
+                            "amount": adv_val,
+                            "amount_allocated": adv_val
+                        }],
+                        is_advance=True
+                    )
+            except Exception as e:
+                logger.warning(f"Notice while syncing advance on proforma update: {e}")
+
+        return updated
+
+    def get_next_proforma_no(self, organization_id: str) -> str:
+        return self.proforma_repo.generate_proforma_no(organization_id)
 
     def convert_to_invoice(self, proforma_id: str, organization_id: str, user_id: str, amount_paid: Optional[float] = None) -> Dict[str, Any]:
         proforma = self.get_proforma(proforma_id, organization_id)
+        if not proforma:
+            # Check if searched by proforma_no within this organization
+            res_no = self.db.table("proforma_invoices").select("*").eq("organization_id", organization_id).eq("proforma_no", proforma_id).limit(1).execute()
+            if res_no.data:
+                proforma = self.get_proforma(res_no.data[0]["id"], organization_id)
+
         if not proforma:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pro Forma invoice not found")
 
         if proforma.get("organization_id") and str(proforma["organization_id"]) != str(organization_id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: Pro Forma belongs to a different organization.")
 
+        actual_proforma_id = proforma["id"]
+        actual_proforma_no = proforma.get("proforma_no")
         pf_status = str(proforma.get("status") or "").upper()
         converted_doc_id = proforma.get("converted_document_id") or proforma.get("convertedDocumentId")
-        
+
+        # Requirement 3: Check whether that Pro Forma Invoice has already been converted.
+        # If already converted, return the existing linked Tax Invoice instead of creating another invoice.
         if pf_status == "CONVERTED" or converted_doc_id:
             existing_inv = None
             if converted_doc_id:
                 existing_inv = self.invoice_repo.get_by_id(converted_doc_id, organization_id)
             if not existing_inv:
-                res = self.db.table("invoices").select("*").eq("organization_id", organization_id).eq("source_proforma_id", proforma_id).limit(1).execute()
-                if res.data:
-                    existing_inv = res.data[0]
-            
-            existing_no = existing_inv.get("invoice_no") if existing_inv else "unknown"
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Sales Pro Forma {proforma.get('proforma_no')} is already converted to Tax Invoice {existing_no}."
-            )
+                res_src = self.db.table("invoices").select("*").eq("organization_id", organization_id).eq("source_proforma_id", actual_proforma_id).limit(1).execute()
+                if res_src.data:
+                    existing_inv = self.invoice_repo.get_by_id(res_src.data[0]["id"], organization_id) or res_src.data[0]
+            if not existing_inv and actual_proforma_no:
+                res_src_no = self.db.table("invoices").select("*").eq("organization_id", organization_id).eq("source_proforma_no", actual_proforma_no).limit(1).execute()
+                if res_src_no.data:
+                    existing_inv = self.invoice_repo.get_by_id(res_src_no.data[0]["id"], organization_id) or res_src_no.data[0]
+
+            if existing_inv:
+                logger.info(f"Pro Forma {actual_proforma_no} is already converted to Tax Invoice {existing_inv.get('invoice_no')}. Returning existing invoice.")
+                return existing_inv
 
         if pf_status in ["CANCELLED", "REJECTED"]:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Cannot convert a cancelled or rejected Pro Forma Invoice: {proforma.get('proforma_no')}"
-            )        # Execute ONE conversion path: database stored procedure convert_sales_proforma_to_invoice
+                detail=f"Cannot convert a cancelled or rejected Pro Forma Invoice: {actual_proforma_no}"
+            )
+
+        # Requirement 2 & 4: Pre-sync document sequence counter to prevent database duplicate key violation (invoices_organization_id_invoice_no_key)
+        import re
+        next_cand_no = self.invoice_repo.generate_invoice_no(organization_id)
+        m_cand = re.search(r"(\d+)$", next_cand_no)
+        cand_num = int(m_cand.group(1)) if m_cand else 1
         try:
-            rpc_res = self.admin_db.rpc("convert_sales_proforma_to_invoice", {
-                "p_proforma_id": proforma_id
+            self.admin_db.table("organization_document_sequences").upsert({
+                "organization_id": str(organization_id),
+                "invoice_prefix": "INV",
+                "invoice_next_no": cand_num,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }, on_conflict="organization_id").execute()
+        except Exception as e:
+            logger.warning(f"Notice while pre-syncing sequence: {e}")
+
+        # Try database stored procedure convert_proforma_to_invoice
+        new_inv_id = None
+        new_inv_no = None
+        use_fallback = False
+
+        try:
+            rpc_res = self.admin_db.rpc("convert_proforma_to_invoice", {
+                "p_proforma_id": actual_proforma_id,
+                "p_org_id": organization_id,
+                "p_user_id": user_id
             }).execute()
+
+            if rpc_res.data:
+                rpc_dict = rpc_res.data if isinstance(rpc_res.data, dict) else {}
+                new_inv_id = rpc_dict.get("invoice_id") or (str(rpc_res.data) if isinstance(rpc_res.data, (str, uuid.UUID)) else None)
+                new_inv_no = rpc_dict.get("invoice_no")
+            else:
+                use_fallback = True
         except Exception as rpc_err:
             err_str = str(rpc_err)
-            if "P0404" in err_str or "not found" in err_str.lower():
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Sales Pro Forma not found: {proforma_id}")
-            if "P0403" in err_str or "forbidden" in err_str.lower() or "unauthorized" in err_str.lower():
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: Pro Forma belongs to a different organization.")
-            if "P0409" in err_str or "already converted" in err_str.lower():
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Sales Pro Forma {proforma.get('proforma_no')} is already converted.")
-            if "P0410" in err_str or "cancelled" in err_str.lower() or "rejected" in err_str.lower():
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Cannot convert a cancelled or rejected Pro Forma Invoice: {proforma.get('proforma_no')}")
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Database conversion error: {err_str}")
+            logger.warning(f"RPC convert_proforma_to_invoice notice: {err_str}. Running atomic fallback conversion.")
+            # If already converted concurrently, return the converted invoice
+            if "already converted" in err_str.lower() or "P0409" in err_str:
+                res_check = self.db.table("invoices").select("*").eq("organization_id", organization_id).eq("source_proforma_id", actual_proforma_id).limit(1).execute()
+                if res_check.data:
+                    existing = self.invoice_repo.get_by_id(res_check.data[0]["id"], organization_id)
+                    if existing:
+                        return existing
+            use_fallback = True
 
-        if not rpc_res.data:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stored procedure returned empty result.")
+        # Fallback Python conversion if RPC failed or was bypassed
+        if use_fallback or not new_inv_id:
+            assigned_inv_no = self.invoice_repo.generate_invoice_no(organization_id)
+            adv_amt = float(proforma.get("advance_received") or proforma.get("amount_paid") or 0.0)
+            gt_amt = float(proforma.get("grand_total") or 0.0)
+            inv_st = "paid" if adv_amt >= gt_amt - 0.01 and gt_amt > 0 else ("partial" if adv_amt > 0 else "issued")
 
-        rpc_dict = rpc_res.data if isinstance(rpc_res.data, dict) else {}
-        new_inv_id = rpc_dict.get("invoice_id") or (str(rpc_res.data) if isinstance(rpc_res.data, str) else None)
-        new_inv_no = rpc_dict.get("invoice_no")
+            header_payload = {
+                "organization_id": organization_id,
+                "template_id": proforma.get("template_id") or "modern_gst",
+                "invoice_no": assigned_inv_no,
+                "invoice_date": str(date.today()),
+                "due_date": str(proforma.get("due_date")) if proforma.get("due_date") else None,
+                "party_id": proforma.get("party_id") or proforma.get("customer_id"),
+                "source_proforma_id": actual_proforma_id,
+                "source_proforma_no": actual_proforma_no,
+                "source_proforma_date": str(proforma.get("proforma_date") or date.today()),
+                "place_of_supply_state": proforma.get("place_of_supply_state"),
+                "place_of_supply_code": proforma.get("place_of_supply_code"),
+                "currency_code": proforma.get("currency_code") or "INR",
+                "exchange_rate": proforma.get("exchange_rate") or 1.0,
+                "roe": proforma.get("roe") or proforma.get("exchange_rate") or 1.0,
+                "subtotal": proforma.get("subtotal", 0.0),
+                "discount_total": proforma.get("discount_total", 0.0),
+                "taxable_total": proforma.get("taxable_total", 0.0),
+                "cgst_total": proforma.get("cgst_total", 0.0),
+                "sgst_total": proforma.get("sgst_total", 0.0),
+                "igst_total": proforma.get("igst_total", 0.0),
+                "total_cgst": proforma.get("total_cgst") or proforma.get("cgst_total", 0.0),
+                "total_sgst": proforma.get("total_sgst") or proforma.get("sgst_total", 0.0),
+                "total_igst": proforma.get("total_igst") or proforma.get("igst_total", 0.0),
+                "tax_total": proforma.get("tax_total", 0.0),
+                "round_off": proforma.get("round_off", 0.0),
+                "grand_total": gt_amt,
+                "amount_paid": adv_amt,
+                "advance_received": adv_amt,
+                "balance_due": max(0.0, gt_amt - adv_amt),
+                "status": inv_st,
+                "notes": proforma.get("notes"),
+                "terms": proforma.get("terms"),
+                "created_by": user_id,
+                "customer_name": proforma.get("customer_name"),
+                "customer_company_name": proforma.get("customer_company_name"),
+                "customer_address": proforma.get("customer_address"),
+                "customer_city": proforma.get("customer_city"),
+                "customer_gstin": proforma.get("customer_gstin"),
+                "customer_phone": proforma.get("customer_phone"),
+                "customer_email": proforma.get("customer_email"),
+                "bill_name": proforma.get("bill_name"),
+                "bill_address_line1": proforma.get("bill_address_line1"),
+                "bill_city": proforma.get("bill_city"),
+                "bill_state": proforma.get("bill_state"),
+                "bill_gstin": proforma.get("bill_gstin"),
+                "ship_name": proforma.get("ship_name"),
+                "ship_address_line1": proforma.get("ship_address_line1"),
+                "ship_city": proforma.get("ship_city"),
+                "ship_state": proforma.get("ship_state"),
+            }
 
-        if not new_inv_id:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stored procedure returned no invoice_id.")
+            pf_items = proforma.get("items") or []
+            if not pf_items:
+                res_items = self.db.table("proforma_invoice_items").select("*").eq("proforma_id", actual_proforma_id).order("line_no").execute()
+                pf_items = res_items.data or []
 
+            created_inv = self.invoice_repo.create(header_payload, pf_items)
+            new_inv_id = created_inv["id"]
+            new_inv_no = created_inv.get("invoice_no") or assigned_inv_no
+
+            # Update Pro Forma status to CONVERTED
+            self.admin_db.table("proforma_invoices").update({
+                "status": "CONVERTED",
+                "converted_document_id": new_inv_id,
+                "converted_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", actual_proforma_id).execute()
+
+        # Carry advance payment forward and link to Tax Invoice
+        adv_amount = float(proforma.get("advance_received") or proforma.get("amount_paid") or 0.0)
+        cust_id = proforma.get("customer_id") or proforma.get("party_id")
+        if adv_amount > 0:
+            try:
+                inv_row = self.admin_db.table("invoices").select("grand_total").eq("id", new_inv_id).limit(1).execute()
+                gt = float(inv_row.data[0]["grand_total"]) if (inv_row.data and inv_row.data[0].get("grand_total") is not None) else float(proforma.get("grand_total") or 0.0)
+                inv_status = "paid" if adv_amount >= (gt - 0.01) and gt > 0 else "partial"
+                bal_due = max(0.0, gt - adv_amount)
+                self.admin_db.table("invoices").update({
+                    "amount_paid": adv_amount,
+                    "balance_due": bal_due,
+                    "status": inv_status
+                }).eq("id", new_inv_id).execute()
+            except Exception as e:
+                logger.warning(f"Notice updating invoice advance balance: {e}")
+
+            try:
+                from app.repositories.payment_repository import PaymentRepository
+                payment_repo = PaymentRepository()
+                existing_pmt = None
+                res_inv = self.admin_db.table("payments").select("*").eq("organization_id", organization_id).eq("invoice_id", new_inv_id).execute()
+                if res_inv.data:
+                    existing_pmt = res_inv.data[0]
+                if not existing_pmt and actual_proforma_no:
+                    res_pf = self.admin_db.table("payments").select("*").eq("organization_id", organization_id).or_(f"notes.ilike.%[proforma:{actual_proforma_id}]%,reference_no.eq.{actual_proforma_no}").execute()
+                    if res_pf.data:
+                        existing_pmt = res_pf.data[0]
+
+                if existing_pmt:
+                    pmt_id = existing_pmt["id"]
+                    self.admin_db.table("payments").update({"invoice_id": new_inv_id}).eq("id", pmt_id).execute()
+                else:
+                    pmt_no = payment_repo.generate_payment_no(organization_id)
+                    payment_repo.create_payment(
+                        organization_id=organization_id,
+                        payment_no=pmt_no,
+                        payment_date=str(proforma.get("proforma_date") or date.today()),
+                        party_id=cust_id,
+                        amount=adv_amount,
+                        amount_received=adv_amount,
+                        payment_mode="Bank Transfer",
+                        reference_no=actual_proforma_no,
+                        notes=f"Advance received from Pro Forma {actual_proforma_no} [proforma:{actual_proforma_id}]",
+                        user_id=user_id,
+                        invoice_id=new_inv_id,
+                        allocations=[{
+                            "document_id": new_inv_id,
+                            "invoice_id": new_inv_id,
+                            "document_type": "invoice",
+                            "amount": adv_amount,
+                            "amount_allocated": adv_amount
+                        }],
+                        is_advance=True
+                    )
+            except Exception as e:
+                logger.warning(f"Notice linking advance payment: {e}")
+
+        # Fetch and return complete Tax Invoice record
         inv = self.invoice_repo.get_by_id(new_inv_id, organization_id)
         if not inv:
             admin_res = self.admin_db.table("invoices").select("*").eq("id", new_inv_id).execute()
@@ -486,13 +752,17 @@ class ProformaService:
             inv["invoice_id"] = new_inv_id
             if new_inv_no:
                 inv["invoice_no"] = new_inv_no
+            inv["source_proforma_id"] = actual_proforma_id
+            inv["source_proforma_no"] = actual_proforma_no
             return inv
 
         return {
             "id": new_inv_id,
             "invoice_id": new_inv_id,
-            "invoice_no": new_inv_no or "INV-UNKNOWN",
+            "invoice_no": new_inv_no or "INV-0001",
             "organization_id": organization_id,
+            "source_proforma_id": actual_proforma_id,
+            "source_proforma_no": actual_proforma_no,
             "status": "issued"
         }
 

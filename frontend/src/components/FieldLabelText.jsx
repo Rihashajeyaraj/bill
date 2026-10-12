@@ -2,13 +2,13 @@ import React from "react";
 import clsx from "clsx";
 
 export default function FieldLabelText({
-  children,
-  label,
+  children = null,
+  label = null,
   required = false,
   optional = false,
-  className,
-  indicatorClassName,
-  optionalClassName
+  className = "",
+  indicatorClassName = "",
+  optionalClassName = ""
 }) {
   const labelText = label || children;
   return (

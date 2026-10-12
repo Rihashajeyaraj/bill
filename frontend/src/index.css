@@ -53,53 +53,53 @@ input[type="number"]::-webkit-inner-spin-button {
 
 @media print {
   @page {
-    size: A4;
-    margin: 12mm;
+    size: A4 portrait;
+    margin: 8mm 10mm;
+  }
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   body {
-    background: #ffffff;
-  }
-  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
     width: 210mm;
-    min-height: 297mm;
+  }
+  html {
+    width: 210mm;
+    height: auto;
   }
   .sidebar,
   .topbar,
-  .app-main-pad,
-  .app-main {
+  .app-main-header,
+  .app-floating-action-bar,
+  .print-hide,
+  .no-print {
+    display: none !important;
+  }
+  .app-main,
+  .app-main-pad {
     padding: 0 !important;
     margin: 0 !important;
   }
-  .sidebar,
-  .topbar {
-    display: none !important;
-  }
-  .print-hide {
-    display: none !important;
-  }
-  .print-sheet {
-    width: 210mm;
-    min-height: 297mm;
-    margin: 0 auto;
-    padding: 12mm;
-    box-sizing: border-box;
-    border: none;
-    box-shadow: none;
-    background: transparent;
-  }
-  .credit-note-preview {
-    background: #ffffff !important;
-    border: 1px solid #e5e5e5 !important;
+  .print-sheet,
+  .invoice-preview,
+  .invoice-master-template {
+    width: 210mm !important;
+    max-width: 210mm !important;
+    margin: 0 auto !important;
+    box-sizing: border-box !important;
     box-shadow: none !important;
-    width: 100%;
-    min-height: calc(297mm - 24mm);
+    background: #ffffff !important;
+    page-break-inside: avoid;
   }
+  .credit-note-preview,
   .invoice-preview > div {
     background: #ffffff !important;
-    border: 1px solid #e5e5e5 !important;
     box-shadow: none !important;
-    width: 100%;
-    min-height: calc(297mm - 24mm);
+    width: 100% !important;
   }
 }
 

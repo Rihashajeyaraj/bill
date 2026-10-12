@@ -141,7 +141,8 @@ class DocumentCalculationResult:
         grand_total_in_words: str = "",
         amount_paid: Decimal = Decimal("0.00"),
         balance_due: Decimal = Decimal("0.00"),
-        tax_type: str = "INTRA_STATE"
+        tax_type: str = "INTRA_STATE",
+        advance_received: Optional[Decimal] = None
     ):
         self.items = items
         self.subtotal = subtotal
@@ -158,8 +159,18 @@ class DocumentCalculationResult:
         self.grand_total = grand_total
         self.grand_total_in_words = grand_total_in_words
         self.amount_paid = amount_paid
+        self.advance_received = advance_received if advance_received is not None else amount_paid
         self.balance_due = balance_due
+        self.balance_payable = balance_due
         self.tax_type = tax_type
+
+        # Compute standard Payment Status
+        if self.amount_paid <= Decimal("0.00"):
+            self.payment_status = "UNPAID"
+        elif self.balance_due <= Decimal("0.00"):
+            self.payment_status = "PAID"
+        else:
+            self.payment_status = "PARTIALLY_PAID"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -178,9 +189,33 @@ class DocumentCalculationResult:
             "grand_total": float(self.grand_total),
             "grand_total_in_words": self.grand_total_in_words,
             "amount_paid": float(self.amount_paid),
+            "advance_received": float(self.advance_received),
             "balance_due": float(self.balance_due),
+            "balance_payable": float(self.balance_due),
+            "payment_status": self.payment_status,
             "tax_type": self.tax_type
         }
+
+def validate_advance_amount(advance: Any, grand_total: Decimal) -> Decimal:
+    """
+    Validates advance amount using Decimal:
+    - Rejects negative advance amounts.
+    - Rejects advances exceeding invoice total.
+    Returns quantized Decimal(0.01).
+    """
+    from fastapi import HTTPException
+    dec = round_money(to_decimal(advance))
+    if dec < Decimal("0.00"):
+        raise HTTPException(
+            status_code=422,
+            detail="Advance amount cannot be negative."
+        )
+    if dec > grand_total:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Advance amount (₹{float(dec):,.2f}) cannot exceed invoice total (₹{float(grand_total):,.2f})."
+        )
+    return dec
 
 def calculate_document_totals(
     raw_items: List[Dict[str, Any]],
@@ -194,8 +229,11 @@ def calculate_document_totals(
     export_type: str = "DOMESTIC",
     overall_discount_type: str = "amount",
     overall_discount_value: Any = 0,
-    doc_currency: str = "INR"
+    doc_currency: str = "INR",
+    advance_received: Any = None
 ) -> DocumentCalculationResult:
+    if advance_received is not None:
+        amount_paid = advance_received
     dec_roe = to_decimal(exchange_rate) or Decimal("1.0")
     norm_export_type = str(export_type or "DOMESTIC").strip().upper()
     
@@ -487,7 +525,8 @@ def calculate_document_totals(
         grand_total_in_words=grand_total_in_words,
         amount_paid=dec_amount_paid,
         balance_due=balance_due,
-        tax_type=tax_type.value
+        tax_type=tax_type.value,
+        advance_received=dec_amount_paid
     )
 
 

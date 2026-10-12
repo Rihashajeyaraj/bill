@@ -20,6 +20,20 @@ KNOWN_PAYMENT_COLUMNS = {
     "is_advance", "amount_received", "tds_amount", "tds_rate", "status"
 }
 
+import time
+from typing import Tuple
+
+_pmt_parties_cache: Dict[str, Tuple[Dict[str, Dict[str, Any]], float]] = {}
+_pmt_doc_no_cache: Dict[str, Tuple[Dict[str, str], float]] = {}
+
+def invalidate_payment_repo_cache(organization_id: Optional[str] = None):
+    if organization_id:
+        _pmt_parties_cache.pop(str(organization_id), None)
+        _pmt_doc_no_cache.pop(str(organization_id), None)
+    else:
+        _pmt_parties_cache.clear()
+        _pmt_doc_no_cache.clear()
+
 class PaymentRepository:
     def __init__(self, token: Optional[str] = None):
         self.db = get_supabase_client(token) if token and token != "dev-token" else get_admin_supabase_client()
@@ -65,6 +79,13 @@ class PaymentRepository:
         return {}
 
     def _get_parties_map(self, organization_id: str) -> Dict[str, Dict[str, Any]]:
+        now = time.time()
+        org_key = str(organization_id)
+        if org_key in _pmt_parties_cache:
+            cached_data, ts = _pmt_parties_cache[org_key]
+            if (now - ts) < 30.0:
+                return cached_data
+
         parties_map = {}
         try:
             res = self.admin_db.table("parties").select("id, display_name, gstin, phone").eq("organization_id", organization_id).execute()
@@ -74,9 +95,31 @@ class PaymentRepository:
                     "gstin": p.get("gstin") or "",
                     "phone": p.get("phone") or ""
                 }
+            _pmt_parties_cache[org_key] = (parties_map, now)
         except Exception:
             pass
         return parties_map
+
+    def _get_doc_no_map(self, organization_id: str) -> Dict[str, str]:
+        now = time.time()
+        org_key = str(organization_id)
+        if org_key in _pmt_doc_no_cache:
+            cached_data, ts = _pmt_doc_no_cache[org_key]
+            if (now - ts) < 30.0:
+                return cached_data
+
+        doc_no_map = {}
+        try:
+            inv_res = self.admin_db.table("invoices").select("id, invoice_no").eq("organization_id", organization_id).execute()
+            for r in (inv_res.data or []):
+                doc_no_map[r["id"]] = r["invoice_no"]
+            pf_res = self.admin_db.table("proforma_invoices").select("id, proforma_no").eq("organization_id", organization_id).execute()
+            for r in (pf_res.data or []):
+                doc_no_map[r["id"]] = r["proforma_no"]
+            _pmt_doc_no_cache[org_key] = (doc_no_map, now)
+        except Exception:
+            pass
+        return doc_no_map
 
     def get_all(self, organization_id: str) -> List[Dict[str, Any]]:
         try:
@@ -156,17 +199,8 @@ class PaymentRepository:
         except Exception:
             pass
 
-        # Document number lookup cache
-        doc_no_map = {}
-        try:
-            inv_res = self.admin_db.table("invoices").select("id, invoice_no").eq("organization_id", organization_id).execute()
-            for r in (inv_res.data or []):
-                doc_no_map[r["id"]] = r["invoice_no"]
-            pf_res = self.admin_db.table("proforma_invoices").select("id, proforma_no").eq("organization_id", organization_id).execute()
-            for r in (pf_res.data or []):
-                doc_no_map[r["id"]] = r["proforma_no"]
-        except Exception:
-            pass
+        # Document number lookup cache (cached with 30s TTL)
+        doc_no_map = self._get_doc_no_map(organization_id)
 
         filtered = []
         clean_cust_id = customer_id.strip() if customer_id and customer_id.strip().lower() not in ("all", "all customers", "null", "undefined", "none", "") else None
@@ -784,51 +818,76 @@ class PaymentRepository:
         from_date: Optional[str] = None,
         to_date: Optional[str] = None,
         status_filter: Optional[str] = None,
-        q: Optional[str] = None
+        q: Optional[str] = None,
+        doc_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        # Fetch parties for customer names
-        parties_res = self.admin_db.table("parties").select("id, display_name, legal_name, gstin").eq("organization_id", organization_id).execute()
+        import re
+        # Fetch parties for customer names and details
+        parties_res = self.admin_db.table("parties").select("id, display_name, legal_name, gstin, phone").eq("organization_id", organization_id).execute()
         parties_map = {p["id"]: p for p in (parties_res.data or [])}
 
-        # Fetch non-reversed incoming payments
+        # Fetch non-reversed incoming payments (payments table has no status column, tracked via notes)
         try:
-            payments_res = self.admin_db.table("payments").select("id, party_id, invoice_id, amount, notes, payment_date, status").eq("organization_id", organization_id).eq("direction", "in").execute()
+            payments_res = self.admin_db.table("payments").select("id, party_id, invoice_id, amount, notes, payment_date").eq("organization_id", organization_id).eq("direction", "in").execute()
             all_payments = payments_res.data or []
         except Exception:
             all_payments = []
-        valid_payments = [p for p in all_payments if str(p.get("status") or "").lower() not in ("reversed", "cancelled")]
+        valid_payments = [p for p in all_payments if not ("[reversed:" in str(p.get("notes") or "").lower() or "[cancelled:" in str(p.get("notes") or "").lower())]
 
         inv_alloc_map: Dict[str, float] = {}
         inv_advance_alloc_map: Dict[str, float] = {}
+        inv_regular_alloc_map: Dict[str, float] = {}
+        inv_advance_direct_map: Dict[str, float] = {}
+        inv_regular_direct_map: Dict[str, float] = {}
         customer_advances: Dict[str, float] = {}
+        payment_adv_map: Dict[str, bool] = {}
 
         for p in valid_payments:
-            amt = float(p.get("amount") or 0.0)
+            pid = p.get("id")
+            amt = float(p.get("amount_received") or p.get("amount") or 0.0)
             inv_id = str(p.get("invoice_id") or "").strip()
             cid = p.get("party_id")
             notes_str = str(p.get("notes") or "").lower()
-            is_adv = "[advance]" in notes_str or not inv_id or "[applied advance]" in notes_str
+            is_adv = bool(p.get("is_advance")) or "[advance]" in notes_str or "[proforma:" in notes_str or "[applied advance]" in notes_str
+            if pid:
+                payment_adv_map[pid] = is_adv
 
             if inv_id:
                 inv_alloc_map[inv_id] = inv_alloc_map.get(inv_id, 0.0) + amt
                 if is_adv:
-                    inv_advance_alloc_map[inv_id] = inv_advance_alloc_map.get(inv_id, 0.0) + amt
+                    inv_advance_direct_map[inv_id] = inv_advance_direct_map.get(inv_id, 0.0) + amt
+                else:
+                    inv_regular_direct_map[inv_id] = inv_regular_direct_map.get(inv_id, 0.0) + amt
             else:
                 if cid:
                     customer_advances[cid] = customer_advances.get(cid, 0.0) + amt
 
-        # Also support payment_allocations table if present
+            pf_match = re.search(r"\[proforma:([a-f0-9\-]+)\]", notes_str)
+            if pf_match:
+                pf_uuid = pf_match.group(1).strip()
+                if is_adv:
+                    inv_advance_direct_map[pf_uuid] = inv_advance_direct_map.get(pf_uuid, 0.0) + amt
+                else:
+                    inv_regular_direct_map[pf_uuid] = inv_regular_direct_map.get(pf_uuid, 0.0) + amt
+
+        # Also inspect payment_allocations table
         try:
-            alloc_res = self.admin_db.table("payment_allocations").select("document_id, invoice_id, amount, amount_allocated").eq("organization_id", organization_id).execute()
+            alloc_res = self.admin_db.table("payment_allocations").select("payment_id, document_id, invoice_id, amount, amount_allocated").eq("organization_id", organization_id).execute()
             for a in (alloc_res.data or []):
                 doc_id = str(a.get("document_id") or a.get("invoice_id") or "").strip()
-                amt = float(a.get("amount") or a.get("amount_allocated") or 0.0)
+                amt = float(a.get("amount_allocated") or a.get("amount") or 0.0)
+                pmt_id = a.get("payment_id")
+                is_adv = payment_adv_map.get(pmt_id, False)
                 if doc_id:
                     inv_alloc_map[doc_id] = inv_alloc_map.get(doc_id, 0.0) + amt
+                    if is_adv:
+                        inv_advance_alloc_map[doc_id] = inv_advance_alloc_map.get(doc_id, 0.0) + amt
+                    else:
+                        inv_regular_alloc_map[doc_id] = inv_regular_alloc_map.get(doc_id, 0.0) + amt
         except Exception:
             pass
 
-        # Fetch non-cancelled invoices
+        # 1. Fetch non-cancelled Tax Invoices
         inv_res = self.admin_db.table("invoices").select("*").eq("organization_id", organization_id).execute()
         raw_invoices = inv_res.data or []
 
@@ -856,18 +915,31 @@ class PaymentRepository:
 
             due_date = str(inv["due_date"]) if inv.get("due_date") else None
             grand_total = round(float(inv.get("grand_total") or 0.0), 2)
-            
-            allocated_pd = inv_alloc_map.get(inv_id, 0.0)
-            header_pd = float(inv.get("amount_paid") or 0.0)
-            paid_amount = round(max(header_pd, allocated_pd), 2)
-            advance_applied = round(inv_advance_alloc_map.get(inv_id, 0.0), 2)
-            balance_due = round(max(0.0, grand_total - paid_amount), 2)
+            header_adv = round(float(inv.get("advance_received") or 0.0), 2)
+            header_pd = round(float(inv.get("amount_paid") or 0.0), 2)
+
+            # Advance Received (from payment allocations, direct payments, or invoice header)
+            adv_from_records = max(inv_advance_alloc_map.get(inv_id, 0.0), inv_advance_direct_map.get(inv_id, 0.0))
+            advance_received = round(adv_from_records if adv_from_records > 0 else (header_adv if header_adv > 0 else header_pd), 2)
+
+            # Additional Payments (non-advance payments)
+            additional_payments = round(max(inv_regular_alloc_map.get(inv_id, 0.0), inv_regular_direct_map.get(inv_id, 0.0)), 2)
+
+            # Total Received = Advance Received + Additional Payments Received (no double-counting)
+            total_received = round(advance_received + additional_payments, 2)
+            if total_received < header_pd:
+                total_received = header_pd
+            if total_received < advance_received:
+                total_received = advance_received
+            additional_payments = max(0.0, round(total_received - advance_received, 2))
+
+            balance_due = max(0.0, round(grand_total - total_received, 2))
 
             days_overdue = None
             days_to_due = None
             if balance_due > 0.01 and due_date:
                 try:
-                    d_due = date.fromisoformat(due_date)
+                    d_due = date.fromisoformat(due_date[:10])
                     if today > d_due:
                         days_overdue = (today - d_due).days
                     else:
@@ -875,36 +947,47 @@ class PaymentRepository:
                 except Exception:
                     pass
 
-            if balance_due <= 0.01:
+            # Calculate Payment Status:
+            # - UNPAID: Total received is zero.
+            # - PARTIALLY_PAID: Total received is greater than zero but less than invoice total.
+            # - PAID: Total received equals invoice total.
+            if balance_due <= 0.01 and grand_total > 0:
+                payment_status = "PAID"
                 computed_status = "paid"
-            elif days_overdue is not None and days_overdue > 0:
-                computed_status = "overdue"
-            elif paid_amount > 0.01:
+            elif total_received > 0.01:
+                payment_status = "PARTIALLY_PAID"
                 computed_status = "partial"
             else:
+                payment_status = "UNPAID"
                 computed_status = "unpaid"
+
+            if computed_status != "paid" and days_overdue is not None and days_overdue > 0:
+                computed_status = "overdue"
 
             if clean_status and clean_status != "all":
                 if clean_status in ("overdue",) and computed_status != "overdue":
                     continue
-                elif clean_status in ("partial", "partially paid", "partially_paid") and computed_status != "partial":
+                elif clean_status in ("partial", "partially paid", "partially_paid") and (computed_status != "partial" and payment_status != "PARTIALLY_PAID"):
                     continue
-                elif clean_status in ("unpaid",) and computed_status != "unpaid":
+                elif clean_status in ("unpaid",) and (computed_status != "unpaid" and payment_status != "UNPAID"):
                     continue
-                elif clean_status in ("paid",) and computed_status != "paid":
+                elif clean_status in ("paid",) and (computed_status != "paid" and payment_status != "PAID"):
                     continue
 
+            c_info = parties_map.get(cid, {})
             cname = (
-                parties_map.get(cid, {}).get("display_name") or
-                parties_map.get(cid, {}).get("legal_name") or
+                c_info.get("display_name") or
+                c_info.get("legal_name") or
                 inv.get("bill_name") or
                 inv.get("customer_name") or
                 "Walk-in / Unlinked"
             )
+            cphone = inv.get("customer_phone") or c_info.get("phone") or ""
+            cgstin = inv.get("customer_gstin") or c_info.get("gstin") or ""
 
             inv_no = str(inv.get("invoice_no") or "")
             if clean_q:
-                haystack = f"{inv_no} {cname}".lower()
+                haystack = f"{inv_no} {cname} {cphone} {cgstin}".lower()
                 if clean_q not in haystack:
                     continue
 
@@ -914,24 +997,174 @@ class PaymentRepository:
                 "invoice_id": inv_id,
                 "invoice_no": inv_no,
                 "invoice_date": inv_date,
+                "invoice_type": "invoice",
                 "customer_id": cid,
                 "customer_name": cname,
+                "customer_phone": cphone,
+                "customer_gstin": cgstin,
                 "due_date": due_date,
                 "grand_total": grand_total,
                 "total_amount": grand_total,
-                "paid": paid_amount,
-                "paid_amount": paid_amount,
-                "advance_applied": advance_applied,
+                "invoice_total": grand_total,
+                "advance_received": advance_received,
+                "advance_applied": advance_received,
+                "additional_payments_received": additional_payments,
+                "additional_payments": additional_payments,
+                "total_received": total_received,
+                "amount_received": total_received,
+                "paid": total_received,
+                "paid_amount": total_received,
                 "balance_due": balance_due,
+                "balance_amount": balance_due,
                 "days_overdue": days_overdue,
                 "days_to_due": days_to_due,
                 "status": computed_status,
-                "has_advance_applied": advance_applied > 0.01,
+                "payment_status": payment_status,
+                "has_advance_applied": advance_received > 0.01,
                 "customer_has_advance": cust_adv > 0.01,
                 "available_customer_advance": cust_adv
             })
 
-        items.sort(key=lambda x: x["invoice_date"] or "", reverse=True)
+        # 2. Fetch active unconverted Pro Forma Invoices
+        try:
+            pf_res = self.admin_db.table("proforma_invoices").select("*").eq("organization_id", organization_id).execute()
+            raw_proformas = pf_res.data or []
+        except Exception:
+            raw_proformas = []
+
+        for pf in raw_proformas:
+            pf_st = str(pf.get("status") or "DRAFT").upper()
+            converted_id = pf.get("converted_document_id")
+            # Converted or cancelled proformas are excluded to avoid duplicate rows/balances
+            if pf_st in ("CONVERTED", "CANCELLED", "REJECTED") or converted_id:
+                continue
+
+            pf_id = str(pf["id"])
+            cid = pf.get("party_id") or pf.get("customer_id")
+            if customer_id and str(cid) != str(customer_id):
+                continue
+
+            pf_date = str(pf.get("proforma_date") or "")
+            if from_date and pf_date and pf_date < str(from_date):
+                continue
+            if to_date and pf_date and pf_date > str(to_date):
+                continue
+
+            due_date = str(pf.get("due_date") or pf.get("valid_till") or "") or None
+            grand_total = round(float(pf.get("grand_total") or 0.0), 2)
+            meta = pf.get("metadata") or {}
+            header_adv = round(float(pf.get("advance_received") or pf.get("amount_paid") or meta.get("advance_received") or meta.get("amount_paid") or 0.0), 2)
+
+            adv_from_records = max(inv_advance_alloc_map.get(pf_id, 0.0), inv_advance_direct_map.get(pf_id, 0.0))
+            advance_received = round(adv_from_records if adv_from_records > 0 else header_adv, 2)
+
+            additional_payments = round(max(inv_regular_alloc_map.get(pf_id, 0.0), inv_regular_direct_map.get(pf_id, 0.0)), 2)
+
+            total_received = round(advance_received + additional_payments, 2)
+            if total_received < header_adv:
+                total_received = header_adv
+            if total_received < advance_received:
+                total_received = advance_received
+            additional_payments = max(0.0, round(total_received - advance_received, 2))
+
+            balance_due = max(0.0, round(grand_total - total_received, 2))
+
+            days_overdue = None
+            days_to_due = None
+            if balance_due > 0.01 and due_date:
+                try:
+                    d_due = date.fromisoformat(due_date[:10])
+                    if today > d_due:
+                        days_overdue = (today - d_due).days
+                    else:
+                        days_to_due = (d_due - today).days
+                except Exception:
+                    pass
+
+            if balance_due <= 0.01 and grand_total > 0:
+                payment_status = "PAID"
+                computed_status = "paid"
+            elif total_received > 0.01:
+                payment_status = "PARTIALLY_PAID"
+                computed_status = "partial"
+            else:
+                payment_status = "UNPAID"
+                computed_status = "unpaid"
+
+            if computed_status != "paid" and days_overdue is not None and days_overdue > 0:
+                computed_status = "overdue"
+
+            if clean_status and clean_status != "all":
+                if clean_status in ("overdue",) and computed_status != "overdue":
+                    continue
+                elif clean_status in ("partial", "partially paid", "partially_paid") and (computed_status != "partial" and payment_status != "PARTIALLY_PAID"):
+                    continue
+                elif clean_status in ("unpaid",) and (computed_status != "unpaid" and payment_status != "UNPAID"):
+                    continue
+                elif clean_status in ("paid",) and (computed_status != "paid" and payment_status != "PAID"):
+                    continue
+
+            c_info = parties_map.get(cid, {})
+            cname = (
+                c_info.get("display_name") or
+                c_info.get("legal_name") or
+                pf.get("bill_name") or
+                pf.get("customer_name") or
+                "Walk-in / Unlinked"
+            )
+            cphone = pf.get("customer_phone") or pf.get("bill_phone") or c_info.get("phone") or ""
+            cgstin = pf.get("customer_gstin") or pf.get("bill_gstin") or c_info.get("gstin") or ""
+
+            inv_no = str(pf.get("proforma_no") or "")
+            if clean_q:
+                haystack = f"{inv_no} {cname} {cphone} {cgstin}".lower()
+                if clean_q not in haystack:
+                    continue
+
+            cust_adv = round(customer_advances.get(cid, 0.0), 2) if cid else 0.0
+
+            items.append({
+                "invoice_id": pf_id,
+                "invoice_no": inv_no,
+                "invoice_date": pf_date,
+                "invoice_type": "proforma",
+                "customer_id": cid,
+                "customer_name": cname,
+                "customer_phone": cphone,
+                "customer_gstin": cgstin,
+                "due_date": due_date,
+                "grand_total": grand_total,
+                "total_amount": grand_total,
+                "invoice_total": grand_total,
+                "advance_received": advance_received,
+                "advance_applied": advance_received,
+                "additional_payments_received": additional_payments,
+                "additional_payments": additional_payments,
+                "total_received": total_received,
+                "amount_received": total_received,
+                "paid": total_received,
+                "paid_amount": total_received,
+                "balance_due": balance_due,
+                "balance_amount": balance_due,
+                "days_overdue": days_overdue,
+                "days_to_due": days_to_due,
+                "status": computed_status,
+                "payment_status": payment_status,
+                "has_advance_applied": advance_received > 0.01,
+                "customer_has_advance": cust_adv > 0.01,
+                "available_customer_advance": cust_adv
+            })
+
+        # Filter by doc_type if specified
+        if doc_type and doc_type.lower() != "all":
+            clean_dt = doc_type.lower()
+            if clean_dt in ("proforma", "pi"):
+                items = [i for i in items if i.get("invoice_type") == "proforma"]
+            elif clean_dt in ("invoice", "tax_invoice", "tax"):
+                items = [i for i in items if i.get("invoice_type") == "invoice"]
+
+        # Sort descending by invoice_date
+        items.sort(key=lambda x: str(x.get("invoice_date") or ""), reverse=True)
         return items
 
     def get_receivables_summary(

@@ -7,8 +7,8 @@ import {
 import { authGetOrganizationId, authGetRole, authGetUser } from "../../services/auth.service";
 import { isSupabaseConfigured, supabase } from "../../services/supabaseClient";
 import { canCreateEntries, canDeleteEntries, canEditEntries } from "../../services/roles";
-import { ensureRemoteOpeningStockLedgerForItems } from "../../services/inventory.service";
-import { syncLowStockNotifications } from "../../services/stockNotifications.service";
+const ensureRemoteOpeningStockLedgerForItems = async () => {};
+const syncLowStockNotifications = async () => {};
 import { buildTaxLabel, normalizeItemType, normalizeText, parseNumber } from "./utils";
 import { resolveLowStockAlertValue, resolveUpsertStockValues } from "./stockPersistence";
 

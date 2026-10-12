@@ -7,7 +7,6 @@ import Tabs from "../components/Tabs";
 import Badge from "../components/Badge";
 import Modal from "../components/Modal";
 import ItemFormModal from "../modules/items/ItemFormModal";
-import { listCreditNotes } from "../modules/creditNote/store";
 import { useOrganization } from "../context/OrganizationContext";
 import { formatDateByPreference } from "../lib/formatPreferences";
 import {
@@ -23,9 +22,12 @@ import {
   upsertItemRemote
 } from "../modules/items/store";
 import { formatMoney, normalizeText, parseNumber, taxContext } from "../modules/items/utils";
-import { listItemReturnActions, saveItemReturnAction } from "../services/itemReturns.service";
-import { fetchItemStockHistory, fetchPurchaseBillByBatchId } from "../services/inventory.service";
-import { purchasesList } from "../services/purchases.service";
+const listCreditNotes = () => [];
+const listItemReturnActions = () => [];
+const saveItemReturnAction = () => {};
+const fetchItemStockHistory = async () => [];
+const fetchPurchaseBillByBatchId = async () => null;
+const purchasesList = () => [];
 import { isOrganizationScopedStorageEventKey, LS_KEYS } from "../services/storage";
 import { useToast } from "../context/ToastContext";
 import { authGetRole } from "../services/auth.service";

@@ -1,0 +1,70 @@
+
+> vyapar-relaxing-red-frontend@1.0.0 build
+> vite build
+
+[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+transforming...
+[32m✓[39m 3056 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mindex.html                                       [39m[1m[2m  2.14 kB[22m[1m[22m[2m │ gzip:   0.80 kB[22m
+[2mdist/[22m[32massets/twite_ai_technologies_logo-DTaAcKGK.jfif  [39m[1m[2m  4.12 kB[22m[1m[22m
+[2mdist/[22m[35massets/CompanySettings-DfuhIg4U.css              [39m[1m[2m  5.12 kB[22m[1m[22m[2m │ gzip:   1.54 kB[22m
+[2mdist/[22m[35massets/index-B9J7LMKu.css                        [39m[1m[2m100.28 kB[22m[1m[22m[2m │ gzip:  17.52 kB[22m
+[2mdist/[22m[36massets/AgingReport-DD8cpeSb.js                   [39m[1m[2m  0.15 kB[22m[1m[22m[2m │ gzip:   0.15 kB[22m
+[2mdist/[22m[36massets/PartyWiseStatement-B0MHFtkO.js            [39m[1m[2m  0.16 kB[22m[1m[22m[2m │ gzip:   0.15 kB[22m
+[2mdist/[22m[36massets/Card-BljynQ74.js                          [39m[1m[2m  0.22 kB[22m[1m[22m[2m │ gzip:   0.18 kB[22m
+[2mdist/[22m[36massets/tokens-CCHip6cL.js                        [39m[1m[2m  0.29 kB[22m[1m[22m[2m │ gzip:   0.23 kB[22m
+[2mdist/[22m[36massets/useGlobalLoadingBridge-mQCXiopJ.js        [39m[1m[2m  0.33 kB[22m[1m[22m[2m │ gzip:   0.22 kB[22m
+[2mdist/[22m[36massets/Badge-DwhKEWRP.js                         [39m[1m[2m  0.42 kB[22m[1m[22m[2m │ gzip:   0.28 kB[22m
+[2mdist/[22m[36massets/GradientButton-DYfiID9o.js                [39m[1m[2m  0.44 kB[22m[1m[22m[2m │ gzip:   0.32 kB[22m
+[2mdist/[22m[36massets/Tabs-BobDqeOj.js                          [39m[1m[2m  0.53 kB[22m[1m[22m[2m │ gzip:   0.35 kB[22m
+[2mdist/[22m[36massets/PageHeader-CEDpI3-s.js                    [39m[1m[2m  0.57 kB[22m[1m[22m[2m │ gzip:   0.33 kB[22m
+[2mdist/[22m[36massets/ActionStatusDialog-BGM6bHLB.js            [39m[1m[2m  0.58 kB[22m[1m[22m[2m │ gzip:   0.36 kB[22m
+[2mdist/[22m[36massets/NotFound-BQ_DPHyq.js                      [39m[1m[2m  0.65 kB[22m[1m[22m[2m │ gzip:   0.40 kB[22m
+[2mdist/[22m[36massets/Modal-CCr8TKqJ.js                         [39m[1m[2m  2.08 kB[22m[1m[22m[2m │ gzip:   0.84 kB[22m
+[2mdist/[22m[36massets/FormField-unSNbIh9.js                     [39m[1m[2m  2.58 kB[22m[1m[22m[2m │ gzip:   1.10 kB[22m
+[2mdist/[22m[36massets/Settings-e8KdsZHV.js                      [39m[1m[2m  2.66 kB[22m[1m[22m[2m │ gzip:   1.17 kB[22m
+[2mdist/[22m[36massets/SuperAdminActivity-aFkqTTSk.js            [39m[1m[2m  3.95 kB[22m[1m[22m[2m │ gzip:   1.59 kB[22m
+[2mdist/[22m[36massets/apiClient-BKVsJ8d4.js                     [39m[1m[2m  4.34 kB[22m[1m[22m[2m │ gzip:   1.55 kB[22m
+[2mdist/[22m[36massets/SuperAdminDashboard-d-8ngdNu.js           [39m[1m[2m  4.60 kB[22m[1m[22m[2m │ gzip:   1.75 kB[22m
+[2mdist/[22m[36massets/CurrencyMultiInput-klrLVz-H.js            [39m[1m[2m  4.74 kB[22m[1m[22m[2m │ gzip:   2.17 kB[22m
+[2mdist/[22m[36massets/DateInput-BntIDWqj.js                     [39m[1m[2m  5.75 kB[22m[1m[22m[2m │ gzip:   2.42 kB[22m
+[2mdist/[22m[36massets/InvoiceTemplateSetup-Dz5ecDqf.js          [39m[1m[2m  5.95 kB[22m[1m[22m[2m │ gzip:   2.35 kB[22m
+[2mdist/[22m[36massets/OrganizationSelect-DoJaPBtV.js            [39m[1m[2m  6.25 kB[22m[1m[22m[2m │ gzip:   1.99 kB[22m
+[2mdist/[22m[36massets/SuperAdminRequests-DutMqfi6.js            [39m[1m[2m  7.49 kB[22m[1m[22m[2m │ gzip:   2.26 kB[22m
+[2mdist/[22m[36massets/SuperAdminLayout-CojesYIM.js              [39m[1m[2m  7.75 kB[22m[1m[22m[2m │ gzip:   2.24 kB[22m
+[2mdist/[22m[36massets/ForgotPassword-oJarYmy4.js                [39m[1m[2m  9.80 kB[22m[1m[22m[2m │ gzip:   2.82 kB[22m
+[2mdist/[22m[36massets/ResetPassword-VjEq5tAq.js                 [39m[1m[2m 11.24 kB[22m[1m[22m[2m │ gzip:   3.13 kB[22m
+[2mdist/[22m[36massets/tax-CgScmCpa.js                           [39m[1m[2m 11.30 kB[22m[1m[22m[2m │ gzip:   4.13 kB[22m
+[2mdist/[22m[36massets/TenantCompanyUsers-DQRRUCSI.js            [39m[1m[2m 12.24 kB[22m[1m[22m[2m │ gzip:   3.36 kB[22m
+[2mdist/[22m[36massets/InvoiceHistory-xv65jZmq.js                [39m[1m[2m 13.52 kB[22m[1m[22m[2m │ gzip:   4.14 kB[22m
+[2mdist/[22m[36massets/proformas.service-DuFuos5H.js             [39m[1m[2m 13.78 kB[22m[1m[22m[2m │ gzip:   3.90 kB[22m
+[2mdist/[22m[36massets/Dashboard-C-cRZSKP.js                     [39m[1m[2m 14.86 kB[22m[1m[22m[2m │ gzip:   4.52 kB[22m
+[2mdist/[22m[36massets/PartyStatement-lOAEw9Gn.js                [39m[1m[2m 16.58 kB[22m[1m[22m[2m │ gzip:   3.54 kB[22m
+[2mdist/[22m[36massets/payments.service-CJeT6Ons.js              [39m[1m[2m 16.90 kB[22m[1m[22m[2m │ gzip:   4.76 kB[22m
+[2mdist/[22m[36massets/ItemCreate-DGm3aFWO.js                    [39m[1m[2m 21.04 kB[22m[1m[22m[2m │ gzip:   6.01 kB[22m
+[2mdist/[22m[36massets/CompanySetup-D5qrqm1W.js                  [39m[1m[2m 21.13 kB[22m[1m[22m[2m │ gzip:   5.62 kB[22m
+[2mdist/[22m[36massets/SuperAdminCompanies-DcEjZE4I.js           [39m[1m[2m 22.74 kB[22m[1m[22m[2m │ gzip:   5.54 kB[22m
+[2mdist/[22m[36massets/SalesProformasList-Dz6iVj2I.js            [39m[1m[2m 23.40 kB[22m[1m[22m[2m │ gzip:   6.58 kB[22m
+[2mdist/[22m[36massets/InvoiceTemplateSelector-BZK-y_S-.js       [39m[1m[2m 24.67 kB[22m[1m[22m[2m │ gzip:   6.79 kB[22m
+[2mdist/[22m[36massets/InvoicePreview-aDx3yJKb.js                [39m[1m[2m 25.80 kB[22m[1m[22m[2m │ gzip:   6.95 kB[22m
+[2mdist/[22m[36massets/Parties-Cc0IRpkr.js                       [39m[1m[2m 26.30 kB[22m[1m[22m[2m │ gzip:   7.76 kB[22m
+[2mdist/[22m[36massets/purify.es-BSKMTLSQ.js                     [39m[1m[2m 26.41 kB[22m[1m[22m[2m │ gzip:   9.94 kB[22m
+[2mdist/[22m[36massets/icons-nWhpI3zp.js                         [39m[1m[2m 41.74 kB[22m[1m[22m[2m │ gzip:   8.44 kB[22m
+[2mdist/[22m[36massets/router-query-Bvus4-P9.js                  [39m[1m[2m 45.90 kB[22m[1m[22m[2m │ gzip:  14.18 kB[22m
+[2mdist/[22m[36massets/Items-CwKnWU2U.js                         [39m[1m[2m 49.60 kB[22m[1m[22m[2m │ gzip:  11.50 kB[22m
+[2mdist/[22m[36massets/SalesProformaEditor-Cv427CfZ.js           [39m[1m[2m 51.99 kB[22m[1m[22m[2m │ gzip:  12.57 kB[22m
+[2mdist/[22m[36massets/PaymentInPremium-BK12eT8S.js              [39m[1m[2m 59.62 kB[22m[1m[22m[2m │ gzip:  12.62 kB[22m
+[2mdist/[22m[36massets/CompanySettings-Bzv7QG3X.js               [39m[1m[2m 83.97 kB[22m[1m[22m[2m │ gzip:  20.67 kB[22m
+[2mdist/[22m[36massets/InvoiceCreate-B1uvEJLO.js                 [39m[1m[2m 96.18 kB[22m[1m[22m[2m │ gzip:  23.98 kB[22m
+[2mdist/[22m[36massets/Reports-_PfGD-CB.js                       [39m[1m[2m124.82 kB[22m[1m[22m[2m │ gzip:  27.04 kB[22m
+[2mdist/[22m[36massets/index.es-DiCk0MqD.js                      [39m[1m[2m150.73 kB[22m[1m[22m[2m │ gzip:  51.57 kB[22m
+[2mdist/[22m[36massets/supabase-C8W5_S3P.js                      [39m[1m[2m210.53 kB[22m[1m[22m[2m │ gzip:  54.57 kB[22m
+[2mdist/[22m[36massets/heavy-vendor-CkbGwgij.js                  [39m[1m[2m282.46 kB[22m[1m[22m[2m │ gzip:  94.92 kB[22m
+[2mdist/[22m[36massets/index-DWbdmQf0.js                         [39m[1m[2m293.30 kB[22m[1m[22m[2m │ gzip:  78.34 kB[22m
+[2mdist/[22m[36massets/charts-DddjzOnB.js                        [39m[1m[2m363.61 kB[22m[1m[22m[2m │ gzip:  99.17 kB[22m
+[2mdist/[22m[36massets/geo-data-Bm1QcL6Z.js                      [39m[1m[2m591.19 kB[22m[1m[22m[2m │ gzip: 133.85 kB[22m
+[2mdist/[22m[36massets/pdf-tools-CSH2wm1U.js                     [39m[1m[2m592.92 kB[22m[1m[22m[2m │ gzip: 177.08 kB[22m
+[2mdist/[22m[36massets/react-core-DvNh0Urc.js                    [39m[1m[2m845.43 kB[22m[1m[22m[2m │ gzip: 130.08 kB[22m
+[32m✓ built in 11.80s[39m

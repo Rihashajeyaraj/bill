@@ -1,1932 +1,1379 @@
-import React, { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import clsx from "clsx";
 import { useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import {
-  ArrowLeftRight,
-  Briefcase,
-  ChevronDown,
-  ClipboardList,
+  Users,
+  Wallet,
+  PiggyBank,
+  AlertCircle,
+  FileText,
+  Receipt,
+  Search,
+  RotateCcw,
+  Printer,
   FileDown,
   FileSpreadsheet,
-  Printer,
-  Receipt,
-  RefreshCw,
-  TrendingUp,
-  Users,
-  Wallet
+  ChevronDown,
+  ChevronRight,
+  Filter,
+  CheckCircle2,
+  Clock,
+  ArrowUpRight,
+  ShieldCheck,
+  Building2,
+  Phone,
+  Hash,
+  RefreshCw
 } from "lucide-react";
 import Card from "../components/Card";
 import DateInput from "../components/DateInput";
 import PageHeader from "../components/PageHeader";
 import { useOrganization } from "../context/OrganizationContext";
 import { useFinancialYears } from "../context/FinancialYearContext";
-import { reportSections } from "../data/reports";
-import { useGlobalLoadingBridge } from "../hooks/useGlobalLoadingBridge";
-import { formatDateByPreference } from "../lib/formatPreferences";
-import { formatMoney, normalizeText } from "../modules/parties/utils";
-import { exportReportExcel, exportReportJson, exportReportPdf, printReport } from "../modules/reports/reportExport";
+import { useToast } from "../context/ToastContext";
+import { apiClient } from "../services/apiClient";
+import { exportReportExcel, exportReportPdf, printReport } from "../modules/reports/reportExport";
 import { authGetRole } from "../services/auth.service";
-import {
-  buildAgingReport,
-  buildAllPartiesReport,
-  buildAllTransactionsReport,
-  buildCashFlowReport,
-  buildGstReport,
-  buildPartyStatementReport,
-  buildProfitLossReport,
-  buildPurchaseReport,
-  buildSaleReport,
-  buildTdsReport,
-  getDefaultReportFilters,
-  getReportsDataset,
-  listReportParties,
-  PARTY_TYPES,
-  syncReportsData,
-  TRANSACTION_TYPE_OPTIONS
-} from "../services/reports.service";
 import { isAccounterRole, isOwnerRole } from "../services/roles";
-import { applyFinancialYearRange } from "../services/financialYears.service";
-
-const REPORT_PAGE_SIZE = 20;
-const REPORT_SIDEBAR_MIN_WIDTH = 240;
-const REPORT_SIDEBAR_MAX_WIDTH = 360;
-const REPORT_SIDEBAR_DEFAULT_WIDTH = 290;
-const SORTABLE_TRANSACTION_COLUMNS = new Set(["date", "transactionType", "reference", "partyName", "amount", "status"]);
-
-function hasReportDatasetData(dataset) {
-  if (!dataset || typeof dataset !== "object") return false;
-  return Object.values(dataset).some((value) => Array.isArray(value) && value.length > 0);
-}
-
-function isIndiaCompany(profile = {}) {
-  const country = String(profile?.country || profile?.countryCode || "").trim().toLowerCase();
-  return country === "india" || country === "in";
-}
-
-function getVisibleReportSections(profile = {}) {
-  const allowTdsReport = isIndiaCompany(profile);
-  return reportSections
-    .map((section) => ({
-      ...section,
-      items: section.items.filter(
-        (item) => (item.id !== "tds-report" && item.id !== "gst-report") || allowTdsReport
-      )
-    }))
-    .filter((section) => section.items.length > 0);
-}
-
-const REPORT_META = {
-  "sale-report": {
-    icon: Receipt,
-    accent: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    activeAccent: "border-emerald-300 bg-emerald-50 text-emerald-950 shadow-md md:hover:border-emerald-400 md:hover:bg-emerald-100/80"
-  },
-  "purchase-report": {
-    icon: Briefcase,
-    accent: "bg-amber-50 text-amber-700 border-amber-200",
-    activeAccent: "border-amber-300 bg-amber-50 text-amber-950 shadow-md md:hover:border-amber-400 md:hover:bg-amber-100/80"
-  },
-  "cash-flow": {
-    icon: Wallet,
-    accent: "bg-cyan-50 text-cyan-700 border-cyan-200",
-    activeAccent: "border-cyan-300 bg-cyan-50 text-cyan-950 shadow-md md:hover:border-cyan-400 md:hover:bg-cyan-100/80"
-  },
-  "all-transactions": {
-    icon: ArrowLeftRight,
-    accent: "bg-slate-100 text-slate-700 border-slate-200",
-    activeAccent: "border-slate-300 bg-slate-100 text-slate-900 shadow-md md:hover:border-slate-400 md:hover:bg-slate-200/80"
-  },
-  "party-statement": {
-    icon: ClipboardList,
-    accent: "bg-violet-50 text-violet-700 border-violet-200",
-    activeAccent: "border-violet-300 bg-violet-50 text-violet-950 shadow-md md:hover:border-violet-400 md:hover:bg-violet-100/80"
-  },
-  "aging-report": {
-    icon: Users,
-    accent: "bg-rose-50 text-rose-700 border-rose-200",
-    activeAccent: "border-rose-300 bg-rose-50 text-rose-950 shadow-md md:hover:border-rose-400 md:hover:bg-rose-100/80"
-  },
-  "all-parties": {
-    icon: Users,
-    accent: "bg-teal-50 text-teal-700 border-teal-200",
-    activeAccent: "border-teal-300 bg-teal-50 text-teal-950 shadow-md md:hover:border-teal-400 md:hover:bg-teal-100/80"
-  },
-  "profit-loss": {
-    icon: TrendingUp,
-    accent: "bg-lime-50 text-lime-700 border-lime-200",
-    activeAccent: "border-lime-300 bg-lime-50 text-lime-950 shadow-md md:hover:border-lime-400 md:hover:bg-lime-100/80"
-  },
-  "gst-report": {
-    icon: FileSpreadsheet,
-    accent: "bg-orange-50 text-orange-700 border-orange-200",
-    activeAccent: "border-orange-300 bg-orange-50 text-orange-950 shadow-md md:hover:border-orange-400 md:hover:bg-orange-100/80"
-  },
-  "tds-report": {
-    icon: FileSpreadsheet,
-    accent: "bg-sky-50 text-sky-700 border-sky-200",
-    activeAccent: "border-sky-300 bg-sky-50 text-sky-950 shadow-md md:hover:border-sky-400 md:hover:bg-sky-100/80"
-  }
-};
-
-const AGING_BUCKET_COLUMNS = [
-  { key: "bucket_0_30", label: "0-30 Days" },
-  { key: "bucket_31_60", label: "31-60 Days" },
-  { key: "bucket_61_90", label: "61-90 Days" },
-  { key: "bucket_above_90", label: "Above 90 Days" }
-];
-
-const AGING_TRANSACTION_BADGES = {
-  Invoice: "bg-slate-100 text-slate-700",
-  Purchase: "bg-slate-100 text-slate-700",
-  Payment: "bg-sky-50 text-sky-700",
-  "Credit Note": "bg-rose-50 text-rose-700",
-  "Debit Note": "bg-amber-50 text-amber-700"
-};
+import { formatMoney } from "../modules/parties/utils";
+import { REPORT_TYPES } from "../data/reports";
 
 function isAuthorizedReportRole(role) {
   return isOwnerRole(role) || isAccounterRole(role);
 }
 
-function paginateRows(rows, page, pageSize = REPORT_PAGE_SIZE) {
-  const totalRows = rows.length;
-  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-  const safePage = Math.min(Math.max(1, page), totalPages);
-  const startIndex = (safePage - 1) * pageSize;
-  return {
-    rows: rows.slice(startIndex, startIndex + pageSize),
-    page: safePage,
-    totalRows,
-    totalPages,
-    startIndex,
-    endIndex: Math.min(startIndex + pageSize, totalRows)
-  };
+// Strictly format all displayed dates as DD/MM/YYYY
+export function formatDateDDMMYYYY(val) {
+  if (!val || val === "-" || val === "null" || val === "undefined") return "-";
+  const s = String(val).trim();
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
+  if (s.includes("-")) {
+    const parts = s.slice(0, 10).split("-");
+    if (parts.length === 3 && parts[0].length === 4) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+  }
+  return s;
 }
 
-function MetricCard({ label, value, tone = "default" }) {
-  const toneClasses =
-    tone === "positive"
-      ? "border-emerald-200 bg-emerald-50/80 text-emerald-800"
-      : tone === "negative"
-        ? "border-rose-200 bg-rose-50/80 text-rose-800"
-        : "border-slate-200 bg-white text-slate-900";
-
-  return (
-    <div className={clsx("min-w-0 overflow-hidden rounded-3xl border p-4 sm:p-5", toneClasses)}>
-      <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-3 min-w-0 text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl">{value}</p>
-    </div>
-  );
-}
-
-function InteractiveMetricCard({ label, value, tone = "default", active = false, onClick }) {
-  const toneClasses =
-    tone === "positive"
-      ? "border-emerald-200 bg-emerald-50/80 text-emerald-800"
-      : tone === "negative"
-        ? "border-rose-200 bg-rose-50/80 text-rose-800"
-        : "border-slate-200 bg-white text-slate-900";
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={clsx(
-        "min-w-0 overflow-hidden rounded-3xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 sm:p-5",
-        toneClasses,
-        active && "ring-2 ring-slate-900/70 shadow-md"
-      )}
-    >
-      <p className="min-w-0 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-3 min-w-0 text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl">{value}</p>
-    </button>
-  );
-}
-
-const STATEMENT_TRANSACTION_BADGES = {
-  "Payment In": "border-emerald-200 bg-emerald-50 text-emerald-700",
-  "Payment Out": "border-rose-200 bg-rose-50 text-rose-700",
-  "TDS Credit": "border-teal-200 bg-teal-50 text-teal-700",
-  "TDS Debit": "border-amber-200 bg-amber-50 text-amber-700"
+const REPORT_ICONS = {
+  "customer-wise": Users,
+  "payment-wise": Wallet,
+  "advances": PiggyBank,
+  "balance-due": AlertCircle,
+  "proforma": FileText,
+  "tax-invoices": Receipt
 };
-
-function formatCell(row, column, currency) {
-  const value = row?.[column.key];
-  if (column.format === "date") return formatDateByPreference(value, "-");
-  if (column.format === "money") return formatMoney(value, currency);
-  if (column.format === "number") return value ?? 0;
-  if (column.format === "percent") return formatPercent(value);
-  return value || "-";
-}
-
-function formatPercent(value) {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) return "-";
-  return `${numericValue.toFixed(Math.abs(numericValue) >= 10 ? 1 : 2)}%`;
-}
-
-function buildExportPayload({ viewModel, currency }) {
-  const footerRows = Array.isArray(viewModel.footerRows) ? viewModel.footerRows : [];
-  return {
-    title: viewModel.title,
-    subtitle: viewModel.subtitle,
-    filename: viewModel.filename || viewModel.title,
-    summary: viewModel.metrics.map((item) => ({ label: item.label, value: item.value })),
-    sections: [
-      {
-        title: viewModel.tableTitle || "Report Data",
-        columns: viewModel.columns.map((column) => ({ label: column.label })),
-        rows: [
-          ...viewModel.exportRows.map((row) => viewModel.columns.map((column) => formatCell(row, column, currency))),
-          ...footerRows
-        ]
-      }
-    ]
-  };
-}
-
-function SearchablePartySelect({ label, options, value, onChange, placeholder = "All Parties", disabled = false }) {
-  const containerRef = useRef(null);
-  const triggerRef = useRef(null);
-  const searchInputRef = useRef(null);
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-
-  const selectedOption = useMemo(
-    () => options.find((option) => option.id === value) || null,
-    [options, value]
-  );
-
-  const filteredOptions = useMemo(() => {
-    const search = normalizeText(query);
-    if (!search) return options;
-    return options.filter((option) =>
-      normalizeText([option.name, option.phone, option.email, option.address].join(" ")).includes(search)
-    );
-  }, [options, query]);
-
-  useEffect(() => {
-    function handlePointerDown(event) {
-      if (!containerRef.current?.contains(event.target)) {
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, []);
-
-  useEffect(() => {
-    if (!open) setQuery("");
-  }, [open]);
-
-  function closeDropdown({ blur = false } = {}) {
-    setOpen(false);
-    if (!blur) return;
-    window.requestAnimationFrame(() => {
-      searchInputRef.current?.blur?.();
-      triggerRef.current?.blur?.();
-    });
-  }
-
-  return (
-    <div className="text-xs font-semibold text-slate-600">
-      <span>{label}</span>
-      <div ref={containerRef} className="relative mt-2">
-        <button
-          ref={triggerRef}
-          type="button"
-          disabled={disabled}
-          onClick={() => setOpen((current) => !current)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              closeDropdown({ blur: true });
-            }
-          }}
-          className="flex h-11 w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 text-left text-sm text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:ring-4 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <div className="min-w-0">
-            <p className={clsx("truncate font-medium", selectedOption ? "text-slate-900" : "text-slate-500")}>
-              {selectedOption?.name || placeholder}
-            </p>
-            <p className="truncate text-xs text-slate-500">
-              {selectedOption
-                ? [selectedOption.phone, selectedOption.email].filter(Boolean).join(" | ") || "No contact details"
-                : "Optional filter"}
-            </p>
-          </div>
-          <ChevronDown className={clsx("h-4 w-4 shrink-0 text-slate-400 transition", open && "rotate-180")} />
-        </button>
-
-        {open ? (
-          <div className="absolute z-30 mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-            <div className="border-b border-slate-100 p-2">
-              <label className="relative block">
-                <input
-                  ref={searchInputRef}
-                  autoFocus
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      closeDropdown({ blur: true });
-                      return;
-                    }
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      const firstOption = filteredOptions[0];
-                      if (!firstOption) return;
-                      onChange(firstOption.id);
-                      closeDropdown({ blur: true });
-                    }
-                  }}
-                  placeholder="Search party"
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm outline-none focus:ring-4 focus:ring-slate-200"
-                />
-              </label>
-            </div>
-
-            <div className="max-h-72 overflow-auto py-1">
-              <button
-                type="button"
-                onClick={() => {
-                  onChange("");
-                  closeDropdown({ blur: true });
-                }}
-                className={clsx("flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50", !value && "bg-emerald-50/70")}
-              >
-                <div className="min-w-0">
-                  <p className="font-medium text-slate-900">{placeholder}</p>
-                  <p className="text-xs text-slate-500">Show all matching records</p>
-                </div>
-              </button>
-
-              {filteredOptions.length ? (
-                filteredOptions.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => {
-                      onChange(option.id);
-                      closeDropdown({ blur: true });
-                    }}
-                    className={clsx("flex w-full items-start justify-between gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50", option.id === value && "bg-emerald-50/70")}
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-slate-900">{option.name}</p>
-                      <p className="truncate text-xs text-slate-500">
-                        {[option.phone, option.email].filter(Boolean).join(" | ") || "No contact details"}
-                      </p>
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <div className="px-4 py-6 text-sm text-slate-500">No party matches this search.</div>
-              )}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function ReportSidebar({ sections, activeReport, onSelect }) {
-  return (
-    <div className="grid gap-2 xl:grid-cols-3">
-      {sections.map((section) => (
-        <Card key={section.id} className="h-full p-2 sm:p-2.5">
-          <div className="mb-1">
-            <p className="text-xs font-semibold text-slate-900">{section.title}</p>
-            <p
-              className="mt-0.5 text-[9px] leading-3.5 text-slate-500"
-              style={{
-                display: "-webkit-box",
-                WebkitLineClamp: 1,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden"
-              }}
-            >
-              {section.description}
-            </p>
-          </div>
-
-          <div className="space-y-0.5">
-            {section.items.map((item) => {
-              const meta = REPORT_META[item.id] || REPORT_META["all-transactions"];
-              const Icon = meta.icon;
-              const isActive = item.id === activeReport;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onSelect(item.id)}
-                  className={clsx(
-                    "w-full cursor-pointer rounded-xl border px-2 py-1.5 text-left transform-gpu transition-all duration-200 ease-out will-change-transform md:hover:-translate-y-0.5 md:hover:scale-[1.02] md:hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
-                    isActive
-                      ? meta.activeAccent
-                      : "border-slate-200 bg-white md:hover:border-slate-300 md:hover:bg-slate-50"
-                  )}
-                >
-                  <div className="flex items-start gap-1.5">
-                    <div className={clsx("rounded-lg border p-1", meta.accent)}>
-                      <Icon className="h-2.5 w-2.5" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-semibold leading-4">{item.label}</p>
-                      <p
-                        className={clsx("mt-0.5 text-[9px] leading-3.5", isActive ? "text-slate-600" : "text-slate-500")}
-                        style={{
-                          display: "-webkit-box",
-                          WebkitLineClamp: 1,
-                          WebkitBoxOrient: "vertical",
-                          overflow: "hidden"
-                        }}
-                      >
-                        {item.description}
-                      </p>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function ReportTable({ columns, rows, currency, sortKey, sortDirection, onSort, emptyText = "No records found." }) {
-  return (
-    <div className="overflow-x-auto rounded-3xl border border-slate-200">
-      <table className="w-full min-w-[620px] text-left text-xs sm:min-w-[720px] sm:text-sm xl:min-w-[880px]">
-        <thead className="bg-slate-50">
-          <tr>
-            {columns.map((column) => {
-              const sortable = typeof onSort === "function" && column.sortable;
-              const active = sortable && sortKey === column.key;
-              return (
-                <th key={column.key} className={clsx("whitespace-nowrap px-3 py-3 font-semibold text-slate-700 sm:px-4", column.align === "right" && "text-right")}>
-                  {sortable ? (
-                    <button
-                      type="button"
-                      onClick={() => onSort(column.key)}
-                      className={clsx("inline-flex items-center gap-1", column.align === "right" && "ml-auto")}
-                    >
-                      {column.label}
-                      <span className="text-xs text-slate-400">{active ? (sortDirection === "asc" ? "^" : "v") : "v"}</span>
-                    </button>
-                  ) : (
-                    column.label
-                  )}
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? (
-            rows.map((row) => (
-              <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50/70">
-                {columns.map((column) => (
-                  <td key={`${row.id}_${column.key}`} className={clsx("whitespace-nowrap px-3 py-3 text-slate-700 sm:px-4", column.align === "right" && "text-right", column.emphasis && "font-semibold text-slate-900")}>
-                    {formatCell(row, column, currency)}
-                  </td>
-                ))}
-              </tr>
-            ))
-          ) : (
-            <tr>
-              <td colSpan={columns.length} className="px-4 py-16 text-center text-slate-500">
-                {emptyText}
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function AgingReportTable({ rows, currency, expandedBucket, onToggle, emptyText = "No records found." }) {
-  return (
-    <div className="overflow-x-auto rounded-3xl border border-slate-200">
-      <table className="w-full min-w-[680px] text-left text-xs sm:min-w-[760px] sm:text-sm xl:min-w-[980px]">
-        <thead className="bg-slate-50">
-          <tr>
-            <th className="whitespace-nowrap px-3 py-3 font-semibold text-slate-700 sm:px-4">Party Name</th>
-            <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-700 sm:px-4">Total Outstanding</th>
-            {AGING_BUCKET_COLUMNS.map((column) => (
-              <th key={column.key} className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-700 sm:px-4">
-                {column.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? (
-            rows.map((row) => {
-              const isExpandedRow = expandedBucket?.partyId === row.id;
-              const activeBucketKey = isExpandedRow ? expandedBucket?.bucketKey : "";
-              const activeBucketLabel = AGING_BUCKET_COLUMNS.find((column) => column.key === activeBucketKey)?.label || "";
-              const activeDetails = activeBucketKey ? row?.bucketDetails?.[activeBucketKey] || [] : [];
-
-              return (
-                <React.Fragment key={row.id}>
-                  <tr className={clsx("border-t border-slate-100", isExpandedRow && "bg-slate-50/60")}>
-                    <td className="whitespace-nowrap px-3 py-3 font-medium text-slate-900 sm:px-4">{row.partyName || "-"}</td>
-                    <td className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-900 sm:px-4">{formatMoney(row.totalOutstanding, currency)}</td>
-                    {AGING_BUCKET_COLUMNS.map((column) => {
-                      const bucketValue = row?.[column.key] || 0;
-                      const bucketDetails = row?.bucketDetails?.[column.key] || [];
-                      const canExpand = bucketValue > 0 && bucketDetails.length > 0;
-                      const isActive = activeBucketKey === column.key;
-
-                      return (
-                        <td key={`${row.id}_${column.key}`} className="whitespace-nowrap px-3 py-3 text-right sm:px-4">
-                          {canExpand ? (
-                            <button
-                              type="button"
-                              onClick={() => onToggle(row.id, column.key)}
-                              className={clsx(
-                                "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-sm font-semibold transition",
-                                isActive
-                                  ? "border-slate-900 bg-slate-900 text-white"
-                                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-                              )}
-                              title={`View ${column.label} transactions`}
-                            >
-                              {formatMoney(bucketValue, currency)}
-                              <ChevronDown className={clsx("h-4 w-4 transition", isActive && "rotate-180")} />
-                            </button>
-                          ) : (
-                            <span className="text-slate-500">{formatMoney(bucketValue, currency)}</span>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-
-                  <tr className="border-t-0">
-                    <td colSpan={2 + AGING_BUCKET_COLUMNS.length} className="p-0">
-                      <div className={clsx("grid transition-all duration-200 ease-out", isExpandedRow ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
-                        <div className="overflow-hidden">
-                          <div className="border-t border-slate-100 bg-slate-50/70 px-3 py-4 sm:px-4">
-                            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                              <div>
-                                <p className="text-sm font-semibold text-slate-900">
-                                  {row.partyName} {activeBucketLabel ? `- ${activeBucketLabel}` : ""}
-                                </p>
-                                <p className="text-xs text-slate-500">
-                                  {activeDetails.length} transaction{activeDetails.length === 1 ? "" : "s"} linked to this aging bucket.
-                                </p>
-                              </div>
-                              {activeBucketKey ? (
-                                <button
-                                  type="button"
-                                  onClick={() => onToggle(row.id, activeBucketKey)}
-                                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                                >
-                                  Collapse
-                                </button>
-                              ) : null}
-                            </div>
-
-                            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-                              <table className="w-full min-w-[680px] text-left text-xs sm:min-w-[760px]">
-                                <thead className="bg-slate-50">
-                                  <tr>
-                                    <th className="whitespace-nowrap px-3 py-3 font-semibold text-slate-600 sm:px-4">Date</th>
-                                    <th className="whitespace-nowrap px-3 py-3 font-semibold text-slate-600 sm:px-4">Transaction Type</th>
-                                    <th className="whitespace-nowrap px-3 py-3 font-semibold text-slate-600 sm:px-4">Reference Number</th>
-                                    <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-600 sm:px-4">Amount</th>
-                                    <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-600 sm:px-4">Days Pending</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {activeDetails.length ? (
-                                    activeDetails.map((detail) => (
-                                      <tr key={detail.id} className="border-t border-slate-100">
-                                        <td className="whitespace-nowrap px-3 py-3 text-slate-700 sm:px-4">{formatDateByPreference(detail.date, "-")}</td>
-                                        <td className="whitespace-nowrap px-3 py-3 sm:px-4">
-                                          <span className={clsx("inline-flex rounded-full px-2.5 py-1 font-semibold", AGING_TRANSACTION_BADGES[detail.transactionType] || "bg-slate-100 text-slate-700")}>
-                                            {detail.transactionType}
-                                          </span>
-                                        </td>
-                                        <td className="whitespace-nowrap px-3 py-3 text-slate-700 sm:px-4">{detail.reference || "-"}</td>
-                                        <td className={clsx("whitespace-nowrap px-3 py-3 text-right font-semibold sm:px-4", detail.amount < 0 ? "text-rose-700" : "text-slate-900")}>
-                                          {formatMoney(detail.amount, currency)}
-                                        </td>
-                                        <td className="whitespace-nowrap px-3 py-3 text-right text-slate-700 sm:px-4">{detail.daysPending ?? 0}</td>
-                                      </tr>
-                                    ))
-                                  ) : (
-                                    <tr>
-                                      <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
-                                        No transactions found for this aging bucket.
-                                      </td>
-                                    </tr>
-                                  )}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                </React.Fragment>
-              );
-            })
-          ) : (
-            <tr>
-              <td colSpan={2 + AGING_BUCKET_COLUMNS.length} className="px-4 py-16 text-center text-slate-500">
-                {emptyText}
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function PaginationBar({ pageInfo, onChange }) {
-  if (!pageInfo || pageInfo.totalPages <= 1) return null;
-  return (
-    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-xs text-slate-500">
-        Showing {pageInfo.startIndex + 1}-{pageInfo.endIndex} of {pageInfo.totalRows}
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onChange(pageInfo.page - 1)}
-          disabled={pageInfo.page === 1}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Previous
-        </button>
-        <span className="text-xs font-semibold text-slate-600">
-          Page {pageInfo.page} of {pageInfo.totalPages}
-        </span>
-        <button
-          type="button"
-          onClick={() => onChange(pageInfo.page + 1)}
-          disabled={pageInfo.page === pageInfo.totalPages}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Next
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ProfitLossInsights({ viewModel, currency }) {
-  const totals = viewModel?.totals || {};
-  const topExpenseRows = Array.isArray(viewModel?.topExpenseRows) ? viewModel.topExpenseRows : [];
-  const totalSales = Number(totals.totalSales || 0);
-  const totalExpenses = Number(totals.totalExpenses || 0);
-  const grossProfit = Number(totals.grossProfit || 0);
-  const netProfit = Number(totals.netProfit || 0);
-  const grossLabel = grossProfit < 0 ? "Gross Loss" : "Gross Profit";
-  const netLabel = netProfit < 0 ? "Net Loss" : "Net Profit";
-
-  const summaryRows = [
-    { label: grossLabel, value: formatMoney(Math.abs(grossProfit), currency), tone: grossProfit < 0 ? "text-rose-700" : "text-emerald-700" },
-    { label: "Total Expenses", value: formatMoney(totalExpenses, currency), tone: "text-slate-900" },
-    { label: netLabel, value: formatMoney(Math.abs(netProfit), currency), tone: netProfit < 0 ? "text-rose-700" : "text-emerald-700" },
-    { label: "Profit Margin", value: formatPercent(viewModel?.profitMargin), tone: netProfit < 0 ? "text-rose-700" : "text-slate-900" }
-  ];
-
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.7fr)]">
-        <div className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Top Expense Categories</p>
-              <p className="mt-1 text-xs text-slate-500">Highest expense categories within the selected financial year/date range.</p>
-            </div>
-            <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-              {topExpenseRows.length} categories
-            </div>
-          </div>
-
-          {topExpenseRows.length ? (
-            <div className="space-y-3">
-              {topExpenseRows.map((row) => {
-                const amount = Number(row?.amount || 0);
-                const share = totalExpenses > 0 ? Math.max(0, Math.min(100, (amount / totalExpenses) * 100)) : 0;
-                return (
-                  <div key={row.category} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-slate-900">{row.category || "Uncategorized"}</p>
-                      <div className="text-right">
-                        <p className="text-sm font-semibold text-slate-900">{formatMoney(amount, currency)}</p>
-                        <p className="text-xs text-slate-500">{formatPercent(share)}</p>
-                      </div>
-                    </div>
-                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
-                      <div className="h-full rounded-full bg-slate-900" style={{ width: `${share}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 p-6 text-sm text-slate-500">
-              No expense entries exist for the selected filters. Profit values are currently based on sales and purchases only.
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4 sm:p-5">
-          <p className="text-sm font-semibold text-slate-900">Profit Snapshot</p>
-          <p className="mt-1 text-xs text-slate-500">Summary values remain aligned with the simplified profit and loss formula.</p>
-
-          <div className="mt-4 space-y-3">
-            {summaryRows.map((row) => (
-              <div key={row.label} className="flex items-center justify-between gap-3 rounded-2xl border border-white/70 bg-white px-4 py-3">
-                <span className="text-sm font-medium text-slate-600">{row.label}</span>
-                <span className={clsx("text-sm font-semibold", row.tone)}>{row.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ProfitLossBreakdownModal({ mode, onClose, viewModel, currency }) {
-  if (!mode || !viewModel) return null;
-
-  const totals = viewModel.totals || {};
-  const totalSales = Number(totals.totalSales || 0);
-  const totalPurchase = Number(totals.totalPurchase ?? totals.totalPurchases ?? 0);
-  const totalExpenses = Number(totals.totalExpenses || 0);
-  const grossProfit = Number(totals.grossProfit || 0);
-  const netProfit = Number(totals.netProfit || 0);
-  const grossLabel = grossProfit < 0 ? "Gross Loss" : "Gross Profit";
-  const netLabel = netProfit < 0 ? "Net Loss" : "Net Profit";
-  const isGrossMode = mode === "gross-breakdown";
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/40 p-3 sm:p-4" onClick={onClose}>
-      <Card
-        className="my-auto w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-4 shadow-2xl sm:p-6"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-lg font-semibold text-slate-900">{isGrossMode ? "Gross Profit Breakdown" : "Net Profit Breakdown"}</p>
-            <p className="mt-1 text-sm text-slate-500">Uses the same current filters and summary card totals.</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-          >
-            Close
-          </button>
-        </div>
-
-        <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
-          <div className="space-y-3 text-sm">
-            <div className="flex items-center justify-between gap-3">
-              <span className="font-medium text-slate-700">Sales</span>
-              <span className="font-semibold text-slate-900">{formatMoney(totalSales, currency)}</span>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="font-medium text-slate-700">(-) Purchase</span>
-              <span className="font-semibold text-slate-900">{formatMoney(totalPurchase, currency)}</span>
-            </div>
-            <div className="border-t border-dashed border-slate-300 pt-3">
-              <div className={clsx("flex items-center justify-between gap-3", isGrossMode && "rounded-2xl px-4 py-3", isGrossMode && (grossProfit < 0 ? "bg-rose-50" : "bg-emerald-50"))}>
-                <span className="font-semibold text-slate-900">{grossLabel}</span>
-                <span className={clsx(isGrossMode ? "text-base font-bold" : "font-semibold", grossProfit < 0 ? "text-rose-700" : "text-emerald-700")}>
-                  {formatMoney(Math.abs(grossProfit), currency)}
-                </span>
-              </div>
-            </div>
-
-            {!isGrossMode ? (
-              <>
-                <div className="pt-2" />
-
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium text-slate-700">(-) Total Expenses</span>
-                  <span className="font-semibold text-slate-900">{formatMoney(totalExpenses, currency)}</span>
-                </div>
-                <div className="border-t border-dashed border-slate-300 pt-3">
-                  <div className={clsx("flex items-center justify-between gap-3 rounded-2xl px-4 py-3", netProfit < 0 ? "bg-rose-50" : "bg-emerald-50")}>
-                    <span className="font-semibold text-slate-900">{netLabel}</span>
-                    <span className={clsx("text-base font-bold", netProfit < 0 ? "text-rose-700" : "text-emerald-700")}>
-                      {formatMoney(Math.abs(netProfit), currency)}
-                    </span>
-                  </div>
-                </div>
-              </>
-            ) : null}
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function GstBreakdownPanel({ totals, currency }) {
-  const rows = [
-    {
-      label: "CGST",
-      output: totals.outputCgst,
-      input: totals.inputCgst,
-      payable: totals.payableCgst
-    },
-    {
-      label: "SGST",
-      output: totals.outputSgst,
-      input: totals.inputSgst,
-      payable: totals.payableSgst
-    },
-    {
-      label: "IGST",
-      output: totals.outputIgst,
-      input: totals.inputIgst,
-      payable: totals.payableIgst
-    }
-  ];
-
-  return (
-    <div className="mb-4 overflow-x-auto rounded-3xl border border-slate-200 bg-slate-50/70">
-      <table className="w-full min-w-[560px] text-left text-xs sm:min-w-[640px] sm:text-sm xl:min-w-[720px]">
-        <thead className="bg-slate-100/80">
-          <tr>
-            <th className="whitespace-nowrap px-3 py-3 font-semibold text-slate-700 sm:px-4">GST Type</th>
-            <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-700 sm:px-4">Output GST</th>
-            <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-700 sm:px-4">Input GST</th>
-            <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-700 sm:px-4">Payable</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.label} className="border-t border-slate-200">
-              <td className="whitespace-nowrap px-3 py-3 font-medium text-slate-900 sm:px-4">{row.label}</td>
-              <td className="whitespace-nowrap px-3 py-3 text-right text-slate-700 sm:px-4">{formatMoney(row.output, currency)}</td>
-              <td className="whitespace-nowrap px-3 py-3 text-right text-slate-700 sm:px-4">{formatMoney(row.input, currency)}</td>
-              <td className={clsx("whitespace-nowrap px-3 py-3 text-right font-semibold sm:px-4", row.payable >= 0 ? "text-emerald-700" : "text-rose-700")}>
-                {formatMoney(row.payable, currency)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function getDerivedPartyType(activeReport, partyType) {
-  if (activeReport === "sale-report") return PARTY_TYPES.customer;
-  if (activeReport === "gst-report") return PARTY_TYPES.customer;
-  if (activeReport === "tds-report") return partyType || PARTY_TYPES.customer;
-  if (activeReport === "purchase-report") return PARTY_TYPES.supplier;
-  return partyType;
-}
-
-function PartyStatementTable({ columns, rows, currency, emptyText = "No records found." }) {
-  return (
-    <div className="overflow-x-auto rounded-3xl border border-slate-200">
-      <table className="w-full min-w-[1120px] text-left text-xs sm:text-sm">
-        <thead className="bg-slate-50">
-          <tr>
-            {columns.map((column) => (
-              <th key={column.key} className={clsx("whitespace-nowrap px-3 py-3 font-semibold text-slate-700 sm:px-4", column.align === "right" && "text-right")}>
-                {column.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? (
-            rows.map((row) => (
-              <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50/70">
-                {columns.map((column) => {
-                  const isTransactionTypeColumn = column.key === "transactionType";
-                  const displayValue = formatCell(row, column, currency);
-                  return (
-                    <td
-                      key={`${row.id}_${column.key}`}
-                      className={clsx(
-                        "px-3 py-3 text-slate-700 sm:px-4",
-                        column.align === "right" && "text-right",
-                        column.emphasis && "font-semibold text-slate-900"
-                      )}
-                    >
-                      {isTransactionTypeColumn ? (
-                        <span
-                          className={clsx(
-                            "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
-                            STATEMENT_TRANSACTION_BADGES[displayValue] || "border-slate-200 bg-slate-50 text-slate-700"
-                          )}
-                        >
-                          {displayValue}
-                        </span>
-                      ) : (
-                        displayValue
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))
-          ) : (
-            <tr>
-              <td colSpan={columns.length} className="px-4 py-16 text-center text-slate-500">
-                {emptyText}
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function buildViewModel({ activeReport, data, currency, currentPage, agingMetricFilter, saleMetricFilter, purchaseMetricFilter }) {
-  if (!data) return null;
-
-  const paginateIfNeeded = (rows) => paginateRows(rows, currentPage, REPORT_PAGE_SIZE);
-  const sumRows = (rows, key) => rows.reduce((total, row) => total + Number(row?.[key] || 0), 0);
-
-  switch (activeReport) {
-    case "sale-report": {
-      const filteredRows =
-        saleMetricFilter === "received"
-          ? data.rows.filter((row) => Number(row?.unpaidAmount || 0) <= 0)
-          : saleMetricFilter === "receivable"
-            ? data.rows.filter((row) => Number(row?.unpaidAmount || 0) > 0)
-            : data.rows;
-      const metricTotals = {
-        totalSales: sumRows(filteredRows, "totalAmount"),
-        paidAmount: sumRows(filteredRows, "paidAmount"),
-        unpaidAmount: sumRows(filteredRows, "unpaidAmount"),
-        invoiceCount: filteredRows.length
-      };
-      const pageInfo = paginateIfNeeded(filteredRows);
-      return {
-        title: "Sale Report",
-        subtitle: "Invoice list with received and receivable status for the selected period.",
-        filename: "sale-report",
-        metrics: [
-          { label: "Total Sales", value: formatMoney(metricTotals.totalSales, currency), tone: "positive", metricKey: "all" },
-          { label: "Received", value: formatMoney(metricTotals.paidAmount, currency), metricKey: "received" },
-          { label: "Receivable", value: formatMoney(metricTotals.unpaidAmount, currency), tone: metricTotals.unpaidAmount > 0 ? "negative" : "default", metricKey: "receivable" },
-          { label: "Invoices", value: metricTotals.invoiceCount }
-        ],
-        columns: [
-          { key: "date", label: "Date", format: "date", sortable: true },
-          { key: "reference", label: "Invoice No" },
-          { key: "partyName", label: "Customer" },
-          { key: "totalAmount", label: "Total", align: "right", format: "money" },
-          { key: "paidAmount", label: "Received", align: "right", format: "money" },
-          { key: "unpaidAmount", label: "Receivable", align: "right", format: "money" },
-          { key: "status", label: "Status", align: "right" }
-        ],
-        tableTitle: "Invoices",
-        rows: pageInfo.rows,
-        exportRows: filteredRows,
-        pageInfo
-      };
-    }
-    case "purchase-report": {
-      const filteredRows =
-        purchaseMetricFilter === "paid"
-          ? data.rows.filter((row) => Number(row?.pendingAmount || 0) <= 0)
-          : purchaseMetricFilter === "payable"
-            ? data.rows.filter((row) => Number(row?.pendingAmount || 0) > 0)
-            : data.rows;
-      const metricTotals = {
-        totalPurchases: sumRows(filteredRows, "totalAmount"),
-        paidAmount: sumRows(filteredRows, "paidAmount"),
-        pendingAmount: sumRows(filteredRows, "pendingAmount"),
-        billCount: filteredRows.length
-      };
-      const pageInfo = paginateIfNeeded(filteredRows);
-      return {
-        title: "Purchase Report",
-        subtitle: "Supplier bills with paid and payable visibility.",
-        filename: "purchase-report",
-        metrics: [
-          { label: "Total Purchases", value: formatMoney(metricTotals.totalPurchases, currency), metricKey: "all" },
-          { label: "Paid", value: formatMoney(metricTotals.paidAmount, currency), metricKey: "paid" },
-          { label: "Payable", value: formatMoney(metricTotals.pendingAmount, currency), tone: metricTotals.pendingAmount > 0 ? "negative" : "default", metricKey: "payable" },
-          { label: "Bills", value: metricTotals.billCount }
-        ],
-        columns: [
-          { key: "date", label: "Date", format: "date" },
-          { key: "reference", label: "Bill No" },
-          { key: "partyName", label: "Supplier" },
-          { key: "totalAmount", label: "Total", align: "right", format: "money" },
-          { key: "paidAmount", label: "Paid", align: "right", format: "money" },
-          { key: "pendingAmount", label: "Payable", align: "right", format: "money" },
-          { key: "status", label: "Status", align: "right" }
-        ],
-        tableTitle: "Purchase Bills",
-        rows: pageInfo.rows,
-        exportRows: filteredRows,
-        pageInfo
-      };
-    }
-    case "cash-flow": {
-      const pageInfo = paginateIfNeeded(data.rows);
-      return {
-        title: "Cash Flow",
-        subtitle: "Payments received, payments made, and expenses across the selected period.",
-        filename: "cash-flow",
-        metrics: [
-          { label: "Cash In", value: formatMoney(data.totals.cashIn, currency), tone: "positive" },
-          { label: "Cash Out", value: formatMoney(data.totals.cashOut, currency) },
-          { label: "Net Cash Flow", value: formatMoney(data.totals.netCashFlow, currency), tone: data.totals.netCashFlow >= 0 ? "positive" : "negative" },
-          { label: "Movements", value: data.rows.length }
-        ],
-        columns: [
-          { key: "date", label: "Date", format: "date" },
-          { key: "transactionType", label: "Type" },
-          { key: "reference", label: "Reference" },
-          { key: "partyName", label: "Party / Category" },
-          { key: "cashIn", label: "Cash In", align: "right", format: "money" },
-          { key: "cashOut", label: "Cash Out", align: "right", format: "money" },
-          { key: "netAmount", label: "Net", align: "right", format: "money", emphasis: true }
-        ],
-        tableTitle: "Cash Movements",
-        rows: pageInfo.rows,
-        exportRows: data.rows,
-        pageInfo
-      };
-    }
-    case "all-transactions":
-      return {
-        title: "All Transactions",
-        subtitle: "Global transaction ledger with search, sorting, and pagination.",
-        filename: "all-transactions",
-        metrics: [
-          { label: "Transactions", value: data.totalRows },
-          { label: "Showing Type", value: data.transactionType || "All" },
-          { label: "Date Range", value: data.fromDate && data.toDate ? `${formatDateByPreference(data.fromDate, "-")} to ${formatDateByPreference(data.toDate, "-")}` : "All dates" },
-          { label: "Search", value: data.search || "None" }
-        ],
-        columns: [
-          { key: "date", label: "Date", format: "date", sortable: true },
-          { key: "transactionType", label: "Type", sortable: true },
-          { key: "reference", label: "Reference", sortable: true },
-          { key: "partyName", label: "Party", sortable: true },
-          { key: "amount", label: "Amount", align: "right", format: "money", sortable: true },
-          { key: "status", label: "Status", align: "right", sortable: true }
-        ],
-        tableTitle: "Transaction Ledger",
-        rows: data.rows,
-        exportRows: data.allRows || data.rows,
-        pageInfo: data
-      };
-    case "party-statement":
-      return {
-        title: "Party Statement",
-        subtitle: data.party ? `${data.party.name} statement with opening, running, and closing balance.` : "Select a customer or supplier to generate the statement.",
-        filename: data.party ? `${data.party.name}-statement` : "party-statement",
-        metrics: data.party
-          ? [
-              { label: "Opening Balance", value: formatMoney(data.openingBalance, currency) },
-              { label: "Total Debit", value: formatMoney(data.totals.debit, currency) },
-              { label: "Total Credit", value: formatMoney(data.totals.credit, currency) },
-              { label: "Closing Balance", value: formatMoney(data.closingBalance, currency), tone: data.closingBalance >= 0 ? "positive" : "negative" }
-            ]
-          : [],
-        columns: [
-          { key: "date", label: "Date", format: "date" },
-          { key: "transactionType", label: "Transaction Type" },
-          { key: "transactionMode", label: "Transaction Mode" },
-          { key: "referenceNumber", label: "Reference Number" },
-          { key: "invoiceNumber", label: "Invoice Number" },
-          { key: "debit", label: "Debit", align: "right", format: "money" },
-          { key: "credit", label: "Credit", align: "right", format: "money" },
-          { key: "runningBalance", label: "Running Balance", align: "right", format: "money", emphasis: true }
-        ],
-        tableTitle: "Statement Entries",
-        rows: data.rows,
-        exportRows: data.allRows || data.rows,
-        pageInfo: data
-      };
-    case "aging-report": {
-      const filteredRows =
-        agingMetricFilter && agingMetricFilter !== "totalOutstanding"
-          ? data.rows.filter((row) => Number(row?.[agingMetricFilter] || 0) > 0)
-          : data.rows;
-      const pageInfo = paginateIfNeeded(filteredRows);
-      return {
-        title: "Aging Report",
-        subtitle: "Outstanding invoices grouped into aging buckets as of the selected date.",
-        filename: "aging-report",
-        metrics: [
-          { label: "Total Outstanding", value: formatMoney(data.totals.totalOutstanding, currency), tone: data.totals.totalOutstanding > 0 ? "negative" : "default", metricKey: "totalOutstanding" },
-          { label: "0-30 Days", value: formatMoney(data.totals.bucket_0_30, currency), metricKey: "bucket_0_30" },
-          { label: "31-60 Days", value: formatMoney(data.totals.bucket_31_60, currency), metricKey: "bucket_31_60" },
-          { label: "90+ Days", value: formatMoney(data.totals.bucket_above_90, currency), tone: data.totals.bucket_above_90 > 0 ? "negative" : "default", metricKey: "bucket_above_90" }
-        ],
-        columns: [
-          { key: "partyName", label: "Party Name" },
-          { key: "totalOutstanding", label: "Total Outstanding", align: "right", format: "money", emphasis: true },
-          ...AGING_BUCKET_COLUMNS.map((column) => ({ key: column.key, label: column.label, align: "right", format: "money" }))
-        ],
-        tableTitle: "Outstanding Aging",
-        rows: pageInfo.rows,
-        exportRows: filteredRows,
-        pageInfo
-      };
-    }
-    case "all-parties": {
-      const pageInfo = paginateIfNeeded(data.rows);
-      return {
-        title: "All Parties",
-        subtitle: "Customer and supplier balances with recent activity.",
-        filename: "all-parties",
-        metrics: [
-          { label: "Parties", value: data.totals.parties },
-          { label: "Total Outstanding", value: formatMoney(data.totals.totalOutstanding, currency) },
-          { label: "Overdue Parties", value: data.totals.overdueParties },
-          { label: "Party Type", value: data.partyType }
-        ],
-        columns: [
-          { key: "name", label: "Party Name" },
-          { key: "type", label: "Type" },
-          { key: "phone", label: "Phone" },
-          { key: "email", label: "Email" },
-          { key: "outstanding", label: "Outstanding", align: "right", format: "money", emphasis: true },
-          { key: "maxOverdueDays", label: "Max Overdue Days", align: "right", format: "number" },
-          { key: "latestActivityDate", label: "Last Activity", align: "right", format: "date" }
-        ],
-        tableTitle: "Party Master",
-        rows: pageInfo.rows,
-        exportRows: data.rows,
-        pageInfo
-      };
-    }
-    case "profit-loss": {
-      const totalPurchase = data.totals.totalPurchase ?? data.totals.totalPurchases ?? 0;
-      const grossProfit = data.totals.grossProfit ?? data.totals.totalSales - totalPurchase;
-      const netProfit = data.totals.netProfit ?? grossProfit - data.totals.totalExpenses;
-      return {
-        title: "Profit & Loss",
-        subtitle: "Simple financial summary without complex accounting treatment.",
-        filename: "profit-loss",
-        metrics: [
-          { label: "Total Sales", value: formatMoney(data.totals.totalSales, currency), tone: "positive" },
-          { label: "Total Purchase", value: formatMoney(totalPurchase, currency) },
-          {
-            label: grossProfit < 0 ? "Gross Loss" : "Gross Profit",
-            value: formatMoney(Math.abs(grossProfit), currency),
-            tone: grossProfit < 0 ? "negative" : "positive",
-            metricKey: "gross-breakdown"
-          },
-          { label: "Total Expenses", value: formatMoney(data.totals.totalExpenses, currency) },
-          {
-            label: netProfit < 0 ? "Net Loss" : "Net Profit",
-            value: formatMoney(Math.abs(netProfit), currency),
-            tone: netProfit >= 0 ? "positive" : "negative",
-            metricKey: "net-breakdown"
-          }
-        ],
-        columns: [
-          { key: "category", label: "Expense Category" },
-          { key: "amount", label: "Amount", align: "right", format: "money", emphasis: true }
-        ],
-        tableTitle: "Top Expense Categories",
-        rows: data.expenseRows,
-        exportRows: data.expenseRows,
-        pageInfo: null,
-        topExpenseRows: data.expenseRows.slice(0, 5),
-        profitMargin: data.totals.totalSales > 0 ? (netProfit / data.totals.totalSales) * 100 : null,
-        totals: {
-          ...data.totals,
-          totalPurchase,
-          grossProfit,
-          netProfit
-        }
-      };
-    }
-    case "gst-report": {
-      const pageInfo = paginateIfNeeded(data.rows);
-      return {
-        title: "GST Report",
-        subtitle: "Sales GST output, purchase GST input, and payable tax for the selected period.",
-        filename: "gst-report",
-        metrics: [
-          { label: "Total Sales GST", value: formatMoney(data.totals.outputGst, currency), tone: "positive" },
-          { label: "Total Purchase GST", value: formatMoney(data.totals.inputGst, currency) },
-          { label: "GST Payable", value: formatMoney(data.totals.gstPayable, currency), tone: data.totals.gstPayable >= 0 ? "positive" : "negative" }
-        ],
-        columns: [
-          { key: "date", label: "Date", format: "date" },
-          { key: "reference", label: "Invoice No" },
-          { key: "partyName", label: "Customer" },
-          { key: "gstAmount", label: "GST Amount", align: "right", format: "money", emphasis: true }
-        ],
-        tableTitle: "Sales GST Entries",
-        rows: pageInfo.rows,
-        exportRows: data.rows,
-        pageInfo,
-        totals: data.totals,
-        breakdown: [
-          { label: "CGST", output: data.totals.outputCgst, input: data.totals.inputCgst, payable: data.totals.payableCgst },
-          { label: "SGST", output: data.totals.outputSgst, input: data.totals.inputSgst, payable: data.totals.payableSgst },
-          { label: "IGST", output: data.totals.outputIgst, input: data.totals.inputIgst, payable: data.totals.payableIgst }
-        ]
-      };
-    }
-    case "tds-report": {
-      const pageInfo = paginateIfNeeded(data.rows);
-      const isCustomerView = data.partyType === PARTY_TYPES.customer;
-      return {
-        title: "TDS Report",
-        subtitle: isCustomerView
-          ? "Customer payment TDS deducted through Payment In entries for the selected period."
-          : "Supplier payment TDS deducted through Payment Out entries for the selected period.",
-        filename: "tds-report",
-        metrics: [
-          { label: "Total TDS", value: formatMoney(data.totals.totalTds, currency), tone: data.totals.totalTds > 0 ? "positive" : "default" },
-          { label: isCustomerView ? "Customers" : "Suppliers", value: isCustomerView ? data.totals.customers : data.totals.suppliers },
-          { label: "Entries", value: data.rows.length }
-        ],
-        columns: [
-          { key: "date", label: "Date", format: "date" },
-          { key: "invoiceReference", label: isCustomerView ? "Invoice No" : "Bill No" },
-          { key: "partyName", label: isCustomerView ? "Customer" : "Supplier" },
-          { key: "tdsRate", label: "TDS %", align: "right", format: "percent" },
-          { key: "tdsAmount", label: "TDS Amount", align: "right", format: "money", emphasis: true },
-          { key: "finalPaidAmount", label: isCustomerView ? "Received Amount" : "Final Paid", align: "right", format: "money" }
-        ],
-        tableTitle: "TDS Entries",
-        rows: pageInfo.rows,
-        exportRows: data.rows,
-        pageInfo
-      };
-    }
-    default:
-      return null;
-  }
-}
 
 export default function Reports() {
   const role = authGetRole();
   const canAccess = isAuthorizedReportRole(role);
-  const { currency = "USD", profile: organizationProfile = {} } = useOrganization();
+  const toast = useToast();
+  const { currency = "INR" } = useOrganization();
   const { years, selectedYear, selectFinancialYear, activeRange } = useFinancialYears();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [filters, setFilters] = useState(() =>
-    applyFinancialYearRange(getDefaultReportFilters(), selectedYear)
-  );
-  const [dataset, setDataset] = useState(() => getReportsDataset(activeRange));
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [page, setPage] = useState(1);
-  const [sidebarWidth, setSidebarWidth] = useState(REPORT_SIDEBAR_DEFAULT_WIDTH);
-  const [expandedAgingBucket, setExpandedAgingBucket] = useState(null);
-  const [agingMetricFilter, setAgingMetricFilter] = useState("totalOutstanding");
-  const [saleMetricFilter, setSaleMetricFilter] = useState("all");
-  const [purchaseMetricFilter, setPurchaseMetricFilter] = useState("all");
-  const [profitBreakdownMode, setProfitBreakdownMode] = useState("");
-  const resizeStateRef = useRef(null);
-  const deferredDataset = useDeferredValue(dataset);
-  const deferredFilters = useDeferredValue(filters);
-  const deferredPage = useDeferredValue(page);
-  const hasCachedDataset = useMemo(() => hasReportDatasetData(dataset), [dataset]);
-  useGlobalLoadingBridge(loading && !hasCachedDataset, "reports-module");
 
-  const visibleReportSections = useMemo(
-    () => getVisibleReportSections(organizationProfile),
-    [organizationProfile]
-  );
-  const visibleReportOrder = useMemo(
-    () => visibleReportSections.flatMap((section) => section.items.map((item) => item.id)),
-    [visibleReportSections]
-  );
-  const activeReport = visibleReportOrder.includes(searchParams.get("report")) ? searchParams.get("report") : visibleReportOrder[0];
+  // Active report tab
+  const activeReport = useMemo(() => {
+    const r = searchParams.get("report");
+    const valid = REPORT_TYPES.some((t) => t.id === r);
+    return valid ? r : "customer-wise";
+  }, [searchParams]);
 
-  const partyTypeForOptions = useMemo(
-    () => getDerivedPartyType(activeReport, filters.partyType),
-    [activeReport, filters.partyType]
-  );
+  // Filters state
+  const [fromDate, setFromDate] = useState(activeRange?.fromDate || "");
+  const [toDate, setToDate] = useState(activeRange?.toDate || "");
+  const [customerId, setCustomerId] = useState("");
+  const [invoiceType, setInvoiceType] = useState("");
+  const [status, setStatus] = useState("");
+  const [paymentMode, setPaymentMode] = useState("");
+  const [includePaid, setIncludePaid] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const partyOptions = useMemo(() => {
-    if (activeReport === "all-transactions") {
-      return [...(dataset?.parties || [])].sort((left, right) => left.name.localeCompare(right.name));
-    }
-    if (activeReport === "sale-report" || activeReport === "purchase-report" || activeReport === "party-statement" || activeReport === "aging-report" || activeReport === "all-parties" || activeReport === "tds-report") {
-      return listReportParties(dataset, partyTypeForOptions);
-    }
-    return [];
-  }, [activeReport, dataset, partyTypeForOptions]);
+  // Staged search input
+  const [stagedSearch, setStagedSearch] = useState("");
 
+  // Customer row accordion expanded state
+  const [expandedCustomerIds, setExpandedCustomerIds] = useState(new Set());
+
+  // Update dates when active financial year range changes
   useEffect(() => {
-    if (!selectedYear) return;
-    setFilters((current) => applyFinancialYearRange(current, selectedYear));
-  }, [selectedYear?.id, selectedYear?.startDate, selectedYear?.endDate]);
+    if (activeRange?.fromDate) setFromDate(activeRange.fromDate);
+    if (activeRange?.toDate) setToDate(activeRange.toDate);
+  }, [activeRange?.fromDate, activeRange?.toDate]);
 
-  useEffect(() => {
-    if (searchParams.get("report") !== activeReport) {
-      setSearchParams({ report: activeReport }, { replace: true });
-    }
-  }, [activeReport, searchParams, setSearchParams]);
-
-  useEffect(() => {
-    if (filters.partyId && !partyOptions.some((option) => option.id === filters.partyId)) {
-      setFilters((current) => ({ ...current, partyId: "" }));
-    }
-  }, [filters.partyId, partyOptions]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [
-    activeReport,
-    filters.asOfDate,
-    filters.fromDate,
-    filters.partyId,
-    filters.partyType,
-    filters.search,
-    filters.sortDirection,
-    filters.sortKey,
-    filters.toDate,
-    filters.transactionType
-  ]);
-
-  useEffect(() => {
-    setExpandedAgingBucket(null);
-    setAgingMetricFilter("totalOutstanding");
-    setSaleMetricFilter("all");
-    setPurchaseMetricFilter("all");
-  }, [activeReport, filters.asOfDate, filters.partyId, filters.partyType, dataset]);
-
-  useEffect(() => {
-    if (activeReport !== "profit-loss") {
-      setProfitBreakdownMode("");
-    }
-  }, [activeReport]);
-
-  useEffect(() => {
-    if (!profitBreakdownMode) return undefined;
-
-    function handleKeyDown(event) {
-      if (event.key === "Escape") {
-        setProfitBreakdownMode("");
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [profitBreakdownMode]);
-
-  useEffect(() => {
-    function handleMouseMove(event) {
-      if (!resizeStateRef.current) return;
-      const { startX, startWidth } = resizeStateRef.current;
-      const delta = event.clientX - startX;
-      const nextWidth = Math.max(
-        REPORT_SIDEBAR_MIN_WIDTH,
-        Math.min(REPORT_SIDEBAR_MAX_WIDTH, startWidth + delta)
-      );
-      setSidebarWidth(nextWidth);
-    }
-
-    function handleMouseUp() {
-      if (!resizeStateRef.current) return;
-      resizeStateRef.current = null;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
-
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!canAccess) return undefined;
-    let mounted = true;
-
-    async function loadReports() {
-      if (!hasCachedDataset) setLoading(true);
-      setError("");
+  // Fetch Customers list for customer filter dropdown
+  const { data: customerList = [] } = useQuery({
+    queryKey: ["customers-dropdown"],
+    queryFn: async () => {
       try {
-        const nextDataset = await syncReportsData(activeRange);
-        if (!mounted) return;
-        startTransition(() => {
-          setDataset(nextDataset);
-        });
-      } catch (loadError) {
-        if (!mounted) return;
-        setError(loadError?.message || "Failed to load reports.");
-      } finally {
-        if (mounted) setLoading(false);
+        const res = await apiClient.getParties("customer");
+        return Array.isArray(res) ? res : res?.data || [];
+      } catch (e) {
+        return [];
       }
+    },
+    staleTime: 60000
+  });
+
+  // Switch report tab
+  const handleSelectReport = (reportId) => {
+    setSearchParams({ report: reportId });
+    setExpandedCustomerIds(new Set());
+  };
+
+  // Build query params for report endpoint
+  const reportParams = useMemo(() => {
+    const params = {
+      start_date: fromDate || undefined,
+      end_date: toDate || undefined,
+      customer_id: customerId || undefined,
+      q: searchQuery || undefined
+    };
+
+    if (activeReport === "balance-due") {
+      params.invoice_type = invoiceType || undefined;
+      params.status = status || undefined;
+      params.include_paid = includePaid ? "true" : undefined;
+    } else if (activeReport === "payment-wise") {
+      params.payment_mode = paymentMode || undefined;
+    } else if (activeReport === "proforma" || activeReport === "tax-invoices") {
+      params.status = status || undefined;
     }
 
-    loadReports();
-    return () => {
-      mounted = false;
-    };
-  }, [canAccess, activeRange?.fromDate, activeRange?.toDate]);
+    return params;
+  }, [activeReport, fromDate, toDate, customerId, searchQuery, invoiceType, status, paymentMode, includePaid]);
 
-  const reportResult = useMemo(() => {
-    try {
+  // Query server for active report data
+  const {
+    data: reportResult,
+    isLoading,
+    isFetching,
+    error,
+    refetch
+  } = useQuery({
+    queryKey: ["report-data", activeReport, reportParams],
+    queryFn: async () => {
       switch (activeReport) {
-        case "sale-report":
-          return buildSaleReport(deferredDataset, {
-            fromDate: deferredFilters.fromDate,
-            toDate: deferredFilters.toDate,
-            partyId: deferredFilters.partyId,
-            sortKey: deferredFilters.sortKey,
-            sortDirection: deferredFilters.sortDirection
-          });
-        case "purchase-report":
-          return buildPurchaseReport(deferredDataset, {
-            fromDate: deferredFilters.fromDate,
-            toDate: deferredFilters.toDate,
-            partyId: deferredFilters.partyId
-          });
-        case "cash-flow":
-          return buildCashFlowReport(deferredDataset, {
-            fromDate: deferredFilters.fromDate,
-            toDate: deferredFilters.toDate
-          });
-        case "all-transactions":
-          return buildAllTransactionsReport(
-            deferredDataset,
-            {
-              fromDate: deferredFilters.fromDate,
-              toDate: deferredFilters.toDate,
-              transactionType: deferredFilters.transactionType,
-              partyId: deferredFilters.partyId,
-              search: deferredFilters.search,
-              sortKey: deferredFilters.sortKey,
-              sortDirection: deferredFilters.sortDirection
-            },
-            { page: deferredPage, pageSize: REPORT_PAGE_SIZE }
-          );
-        case "party-statement":
-          return buildPartyStatementReport(
-            deferredDataset,
-            {
-              partyType: deferredFilters.partyType,
-              partyId: deferredFilters.partyId,
-              fromDate: deferredFilters.fromDate,
-              toDate: deferredFilters.toDate
-            },
-            { page: deferredPage, pageSize: REPORT_PAGE_SIZE }
-          );
-        case "aging-report":
-          return buildAgingReport(deferredDataset, {
-            partyType: deferredFilters.partyType,
-            partyId: deferredFilters.partyId,
-            asOfDate: deferredFilters.asOfDate
-          });
-        case "all-parties":
-          return buildAllPartiesReport(deferredDataset, {
-            partyType: deferredFilters.partyType,
-            search: deferredFilters.search
-          });
-        case "profit-loss":
-          return buildProfitLossReport(deferredDataset, {
-            fromDate: deferredFilters.fromDate,
-            toDate: deferredFilters.toDate
-          });
-        case "gst-report":
-          return buildGstReport(deferredDataset, {
-            fromDate: deferredFilters.fromDate,
-            toDate: deferredFilters.toDate,
-            organizationCountry: organizationProfile?.country || organizationProfile?.countryCode || ""
-          });
-        case "tds-report":
-          return buildTdsReport(deferredDataset, {
-            fromDate: deferredFilters.fromDate,
-            toDate: deferredFilters.toDate,
-            partyId: deferredFilters.partyId,
-            organizationCountry: organizationProfile?.country || organizationProfile?.countryCode || ""
-          });
+        case "customer-wise":
+          return await apiClient.getCustomerWiseReport(reportParams);
+        case "payment-wise":
+          return await apiClient.getPaymentsReport(reportParams);
+        case "advances":
+          return await apiClient.getAdvanceReceivedReport(reportParams);
+        case "balance-due":
+          return await apiClient.getBalanceDueReport(reportParams);
+        case "proforma":
+          return await apiClient.getProformaReport(reportParams);
+        case "tax-invoices":
+          return await apiClient.getTaxInvoicesReport(reportParams);
         default:
-          return null;
+          return await apiClient.getCustomerWiseReport(reportParams);
       }
-    } catch (reportError) {
-      return { error: reportError?.message || "Failed to generate report." };
+    },
+    enabled: canAccess,
+    keepPreviousData: true
+  });
+
+  const summary = reportResult?.summary || {};
+  const rows = reportResult?.data || [];
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeReport, reportParams]);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const paginatedRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return rows.slice(start, start + pageSize);
+  }, [rows, currentPage, pageSize]);
+
+  // Toggle Customer Row expansion
+  const toggleCustomerExpand = (cid) => {
+    setExpandedCustomerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(cid)) next.delete(cid);
+      else next.add(cid);
+      return next;
+    });
+  };
+
+  // Reset filters
+  const handleResetFilters = () => {
+    setFromDate(activeRange?.fromDate || "");
+    setToDate(activeRange?.toDate || "");
+    setCustomerId("");
+    setInvoiceType("");
+    setStatus("");
+    setPaymentMode("");
+    setIncludePaid(false);
+    setSearchQuery("");
+    setStagedSearch("");
+  };
+
+  // Apply search
+  const handleApplyFilters = () => {
+    setSearchQuery(stagedSearch.trim());
+  };
+
+  // Export & Print handler
+  const handleExport = (exportType) => {
+    const currentMeta = REPORT_TYPES.find((t) => t.id === activeReport) || REPORT_TYPES[0];
+    
+    // Build summary rows for export
+    let exportSummary = [];
+    let exportColumns = [];
+    let exportRows = [];
+
+    if (activeReport === "customer-wise") {
+      exportSummary = [
+        { label: "Total Customers", value: summary.total_customers ?? rows.length },
+        { label: "Total Invoice Amount", value: formatMoney(summary.total_invoice_amount, currency) },
+        { label: "Total Received", value: formatMoney(summary.total_amount_received, currency) },
+        { label: "Total Outstanding", value: formatMoney(summary.total_outstanding, currency) }
+      ];
+      exportColumns = [
+        { label: "Customer Name" },
+        { label: "Phone" },
+        { label: "GSTIN" },
+        { label: "Pro Forma Count" },
+        { label: "Tax Invoice Count" },
+        { label: "Total Invoice Amount" },
+        { label: "Advance Received" },
+        { label: "Additional Payments" },
+        { label: "Total Received" },
+        { label: "Balance Due" }
+      ];
+      exportRows = rows.map((r) => [
+        r.customer_name || "-",
+        r.phone || "-",
+        r.gstin || "-",
+        r.proforma_count ?? 0,
+        r.tax_invoice_count ?? 0,
+        formatMoney(r.total_invoice_amount, currency),
+        formatMoney(r.advance_received, currency),
+        formatMoney(r.additional_payments_received, currency),
+        formatMoney(r.total_received, currency),
+        formatMoney(r.balance_due, currency)
+      ]);
+    } else if (activeReport === "payment-wise") {
+      exportSummary = [
+        { label: "Receipt Count", value: summary.receipt_count ?? rows.length },
+        { label: "Total Payments Received", value: formatMoney(summary.total_payments_received, currency) },
+        { label: "Cash Received", value: formatMoney(summary.cash_received, currency) },
+        { label: "Bank / UPI Received", value: formatMoney(summary.bank_upi_received, currency) }
+      ];
+      exportColumns = [
+        { label: "Payment Date" },
+        { label: "Receipt Number" },
+        { label: "Customer Name" },
+        { label: "Invoice Number" },
+        { label: "Payment Method" },
+        { label: "Reference Number" },
+        { label: "Amount Received" },
+        { label: "Notes" }
+      ];
+      exportRows = rows.map((r) => [
+        formatDateDDMMYYYY(r.payment_date),
+        r.receipt_number || "-",
+        r.customer_name || "-",
+        r.invoice_number || "-",
+        r.payment_method || "-",
+        r.reference_number || "-",
+        formatMoney(r.amount_received, currency),
+        r.notes || "-"
+      ]);
+    } else if (activeReport === "advances") {
+      exportSummary = [
+        { label: "Total Advances Received", value: formatMoney(summary.total_advances_received, currency) },
+        { label: "Advance Receipts Count", value: summary.advance_receipts_count ?? rows.length },
+        { label: "Advances Applied to Tax Invoices", value: formatMoney(summary.advances_applied_to_tax_invoices, currency) },
+        { label: "Unapplied Advance Balance", value: formatMoney(summary.unapplied_advance_balance, currency) }
+      ];
+      exportColumns = [
+        { label: "Receipt Date" },
+        { label: "Pro Forma Invoice No" },
+        { label: "Customer Name" },
+        { label: "Invoice Total" },
+        { label: "Advance Received" },
+        { label: "Advance Applied" },
+        { label: "Remaining Balance" },
+        { label: "Tax Invoice Number" },
+        { label: "Status" }
+      ];
+      exportRows = rows.map((r) => [
+        formatDateDDMMYYYY(r.receipt_date),
+        r.proforma_invoice_no || "-",
+        r.customer_name || "-",
+        formatMoney(r.invoice_total, currency),
+        formatMoney(r.advance_received, currency),
+        formatMoney(r.advance_applied, currency),
+        formatMoney(r.remaining_balance, currency),
+        r.tax_invoice_number || "-",
+        r.status || "-"
+      ]);
+    } else if (activeReport === "balance-due") {
+      exportSummary = [
+        { label: "Total Outstanding", value: formatMoney(summary.total_outstanding, currency) },
+        { label: "Overdue Amount", value: formatMoney(summary.overdue_amount, currency) },
+        { label: "Unpaid Invoices", value: summary.unpaid_invoices_count ?? 0 },
+        { label: "Partially Paid Invoices", value: summary.partially_paid_invoices_count ?? 0 }
+      ];
+      exportColumns = [
+        { label: "Invoice Date" },
+        { label: "Invoice Number" },
+        { label: "Invoice Type" },
+        { label: "Customer Name" },
+        { label: "Invoice Total" },
+        { label: "Advance Received" },
+        { label: "Additional Payments" },
+        { label: "Total Received" },
+        { label: "Balance Due" },
+        { label: "Due Date" },
+        { label: "Days Overdue" },
+        { label: "Status" }
+      ];
+      exportRows = rows.map((r) => [
+        formatDateDDMMYYYY(r.invoice_date),
+        r.invoice_number || "-",
+        r.invoice_type || "-",
+        r.customer_name || "-",
+        formatMoney(r.invoice_total, currency),
+        formatMoney(r.advance_received, currency),
+        formatMoney(r.additional_payments_received, currency),
+        formatMoney(r.total_received, currency),
+        formatMoney(r.balance_due, currency),
+        formatDateDDMMYYYY(r.due_date),
+        r.days_overdue > 0 ? `${r.days_overdue} days` : "-",
+        r.payment_status || "-"
+      ]);
+    } else if (activeReport === "proforma") {
+      exportSummary = [
+        { label: "Total Pro Forma Invoices", value: summary.total_proforma_invoices ?? rows.length },
+        { label: "Total Pro Forma Value", value: formatMoney(summary.total_proforma_value, currency) },
+        { label: "Total Advances Received", value: formatMoney(summary.total_advances_received, currency) },
+        { label: "Converted to Tax Invoices", value: summary.converted_count ?? 0 },
+        { label: "Pending Conversion", value: summary.pending_conversion_count ?? 0 }
+      ];
+      exportColumns = [
+        { label: "Pro Forma Number" },
+        { label: "Invoice Date" },
+        { label: "Valid Till" },
+        { label: "Customer Name" },
+        { label: "Total Before Tax" },
+        { label: "GST Amount" },
+        { label: "Invoice Total" },
+        { label: "Advance Received" },
+        { label: "Balance Payable" },
+        { label: "Conversion Status" },
+        { label: "Converted Tax Invoice" }
+      ];
+      exportRows = rows.map((r) => [
+        r.proforma_number || "-",
+        formatDateDDMMYYYY(r.invoice_date),
+        formatDateDDMMYYYY(r.valid_till),
+        r.customer_name || "-",
+        formatMoney(r.total_before_tax, currency),
+        formatMoney(r.gst_amount, currency),
+        formatMoney(r.invoice_total, currency),
+        formatMoney(r.advance_received, currency),
+        formatMoney(r.balance_payable, currency),
+        r.conversion_status || "-",
+        r.converted_tax_invoice_number || "-"
+      ]);
+    } else if (activeReport === "tax-invoices") {
+      exportSummary = [
+        { label: "Tax Invoices", value: summary.total_tax_invoices ?? rows.length },
+        { label: "Total Taxable Value", value: formatMoney(summary.total_taxable_value, currency) },
+        { label: "Total GST", value: formatMoney(summary.total_gst, currency) },
+        { label: "Total Invoice Value", value: formatMoney(summary.total_invoice_value, currency) },
+        { label: "Total Received", value: formatMoney(summary.total_received, currency) },
+        { label: "Total Outstanding", value: formatMoney(summary.total_outstanding, currency) }
+      ];
+      exportColumns = [
+        { label: "Invoice Number" },
+        { label: "Invoice Date" },
+        { label: "Customer Name" },
+        { label: "GSTIN" },
+        { label: "Taxable Amount" },
+        { label: "CGST" },
+        { label: "SGST" },
+        { label: "IGST" },
+        { label: "Total GST" },
+        { label: "Invoice Total" },
+        { label: "Advance Received" },
+        { label: "Additional Payments" },
+        { label: "Balance Due" },
+        { label: "Due Date" },
+        { label: "Status" }
+      ];
+      exportRows = rows.map((r) => [
+        r.invoice_number || "-",
+        formatDateDDMMYYYY(r.invoice_date),
+        r.customer_name || "-",
+        r.customer_gstin || "-",
+        formatMoney(r.taxable_amount, currency),
+        formatMoney(r.cgst, currency),
+        formatMoney(r.sgst, currency),
+        formatMoney(r.igst, currency),
+        formatMoney(r.total_gst, currency),
+        formatMoney(r.invoice_total, currency),
+        formatMoney(r.advance_received, currency),
+        formatMoney(r.additional_payments, currency),
+        formatMoney(r.balance_due, currency),
+        formatDateDDMMYYYY(r.due_date),
+        r.payment_status || "-"
+      ]);
     }
-  }, [activeReport, deferredDataset, deferredFilters, deferredPage, organizationProfile]);
 
-  const viewModel = useMemo(
-    () => (reportResult?.error ? null : buildViewModel({ activeReport, data: reportResult, currency, currentPage: page, agingMetricFilter, saleMetricFilter, purchaseMetricFilter })),
-    [activeReport, reportResult, currency, page, agingMetricFilter, saleMetricFilter, purchaseMetricFilter]
-  );
-
-  function handleRefresh() {
-    setLoading(true);
-    setError("");
-    syncReportsData(activeRange)
-      .then((nextDataset) =>
-        startTransition(() => {
-          setDataset(nextDataset);
-        })
-      )
-      .catch((loadError) => setError(loadError?.message || "Failed to refresh reports."))
-      .finally(() => setLoading(false));
-  }
-
-  function updateFilter(key, value) {
-    setFilters((current) => ({ ...current, [key]: value }));
-  }
-
-  function handleSort(columnKey) {
-    if (!SORTABLE_TRANSACTION_COLUMNS.has(columnKey)) return;
-    setFilters((current) => ({
-      ...current,
-      sortKey: columnKey,
-      sortDirection: current.sortKey === columnKey && current.sortDirection === "asc" ? "desc" : "asc"
-    }));
-  }
-
-  function handleExport(mode) {
-    if (!viewModel) return;
-    const payload = buildExportPayload({ viewModel, currency });
-    if (mode === "print") printReport(payload);
-    if (mode === "pdf") exportReportPdf(payload);
-    if (mode === "excel") exportReportExcel(payload);
-    if (mode === "json") exportReportJson(payload);
-  }
-
-  function handleSidebarResizeStart(event) {
-    resizeStateRef.current = {
-      startX: event.clientX,
-      startWidth: sidebarWidth
+    const payload = {
+      title: currentMeta.label,
+      subtitle: currentMeta.description,
+      filename: `${currentMeta.id}-report`,
+      summary: exportSummary,
+      sections: [
+        {
+          title: currentMeta.label,
+          columns: exportColumns,
+          rows: exportRows
+        }
+      ]
     };
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }
 
-  function handleAgingBucketToggle(partyId, bucketKey) {
-    setExpandedAgingBucket((current) =>
-      current?.partyId === partyId && current?.bucketKey === bucketKey ? null : { partyId, bucketKey }
-    );
-  }
-
-  function renderFilters() {
-    const showDateRange = ["sale-report", "purchase-report", "cash-flow", "all-transactions", "party-statement", "profit-loss", "gst-report", "tds-report"].includes(activeReport);
-    const showPartyType = ["party-statement", "aging-report", "all-parties", "tds-report"].includes(activeReport);
-    const showPartySelect = ["sale-report", "purchase-report", "all-transactions", "party-statement", "aging-report", "tds-report"].includes(activeReport);
-    const showAsOfDate = activeReport === "aging-report";
-    const showTransactionType = activeReport === "all-transactions";
-    const showSearch = activeReport === "all-transactions" || activeReport === "all-parties";
-    const partyLabel =
-      activeReport === "sale-report"
-        ? "Customer"
-        : activeReport === "purchase-report"
-          ? "Supplier"
-          : activeReport === "tds-report"
-            ? "Party"
-          : "Party";
-    const placeholder =
-      activeReport === "sale-report"
-        ? "All Customers"
-        : activeReport === "purchase-report"
-          ? "All Suppliers"
-          : activeReport === "tds-report"
-            ? "All Parties"
-          : "All Parties";
-
-    return (
-      <Card className="p-4 sm:p-6">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {years.length ? (
-            <label className="text-xs font-semibold text-slate-600">
-              Financial Year
-              <select
-                value={selectedYear?.id || ""}
-                onChange={(event) => selectFinancialYear(event.target.value)}
-                className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-100"
-              >
-                {years.map((year) => (
-                  <option key={year.id} value={year.id}>
-                    FY {year.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          {showPartyType ? (
-            <label className="text-xs font-semibold text-slate-600">
-              Party Type
-              <select
-                value={filters.partyType}
-                onChange={(event) => updateFilter("partyType", event.target.value)}
-                className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-100"
-              >
-                <option value={PARTY_TYPES.customer}>Customer</option>
-                <option value={PARTY_TYPES.supplier}>Supplier</option>
-              </select>
-            </label>
-          ) : null}
-
-          {showPartySelect ? (
-            <SearchablePartySelect
-              label={partyLabel}
-              options={partyOptions}
-              value={filters.partyId}
-              onChange={(value) => updateFilter("partyId", value)}
-              placeholder={placeholder}
-              disabled={loading}
-            />
-          ) : null}
-
-          {showDateRange ? (
-            <label className="text-xs font-semibold text-slate-600">
-              From Date
-              <DateInput
-                value={filters.fromDate}
-                onChange={(value) => updateFilter("fromDate", value)}
-                max={filters.toDate || undefined}
-                className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm"
-              />
-            </label>
-          ) : null}
-
-          {showDateRange ? (
-            <label className="text-xs font-semibold text-slate-600">
-              To Date
-              <DateInput
-                value={filters.toDate}
-                onChange={(value) => updateFilter("toDate", value)}
-                min={filters.fromDate || undefined}
-                className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm"
-              />
-            </label>
-          ) : null}
-
-          {showAsOfDate ? (
-            <label className="text-xs font-semibold text-slate-600">
-              As of Date
-              <DateInput
-                value={filters.asOfDate}
-                onChange={(value) => updateFilter("asOfDate", value)}
-                className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm"
-              />
-            </label>
-          ) : null}
-
-          {showTransactionType ? (
-            <label className="text-xs font-semibold text-slate-600">
-              Transaction Type
-              <select
-                value={filters.transactionType}
-                onChange={(event) => updateFilter("transactionType", event.target.value)}
-                className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-100"
-              >
-                {TRANSACTION_TYPE_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          {showSearch ? (
-            <label className="text-xs font-semibold text-slate-600">
-              Search
-              <div className="relative mt-2">
-                <input
-                  value={filters.search}
-                  onChange={(event) => updateFilter("search", event.target.value)}
-                  placeholder={activeReport === "all-transactions" ? "Search by party, reference, or status" : "Search party"}
-                  className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none focus:ring-4 focus:ring-slate-100"
-                />
-              </div>
-            </label>
-          ) : null}
-        </div>
-      </Card>
-    );
-  }
+    if (exportType === "print") printReport(payload);
+    else if (exportType === "pdf") exportReportPdf(payload);
+    else if (exportType === "excel") exportReportExcel(payload);
+  };
 
   if (!canAccess) {
     return (
-      <div className="mx-auto max-w-4xl space-y-4 pb-24">
-        <PageHeader title="Reports" subtitle="Reports are limited to Admin and Accountant users." />
-        <Card className="p-10 text-center text-sm text-slate-500">
-          You do not have permission to access the reporting module.
+      <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
+        <PageHeader title="Reports & Analytics" subtitle="Access restricted to Organization Owners and Accountants." />
+        <Card className="mt-6 p-8 text-center">
+          <AlertCircle className="mx-auto h-12 w-12 text-rose-500" />
+          <h3 className="mt-4 text-lg font-bold text-slate-800">Permission Denied</h3>
+          <p className="mt-2 text-sm text-slate-500">You do not have sufficient permissions to view Billing & Payment Reports.</p>
         </Card>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1760px] space-y-4 pb-24">
-      <PageHeader
-        title="Reports"
-        subtitle="Clean, business-focused reporting for transactions, parties, and finance."
-        right={
+    <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
+      {/* 1. Header */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Reports & Analytics</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            View customer billing, invoice transactions, advance receipts and outstanding balances.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={handleRefresh}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={() => handleExport("print")}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+            title="Print Report"
           >
-            <RefreshCw className={clsx("h-4 w-4", loading && "animate-spin")} />
-            Refresh
+            <Printer className="h-4 w-4 text-slate-500" />
+            <span>Print</span>
           </button>
-        }
-      />
-
-      {error ? (
-        <Card className="border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</Card>
-      ) : null}
-
-      {reportResult?.error ? (
-        <Card className="border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{reportResult.error}</Card>
-      ) : null}
-
-      <ReportSidebar
-        sections={visibleReportSections}
-        activeReport={activeReport}
-        onSelect={(reportId) => setSearchParams({ report: reportId })}
-      />
-
-      <div className="min-w-0 space-y-4">
-          {renderFilters()}
-
-          {viewModel ? (
-            <>
-              <Card className="p-4 sm:p-6">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <p className="text-lg font-semibold text-slate-900">{viewModel.title}</p>
-                    <p className="mt-1 text-sm text-slate-500">{viewModel.subtitle}</p>
-                  </div>
-
-                  <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:w-auto lg:flex-wrap lg:items-center">
-                    <button type="button" onClick={() => handleExport("print")} className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 lg:w-auto">
-                      <Printer className="h-4 w-4" />
-                      Print
-                    </button>
-                    <button type="button" onClick={() => handleExport("pdf")} className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 lg:w-auto">
-                      <FileDown className="h-4 w-4" />
-                      Export PDF
-                    </button>
-                    <button type="button" onClick={() => handleExport("excel")} className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 lg:w-auto">
-                      <FileSpreadsheet className="h-4 w-4" />
-                      Export Excel
-                    </button>
-                    <button type="button" onClick={() => handleExport("json")} className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 lg:w-auto">
-                      <FileDown className="h-4 w-4" />
-                      Export JSON
-                    </button>
-                  </div>
-                </div>
-
-                {viewModel.metrics.length ? (
-                  <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                    {viewModel.metrics.map((metric) => (
-                      metric.metricKey && activeReport === "aging-report" ? (
-                        <InteractiveMetricCard
-                          key={metric.label}
-                          label={metric.label}
-                          value={metric.value}
-                          tone={metric.tone}
-                          active={agingMetricFilter === metric.metricKey}
-                          onClick={() => {
-                            setExpandedAgingBucket(null);
-                            setPage(1);
-                            setAgingMetricFilter(metric.metricKey);
-                          }}
-                        />
-                      ) : metric.metricKey && activeReport === "sale-report" ? (
-                        <InteractiveMetricCard
-                          key={metric.label}
-                          label={metric.label}
-                          value={metric.value}
-                          tone={metric.tone}
-                          active={saleMetricFilter === metric.metricKey}
-                          onClick={() => {
-                            setPage(1);
-                            setSaleMetricFilter(metric.metricKey);
-                          }}
-                        />
-                      ) : metric.metricKey && activeReport === "purchase-report" ? (
-                        <InteractiveMetricCard
-                          key={metric.label}
-                          label={metric.label}
-                          value={metric.value}
-                          tone={metric.tone}
-                          active={purchaseMetricFilter === metric.metricKey}
-                          onClick={() => {
-                            setPage(1);
-                            setPurchaseMetricFilter(metric.metricKey);
-                          }}
-                        />
-                      ) : metric.metricKey && activeReport === "profit-loss" ? (
-                        <InteractiveMetricCard
-                          key={metric.label}
-                          label={metric.label}
-                          value={metric.value}
-                          tone={metric.tone}
-                          active={profitBreakdownMode === metric.metricKey}
-                          onClick={() => setProfitBreakdownMode(metric.metricKey)}
-                        />
-                      ) : (
-                        <MetricCard key={metric.label} label={metric.label} value={metric.value} tone={metric.tone} />
-                      )
-                    ))}
-                  </div>
-                ) : null}
-              </Card>
-
-              <Card className="p-4 sm:p-6">
-                {activeReport === "profit-loss" ? (
-                  <ProfitLossInsights viewModel={viewModel} currency={currency} />
-                ) : (
-                  <>
-                    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">{viewModel.tableTitle}</p>
-                        <p className="text-xs text-slate-500">Built for large datasets with filtered exports and paginated viewing.</p>
-                      </div>
-                      <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                        {(viewModel.pageInfo?.totalRows ?? viewModel.exportRows.length) || 0} rows
-                      </div>
-                    </div>
-
-                    {activeReport === "gst-report" ? (
-                      <>
-                        <GstBreakdownPanel totals={viewModel.totals} currency={currency} />
-                        <ReportTable
-                          columns={viewModel.columns}
-                          rows={viewModel.rows}
-                          currency={currency}
-                          sortKey={filters.sortKey}
-                          sortDirection={filters.sortDirection}
-                          onSort={null}
-                          emptyText="No GST entries found for the selected filters."
-                        />
-                      </>
-                    ) : activeReport === "aging-report" ? (
-                      <AgingReportTable
-                        rows={viewModel.rows}
-                        currency={currency}
-                        expandedBucket={expandedAgingBucket}
-                        onToggle={handleAgingBucketToggle}
-                        emptyText="No records found for the selected filters."
-                      />
-                    ) : activeReport === "party-statement" ? (
-                      <PartyStatementTable
-                        columns={viewModel.columns}
-                        rows={viewModel.rows}
-                        currency={currency}
-                        emptyText={viewModel.pageInfo?.party ? "No records found for the selected filters." : "Select a party to generate the statement."}
-                      />
-                    ) : (
-                      <ReportTable
-                        columns={viewModel.columns}
-                        rows={viewModel.rows}
-                        currency={currency}
-                        sortKey={filters.sortKey}
-                        sortDirection={filters.sortDirection}
-                        onSort={activeReport === "all-transactions" || activeReport === "sale-report" ? handleSort : null}
-                        emptyText={activeReport === "party-statement" ? "Select a party to generate the statement." : "No records found for the selected filters."}
-                      />
-                    )}
-
-                    <PaginationBar pageInfo={viewModel.pageInfo} onChange={setPage} />
-                  </>
-                )}
-              </Card>
-            </>
-          ) : (
-            <Card className="p-10 text-center text-sm text-slate-500">
-              Select a report to begin.
-            </Card>
-          )}
+          <button
+            type="button"
+            onClick={() => handleExport("pdf")}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+            title="Export PDF"
+          >
+            <FileDown className="h-4 w-4 text-rose-500" />
+            <span>Export PDF</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport("excel")}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+            title="Export Excel"
+          >
+            <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+            <span>Export Excel</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+            title="Refresh Data"
+          >
+            <RefreshCw className={clsx("h-4 w-4", isFetching && "animate-spin text-slate-900")} />
+          </button>
+        </div>
       </div>
 
-      {activeReport === "profit-loss" ? (
-        <ProfitLossBreakdownModal
-          mode={profitBreakdownMode}
-          onClose={() => setProfitBreakdownMode("")}
-          viewModel={viewModel}
-          currency={currency}
-        />
+      {/* 2. Report Selector Tabs */}
+      <div className="overflow-x-auto pb-1">
+        <div className="inline-flex min-w-full items-center gap-1.5 rounded-2xl border border-slate-200 bg-slate-100/80 p-1.5 text-xs font-medium sm:min-w-0">
+          {REPORT_TYPES.map((tab) => {
+            const Icon = REPORT_ICONS[tab.id] || FileText;
+            const isActive = tab.id === activeReport;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => handleSelectReport(tab.id)}
+                className={clsx(
+                  "flex items-center gap-2 whitespace-nowrap rounded-xl px-3.5 py-2 text-xs font-semibold transition-all duration-150",
+                  isActive
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-600 hover:bg-white/60 hover:text-slate-900"
+                )}
+              >
+                <Icon className={clsx("h-4 w-4", isActive ? "text-emerald-600" : "text-slate-400")} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 3. Common Filters Bar */}
+      <Card className="p-4 sm:p-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+          {/* Financial Year Filter */}
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Financial Year</label>
+            <select
+              value={selectedYear?.id || ""}
+              onChange={(e) => {
+                const yr = years.find((y) => y.id === e.target.value);
+                if (yr) {
+                  selectFinancialYear(yr);
+                  if (yr.startDate) setFromDate(yr.startDate);
+                  if (yr.endDate) setToDate(yr.endDate);
+                }
+              }}
+              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            >
+              {years.map((y) => (
+                <option key={y.id} value={y.id}>
+                  {y.label || y.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Customer Filter */}
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Customer</label>
+            <select
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            >
+              <option value="">All Customers</option>
+              {customerList.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.display_name || c.name || "Customer"}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* From Date Filter */}
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">From Date</label>
+            <DateInput
+              value={fromDate}
+              onChange={setFromDate}
+              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 shadow-sm outline-none"
+            />
+          </div>
+
+          {/* To Date Filter */}
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">To Date</label>
+            <DateInput
+              value={toDate}
+              onChange={setToDate}
+              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 shadow-sm outline-none"
+            />
+          </div>
+
+          {/* Contextual Filter: Invoice Type (for Balance Due) */}
+          {activeReport === "balance-due" ? (
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-600">Invoice Type</label>
+              <select
+                value={invoiceType}
+                onChange={(e) => setInvoiceType(e.target.value)}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              >
+                <option value="">All Types</option>
+                <option value="invoice">Tax Invoice</option>
+                <option value="proforma">Pro Forma</option>
+              </select>
+            </div>
+          ) : null}
+
+          {/* Contextual Filter: Payment Mode (for Payment-wise) */}
+          {activeReport === "payment-wise" ? (
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-600">Payment Mode</label>
+              <select
+                value={paymentMode}
+                onChange={(e) => setPaymentMode(e.target.value)}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              >
+                <option value="">All Modes</option>
+                <option value="cash">Cash</option>
+                <option value="bank transfer">Bank Transfer</option>
+                <option value="upi">UPI</option>
+                <option value="cheque">Cheque</option>
+              </select>
+            </div>
+          ) : null}
+
+          {/* Contextual Filter: Payment Status (for Balance Due, Tax Invoices) */}
+          {activeReport === "balance-due" || activeReport === "tax-invoices" ? (
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-600">Payment Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              >
+                <option value="">All Statuses</option>
+                <option value="unpaid">Unpaid</option>
+                <option value="partially_paid">Partially Paid</option>
+                <option value="overdue">Overdue</option>
+                <option value="paid">Paid</option>
+              </select>
+            </div>
+          ) : null}
+
+          {/* Contextual Filter: Conversion Status (for Pro Forma) */}
+          {activeReport === "proforma" ? (
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-600">Conversion Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              >
+                <option value="">All Statuses</option>
+                <option value="draft">Draft</option>
+                <option value="pending_conversion">Pending Conversion</option>
+                <option value="converted">Converted</option>
+              </select>
+            </div>
+          ) : null}
+
+          {/* Search by Customer Name or Invoice Number */}
+          <div className="sm:col-span-2 lg:col-span-2 xl:col-span-2">
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Search</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                value={stagedSearch}
+                onChange={(e) => setStagedSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleApplyFilters();
+                }}
+                placeholder="Search by customer name, invoice no..."
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-xs font-medium text-slate-800 shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom row: Balance Due toggle and action buttons */}
+        <div className="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            {activeReport === "balance-due" && (
+              <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={includePaid}
+                  onChange={(e) => setIncludePaid(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                />
+                <span>Include Fully Paid Invoices</span>
+              </label>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleApplyFilters}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
+            >
+              <Filter className="h-3.5 w-3.5" />
+              <span>Apply Filters</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span>Reset</span>
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Error state with retry */}
+      {error ? (
+        <Card className="border-rose-200 bg-rose-50/50 p-6 text-center">
+          <AlertCircle className="mx-auto h-8 w-8 text-rose-500" />
+          <h4 className="mt-2 text-sm font-semibold text-rose-800">Failed to load report data</h4>
+          <p className="mt-1 text-xs text-rose-600">{error?.message || "An unexpected error occurred while communicating with the server."}</p>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-rose-700"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            <span>Retry</span>
+          </button>
+        </Card>
       ) : null}
+
+      {/* 4. Dynamic Summary Cards per Report */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
+        {activeReport === "customer-wise" && (
+          <>
+            <SummaryCard label="Total Customers" value={summary.total_customers ?? rows.length} />
+            <SummaryCard label="Total Invoice Amount" value={formatMoney(summary.total_invoice_amount, currency)} />
+            <SummaryCard label="Total Received" value={formatMoney(summary.total_amount_received, currency)} tone="positive" />
+            <SummaryCard label="Total Outstanding" value={formatMoney(summary.total_outstanding, currency)} tone={summary.total_outstanding > 0 ? "negative" : "default"} />
+          </>
+        )}
+
+        {activeReport === "payment-wise" && (
+          <>
+            <SummaryCard label="Number of Receipts" value={summary.receipt_count ?? rows.length} />
+            <SummaryCard label="Total Payments Received" value={formatMoney(summary.total_payments_received, currency)} tone="positive" />
+            <SummaryCard label="Cash Received" value={formatMoney(summary.cash_received, currency)} />
+            <SummaryCard label="Bank / UPI Received" value={formatMoney(summary.bank_upi_received, currency)} />
+          </>
+        )}
+
+        {activeReport === "advances" && (
+          <>
+            <SummaryCard label="Total Advances Received" value={formatMoney(summary.total_advances_received, currency)} tone="positive" />
+            <SummaryCard label="Number of Advance Receipts" value={summary.advance_receipts_count ?? rows.length} />
+            <SummaryCard label="Advances Applied to Tax Invoices" value={formatMoney(summary.advances_applied_to_tax_invoices, currency)} />
+            <SummaryCard label="Unapplied Advance Balance" value={formatMoney(summary.unapplied_advance_balance, currency)} tone="warning" />
+          </>
+        )}
+
+        {activeReport === "balance-due" && (
+          <>
+            <SummaryCard label="Total Outstanding" value={formatMoney(summary.total_outstanding, currency)} tone={summary.total_outstanding > 0 ? "negative" : "default"} />
+            <SummaryCard label="Overdue Amount" value={formatMoney(summary.overdue_amount, currency)} tone={summary.overdue_amount > 0 ? "negative" : "default"} />
+            <SummaryCard label="Unpaid Invoices" value={summary.unpaid_invoices_count ?? 0} />
+            <SummaryCard label="Partially Paid Invoices" value={summary.partially_paid_invoices_count ?? 0} />
+          </>
+        )}
+
+        {activeReport === "proforma" && (
+          <>
+            <SummaryCard label="Total Pro Forma Invoices" value={summary.total_proforma_invoices ?? rows.length} />
+            <SummaryCard label="Total Pro Forma Value" value={formatMoney(summary.total_proforma_value, currency)} />
+            <SummaryCard label="Advances Received" value={formatMoney(summary.total_advances_received, currency)} tone="positive" />
+            <SummaryCard label="Converted / Pending" value={`${summary.converted_count ?? 0} / ${summary.pending_conversion_count ?? 0}`} />
+          </>
+        )}
+
+        {activeReport === "tax-invoices" && (
+          <>
+            <SummaryCard label="Tax Invoices" value={summary.total_tax_invoices ?? rows.length} />
+            <SummaryCard label="Total Taxable Value" value={formatMoney(summary.total_taxable_value, currency)} />
+            <SummaryCard label="Total GST" value={formatMoney(summary.total_gst, currency)} />
+            <SummaryCard label="Total Invoice Value" value={formatMoney(summary.total_invoice_value, currency)} tone="positive" />
+          </>
+        )}
+      </div>
+
+      {/* 5. Report Table Content */}
+      <Card className="overflow-hidden">
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+            <RefreshCw className="h-8 w-8 animate-spin text-slate-600" />
+            <p className="mt-3 text-xs font-semibold text-slate-600">Loading authoritative report data...</p>
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="rounded-full bg-slate-100 p-4 text-slate-400">
+              <Search className="h-8 w-8" />
+            </div>
+            <h4 className="mt-3 text-sm font-semibold text-slate-800">No records found</h4>
+            <p className="mt-1 text-xs text-slate-500">
+              Try adjusting your date range, customer filter, or search term.
+            </p>
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="mt-4 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              Reset Filters
+            </button>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            {activeReport === "customer-wise" && (
+              <table className="w-full min-w-[900px] text-left text-xs">
+                <thead className="border-b border-slate-100 bg-slate-50/80 font-semibold text-slate-700">
+                  <tr>
+                    <th className="w-8 px-3 py-3.5"></th>
+                    <th className="px-3 py-3.5">Customer Name</th>
+                    <th className="px-3 py-3.5">Phone</th>
+                    <th className="px-3 py-3.5">GSTIN</th>
+                    <th className="px-3 py-3.5 text-center">Pro Forma</th>
+                    <th className="px-3 py-3.5 text-center">Tax Invoices</th>
+                    <th className="px-3 py-3.5 text-right">Invoice Total</th>
+                    <th className="px-3 py-3.5 text-right">Advance Rec.</th>
+                    <th className="px-3 py-3.5 text-right">Addl. Payments</th>
+                    <th className="px-3 py-3.5 text-right">Total Received</th>
+                    <th className="px-3 py-3.5 text-right">Balance Due</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {paginatedRows.map((row) => {
+                    const isExpanded = expandedCustomerIds.has(row.customer_id);
+                    return (
+                      <React.Fragment key={row.customer_id}>
+                        <tr
+                          onClick={() => toggleCustomerExpand(row.customer_id)}
+                          className={clsx(
+                            "cursor-pointer transition hover:bg-slate-50/80",
+                            isExpanded && "bg-slate-50/50"
+                          )}
+                        >
+                          <td className="px-3 py-3 text-slate-400">
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4 text-slate-700" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-slate-400" />
+                            )}
+                          </td>
+                          <td className="px-3 py-3 font-semibold text-slate-900">{row.customer_name || "-"}</td>
+                          <td className="px-3 py-3 font-mono text-slate-600">{row.phone || "-"}</td>
+                          <td className="px-3 py-3 font-mono text-slate-600">{row.gstin || "-"}</td>
+                          <td className="px-3 py-3 text-center">{row.proforma_count}</td>
+                          <td className="px-3 py-3 text-center">{row.tax_invoice_count}</td>
+                          <td className="px-3 py-3 text-right font-semibold text-slate-900">
+                            {formatMoney(row.total_invoice_amount, currency)}
+                          </td>
+                          <td className="px-3 py-3 text-right text-emerald-700 font-medium">
+                            {formatMoney(row.advance_received, currency)}
+                          </td>
+                          <td className="px-3 py-3 text-right text-slate-700 font-medium">
+                            {formatMoney(row.additional_payments_received, currency)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-semibold text-emerald-700">
+                            {formatMoney(row.total_received, currency)}
+                          </td>
+                          <td
+                            className={clsx(
+                              "px-3 py-3 text-right font-bold",
+                              row.balance_due > 0 ? "text-rose-600" : "text-slate-900"
+                            )}
+                          >
+                            {formatMoney(row.balance_due, currency)}
+                          </td>
+                        </tr>
+
+                        {/* Customer Row Click Detail Expansion */}
+                        {isExpanded && (
+                          <tr className="bg-slate-50/40">
+                            <td colSpan={11} className="px-6 py-4">
+                              <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                                  <p className="text-xs font-bold text-slate-800">
+                                    {row.customer_name} — Invoices & Payments History
+                                  </p>
+                                  <span className="text-[11px] text-slate-500">
+                                    {row.invoices?.length || 0} Documents &bull; {row.payments?.length || 0} Receipts
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                                  {/* Invoices List */}
+                                  <div>
+                                    <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                                      Billing Invoices
+                                    </p>
+                                    {row.invoices && row.invoices.length > 0 ? (
+                                      <div className="overflow-hidden rounded-xl border border-slate-100">
+                                        <table className="w-full text-left text-[11px]">
+                                          <thead className="bg-slate-50 font-semibold text-slate-600">
+                                            <tr>
+                                              <th className="px-2.5 py-1.5">No</th>
+                                              <th className="px-2.5 py-1.5">Type</th>
+                                              <th className="px-2.5 py-1.5">Date</th>
+                                              <th className="px-2.5 py-1.5 text-right">Total</th>
+                                              <th className="px-2.5 py-1.5 text-right">Balance</th>
+                                              <th className="px-2.5 py-1.5 text-center">Status</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody className="divide-y divide-slate-100">
+                                            {row.invoices.map((inv) => (
+                                              <tr key={inv.id}>
+                                                <td className="px-2.5 py-1.5 font-medium text-slate-900">{inv.invoice_no}</td>
+                                                <td className="px-2.5 py-1.5 text-slate-500">{inv.document_type}</td>
+                                                <td className="px-2.5 py-1.5 text-slate-600">{formatDateDDMMYYYY(inv.date)}</td>
+                                                <td className="px-2.5 py-1.5 text-right font-medium">{formatMoney(inv.grand_total, currency)}</td>
+                                                <td className="px-2.5 py-1.5 text-right font-medium text-rose-600">{formatMoney(inv.balance_due, currency)}</td>
+                                                <td className="px-2.5 py-1.5 text-center">
+                                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+                                                    {inv.status}
+                                                  </span>
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    ) : (
+                                      <p className="text-[11px] text-slate-400">No invoices on record for this customer.</p>
+                                    )}
+                                  </div>
+
+                                  {/* Payments List */}
+                                  <div>
+                                    <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                                      Payment Receipts
+                                    </p>
+                                    {row.payments && row.payments.length > 0 ? (
+                                      <div className="overflow-hidden rounded-xl border border-slate-100">
+                                        <table className="w-full text-left text-[11px]">
+                                          <thead className="bg-slate-50 font-semibold text-slate-600">
+                                            <tr>
+                                              <th className="px-2.5 py-1.5">Receipt No</th>
+                                              <th className="px-2.5 py-1.5">Date</th>
+                                              <th className="px-2.5 py-1.5">Mode</th>
+                                              <th className="px-2.5 py-1.5">Reference</th>
+                                              <th className="px-2.5 py-1.5 text-right">Amount</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody className="divide-y divide-slate-100">
+                                            {row.payments.map((pmt) => (
+                                              <tr key={pmt.id}>
+                                                <td className="px-2.5 py-1.5 font-medium text-slate-900">{pmt.payment_no}</td>
+                                                <td className="px-2.5 py-1.5 text-slate-600">{formatDateDDMMYYYY(pmt.payment_date)}</td>
+                                                <td className="px-2.5 py-1.5 text-slate-600">{pmt.payment_mode}</td>
+                                                <td className="px-2.5 py-1.5 font-mono text-slate-500">{pmt.reference_no}</td>
+                                                <td className="px-2.5 py-1.5 text-right font-semibold text-emerald-700">
+                                                  {formatMoney(pmt.amount, currency)}
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    ) : (
+                                      <p className="text-[11px] text-slate-400">No direct payment receipts recorded.</p>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+
+            {activeReport === "payment-wise" && (
+              <table className="w-full min-w-[800px] text-left text-xs">
+                <thead className="border-b border-slate-100 bg-slate-50/80 font-semibold text-slate-700">
+                  <tr>
+                    <th className="px-3.5 py-3.5">Payment Date</th>
+                    <th className="px-3.5 py-3.5">Receipt Number</th>
+                    <th className="px-3.5 py-3.5">Customer Name</th>
+                    <th className="px-3.5 py-3.5">Invoice Number</th>
+                    <th className="px-3.5 py-3.5">Payment Method</th>
+                    <th className="px-3.5 py-3.5">Reference Number</th>
+                    <th className="px-3.5 py-3.5 text-right">Amount Received</th>
+                    <th className="px-3.5 py-3.5">Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {paginatedRows.map((row) => (
+                    <tr key={row.id} className="hover:bg-slate-50/60">
+                      <td className="whitespace-nowrap px-3.5 py-3 font-medium text-slate-900">
+                        {formatDateDDMMYYYY(row.payment_date)}
+                      </td>
+                      <td className="px-3.5 py-3 font-semibold text-slate-900">{row.receipt_number || "-"}</td>
+                      <td className="px-3.5 py-3 font-medium text-slate-900">{row.customer_name || "-"}</td>
+                      <td className="px-3.5 py-3 font-mono text-slate-600">{row.invoice_number || "-"}</td>
+                      <td className="px-3.5 py-3 text-slate-600">{row.payment_method || "-"}</td>
+                      <td className="px-3.5 py-3 font-mono text-slate-600">{row.reference_number || "-"}</td>
+                      <td className="px-3.5 py-3 text-right font-bold text-emerald-700">
+                        {formatMoney(row.amount_received, currency)}
+                      </td>
+                      <td className="max-w-[180px] truncate px-3.5 py-3 text-slate-500" title={row.notes}>
+                        {row.notes || "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {activeReport === "advances" && (
+              <table className="w-full min-w-[850px] text-left text-xs">
+                <thead className="border-b border-slate-100 bg-slate-50/80 font-semibold text-slate-700">
+                  <tr>
+                    <th className="px-3.5 py-3.5">Receipt / Advance Date</th>
+                    <th className="px-3.5 py-3.5">Pro Forma No</th>
+                    <th className="px-3.5 py-3.5">Customer Name</th>
+                    <th className="px-3.5 py-3.5 text-right">Invoice Total</th>
+                    <th className="px-3.5 py-3.5 text-right">Advance Received</th>
+                    <th className="px-3.5 py-3.5 text-right">Advance Applied</th>
+                    <th className="px-3.5 py-3.5 text-right">Remaining Balance</th>
+                    <th className="px-3.5 py-3.5">Tax Invoice No</th>
+                    <th className="px-3.5 py-3.5 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {paginatedRows.map((row, idx) => (
+                    <tr key={row.proforma_id || idx} className="hover:bg-slate-50/60">
+                      <td className="whitespace-nowrap px-3.5 py-3 font-medium text-slate-900">
+                        {formatDateDDMMYYYY(row.receipt_date)}
+                      </td>
+                      <td className="px-3.5 py-3 font-semibold text-slate-900">{row.proforma_invoice_no}</td>
+                      <td className="px-3.5 py-3 font-medium text-slate-900">{row.customer_name}</td>
+                      <td className="px-3.5 py-3 text-right font-medium text-slate-900">
+                        {formatMoney(row.invoice_total, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-right font-bold text-emerald-700">
+                        {formatMoney(row.advance_received, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-right font-semibold text-slate-800">
+                        {formatMoney(row.advance_applied, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-right font-bold text-rose-600">
+                        {formatMoney(row.remaining_balance, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 font-mono font-medium text-slate-900">
+                        {row.tax_invoice_number || "-"}
+                      </td>
+                      <td className="px-3.5 py-3 text-center">
+                        <span
+                          className={clsx(
+                            "rounded-full px-2.5 py-0.5 text-[10px] font-semibold",
+                            row.status === "Converted"
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : "bg-slate-100 text-slate-700"
+                          )}
+                        >
+                          {row.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {activeReport === "balance-due" && (
+              <table className="w-full min-w-[950px] text-left text-xs">
+                <thead className="border-b border-slate-100 bg-slate-50/80 font-semibold text-slate-700">
+                  <tr>
+                    <th className="px-3.5 py-3.5">Invoice Date</th>
+                    <th className="px-3.5 py-3.5">Invoice Number</th>
+                    <th className="px-3.5 py-3.5">Invoice Type</th>
+                    <th className="px-3.5 py-3.5">Customer Name</th>
+                    <th className="px-3.5 py-3.5 text-right">Invoice Total</th>
+                    <th className="px-3.5 py-3.5 text-right">Advance Received</th>
+                    <th className="px-3.5 py-3.5 text-right">Additional Payments</th>
+                    <th className="px-3.5 py-3.5 text-right">Total Received</th>
+                    <th className="px-3.5 py-3.5 text-right">Balance Due</th>
+                    <th className="px-3.5 py-3.5">Due Date</th>
+                    <th className="px-3.5 py-3.5 text-center">Overdue</th>
+                    <th className="px-3.5 py-3.5 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {paginatedRows.map((row) => (
+                    <tr key={row.invoice_id} className="hover:bg-slate-50/60">
+                      <td className="whitespace-nowrap px-3.5 py-3 text-slate-600">
+                        {formatDateDDMMYYYY(row.invoice_date)}
+                      </td>
+                      <td className="px-3.5 py-3 font-semibold text-slate-900">{row.invoice_number}</td>
+                      <td className="px-3.5 py-3">
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">
+                          {row.invoice_type}
+                        </span>
+                      </td>
+                      <td className="px-3.5 py-3 font-medium text-slate-900">{row.customer_name}</td>
+                      <td className="px-3.5 py-3 text-right font-medium text-slate-900">
+                        {formatMoney(row.invoice_total, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-right text-emerald-700 font-medium">
+                        {formatMoney(row.advance_received, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-right text-slate-700 font-medium">
+                        {formatMoney(row.additional_payments_received, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-right font-semibold text-emerald-700">
+                        {formatMoney(row.total_received, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-right font-bold text-rose-600">
+                        {formatMoney(row.balance_due, currency)}
+                      </td>
+                      <td className="whitespace-nowrap px-3.5 py-3 text-slate-600">
+                        {formatDateDDMMYYYY(row.due_date)}
+                      </td>
+                      <td className="px-3.5 py-3 text-center">
+                        {row.days_overdue > 0 ? (
+                          <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 border border-rose-200">
+                            {row.days_overdue}d Overdue
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )}
+                      </td>
+                      <td className="px-3.5 py-3 text-center">
+                        <span
+                          className={clsx(
+                            "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                            row.payment_status === "Paid"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : row.payment_status === "Overdue"
+                              ? "bg-rose-50 text-rose-700 border border-rose-200"
+                              : row.payment_status === "Partially Paid"
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-slate-100 text-slate-700"
+                          )}
+                        >
+                          {row.payment_status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {activeReport === "proforma" && (
+              <table className="w-full min-w-[900px] text-left text-xs">
+                <thead className="border-b border-slate-100 bg-slate-50/80 font-semibold text-slate-700">
+                  <tr>
+                    <th className="px-3.5 py-3.5">Pro Forma Number</th>
+                    <th className="px-3.5 py-3.5">Invoice Date</th>
+                    <th className="px-3.5 py-3.5">Valid Till</th>
+                    <th className="px-3.5 py-3.5">Customer Name</th>
+                    <th className="px-3.5 py-3.5 text-right">Total Before Tax</th>
+                    <th className="px-3.5 py-3.5 text-right">GST Amount</th>
+                    <th className="px-3.5 py-3.5 text-right">Invoice Total</th>
+                    <th className="px-3.5 py-3.5 text-right">Advance Received</th>
+                    <th className="px-3.5 py-3.5 text-right">Balance Payable</th>
+                    <th className="px-3.5 py-3.5 text-center">Status</th>
+                    <th className="px-3.5 py-3.5">Converted Tax Invoice</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {paginatedRows.map((row) => (
+                    <tr key={row.proforma_id} className="hover:bg-slate-50/60">
+                      <td className="px-3.5 py-3 font-semibold text-slate-900">{row.proforma_number}</td>
+                      <td className="whitespace-nowrap px-3.5 py-3 text-slate-600">
+                        {formatDateDDMMYYYY(row.invoice_date)}
+                      </td>
+                      <td className="whitespace-nowrap px-3.5 py-3 text-slate-600">
+                        {formatDateDDMMYYYY(row.valid_till)}
+                      </td>
+                      <td className="px-3.5 py-3 font-medium text-slate-900">{row.customer_name}</td>
+                      <td className="px-3.5 py-3 text-right font-medium text-slate-800">
+                        {formatMoney(row.total_before_tax, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-right font-medium text-slate-800">
+                        {formatMoney(row.gst_amount, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-right font-bold text-slate-900">
+                        {formatMoney(row.invoice_total, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-right font-semibold text-emerald-700">
+                        {formatMoney(row.advance_received, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-right font-bold text-rose-600">
+                        {formatMoney(row.balance_payable, currency)}
+                      </td>
+                      <td className="px-3.5 py-3 text-center">
+                        <span
+                          className={clsx(
+                            "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                            row.conversion_status === "Converted"
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : "bg-amber-50 text-amber-700 border border-amber-200"
+                          )}
+                        >
+                          {row.conversion_status}
+                        </span>
+                      </td>
+                      <td className="px-3.5 py-3 font-mono font-medium text-slate-900">
+                        {row.converted_tax_invoice_number || "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {activeReport === "tax-invoices" && (
+              <table className="w-full min-w-[1100px] text-left text-xs">
+                <thead className="border-b border-slate-100 bg-slate-50/80 font-semibold text-slate-700">
+                  <tr>
+                    <th className="px-3 py-3.5">Invoice Number</th>
+                    <th className="px-3 py-3.5">Invoice Date</th>
+                    <th className="px-3 py-3.5">Customer Name</th>
+                    <th className="px-3 py-3.5">Customer GSTIN</th>
+                    <th className="px-3 py-3.5 text-right">Taxable Amount</th>
+                    <th className="px-3 py-3.5 text-right">CGST</th>
+                    <th className="px-3 py-3.5 text-right">SGST</th>
+                    <th className="px-3 py-3.5 text-right">IGST</th>
+                    <th className="px-3 py-3.5 text-right">Total GST</th>
+                    <th className="px-3 py-3.5 text-right">Invoice Total</th>
+                    <th className="px-3 py-3.5 text-right">Advance / Prev.</th>
+                    <th className="px-3 py-3.5 text-right">Addl. Payments</th>
+                    <th className="px-3 py-3.5 text-right">Balance Due</th>
+                    <th className="px-3 py-3.5">Due Date</th>
+                    <th className="px-3 py-3.5 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {paginatedRows.map((row) => (
+                    <tr key={row.invoice_id} className="hover:bg-slate-50/60">
+                      <td className="px-3 py-3 font-semibold text-slate-900">{row.invoice_number}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-slate-600">
+                        {formatDateDDMMYYYY(row.invoice_date)}
+                      </td>
+                      <td className="px-3 py-3 font-medium text-slate-900">{row.customer_name}</td>
+                      <td className="px-3 py-3 font-mono text-slate-600">{row.customer_gstin || "-"}</td>
+                      <td className="px-3 py-3 text-right font-medium text-slate-800">
+                        {formatMoney(row.taxable_amount, currency)}
+                      </td>
+                      <td className="px-3 py-3 text-right text-slate-600">{formatMoney(row.cgst, currency)}</td>
+                      <td className="px-3 py-3 text-right text-slate-600">{formatMoney(row.sgst, currency)}</td>
+                      <td className="px-3 py-3 text-right text-slate-600">{formatMoney(row.igst, currency)}</td>
+                      <td className="px-3 py-3 text-right font-medium text-slate-800">
+                        {formatMoney(row.total_gst, currency)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-bold text-slate-900">
+                        {formatMoney(row.invoice_total, currency)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-medium text-emerald-700">
+                        {formatMoney(row.advance_received, currency)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-medium text-slate-700">
+                        {formatMoney(row.additional_payments, currency)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-bold text-rose-600">
+                        {formatMoney(row.balance_due, currency)}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 text-slate-600">
+                        {formatDateDDMMYYYY(row.due_date)}
+                      </td>
+                      <td className="px-3 py-3 text-center">
+                        <span
+                          className={clsx(
+                            "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                            row.payment_status === "Paid"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : row.payment_status === "Overdue"
+                              ? "bg-rose-50 text-rose-700 border border-rose-200"
+                              : row.payment_status === "Partially Paid"
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-slate-100 text-slate-700"
+                          )}
+                        >
+                          {row.payment_status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {rows.length > pageSize && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-slate-200 px-5 py-3.5 bg-slate-50/60 rounded-b-2xl">
+            <div className="text-xs text-slate-500 font-medium">
+              Showing <span className="font-semibold text-slate-700">{Math.min((currentPage - 1) * pageSize + 1, rows.length)}</span> to{" "}
+              <span className="font-semibold text-slate-700">{Math.min(currentPage * pageSize, rows.length)}</span> of{" "}
+              <span className="font-semibold text-slate-700">{rows.length}</span> entries
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                <span>Per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 font-medium shadow-sm focus:border-slate-400 focus:outline-none"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm transition"
+                >
+                  Prev
+                </button>
+                <span className="px-2 text-xs font-semibold text-slate-700">
+                  {currentPage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm transition"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function SummaryCard({ label, value, tone = "default" }) {
+  const toneClasses =
+    tone === "positive"
+      ? "border-emerald-200 bg-emerald-50/50 text-emerald-800"
+      : tone === "negative"
+      ? "border-rose-200 bg-rose-50/50 text-rose-800"
+      : tone === "warning"
+      ? "border-amber-200 bg-amber-50/50 text-amber-800"
+      : "border-slate-200 bg-white text-slate-900";
+
+  return (
+    <div className={clsx("overflow-hidden rounded-2xl border p-4 shadow-sm", toneClasses)}>
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="mt-2 text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">{value}</p>
     </div>
   );
 }

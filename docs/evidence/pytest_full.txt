@@ -1,0 +1,60 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.9, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\RIHASHA\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\RIHASHA\OneDrive\Desktop\bill-riha
+plugins: anyio-4.15.1
+collecting ... collected 29 items
+
+backend/tests/test_backend_services.py::test_state_normalization PASSED  [  3%]
+backend/tests/test_backend_services.py::test_tax_type_determination PASSED [  6%]
+backend/tests/test_backend_services.py::test_item_line_calculation_intra_state PASSED [ 10%]
+backend/tests/test_backend_services.py::test_item_line_calculation_inter_state PASSED [ 13%]
+backend/tests/test_backend_services.py::test_document_calculation_totals PASSED [ 17%]
+backend/tests/test_backend_services.py::test_dynamic_gst_rates_intra_state PASSED [ 20%]
+backend/tests/test_backend_services.py::test_dynamic_gst_rates_inter_state PASSED [ 24%]
+backend/tests/test_backend_services.py::test_country_aware_tax_jurisdictions PASSED [ 27%]
+backend/tests/test_backend_services.py::test_calculation_service_foreign_currency_discount_before_after PASSED [ 31%]
+backend/tests/test_main.py::test_read_root PASSED                        [ 34%]
+backend/tests/test_main.py::test_health_check PASSED                     [ 37%]
+backend/tests/test_payment_flow.py::test_advance_payment_without_allocations PASSED [ 41%]
+backend/tests/test_payment_flow.py::test_payment_with_allocations_across_two_documents PASSED [ 44%]
+backend/tests/test_payment_flow.py::test_overpayment_rejected PASSED     [ 48%]
+backend/tests/test_payment_flow.py::test_legacy_payload_with_party_id_works PASSED [ 51%]
+backend/tests/test_payment_flow.py::test_tenant_b_cannot_pay_tenant_a_invoice PASSED [ 55%]
+backend/tests/test_proforma_conversion.py::test_lossless_proforma_to_tax_invoice_conversion PASSED [ 58%]
+backend/tests/test_proforma_conversion.py::test_duplicate_conversion_rejection_409 PASSED [ 62%]
+backend/tests/test_proforma_conversion.py::test_tax_invoice_read_only_enforcement PASSED [ 65%]
+backend/tests/test_proforma_conversion.py::test_tenant_isolation_on_proforma_conversion PASSED [ 68%]
+backend/tests/test_proforma_conversion.py::test_proforma_field_coverage_mapping PASSED [ 72%]
+backend/tests/test_proforma_conversion.py::test_parallel_proforma_conversion_single_invoice PASSED [ 75%]
+backend/tests/test_proforma_conversion.py::test_financial_year_rollover_sequence_no_collision PASSED [ 79%]
+backend/tests/test_proforma_conversion.py::test_direct_tax_invoice_creation_prohibited_403 PASSED [ 82%]
+backend/tests/test_proforma_conversion.py::test_20_parallel_conversions_distinct_gap_free PASSED [ 86%]
+backend/tests/test_proforma_export.py::test_calculation_service_rounding_and_discount_distribution PASSED [ 89%]
+backend/tests/test_proforma_export.py::test_proforma_create_and_get_with_export_fields PASSED [ 93%]
+backend/tests/test_proforma_pending_documents.py::test_create_proforma_and_fetch_pending_documents PASSED [ 96%]
+backend/tests/test_sale_report.py::test_sale_report_end_to_end PASSED    [100%]
+
+============================== warnings summary ===============================
+..\..\..\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\testclient.py:1
+  C:\Users\RIHASHA\AppData\Local\Programs\Python\Python312\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+backend/tests/test_payment_flow.py: 20 warnings
+backend/tests/test_proforma_conversion.py: 201 warnings
+backend/tests/test_proforma_export.py: 9 warnings
+backend/tests/test_proforma_pending_documents.py: 5 warnings
+backend/tests/test_sale_report.py: 8 warnings
+  C:\Users\RIHASHA\AppData\Local\Programs\Python\Python312\Lib\site-packages\supabase\_sync\client.py:309: DeprecationWarning: The 'timeout' parameter is deprecated. Please configure it in the http client instead.
+    return SyncPostgrestClient(
+
+backend/tests/test_payment_flow.py: 20 warnings
+backend/tests/test_proforma_conversion.py: 201 warnings
+backend/tests/test_proforma_export.py: 9 warnings
+backend/tests/test_proforma_pending_documents.py: 5 warnings
+backend/tests/test_sale_report.py: 8 warnings
+  C:\Users\RIHASHA\AppData\Local\Programs\Python\Python312\Lib\site-packages\supabase\_sync\client.py:309: DeprecationWarning: The 'verify' parameter is deprecated. Please configure it in the http client instead.
+    return SyncPostgrestClient(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================ 29 passed, 487 warnings in 599.40s (0:09:59) =================

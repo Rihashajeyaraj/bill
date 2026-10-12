@@ -1,7 +1,7 @@
 import React from "react";
 import clsx from "clsx";
 
-export default function GradientButton({ className, children, ...props }) {
+export default function GradientButton({ className = "", children = null, loading = false, ...props }) {
   return (
     <button
       {...props}
@@ -15,3 +15,4 @@ export default function GradientButton({ className, children, ...props }) {
     </button>
   );
 }
+

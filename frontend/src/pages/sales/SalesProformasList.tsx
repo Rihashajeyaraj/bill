@@ -118,6 +118,21 @@ function buildPreviewData(record: any, company: any) {
     companyPan: company?.pan || "",
     companyPhone: company?.phone || "",
     companyState: company?.address?.state || company?.state || "",
+    companyLogoUrl: company?.logoBase64 || company?.logo_url || company?.logoUrl || "",
+    companySignatureUrl: company?.signatureUrl || company?.signatureBase64 || company?.settings?.signatureUrl || "",
+    company: {
+      ...(company || {}),
+      logo_url: company?.logoBase64 || company?.logo_url || company?.logoUrl || "",
+      signature_url: company?.signatureUrl || company?.signatureBase64 || company?.settings?.signatureUrl || ""
+    },
+    seller: {
+      name: company?.companyName || company?.name || "",
+      address: companyAddressParts.join(", "),
+      gstin: company?.tax?.gstin || company?.gstin || "",
+      phone: company?.phone || "",
+      logoUrl: company?.logoBase64 || company?.logo_url || company?.logoUrl || "",
+      signatureUrl: company?.signatureUrl || company?.signatureBase64 || company?.settings?.signatureUrl || ""
+    },
 
     customerName,
     customerAddress,
@@ -218,47 +233,20 @@ export default function SalesProformasList() {
   const loadRows = useCallback(async () => {
     setLoading(true);
     try {
-      const [remoteFastApi, syncedLocal] = await Promise.all([
-        apiClient.getProformas().catch(() => []),
-        salesProformasSyncFromRemote().catch(() => [])
-      ]);
+      let proformaRecords: any[] = [];
+      let fastApiSuccess = false;
 
-      const mergedMap = new Map<string, any>();
-
-      // 1. Process local/Supabase records
-      const localList = Array.isArray(syncedLocal) && syncedLocal.length > 0 ? syncedLocal : salesProformasList();
-      localList.forEach((item: any) => {
-        const pNo = item.proformaNo || item.proforma_no || "";
-        const key = String(pNo || item.id || "").trim();
-        if (key) {
-          mergedMap.set(key, {
-            id: item.id,
-            proformaNo: pNo || "-",
-            proformaDate: item.proformaDate || item.proforma_date || "",
-            validTill: item.validTill || item.valid_till || "",
-            dueDate: item.dueDate || item.due_date || "",
-            partyName: item.partyName || item.customer_name || (item.customer && (item.customer.display_name || item.customer.name)) || "-",
-            totals: item.totals || { grandTotal: Number(item.grand_total || item.amount || 0) },
-            appliedAmount: Number(item.appliedAmount || item.amount_paid || 0),
-            balanceAmount: Number(item.balanceAmount || 0),
-            status: item.status || "DRAFT",
-            templateId: item.templateId || item.template_id || "new_globe_export",
-            convertedDocumentId: item.convertedDocumentId || item.converted_document_id || "",
-            convertedInvoiceNo: item.convertedInvoiceNo || item.converted_invoice_no || item.invoice_no || ""
-          });
-        }
-      });
-
-      // 2. Process FastAPI records (takes priority for accurate remote state)
-      if (Array.isArray(remoteFastApi)) {
-        remoteFastApi.forEach((item: any) => {
-          const pNo = item.proforma_no || item.proformaNo || "";
-          const key = String(pNo || item.id || "").trim();
-          if (key) {
+      // 1. Primary: FastAPI backend (batch-loaded parties, avoids duplicate line items download)
+      try {
+        const remoteFastApi = await apiClient.getProformas();
+        if (Array.isArray(remoteFastApi) && remoteFastApi.length > 0) {
+          fastApiSuccess = true;
+          proformaRecords = remoteFastApi.map((item: any) => {
+            const pNo = item.proforma_no || item.proformaNo || "";
             const customerName = item.customer_name || (item.customer && (item.customer.display_name || item.customer.name)) || item.party_name || "-";
             const grandTotal = Number(item.grand_total ?? item.subtotal ?? 0);
             const amountPaid = Number(item.amount_paid || 0);
-            mergedMap.set(key, {
+            return {
               id: item.id,
               proformaNo: pNo || "-",
               proformaDate: item.proforma_date || item.proformaDate || "",
@@ -272,12 +260,38 @@ export default function SalesProformasList() {
               templateId: item.template_id || item.templateId || "new_globe_export",
               convertedDocumentId: item.converted_document_id || item.convertedDocumentId || "",
               convertedInvoiceNo: item.converted_invoice_no || item.convertedInvoiceNo || item.invoice_no || ""
-            });
-          }
+            };
+          });
+        }
+      } catch (err) {
+        console.warn("FastAPI proformas fetch failed, using fallback:", err);
+      }
+
+      // 2. Fallback: remote sync or local storage if primary was empty/failed
+      if (!fastApiSuccess) {
+        const syncedLocal = await salesProformasSyncFromRemote().catch(() => []);
+        const localList = Array.isArray(syncedLocal) && syncedLocal.length > 0 ? syncedLocal : salesProformasList();
+        proformaRecords = localList.map((item: any) => {
+          const pNo = item.proformaNo || item.proforma_no || "";
+          return {
+            id: item.id,
+            proformaNo: pNo || "-",
+            proformaDate: item.proformaDate || item.proforma_date || "",
+            validTill: item.validTill || item.valid_till || "",
+            dueDate: item.dueDate || item.due_date || "",
+            partyName: item.partyName || item.customer_name || (item.customer && (item.customer.display_name || item.customer.name)) || "-",
+            totals: item.totals || { grandTotal: Number(item.grand_total || item.amount || 0) },
+            appliedAmount: Number(item.appliedAmount || item.amount_paid || 0),
+            balanceAmount: Number(item.balanceAmount || 0),
+            status: item.status || "DRAFT",
+            templateId: item.templateId || item.template_id || "new_globe_export",
+            convertedDocumentId: item.convertedDocumentId || item.converted_document_id || "",
+            convertedInvoiceNo: item.convertedInvoiceNo || item.converted_invoice_no || item.invoice_no || ""
+          };
         });
       }
 
-      setRows(Array.from(mergedMap.values()));
+      setRows(proformaRecords);
     } catch (error: any) {
       toast.showError("Failed to load Pro Forma Invoices", error?.message || "Showing local data.");
     } finally {

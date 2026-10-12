@@ -53,6 +53,7 @@ class InvoiceCreate(BaseModel):
     notes: Optional[str] = None
     terms: Optional[str] = None
     amount_paid: float = 0.0
+    advance_received: Optional[float] = 0.0
 
     # Customer Snapshot & Manual Entry
     customer_name: Optional[str] = None
@@ -76,6 +77,8 @@ class InvoiceUpdate(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = None
     terms: Optional[str] = None
+    amount_paid: Optional[float] = None
+    advance_received: Optional[float] = None
 
     # Customer Snapshot & Manual Entry
     customer_name: Optional[str] = None
@@ -182,8 +185,10 @@ class InvoiceResponse(BaseModel):
     tax_total: float = 0.0
     round_off: float = 0.0
     grand_total: float = 0.0
+    advance_received: float = 0.0
     amount_paid: float = 0.0
     balance_due: float = 0.0
+    payment_status: Optional[str] = None
     status: str = "issued"
     notes: Optional[str] = None
     terms: Optional[str] = None
