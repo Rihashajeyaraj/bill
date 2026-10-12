@@ -2,12 +2,15 @@ dist/
 node_modules/
 playwright-report/
 test-results/
+frontend/venv/
+backend/venv/
+venv/
 __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
 backend/.pytest_cache/
-backend/venv/
 .coverage
 htmlcov/
 scratch/
+.vite/
